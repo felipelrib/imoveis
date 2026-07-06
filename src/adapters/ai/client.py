@@ -96,7 +96,10 @@ class OllamaClient(LocalAIClient):
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self._client = httpx.AsyncClient(timeout=timeout)
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_keepalive_connections=0)
+        )
 
     # -- visuals -------------------------------------------------------------
 
@@ -115,6 +118,7 @@ class OllamaClient(LocalAIClient):
             "prompt": prompt,
             "images": images_b64,
             "stream": False,
+            "format": "json",
         }
 
         logger.info(
@@ -132,7 +136,8 @@ class OllamaClient(LocalAIClient):
             parsed = _safe_parse_json(body.get("response", ""))
             logger.info("ollama_visual_response", parsed_keys=list(parsed.keys()))
         except Exception as exc:
-            logger.error("ollama_visual_error", error=str(exc))
+            import traceback
+            logger.error("ollama_visual_error", error=str(exc), traceback=traceback.format_exc())
             parsed = {}
 
         return VisualAnalysisResult(
@@ -151,6 +156,7 @@ class OllamaClient(LocalAIClient):
             "model": self.model,
             "prompt": full_prompt,
             "stream": False,
+            "format": "json",
         }
 
         logger.info(
@@ -168,7 +174,8 @@ class OllamaClient(LocalAIClient):
             parsed = _safe_parse_json(body.get("response", ""))
             logger.info("ollama_text_response", parsed_keys=list(parsed.keys()))
         except Exception as exc:
-            logger.error("ollama_text_error", error=str(exc))
+            import traceback
+            logger.error("ollama_text_error", error=str(exc), traceback=traceback.format_exc())
             parsed = {}
 
         return SentimentAnalysisResult(
@@ -232,6 +239,7 @@ class LMStudioClient(LocalAIClient):
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self._max_tokens,
             "temperature": 0.3,
+            "response_format": {"type": "json_object"},
         }
 
     async def _chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
