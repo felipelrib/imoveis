@@ -1,21 +1,32 @@
-from adapters.db.extra_models import PlatformCheckpoint
-from adapters.db.models import Base
 from sqlalchemy.orm import Session
+from src.adapters.db.models import PlatformCheckpoint
+from typing import Dict, Any
 
 class CheckpointStore:
     """Persist per-platform checkpoints using DB table platform_checkpoints."""
+
     def __init__(self, session: Session):
         self.session = session
 
     def get(self, platform_name: str) -> dict:
-        row = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).one_or_none()
-        return row.data if row else {}
+        """Get checkpoint for a platform."""
+        checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
+        if checkpoint:
+            return checkpoint.checkpoint_data
+        return {}
 
     def set(self, platform_name: str, data: dict) -> None:
-        row = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).one_or_none()
-        if row:
-            row.data = data
-        else:
-            row = PlatformCheckpoint(platform_name=platform_name, data=data)
-            self.session.add(row)
-        self.session.commit()
+        """Set checkpoint for a platform."""
+        try:
+            checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
+            if checkpoint:
+                checkpoint.checkpoint_data = data
+            else:
+                checkpoint = PlatformCheckpoint(platform_name=platform_name, checkpoint_data=data)
+                self.session.add(checkpoint)
+            self.session.commit()
+        except Exception as e:
+            # Log error and re-raise to ensure we don't silently lose checkpoints
+            print(f"Error saving checkpoint for {platform_name}: {e}")
+            self.session.rollback()
+            raise

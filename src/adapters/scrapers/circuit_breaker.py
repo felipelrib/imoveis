@@ -1,16 +1,14 @@
-import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict
 import time
-
-logger = logging.getLogger(__name__)
 
 @dataclass
 class CircuitBreakerState:
     """Represents the state of a circuit breaker."""
-    failures: int = 0
-    opened: bool = False
-    last_failure: Optional[float] = None
+    is_open: bool = False
+    failure_count: int = 0
+    last_failure_time: Optional[float] = None
+    cooldown_end_time: Optional[float] = None
 
 class CircuitBreaker:
     """Simple in-process circuit breaker.
@@ -32,57 +30,31 @@ class CircuitBreaker:
         self._state = CircuitBreakerState()
 
     def is_open(self) -> bool:
-        """Check if circuit is open."""
-        try:
-            return self._state.opened
-        except Exception as e:
-            logger.error(f"Error checking circuit breaker state for {self.platform_name}: {e}")
-            # Fallback para considerar o circuito fechado em caso de falha
+        """Check if the circuit breaker is currently open."""
+        if not self._state.is_open:
             return False
+            
+        # If we're in cooldown, check if it's time to retry
+        if self._state.cooldown_end_time and time.time() < self._state.cooldown_end_time:
+            return True
+            
+        # Cooldown expired, reset state
+        self._state = CircuitBreakerState()
+        return False
 
     def record_failure(self) -> None:
-        """Record a failure."""
-        try:
-            self._state.failures += 1
-            self._state.last_failure = time.time()
+        """Record a failure in the circuit breaker."""
+        if self.is_open():
+            return
             
-            if self._state.failures >= self.failure_threshold:
-                self._state.opened = True
-                
-            logger.debug(f"Recorded failure for {self.platform_name}. Failures: {self._state.failures}")
-        except Exception as e:
-            logger.error(f"Error recording failure for circuit breaker {self.platform_name}: {e}")
+        self._state.failure_count += 1
+        self._state.last_failure_time = time.time()
+        
+        if self._state.failure_count >= self.failure_threshold:
+            self._state.is_open = True
+            self._state.cooldown_end_time = time.time() + self.cooldown_seconds
 
     def record_success(self) -> None:
-        """Record a success."""
-        try:
-            if self._state.opened:
-                # Reset the circuit
-                self._state.failures = 0
-                self._state.opened = False
-                self._state.last_failure = None
-                logger.debug(f"Reset circuit breaker for {self.platform_name}")
-        except Exception as e:
-            logger.error(f"Error recording success for circuit breaker {self.platform_name}: {e}")
-
-    def can_attempt(self) -> bool:
-        """Check if we can attempt an operation."""
-        try:
-            if not self._state.opened:
-                return True
-                
-            # Check if cooldown has passed
-            if self._state.last_failure is not None:
-                if time.time() - self._state.last_failure > self.cooldown_seconds:
-                    # Reset the circuit after cooldown
-                    self._state.failures = 0
-                    self._state.opened = False
-                    self._state.last_failure = None
-                    logger.debug(f"Reset circuit breaker for {self.platform_name} after cooldown")
-                    return True
-                    
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if can attempt for circuit breaker {self.platform_name}: {e}")
-            # Fallback para permitir tentativas em caso de falha
-            return True
+        """Record a success in the circuit breaker."""
+        # Reset state on success
+        self._state = CircuitBreakerState()
