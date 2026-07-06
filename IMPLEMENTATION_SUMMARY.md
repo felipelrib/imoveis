@@ -55,17 +55,12 @@
 - Implementada melhoria na estrutura de consultas de propriedades
 - Adicionado suporte para paginação eficiente
 
-### Arquivo modificado: src/adapters/ai/prompts.py
-- Adicionado tratamento de exceções em prompts de IA
-- Implementada verificação de parâmetros antes da geração de prompts
-- Adicionado logging para falhas na construção de prompts
-
-## Etapa 6: Validação e Segurança Adicional
-
 ### Arquivo modificado: src/core/entities.py
 - Adicionada validação mais rigorosa de dados de entrada
 - Implementada proteção contra injeção de dados maliciosos
 - Adicionado tratamento de exceções em todas as classes BaseModel
+
+## Etapa 6: Validação e Segurança Adicional
 
 ### Arquivo modificado: src/infra/config.py
 - Adicionada verificação de configurações críticas

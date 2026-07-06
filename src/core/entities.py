@@ -1,105 +1,96 @@
-"""Pydantic domain models — framework-agnostic validation layer.
-
-These models sit between the scrapers (raw data) and the persistence
-layer (SQLAlchemy).  Every scraper must produce a ``PropertyCandidate``
-before data can be written to the database.
-"""
-from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel, Field, field_validator
-
-
-# ---------------------------------------------------------------------------
-# Value objects
-# ---------------------------------------------------------------------------
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+import re
 
 class LocationData(BaseModel):
-    """WGS-84 coordinate pair."""
-    lat: float = Field(..., ge=-90, le=90)
-    lon: float = Field(..., ge=-180, le=180)
-
-
-# ---------------------------------------------------------------------------
-# Scraper → DB bridge
-# ---------------------------------------------------------------------------
+    """Location information for a property."""
+    
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    address: str = Field(..., min_length=1)
+    
+    @validator('address')
+    def validate_address(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Address cannot be empty')
+        return v.strip()
 
 class ListingInfo(BaseModel):
-    """Specific listing on a platform for rent or sale."""
-    platform: str
-    platform_id: str
-    listing_type: str  # 'rent' or 'sale'
-    price: float
-    url: str
+    """Information about a property listing."""
+    
+    title: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    price: float = Field(..., ge=0)
+    bedrooms: Optional[int] = Field(None, ge=0)
+    bathrooms: Optional[int] = Field(None, ge=0)
+    area_sqm: Optional[int] = Field(None, ge=0)
+    property_type: Optional[str] = None
+    listing_type: Optional[str] = None
+    
+    @validator('title')
+    def validate_title(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Title cannot be empty')
+        return v.strip()
 
 class PropertyCandidate(BaseModel):
     """Validated scraper output.  All scrapers must produce this before DB persistence."""
-
-    platform: str
-    platform_id: str
-    title: Optional[str] = None
+    
+    platform_id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
     description: Optional[str] = None
-    price: float = Field(..., gt=0)
-    area_m2: Optional[float] = Field(None, gt=0)
-    bedrooms: Optional[int] = Field(None, ge=0)
-    bathrooms: Optional[int] = Field(None, ge=0)
-    parking: Optional[int] = Field(None, ge=0)
+    price: float = Field(..., ge=0)
     location: LocationData
-    address: Optional[str] = None
-    image_urls: List[str] = Field(default_factory=list)
-    props_json: Dict[str, Any] = Field(default_factory=dict)
-    listings: List[ListingInfo] = Field(default_factory=list)
-
-    @field_validator('platform_id', mode='before')
-    @classmethod
-    def coerce_platform_id(cls, v: Any) -> str:
-        return str(v) if v is not None else v
-
-
-# ---------------------------------------------------------------------------
-# Deduplication result
-# ---------------------------------------------------------------------------
+    listing_info: ListingInfo
+    images: Optional[List[str]] = []
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    @validator('platform_id')
+    def coerce_platform_id(cls, v):
+        if not isinstance(v, str):
+            return str(v)
+        return v.strip()
+    
+    @validator('title')
+    def validate_title(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Title cannot be empty')
+        return v.strip()
 
 class DedupeResult(BaseModel):
-    """Outcome of the match-or-create deduplication step."""
-    action: str  # 'created' | 'updated' | 'noop'
-    property_id: str
-    is_duplicate: bool = False
+    """Result of deduplication process."""
+    
+    is_duplicate: bool
+    confidence: float = Field(..., ge=0, le=1)
     matched_property_id: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Scoring
-# ---------------------------------------------------------------------------
 
 class ScoringWeights(BaseModel):
     """Blending weights for statistical vs. AI scores."""
-    stat_weight: float = Field(0.5, ge=0, le=1)
-    ai_weight: float = Field(0.5, ge=0, le=1)
-
-    @field_validator('ai_weight', mode='before')
-    @classmethod
-    def weights_must_sum_to_one(cls, v: Any, info: Any) -> Any:
-        # Just validate range; they don't have to sum to exactly 1.0
+    
+    ai_weight: float = Field(..., ge=0, le=1)
+    statistical_weight: float = Field(..., ge=0, le=1)
+    
+    @validator('ai_weight', 'statistical_weight')
+    def weights_must_sum_to_one(cls, v, info):
+        if info.field_name == 'ai_weight':
+            # Verificar se a soma dos pesos é 1.0
+            if hasattr(info.data, 'statistical_weight'):
+                total = v + info.data['statistical_weight']
+                if abs(total - 1.0) > 0.001:
+                    raise ValueError('Weights must sum to 1.0')
         return v
 
-
-# ---------------------------------------------------------------------------
-# AI analysis results
-# ---------------------------------------------------------------------------
-
 class VisualAnalysisResult(BaseModel):
-    """Output of the VLM visual-quality scorer."""
-    condition_score: float = Field(0.5, ge=0, le=1)
-    features_detected: List[str] = Field(default_factory=list)
-    issues_detected: List[str] = Field(default_factory=list)
-    raw_response: str = ""
-
+    """Result of visual analysis."""
+    
+    tags: List[str] = []
+    sentiment: Optional[str] = None
+    confidence: float = Field(default=0.0, ge=0, le=1)
 
 class SentimentAnalysisResult(BaseModel):
-    """Output of the LLM description-sentiment analyser."""
-    sentiment_score: float = Field(0.5, ge=0, le=1)
-    green_flags: List[str] = Field(default_factory=list)
-    red_flags: List[str] = Field(default_factory=list)
-    raw_response: str = ""
+    """Result of sentiment analysis."""
+    
+    sentiment: str = Field(..., regex=r'^(positive|negative|neutral)$')
+    confidence: float = Field(..., ge=0, le=1)
+    text: str = Field(..., min_length=1)

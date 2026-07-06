@@ -1,21 +1,9 @@
-"""Redis-backed circuit breaker for multi-process safety.
-
-Keys per platform: ``cb:<platform>``
-Stored value: JSON ``{failures, last_failure_ts, open_until}``
-"""
-from __future__ import annotations
-
-import json
-import time
-from typing import Any, Callable, Dict, Optional
-
+import logging
+from typing import Optional
 import redis
+from src.infra.redis_client import get_redis
 
-from infra.logging import get_logger
-from infra.redis_client import get_redis
-
-logger = get_logger(__name__)
-
+logger = logging.getLogger(__name__)
 
 class RedisCircuitBreaker:
     """Circuit breaker whose state lives in Redis.
@@ -28,76 +16,97 @@ class RedisCircuitBreaker:
         Number of consecutive failures before the circuit opens.
     cooldown_seconds:
         How long the circuit stays open.
-    redis_client:
-        Optional pre-built ``redis.Redis`` instance.  Defaults to the
-        centralized client returned by ``get_redis()``.
-    on_trip:
-        Optional callback invoked with ``(platform, failure_count,
-        cooldown_seconds)`` when the circuit opens.
     """
 
-    def __init__(
-        self,
-        platform: str = "default",
-        failure_threshold: int = 5,
-        cooldown_seconds: int = 300,
-        redis_client: Optional[redis.Redis] = None,
-        on_trip: Optional[Callable[[str, int, float], None]] = None,
-    ) -> None:
-        self.r: redis.Redis = redis_client or get_redis()
-        self.platform_name: str = platform
-        self.key: str = f"cb:{platform}"
-        self.failure_threshold: int = int(failure_threshold)
-        self.cooldown_seconds: int = int(cooldown_seconds)
-        self.on_trip = on_trip
-        # Ensure key exists
-        if not self.r.exists(self.key):
-            self._set(self._empty_state())
+    def __init__(self, platform: str, failure_threshold: int = 5, cooldown_seconds: int = 60):
+        self.platform = platform
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.redis_client = get_redis()
+        self._key = f"circuit:{platform}"
 
-    # -- Internal helpers ---------------------------------------------------
+    def _get_state(self) -> dict:
+        """Get current circuit breaker state from Redis."""
+        try:
+            data = self.redis_client.get(self._key)
+            if data is None:
+                return {"failures": 0, "opened": False, "last_failure": None}
+            else:
+                # Supondo que os dados estejam em formato JSON
+                import json
+                return json.loads(data)
+        except Exception as e:
+            logger.error(f"Error getting circuit breaker state for {self.platform}: {e}")
+            # Fallback para estado padrão em caso de falha Redis
+            return {"failures": 0, "opened": False, "last_failure": None}
 
-    @staticmethod
-    def _empty_state() -> Dict[str, Any]:
-        return {"failures": 0, "last_failure_ts": 0, "open_until": 0}
-
-    def _get(self) -> Dict[str, Any]:
-        raw = self.r.get(self.key)
-        if not raw:
-            return self._empty_state()
-        return json.loads(raw)  # type: ignore[arg-type]
-
-    def _set(self, data: Dict[str, Any]) -> None:
-        self.r.set(self.key, json.dumps(data))
-
-    # -- Public API ---------------------------------------------------------
-
-    def record_failure(self) -> None:
-        data = self._get()
-        data["failures"] = data.get("failures", 0) + 1
-        data["last_failure_ts"] = time.time()
-        if data["failures"] >= self.failure_threshold:
-            data["open_until"] = time.time() + self.cooldown_seconds
-            logger.warning(
-                "circuit_breaker_tripped",
-                platform=self.platform_name,
-                failures=data["failures"],
-                cooldown_seconds=self.cooldown_seconds,
-            )
-            if self.on_trip is not None:
-                self.on_trip(
-                    self.platform_name,
-                    data["failures"],
-                    float(self.cooldown_seconds),
-                )
-        self._set(data)
-
-    def record_success(self) -> None:
-        self._set(self._empty_state())
+    def _set_state(self, state: dict) -> None:
+        """Set circuit breaker state in Redis."""
+        try:
+            import json
+            self.redis_client.setex(self._key, self.cooldown_seconds, json.dumps(state))
+        except Exception as e:
+            logger.error(f"Error setting circuit breaker state for {self.platform}: {e}")
+            # Não falhar a operação em caso de falha Redis
 
     def is_open(self) -> bool:
-        data = self._get()
-        return time.time() < data.get("open_until", 0)
+        """Check if circuit is open."""
+        try:
+            state = self._get_state()
+            return state["opened"]
+        except Exception as e:
+            logger.error(f"Error checking circuit breaker state for {self.platform}: {e}")
+            # Fallback para considerar o circuito fechado em caso de falha
+            return False
 
-    def time_left(self) -> float:
-        data = self._get()
-        return max(0.0, data.get("open_until", 0) - time.time())
+    def record_failure(self) -> None:
+        """Record a failure."""
+        try:
+            state = self._get_state()
+            state["failures"] += 1
+            state["last_failure"] = int(time.time())
+            
+            if state["failures"] >= self.failure_threshold:
+                state["opened"] = True
+                
+            self._set_state(state)
+        except Exception as e:
+            logger.error(f"Error recording failure for circuit breaker {self.platform}: {e}")
+
+    def record_success(self) -> None:
+        """Record a success."""
+        try:
+            state = self._get_state()
+            if state["opened"]:
+                # Reset the circuit
+                state["failures"] = 0
+                state["opened"] = False
+                state["last_failure"] = None
+                self._set_state(state)
+        except Exception as e:
+            logger.error(f"Error recording success for circuit breaker {self.platform}: {e}")
+
+    def can_attempt(self) -> bool:
+        """Check if we can attempt an operation."""
+        try:
+            state = self._get_state()
+            
+            if not state["opened"]:
+                return True
+                
+            # Check if cooldown has passed
+            if state["last_failure"] is not None:
+                import time
+                if time.time() - state["last_failure"] > self.cooldown_seconds:
+                    # Reset the circuit after cooldown
+                    state["failures"] = 0
+                    state["opened"] = False
+                    state["last_failure"] = None
+                    self._set_state(state)
+                    return True
+                    
+            return False
+        except Exception as e:
+            logger.error(f"Error checking if can attempt for circuit breaker {self.platform}: {e}")
+            # Fallback para permitir tentativas em caso de falha Redis
+            return True

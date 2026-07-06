@@ -1,58 +1,61 @@
-"""Structured JSON logging for the application.
-
-Provides a pre-configured logger that outputs structured JSON lines
-suitable for log aggregation (ELK, Loki, CloudWatch, etc.).
-
-Usage:
-    from infra.logging import get_logger
-    logger = get_logger(__name__)
-    logger.info("scrape_started", platform="quintoandar", page=1)
-"""
-from __future__ import annotations
-
-import json
 import logging
-import sys
-from datetime import datetime, timezone
-from typing import Any
-
+import json
+from typing import Any, Dict
+import time
 
 class _JSONFormatter(logging.Formatter):
     """Format log records as single-line JSON."""
 
     def format(self, record: logging.LogRecord) -> str:
-        log_entry: dict[str, Any] = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+        log_entry = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)),
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "message": record.getMessage(),
         }
-        # Merge any extra structured fields
-        if hasattr(record, "_extra"):
-            log_entry.update(record._extra)
-        if record.exc_info and record.exc_info[1]:
+        
+        # Adicionar campos extras se existirem
+        if hasattr(record, 'extra_fields'):
+            log_entry.update(record.extra_fields)
+            
+        # Adicionar informações de exceção se houver
+        if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_entry, default=str)
-
+            
+        return json.dumps(log_entry)
 
 class _StructuredLogger:
     """Thin wrapper around stdlib Logger that accepts **kwargs as structured fields."""
 
-    def __init__(self, logger: logging.Logger):
-        self._logger = logger
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
 
     def _log(self, level: int, msg: str, **kwargs: Any) -> None:
-        record = self._logger.makeRecord(
-            name=self._logger.name,
-            level=level,
-            fn="",
-            lno=0,
-            msg=msg,
-            args=(),
-            exc_info=None,
-        )
-        record._extra = kwargs  # type: ignore[attr-defined]
-        self._logger.handle(record)
+        """Log a message with structured data."""
+        extra_fields = kwargs if kwargs else {}
+        
+        # Criar um record customizado com os campos extras
+        class LogRecord(logging.LogRecord):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.extra_fields = extra_fields
+        
+        # Usar o método interno do logger para evitar problemas de formatação
+        if hasattr(self.logger, 'makeRecord'):
+            record = self.logger.makeRecord(
+                self.logger.name,
+                level,
+                "unknown",
+                0,
+                msg,
+                None,
+                None,
+                extra=extra_fields
+            )
+            self.logger.handle(record)
+        else:
+            # Fallback para o comportamento padrão
+            self.logger.log(level, msg, extra=extra_fields)
 
     def debug(self, msg: str, **kwargs: Any) -> None:
         self._log(logging.DEBUG, msg, **kwargs)
@@ -69,23 +72,17 @@ class _StructuredLogger:
     def critical(self, msg: str, **kwargs: Any) -> None:
         self._log(logging.CRITICAL, msg, **kwargs)
 
-
-_initialized = False
-
-
 def _ensure_root_handler() -> None:
-    global _initialized
-    if _initialized:
-        return
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_JSONFormatter())
-    root = logging.getLogger()
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-    _initialized = True
-
+    """Ensure root logger has a JSON formatter."""
+    root_logger = logging.getLogger()
+    
+    if not root_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JSONFormatter())
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
 
 def get_logger(name: str) -> _StructuredLogger:
-    """Return a structured logger for the given module name."""
+    """Get a structured logger."""
     _ensure_root_handler()
-    return _StructuredLogger(logging.getLogger(name))
+    return _StructuredLogger(name)
