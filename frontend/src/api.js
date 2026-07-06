@@ -1,0 +1,75 @@
+const BASE = '/api'
+
+export async function fetchStatus() {
+  const r = await fetch(`${BASE}/system/status`)
+  if (!r.ok) throw new Error('Status fetch failed')
+  return r.json()
+}
+
+export async function fetchPipeline() {
+  const r = await fetch(`${BASE}/system/pipeline`)
+  if (!r.ok) throw new Error('Pipeline fetch failed')
+  return r.json()
+}
+
+export async function fetchPlatforms() {
+  const r = await fetch(`${BASE}/platforms`)
+  if (!r.ok) throw new Error('Platforms fetch failed')
+  return r.json()
+}
+
+export async function triggerScrape(platform, checkpoint = {}, scrapeType = 'both') {
+  const r = await fetch(`${BASE}/scrape`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform, checkpoint, scrape_type: scrapeType }),
+  })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    throw new Error(err.detail || 'Scrape trigger failed')
+  }
+  return r.json()
+}
+
+export async function fetchProperties({
+  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, sortBy = 'combined_score', sortDir = 'desc',
+} = {}) {
+  const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_dir: sortDir })
+  if (platform)    params.set('platform', platform)
+  if (minScore != null) params.set('min_score', minScore)
+  if (maxPrice != null) params.set('max_price', maxPrice)
+  if (minBedrooms != null) params.set('min_bedrooms', minBedrooms)
+  const r = await fetch(`${BASE}/properties?${params}`)
+  if (!r.ok) throw new Error('Properties fetch failed')
+  return r.json()
+}
+
+export async function fetchProperty(id) {
+  const r = await fetch(`${BASE}/properties/${id}`)
+  if (!r.ok) throw new Error('Property fetch failed')
+  return r.json()
+}
+
+export async function pauseWorkers() {
+  const r = await fetch(`${BASE}/admin/workers/pause`, { method: 'POST' })
+  return r.json()
+}
+
+export async function resumeWorkers() {
+  const r = await fetch(`${BASE}/admin/workers/resume`, { method: 'POST' })
+  return r.json()
+}
+
+export async function recalculateScores(weights) {
+  const r = await fetch(`${BASE}/admin/scoring/recalculate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(weights || null),
+  })
+  return r.json()
+}
+
+export async function ensureOllama() {
+  const r = await fetch(`${BASE}/system/ollama/ensure`, { method: 'POST' })
+  return r.json()
+}

@@ -1,0 +1,80 @@
+# =============================================================================
+# Application Configuration — Single Source of Truth
+# =============================================================================
+# Environment variable overrides:
+#   DATABASE_URL  — PostgreSQL connection string
+#   REDIS_URL     — Redis connection string
+#   AI_MODEL      — Override the default VLM model name
+
+database:
+  url: postgresql://user:password@localhost:5432/realestate
+
+redis_url: redis://localhost:6379/0
+
+# ---------------------------------------------------------------------------
+# Platform Scrapers
+# ---------------------------------------------------------------------------
+platforms:
+  quintoandar:
+    base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil
+    enabled: true
+    rate_limit: 30          # requests per minute
+    jitter_min: 2           # minimum delay between requests (seconds)
+    jitter_max: 7           # maximum delay between requests (seconds)
+  olx:
+    base_url: https://www.olx.com.br
+    enabled: false
+    rate_limit: 20
+    jitter_min: 2
+    jitter_max: 6
+
+# ---------------------------------------------------------------------------
+# Deduplication Engine
+# ---------------------------------------------------------------------------
+dedup:
+  radius_m: 50.0                    # geospatial proximity radius in meters
+  area_tolerance_m2: 2.0            # ±m² tolerance for usable area matching
+  text_similarity_threshold: 0.65   # minimum similarity score to consider duplicate
+  text_similarity_algorithm: jaro_winkler  # jaro_winkler | token_sort
+
+# ---------------------------------------------------------------------------
+# Scoring Engine
+# ---------------------------------------------------------------------------
+scoring:
+  stat_weight: 0.5    # weight for statistical z-score/percentile component
+  ai_weight: 0.5      # weight for AI qualitative assessment component
+
+# ---------------------------------------------------------------------------
+# Local AI / VLM
+# ---------------------------------------------------------------------------
+ai:
+  backend: ollama             # ollama | lmstudio
+  ollama_url: http://localhost:11434
+  lmstudio_url: http://localhost:1234
+  default_model: llava
+  timeout_seconds: 120
+  max_tokens: 1024
+
+# ---------------------------------------------------------------------------
+# GPU Resource Management
+# ---------------------------------------------------------------------------
+gpu:
+  semaphore_limit: 1    # max concurrent GPU-bound tasks
+  semaphore_name: gpu
+
+# ---------------------------------------------------------------------------
+# Proxy Configuration (future use — rotating residential proxies)
+# ---------------------------------------------------------------------------
+proxy:
+  enabled: false
+  url: null                             # single proxy URL (e.g. http://user:pass@proxy:8080)
+  rotation_strategy: round_robin        # round_robin | random
+  pool: []                              # list of proxy URLs for rotation
+  # pool:
+  #   - http://user:pass@proxy1:8080
+  #   - http://user:pass@proxy2:8080
+
+# ---------------------------------------------------------------------------
+# Image Storage
+# ---------------------------------------------------------------------------
+image_storage_path: data/images

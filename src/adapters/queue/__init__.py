@@ -1,0 +1,1 @@
+# queue adapter package init

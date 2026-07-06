@@ -1,0 +1,120 @@
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15 + PostGIS 3
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:15-3.3-alpine
+    container_name: imoveis_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: imoveis
+      POSTGRES_PASSWORD: imoveis_secret
+      POSTGRES_DB: realestate
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imoveis -d realestate"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: imoveis_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # FastAPI backend
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: imoveis_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      REDIS_URL: redis://redis:6379/0
+      # Point Ollama to host machine (Ollama runs on Windows host, not in Docker)
+      OLLAMA_HOST: http://host.docker.internal:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs
+      - image_store:/app/data/images
+
+  # ---------------------------------------------------------------------------
+  # Celery AI-enrichment worker
+  # ---------------------------------------------------------------------------
+  worker_ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: imoveis_worker_ai
+    restart: unless-stopped
+    command: >
+      celery -A adapters.queue.tasks worker
+      --loglevel=info
+      --queues=ai
+      --concurrency=1
+    environment:
+      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_HOST: http://host.docker.internal:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs
+      - image_store:/app/data/images
+
+  # ---------------------------------------------------------------------------
+  # Celery scraper worker
+  # ---------------------------------------------------------------------------
+  worker_scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: imoveis_worker_scraper
+    restart: unless-stopped
+    command: >
+      celery -A adapters.queue.tasks worker
+      --loglevel=info
+      --queues=scrapers
+      --concurrency=2
+    environment:
+      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs
+
+volumes:
+  postgres_data:
+  redis_data:
+  image_store:
