@@ -55,5 +55,3 @@ qa_data.json
 # Cursor IDE
 .cursor/
 
-# Cline
-.cline/
