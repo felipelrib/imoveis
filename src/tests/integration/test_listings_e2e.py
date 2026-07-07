@@ -88,7 +88,7 @@ class TestListingPersistence:
 
         listings = session.query(PropertyListing).all()
         assert len(listings) == 1
-        assert listings[0].property_id == result.property_id
+        assert str(listings[0].property_id) == result.property_id
         assert listings[0].platform == "quintoandar"
         assert listings[0].listing_type == "rent"
         assert listings[0].price == pytest.approx(3000.0)

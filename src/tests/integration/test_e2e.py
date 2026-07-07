@@ -177,8 +177,8 @@ class TestDeduplication:
 
         result = match_or_create_property(test_db, PropertyCandidate(**incoming))
 
-        assert result["action"] == "created"
-        assert "property_id" in result
+        assert result.action == "created"
+        assert result.property_id is not None
 
         # Verify property was persisted
         prop = test_db.query(Property).filter_by(platform_id="123456").first()
@@ -204,7 +204,7 @@ class TestDeduplication:
             "props_json": {"raw": "data1"},
         }
         result1 = match_or_create_property(test_db, PropertyCandidate(**incoming1))
-        assert result1["action"] == "created"
+        assert result1.action == "created"
 
         # Try to ingest same property (duplicate)
         incoming2 = {
@@ -224,8 +224,8 @@ class TestDeduplication:
         result2 = match_or_create_property(
             test_db, PropertyCandidate(**incoming2), radius_m=50, text_threshold=0.6
         )
-        assert result2["action"] == "noop"
-        assert result2["property_id"] == result1["property_id"]
+        assert result2.action == "updated"
+        assert result2.property_id == result1.property_id
 
     def test_price_change_tracking(self, test_db):
         """Test that price changes are tracked in history."""
@@ -245,7 +245,7 @@ class TestDeduplication:
             "props_json": {},
         }
         result1 = match_or_create_property(test_db, PropertyCandidate(**incoming1))
-        prop_id = result1["property_id"]
+        prop_id = result1.property_id
 
         # Update with new price
         incoming2 = {
@@ -264,8 +264,8 @@ class TestDeduplication:
         }
         result2 = match_or_create_property(test_db, PropertyCandidate(**incoming2))
 
-        assert result2["action"] == "updated"
-        assert result2["property_id"] == prop_id
+        assert result2.action == "updated"
+        assert result2.property_id == prop_id
 
         # Verify price history
         history = test_db.query(PriceHistory).filter_by(property_id=prop_id).all()
@@ -334,19 +334,25 @@ class TestGPUSemaphore:
 
     def test_semaphore_basic_acquire_release(self, mock_redis):
         """Test basic semaphore acquire and release."""
-        # Note: This test uses mocked Redis
+        import os
+
+        # This test requires a real Redis connection because GPUSemaphore uses
+        # Redis pipelines internally. The mock fixture returns a MagicMock when
+        # REDIS_URL is not set, which cannot simulate pipeline transactions.
+        redis_url = os.environ.get("REDIS_URL")
+        if not redis_url:
+            pytest.skip("REDIS_URL not set — semaphore test requires real Redis")
+
         sem = GPUSemaphore(name="gpu", max_concurrent=1)
 
-        # Mock Redis behavior
-        sem.r = mock_redis
-        mock_redis.decr.return_value = 0  # Acquired
-        mock_redis.incr.return_value = 1  # Released
-
+        # Use real Redis for acquire/release
         acquired = sem.acquire(timeout=5)
-        assert acquired is not None
+        assert acquired is True
+
+        assert sem.available == 0
 
         sem.release()
-        mock_redis.incr.assert_called()
+        assert sem.available == 1
 
 
 # ============================================================================
@@ -478,8 +484,8 @@ class TestEndToEndWorkflow:
         }
 
         result1 = match_or_create_property(test_db, PropertyCandidate(**prop1_data))
-        assert result1["action"] == "created"
-        prop1_id = result1["property_id"]
+        assert result1.action == "created"
+        prop1_id = result1.property_id
 
         # Step 2: Create scoring record
         scoring1 = MetricsScoring(
@@ -516,8 +522,8 @@ class TestEndToEndWorkflow:
         )
 
         # Should match as duplicate (updated)
-        assert result2["action"] == "updated"
-        assert result2["property_id"] == prop1_id
+        assert result2.action == "updated"
+        assert result2.property_id == prop1_id
 
         # Verify price history
         histories = test_db.query(PriceHistory).filter_by(property_id=prop1_id).all()
