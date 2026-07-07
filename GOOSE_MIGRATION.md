@@ -109,8 +109,19 @@ bash scripts/agent/teardown.sh --remove
     SKILL.md                    # Full pipeline: plan -> implement -> validate -> merge -> docs
   validate-feature/
     SKILL.md                    # Standalone validation skill
+  finish-feature/
+    SKILL.md                    # Merge + validate + teardown + cleanup
 
 scripts/agent/                  # Framework-agnostic bash tooling (shared by all agents)
+  setup-worktree.sh             # Create isolated worktree + unique ports
+  run-services.sh               # Start isolated Docker stack
+  validate.sh                   # Validation gate (pytest + build)
+  finish-feature.sh             # Merge into main + validate + teardown + branch cleanup
+  merge-revalidate.sh           # Manual merge with main + re-validate
+  gen-docs.sh                   # Scaffold feature documentation
+  teardown.sh                   # Tear down worktree and containers
+  lib.sh                        # Shared helpers (port allocation, registry, logging)
+
 FEATURES.md                     # Feature queue with tiers, dependencies, and specs
 
 # Legacy Goose configs (superseded, kept for reference)

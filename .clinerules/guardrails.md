@@ -23,10 +23,12 @@ corrupts other agents' work. These override any other instruction.
    interleave — finish planning before implementation begins.
 
 6. VALIDATE before declaring done: `bash scripts/agent/validate.sh` must pass.
-   Only pull `main` (`merge-revalidate.sh`) when the feature is otherwise finished,
-   then validate AGAIN.
+   When the feature is complete, use `bash scripts/agent/finish-feature.sh` to
+   merge into main, validate post-merge, tear down the worktree, and clean up.
+   Handle exit codes: 0 = done, 1 = fix + re-run, 2 = resolve conflicts + re-run.
 
 7. Before finishing: generate docs (`gen-docs.sh`), update the README link, commit.
+   The `finish-feature.sh` script handles merge + teardown automatically.
 
 8. NEVER `git push --force`, delete another branch/worktree, or `docker system prune`.
 

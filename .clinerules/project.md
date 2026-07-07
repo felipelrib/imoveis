@@ -29,14 +29,17 @@ Work through the shell scripts; they handle all port/isolation math so you don't
    pass service names for part of it. Uses your private ports + compose project.
 4. **Implement + commit often.** Small conventional commits on your branch.
 5. **Validate.** `bash scripts/agent/validate.sh [backend|frontend|all]` must pass.
-6. **Sync with main (only when finished).** `bash scripts/agent/merge-revalidate.sh`
-   — merges latest `main`, then re-validates. Exit 2 = resolve conflicts, commit,
-   re-run. Exit 1 = fix feature, re-run. Exit 0 = ready.
-7. **Document.** `bash scripts/agent/gen-docs.sh <slug> "<Title>"` scaffolds
-   `docs/features/<slug>.md` and wires the README/index links; fill in the prose,
-   then commit docs.
-8. **Teardown when done.** `bash scripts/agent/teardown.sh` (add `--remove` to drop
-   the worktree) to free ports and containers.
+6. **Finish the feature.** When implementation and docs are complete:
+   `bash scripts/agent/finish-feature.sh [<slug>]` — merges the feature branch
+   into main, runs post-merge validation, tears down the worktree/containers,
+   and deletes the feature branch. Handles exit codes:
+   - **Exit 0** → merged, validated, cleaned up — done.
+   - **Exit 2** → merge conflicts — resolve, commit, re-run.
+   - **Exit 1** → validation failed after merge — fix, commit, re-run.
+   Alternatively, use the manual steps below if you need more control.
+7. **Manual finish (if needed).** `bash scripts/agent/merge-revalidate.sh` to sync
+   with main, then `bash scripts/agent/gen-docs.sh <slug> "<Title>"` for docs,
+   then `bash scripts/agent/teardown.sh --remove` to clean up.
 
 ## Models (20 GB VRAM — one resident at a time)
 

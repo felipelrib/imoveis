@@ -33,28 +33,16 @@ The user says:
 3. Implement the plan step by step. After each meaningful step: run relevant tests
    and `git commit` with a conventional message.
 4. Add/extend pytest tests for backend changes; keep the frontend building.
-5. When the feature is complete, run:
+5. When the feature is complete, finish it:
    ```bash
-   bash scripts/agent/validate.sh all
+   bash scripts/agent/finish-feature.sh <slug>
    ```
-   It must pass.
-6. Only then run:
-   ```bash
-   bash scripts/agent/merge-revalidate.sh
-   ```
-   Handle its exit code:
+   This merges the branch into main, validates, tears down the worktree, and
+   deletes the feature branch. Handle exit codes:
    - **Exit 2** → resolve conflicts, `git add` + commit, re-run.
    - **Exit 1** → fix the feature, commit, re-run.
-   - **Exit 0** → proceed.
-7. Generate documentation:
-   ```bash
-   bash scripts/agent/gen-docs.sh <slug> "<Title>"
-   ```
-   Then write the doc content and:
-   ```bash
-   git add docs/ README.md && git commit -m "docs: <Title>"
-   ```
-8. Update `FEATURES.md` status to `done` and commit.
+   - **Exit 0** → done.
+6. Update `FEATURES.md` status to `done` and commit.
 
 ## Rules
 
