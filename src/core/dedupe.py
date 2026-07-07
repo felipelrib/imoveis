@@ -1,4 +1,5 @@
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
@@ -87,6 +88,9 @@ def match_or_create_property(
         existing.active = True
         _upsert_listings(session, str(existing.id), candidate.listings or [])
         session.flush()
+        # Record price history (compare before/after)
+        _record_price_change(session, str(existing.id), candidate.price)
+        session.flush()
         return DedupeMatchResult(property_id=str(existing.id), action="updated")
 
     # --- Step 2: Spatial + text fuzzy match ---
@@ -124,6 +128,8 @@ def match_or_create_property(
                     prop.props_json = candidate.props_json
                     _upsert_listings(session, str(prop.id), candidate.listings or [])
                     session.flush()
+                    _record_price_change(session, str(prop.id), candidate.price)
+                    session.flush()
                     return DedupeMatchResult(property_id=str(prop.id), action="updated")
 
     # --- Step 3: Create new property ---
@@ -154,7 +160,72 @@ def match_or_create_property(
     session.add(new_prop)
     session.flush()
     _upsert_listings(session, str(new_prop.id), candidate.listings or [])
+    # Seed initial price history (open interval)
+    _record_price_change(session, str(new_prop.id), candidate.price)
+    session.flush()
     return DedupeMatchResult(property_id=str(new_prop.id), action="created")
+
+
+def _record_price_change(
+    session: Session,
+    property_id: str,
+    new_price: float,
+) -> None:
+    """Record a price change in the price_history table.
+
+    If an open interval (end_ts IS NULL) exists and the price differs,
+    close it and insert a new row.  If the price is the same, do nothing.
+    If no open interval exists, seed one (handles first-seen).
+    """
+    now = datetime.now(timezone.utc)
+
+    open_row = session.execute(
+        text(
+            "SELECT id, price FROM price_history "
+            "WHERE property_id = :pid AND end_ts IS NULL "
+            "ORDER BY start_ts DESC LIMIT 1"
+        ),
+        {"pid": property_id},
+    ).fetchone()
+
+    if open_row is not None:
+        old_price = float(open_row.price)
+        if old_price == new_price:
+            return  # price unchanged — no-op
+        # Close the current open interval
+        session.execute(
+            text(
+                "UPDATE price_history SET end_ts = :now WHERE id = :id"
+            ),
+            {"now": now, "id": str(open_row.id)},
+        )
+        # Insert new open interval
+        session.execute(
+            text(
+                "INSERT INTO price_history (id, property_id, price, start_ts, end_ts) "
+                "VALUES (:id, :pid, :price, :now, NULL)"
+            ),
+            {
+                "id": str(_uuid.uuid4()),
+                "pid": property_id,
+                "price": new_price,
+                "now": now,
+            },
+        )
+    else:
+        # No open interval — seed initial history row
+        session.execute(
+            text(
+                "INSERT INTO price_history (id, property_id, price, start_ts, end_ts) "
+                "VALUES (:id, :pid, :price, :now, NULL)"
+            ),
+            {
+                "id": str(_uuid.uuid4()),
+                "pid": property_id,
+                "price": new_price,
+                "now": now,
+            },
+        )
 
 
 def _upsert_listings(

@@ -289,3 +289,40 @@ def get_property(property_id: str) -> Dict[str, Any]:
         }
     finally:
         session.close()
+
+
+@router.get("/{property_id}/price-history")
+def get_price_history(property_id: str) -> List[Dict[str, Any]]:
+    """Return ordered price-history intervals for a property."""
+    session = SessionLocal()
+    try:
+        # Verify property exists
+        check = session.execute(
+            text("SELECT id FROM properties WHERE id = :id"),
+            {"id": property_id},
+        ).fetchone()
+        if check is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Property not found")
+
+        rows = session.execute(
+            text(
+                "SELECT id, price, start_ts, end_ts "
+                "FROM price_history "
+                "WHERE property_id = :pid "
+                "ORDER BY start_ts DESC"
+            ),
+            {"pid": property_id},
+        ).fetchall()
+
+        return [
+            {
+                "id": str(r[0]),
+                "price": float(r[1]),
+                "start_ts": r[2].isoformat() if r[2] else None,
+                "end_ts": r[3].isoformat() if r[3] else None,
+            }
+            for r in rows
+        ]
+    finally:
+        session.close()
