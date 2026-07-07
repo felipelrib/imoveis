@@ -1,43 +1,52 @@
-# Implementation Plan: property-listings-table
+# Implementation Plan: price-history-tracking
 
-## Goal
-Create the missing `property_listings` table and populate it during deduplication/ingest.
+**Feature**: `price-history-tracking` (Linear BIN-7)  
+**Branch**: `feat/price-history-tracking`  
+**Goal**: Populate the existing `price_history` table on every price change and expose it via API.
 
-## Problem
-- `src/api/properties.py` queries `property_listings` but the table doesn't exist
-- The scraper produces listings data that is discarded during deduplication
-- Properties grid/modal break on a clean DB
+## Affected Areas
 
-## Steps
+- `src/core/dedupe.py` — price change detection + history writes
+- `src/api/properties.py` — new `GET /properties/{id}/price-history` endpoint
+- `src/adapters/db/models.py` — reference existing `PriceHistory` model (no changes)
+- `src/tests/unit/test_dedupe.py` — extend with price-history tests
 
-### Step 1: Add ORM model
-- File: `src/adapters/db/models.py`
-- Add `PropertyListing` class with columns: id, property_id (FK), platform, platform_listing_id, listing_type, price, currency, url, is_furnished, accepts_pets, condo_fee, iptu, raw_json, first_seen, last_seen, active
-- Unique constraint on (platform, platform_listing_id, listing_type)
+## Step-by-step
 
-### Step 2: Create Alembic migration
-- Run `alembic revision -m "add_property_listings_table"`
-- Create `property_listings` table in upgrade()
-- Drop it in downgrade()
+### Step 1: Write implementation plan (this file)
 
-### Step 3: Add listing upsert to dedupe
-- File: `src/core/dedupe.py`
-- Add `_upsert_listings()` helper
-- Call it in all 3 paths: exact match update, fuzzy match update, new create
+### Step 2: Modify `src/core/dedupe.py`
+- Add a helper `_record_price_change(session, property_id, new_price)` that:
+  - Finds the current open interval (`end_ts IS NULL`) for the property
+  - If it exists and the price differs: closes it (`end_ts = now()`) and inserts a new row
+  - If no open interval exists (shouldn't happen after creation, but handle gracefully): insert one
+- Call `_record_price_change` in `match_or_create_property`:
+  - After the update at line 82 (`existing.price = candidate.price`): call it if old price ≠ new
+  - After the fuzzy-match update at line 121 (`prop.price = candidate.price`): same logic
+  - After creating a new property (line 155): insert an initial open interval
 
-### Step 4: Update scraper normalize output
-- File: `src/adapters/scrapers/quintoandar.py`
-- Rename `platform_id` → `platform_listing_id` in listing dicts
-- Add `currency: "BRL"` to each listing
+### Step 3: Add `GET /properties/{id}/price-history` endpoint
+- Add to `src/api/properties.py`
+- Query `price_history` ordered by `start_ts DESC`
+- Return `[{price, start_ts, end_ts}, ...]`
 
-### Step 5: Fix API subquery columns
-- File: `src/api/properties.py`
-- Change `pl.platform_id` → `pl.platform_listing_id` in both subqueries
-- Add `pl.currency` to the output
+### Step 4: Add unit tests
+- Test `_record_price_change` logic (mock session)
+- Test that same price = no new history row
+- Test that different price = close old + insert new
+- Test that first-seen gets seeded interval
 
-### Step 6: Tests
-- Unit test for `_upsert_listings()`
-- Integration test for listing persistence through dedupe
+### Step 5: Validate
+- `bash scripts/agent/validate.sh backend`
+- If Docker unavailable, run pytest directly in the worktree
 
-### Step 7: Validate
-- Run `bash scripts/agent/validate.sh backend`
+### Step 6: Commit + finish feature
+
+## Data / Schema Changes
+
+None — `price_history` table already exists from the initial migration.
+
+## Risks
+
+- Low conflict surface — changes are additive inside existing dedupe paths
+- Docker may need manual setup for full validation
