@@ -13,7 +13,11 @@ class CheckpointStore:
 
     def get(self, platform_name: str) -> dict:
         """Get checkpoint for a platform."""
-        checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
+        checkpoint = (
+            self.session.query(PlatformCheckpoint)
+            .filter_by(platform_name=platform_name)
+            .first()
+        )
         if checkpoint:
             return checkpoint.data
         return {}
@@ -21,7 +25,11 @@ class CheckpointStore:
     def set(self, platform_name: str, data: dict) -> None:
         """Set checkpoint for a platform."""
         try:
-            checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
+            checkpoint = (
+                self.session.query(PlatformCheckpoint)
+                .filter_by(platform_name=platform_name)
+                .first()
+            )
             if checkpoint:
                 checkpoint.data = data
             else:

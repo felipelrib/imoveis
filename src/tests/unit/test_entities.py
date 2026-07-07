@@ -110,7 +110,9 @@ class TestVisualAnalysisResult:
         assert v.confidence == 0.0
 
     def test_with_features(self):
-        v = VisualAnalysisResult(sentiment="neutral", features=["pool", "garden"], confidence=0.8)
+        v = VisualAnalysisResult(
+            sentiment="neutral", features=["pool", "garden"], confidence=0.8
+        )
         assert v.features == ["pool", "garden"]
         assert v.confidence == 0.8
 

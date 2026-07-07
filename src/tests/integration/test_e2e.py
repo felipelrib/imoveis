@@ -22,6 +22,7 @@ from adapters.scrapers.base import BaseScraper
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from api.main import app
 from core.dedupe import find_candidates, match_or_create_property
+from core.entities import PropertyCandidate
 
 # ============================================================================
 # Fixtures
@@ -38,7 +39,9 @@ def test_db():
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
-        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
+        pytest.skip(
+            "DATABASE_URL not set — skipping integration test that requires PostGIS"
+        )
 
     engine = create_engine(database_url, pool_pre_ping=True)
     Base.metadata.create_all(engine)
@@ -104,13 +107,17 @@ class TestAPIEndpoints:
 
     def test_admin_health(self, test_client):
         """Verify admin health endpoint."""
-        response = test_client.get("/admin/health", headers={"X-API-Key": "imoveis_secret"})
+        response = test_client.get(
+            "/admin/health", headers={"X-API-Key": "dev-secret-key"}
+        )
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
     def test_admin_workers_status(self, test_client, mock_redis):
         """Verify admin workers status endpoint."""
-        response = test_client.get("/admin/workers/status", headers={"X-API-Key": "imoveis_secret"})
+        response = test_client.get(
+            "/admin/workers/status", headers={"X-API-Key": "dev-secret-key"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert "ai_workers_paused" in data
@@ -118,13 +125,17 @@ class TestAPIEndpoints:
 
     def test_pause_workers(self, test_client, mock_redis):
         """Test pausing AI workers."""
-        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": "imoveis_secret"})
+        response = test_client.post(
+            "/admin/workers/pause", headers={"X-API-Key": "dev-secret-key"}
+        )
         assert response.status_code == 200
         assert response.json() == {"paused": True}
 
     def test_resume_workers(self, test_client, mock_redis):
         """Test resuming AI workers."""
-        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": "imoveis_secret"})
+        response = test_client.post(
+            "/admin/workers/resume", headers={"X-API-Key": "dev-secret-key"}
+        )
         assert response.status_code == 200
         assert response.json() == {"paused": False}
 
@@ -133,7 +144,7 @@ class TestAPIEndpoints:
         response = test_client.post(
             "/admin/gpu/scale",
             json={"limit": 2},
-            headers={"X-API-Key": "imoveis_secret"},
+            headers={"X-API-Key": "dev-secret-key"},
         )
         assert response.status_code == 200
         assert response.json() == {"gpu_limit": 2}
@@ -164,7 +175,7 @@ class TestDeduplication:
             "props_json": {"raw": "data"},
         }
 
-        result = match_or_create_property(test_db, incoming)
+        result = match_or_create_property(test_db, PropertyCandidate(**incoming))
 
         assert result["action"] == "created"
         assert "property_id" in result
@@ -192,7 +203,7 @@ class TestDeduplication:
             "address": "Rua A, 100",
             "props_json": {"raw": "data1"},
         }
-        result1 = match_or_create_property(test_db, incoming1)
+        result1 = match_or_create_property(test_db, PropertyCandidate(**incoming1))
         assert result1["action"] == "created"
 
         # Try to ingest same property (duplicate)
@@ -210,7 +221,9 @@ class TestDeduplication:
             "address": "Rua A, 100",
             "props_json": {"raw": "data2"},
         }
-        result2 = match_or_create_property(test_db, incoming2, radius_m=50, text_threshold=0.6)
+        result2 = match_or_create_property(
+            test_db, PropertyCandidate(**incoming2), radius_m=50, text_threshold=0.6
+        )
         assert result2["action"] == "noop"
         assert result2["property_id"] == result1["property_id"]
 
@@ -231,7 +244,7 @@ class TestDeduplication:
             "address": "Rua A",
             "props_json": {},
         }
-        result1 = match_or_create_property(test_db, incoming1)
+        result1 = match_or_create_property(test_db, PropertyCandidate(**incoming1))
         prop_id = result1["property_id"]
 
         # Update with new price
@@ -249,7 +262,7 @@ class TestDeduplication:
             "address": "Rua A",
             "props_json": {},
         }
-        result2 = match_or_create_property(test_db, incoming2)
+        result2 = match_or_create_property(test_db, PropertyCandidate(**incoming2))
 
         assert result2["action"] == "updated"
         assert result2["property_id"] == prop_id
@@ -276,7 +289,9 @@ class TestCircuitBreaker:
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
-        cb = RedisCircuitBreaker(platform="test", failure_threshold=3, cooldown_seconds=60)
+        cb = RedisCircuitBreaker(
+            platform="test", failure_threshold=3, cooldown_seconds=60
+        )
 
         assert not cb.is_open()
 
@@ -297,7 +312,9 @@ class TestCircuitBreaker:
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
-        cb = RedisCircuitBreaker(platform="test", failure_threshold=2, cooldown_seconds=1)
+        cb = RedisCircuitBreaker(
+            platform="test", failure_threshold=2, cooldown_seconds=1
+        )
 
         cb.record_failure()
         cb.record_failure()
@@ -460,7 +477,7 @@ class TestEndToEndWorkflow:
             "props_json": {"images": ["img1.jpg"]},
         }
 
-        result1 = match_or_create_property(test_db, prop1_data)
+        result1 = match_or_create_property(test_db, PropertyCandidate(**prop1_data))
         assert result1["action"] == "created"
         prop1_id = result1["property_id"]
 
@@ -490,7 +507,13 @@ class TestEndToEndWorkflow:
             "props_json": {"images": ["img2.jpg"]},
         }
 
-        result2 = match_or_create_property(test_db, prop2_data, radius_m=50, area_tol=2.0, text_threshold=0.6)
+        result2 = match_or_create_property(
+            test_db,
+            PropertyCandidate(**prop2_data),
+            radius_m=50,
+            area_tol=2.0,
+            text_threshold=0.6,
+        )
 
         # Should match as duplicate (updated)
         assert result2["action"] == "updated"

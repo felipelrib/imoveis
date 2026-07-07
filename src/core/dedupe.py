@@ -78,7 +78,11 @@ def match_or_create_property(
     from adapters.db.models import Property
 
     # --- Step 1: Exact platform match ---
-    existing = session.query(Property).filter_by(platform=candidate.platform, platform_id=candidate.platform_id).one_or_none()
+    existing = (
+        session.query(Property)
+        .filter_by(platform=candidate.platform, platform_id=candidate.platform_id)
+        .one_or_none()
+    )
     if existing is not None:
         # Update mutable fields
         existing.price = candidate.price
@@ -108,12 +112,16 @@ def match_or_create_property(
             )
             AND active = true
         """)
-        nearby = session.execute(nearby_query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
+        nearby = session.execute(
+            nearby_query, {"lat": lat, "lon": lon, "radius": radius_m}
+        ).fetchall()
 
         for row in nearby:
             title_sim = text_similarity(candidate.title, row.title)
             area_close = (
-                abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol if candidate.area_m2 and row.area_m2 else True
+                abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol
+                if candidate.area_m2 and row.area_m2
+                else True
             )
             if title_sim >= text_threshold and area_close:
                 # Merge: update the matched property
@@ -263,7 +271,7 @@ def _upsert_listings(
                     "SET price = :price, currency = :currency, url = :url, "
                     "is_furnished = :is_furnished, accepts_pets = :accepts_pets, "
                     "condo_fee = :condo_fee, iptu = :iptu, raw_json = :raw_json, "
-                    "last_seen = :now, active = 1 "
+                    "last_seen = :now, active = true "
                     "WHERE id = :id"
                 ),
                 {
@@ -274,7 +282,11 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
+                    "raw_json": (
+                        str(listing.get("raw_json"))
+                        if listing.get("raw_json") is not None
+                        else None
+                    ),
                     "now": now,
                     "id": str(check.id),
                 },
@@ -288,7 +300,7 @@ def _upsert_listings(
                     "raw_json, first_seen, last_seen, active) "
                     "VALUES (:id, :pid, :platform, :plid, :lt, "
                     ":price, :currency, :url, :is_furnished, :accepts_pets, :condo_fee, :iptu, "
-                    ":raw_json, :now, :now, 1)"
+                    ":raw_json, :now, :now, true)"
                 ),
                 {
                     "id": str(_uuid.uuid4()),
@@ -303,7 +315,11 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
+                    "raw_json": (
+                        str(listing.get("raw_json"))
+                        if listing.get("raw_json") is not None
+                        else None
+                    ),
                     "now": now,
                 },
             )
@@ -335,7 +351,9 @@ def find_candidates(
             )
         """)
 
-        result = session.execute(query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
+        result = session.execute(
+            query, {"lat": lat, "lon": lon, "radius": radius_m}
+        ).fetchall()
 
         candidates = []
         for row in result:

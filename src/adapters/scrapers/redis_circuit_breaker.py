@@ -29,7 +29,9 @@ class RedisCircuitBreaker:
         How long the circuit stays open.
     """
 
-    def __init__(self, platform: str, failure_threshold: int = 5, cooldown_seconds: int = 60):
+    def __init__(
+        self, platform: str, failure_threshold: int = 5, cooldown_seconds: int = 60
+    ):
         self.platform = platform
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds

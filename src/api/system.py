@@ -61,7 +61,9 @@ def _count_properties() -> int:
 
         s = SessionLocal()
         try:
-            result = s.execute(sqlalchemy.text("SELECT COUNT(*) FROM properties")).scalar()
+            result = s.execute(
+                sqlalchemy.text("SELECT COUNT(*) FROM properties")
+            ).scalar()
             return int(result or 0)
         finally:
             s.close()
@@ -78,7 +80,9 @@ def _count_enriched() -> int:
         s = SessionLocal()
         try:
             result = s.execute(
-                sqlalchemy.text("SELECT COUNT(*) FROM metrics_scoring WHERE ai_score IS NOT NULL AND ai_score > 0")
+                sqlalchemy.text(
+                    "SELECT COUNT(*) FROM metrics_scoring WHERE ai_score IS NOT NULL AND ai_score > 0"
+                )
             ).scalar()
             return int(result or 0)
         finally:

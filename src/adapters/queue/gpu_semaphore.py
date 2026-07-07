@@ -59,7 +59,9 @@ class GPUSemaphore:
                     if current_value > 0:
                         # Reduzir o contador
                         pipe.multi()
-                        pipe.setex(f"semaphore:{self.name}", timeout or 3600, current_value - 1)
+                        pipe.setex(
+                            f"semaphore:{self.name}", timeout or 3600, current_value - 1
+                        )
                         pipe.execute()
                         return True
                     else:

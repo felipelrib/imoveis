@@ -8,7 +8,9 @@ from core.dedupe import text_similarity
 
 
 def test_identical_strings_score_one():
-    assert text_similarity("Apartamento 2 quartos", "Apartamento 2 quartos") == pytest.approx(1.0, abs=0.01)
+    assert text_similarity(
+        "Apartamento 2 quartos", "Apartamento 2 quartos"
+    ) == pytest.approx(1.0, abs=0.01)
 
 
 def test_empty_strings_score_zero():

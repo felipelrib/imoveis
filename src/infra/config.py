@@ -73,7 +73,10 @@ class DatabaseConfig(BaseModel, frozen=True):
     @property
     def url(self) -> str:
         """Compute a SQLAlchemy connection string from individual fields."""
-        return f"postgresql://{self.user}:{self.password}" f"@{self.host}:{self.port}/{self.name}"
+        return (
+            f"postgresql://{self.user}:{self.password}"
+            f"@{self.host}:{self.port}/{self.name}"
+        )
 
 
 class RedisConfig(BaseModel, frozen=True):
@@ -195,7 +198,10 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise ConfigError(f"Configuration file {path} must contain a mapping at the top level, " f"got {type(data).__name__}")
+        raise ConfigError(
+            f"Configuration file {path} must contain a mapping at the top level, "
+            f"got {type(data).__name__}"
+        )
     return data
 
 

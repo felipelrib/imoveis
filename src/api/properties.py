@@ -28,7 +28,9 @@ def list_properties(
     property_type: Optional[str] = None,
     is_furnished: Optional[bool] = None,
     accepts_pets: Optional[bool] = None,
-    sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|area_m2)$"),
+    sort_by: str = Query(
+        "combined_score", pattern="^(combined_score|price|first_seen|area_m2)$"
+    ),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> Dict[str, Any]:
     """Return paginated, filtered, scored properties for the GUI grid."""
@@ -56,7 +58,9 @@ def list_properties(
             names = [n.strip() for n in neighborhood_name.split(",")]
             nbr_filters = []
             for i, name in enumerate(names):
-                nbr_filters.append(f"(n.name ILIKE :nbr_{i} OR p.props_json->>'neighborhood' ILIKE :nbr_{i})")
+                nbr_filters.append(
+                    f"(n.name ILIKE :nbr_{i} OR p.props_json->>'neighborhood' ILIKE :nbr_{i})"
+                )
                 params[f"nbr_{i}"] = f"%{name}%"
             filters.append(f"({' OR '.join(nbr_filters)})")
         if min_score is not None:
@@ -64,20 +68,28 @@ def list_properties(
             params["min_score"] = min_score
 
         if listing_type and listing_type != "both":
-            filters.append(f"(p.props_json->>'available_for_{listing_type}')::boolean = true")
+            filters.append(
+                f"(p.props_json->>'available_for_{listing_type}')::boolean = true"
+            )
 
         if property_type:
             filters.append("p.props_json->>'type' ILIKE :property_type")
             params["property_type"] = f"%{property_type}%"
 
         if is_furnished is not None:
-            filters.append(f"(p.props_json->>'isFurnished')::boolean = {'true' if is_furnished else 'false'}")
+            filters.append(
+                f"(p.props_json->>'isFurnished')::boolean = {'true' if is_furnished else 'false'}"
+            )
 
         if accepts_pets is not None:
             if accepts_pets:
-                filters.append("p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'")
+                filters.append(
+                    "p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'"
+                )
             else:
-                filters.append("NOT (p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO')")
+                filters.append(
+                    "NOT (p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO')"
+                )
 
         where = " AND ".join(filters)
         sort_col_map = {
@@ -175,13 +187,27 @@ def list_properties(
                     "address": row[8],
                     "image_urls": row[9] or [],
                     "created_at": row[10].isoformat() if row[10] else None,
-                    "stat_score": (round(float(row[11]), 3) if row[11] is not None else None),
-                    "ai_score": (round(float(row[12]), 3) if row[12] is not None else None),
-                    "combined_score": (round(float(row[13]), 3) if row[13] is not None else None),
-                    "percentile_rank": (round(float(row[14]), 3) if row[14] is not None else None),
-                    "z_score": (round(float(row[15]), 3) if row[15] is not None else None),
-                    "price_per_m2": (round(float(row[16]), 2) if row[16] is not None else None),
-                    "neighborhood_mean": (round(float(row[17]), 2) if row[17] is not None else None),
+                    "stat_score": (
+                        round(float(row[11]), 3) if row[11] is not None else None
+                    ),
+                    "ai_score": (
+                        round(float(row[12]), 3) if row[12] is not None else None
+                    ),
+                    "combined_score": (
+                        round(float(row[13]), 3) if row[13] is not None else None
+                    ),
+                    "percentile_rank": (
+                        round(float(row[14]), 3) if row[14] is not None else None
+                    ),
+                    "z_score": (
+                        round(float(row[15]), 3) if row[15] is not None else None
+                    ),
+                    "price_per_m2": (
+                        round(float(row[16]), 2) if row[16] is not None else None
+                    ),
+                    "neighborhood_mean": (
+                        round(float(row[17]), 2) if row[17] is not None else None
+                    ),
                     "neighborhood_name": neighborhood_name_val,
                     "parking": row[20],
                     "description": row[21],

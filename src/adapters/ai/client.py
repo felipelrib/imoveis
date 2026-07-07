@@ -93,14 +93,18 @@ class OllamaClient(LocalAIClient):
             logger.error(f"Error calling Ollama API: {e}")
             raise
 
-    async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
+    async def analyze_visuals(
+        self, local_paths: List[str], prompt: str
+    ) -> VisualResult:
         try:
             images = []
             for path in local_paths:
                 with open(path, "rb") as f:
                     images.append(base64.b64encode(f.read()).decode("utf-8"))
 
-            res = await self.generate("llava", prompt, images=images, stream=False, format="json")
+            res = await self.generate(
+                "llava", prompt, images=images, stream=False, format="json"
+            )
             data = json.loads(res.get("response", "{}"))
             return VisualResult(
                 condition_score=data.get("condition_score", 0.5),
@@ -117,7 +121,9 @@ class OllamaClient(LocalAIClient):
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
-            res = await self.generate("llama3", full_prompt, stream=False, format="json")
+            res = await self.generate(
+                "llama3", full_prompt, stream=False, format="json"
+            )
             data = json.loads(res.get("response", "{}"))
             return SentimentResult(
                 sentiment_score=data.get("sentiment_score", 0.5),
@@ -144,7 +150,9 @@ class LMStudioClient(LocalAIClient):
         except Exception as e:
             logger.error(f"Error closing LM Studio client: {e}")
 
-    async def chat_completions(self, model: str, messages: list, **kwargs) -> Dict[str, Any]:
+    async def chat_completions(
+        self, model: str, messages: list, **kwargs
+    ) -> Dict[str, Any]:
         """Get chat completions from LM Studio."""
         try:
             await self._ensure_session()
@@ -155,7 +163,9 @@ class LMStudioClient(LocalAIClient):
             async with self.session.post(url, json=data) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"LM Studio API error: {response.status} - {error_text}")
+                    logger.error(
+                        f"LM Studio API error: {response.status} - {error_text}"
+                    )
                     raise Exception(f"LM Studio API error: {response.status}")
 
                 result = await response.json()

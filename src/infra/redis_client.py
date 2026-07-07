@@ -23,7 +23,7 @@ def get_redis() -> redis.Redis:
     global _cached_client
     if _cached_client is None:
         cfg = get_config()
-        _cached_client = redis.Redis.from_url(cfg.redis_url, decode_responses=False)
+        _cached_client = redis.Redis.from_url(cfg.redis.url, decode_responses=False)
     return _cached_client
 
 

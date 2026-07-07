@@ -28,7 +28,9 @@ class GPUControl(Base):
     )
     name = Column(String, unique=True, nullable=False)
     value = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(
+        DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()")
+    )
 
 
 class Neighborhood(Base):
@@ -54,7 +56,9 @@ class PlatformCheckpoint(Base):
     )
     platform_name = Column(String, unique=True, nullable=False)
     data = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(
+        DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()")
+    )
 
 
 class PlatformConfig(Base):
@@ -95,9 +99,13 @@ class Property(Base):
     image_urls = Column(JSON)
     props_json = Column(JSON)
     first_seen = Column(DateTime, server_default=sa.text("now()"))
-    last_updated = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    last_updated = Column(
+        DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()")
+    )
     active = Column(Boolean)
-    neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
+    neighborhood_id = Column(
+        UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True
+    )
 
 
 class MetricsScoring(Base):
@@ -107,7 +115,9 @@ class MetricsScoring(Base):
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"))
+    property_id = Column(
+        UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE")
+    )
     stat_score = Column(Float)
     ai_score = Column(Float)
     combined_score = Column(Float)
@@ -117,7 +127,9 @@ class MetricsScoring(Base):
     neighborhood_mean = Column(Float)
     neighborhood_median = Column(Float)
     meta = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(
+        DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()")
+    )
 
 
 class PriceHistory(Base):
@@ -127,7 +139,9 @@ class PriceHistory(Base):
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"))
+    property_id = Column(
+        UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE")
+    )
     price = Column(Float, nullable=False)
     start_ts = Column(DateTime, server_default=sa.text("now()"))
     end_ts = Column(DateTime)
@@ -158,7 +172,9 @@ class PropertyListing(Base):
     iptu = Column(Float)
     raw_json = Column(JSON)
     first_seen = Column(DateTime, server_default=sa.text("now()"))
-    last_seen = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    last_seen = Column(
+        DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()")
+    )
     active = Column(Boolean, server_default=sa.text("true"))
 
     __table_args__ = (

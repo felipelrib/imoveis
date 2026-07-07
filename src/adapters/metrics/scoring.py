@@ -127,13 +127,17 @@ def compute_neighborhood_stats(
         stat_reasoning = "Priced closely to the neighborhood average."
         if z < -1.0:
             stat_category = "Highly Undervalued"
-            stat_reasoning = "Significantly cheaper than similar properties in the area."
+            stat_reasoning = (
+                "Significantly cheaper than similar properties in the area."
+            )
         elif z < -0.2:
             stat_category = "Slightly Undervalued"
             stat_reasoning = "Priced slightly below the neighborhood average."
         elif z > 1.0:
             stat_category = "Highly Overvalued"
-            stat_reasoning = "Significantly more expensive than similar properties in the area."
+            stat_reasoning = (
+                "Significantly more expensive than similar properties in the area."
+            )
         elif z > 0.2:
             stat_category = "Slightly Overvalued"
             stat_reasoning = "Priced slightly above the neighborhood average."
@@ -163,7 +167,9 @@ def compute_neighborhood_stats(
             ms.z_score = z
             ms.percentile_rank = pct_rank
             ai = float(ms.ai_score or 0.0)
-            ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
+            ms.combined_score = (
+                stat_score * weights.stat_weight + ai * weights.ai_weight
+            )
 
             meta = dict(ms.meta or {})
             meta["stat_analysis"] = stat_analysis

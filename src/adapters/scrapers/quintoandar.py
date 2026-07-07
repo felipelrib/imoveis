@@ -131,7 +131,9 @@ class QuintoAndarScraper(BaseScraper):
                     continue  # Do not yield houses yet, let the smaller windows fetch them to ensure we don't miss any!
 
             if not valid_houses:
-                logger.debug("quintoandar_no_houses_in_window", min_p=min_p, max_p=max_p)
+                logger.debug(
+                    "quintoandar_no_houses_in_window", min_p=min_p, max_p=max_p
+                )
                 continue
 
             # Yield each house
@@ -161,11 +163,19 @@ class QuintoAndarScraper(BaseScraper):
         image_urls = []
         for p in photos:
             if isinstance(p, str):
-                image_urls.append(p if p.startswith("http") else f"https://www.quintoandar.com.br/img/{p}")
+                image_urls.append(
+                    p
+                    if p.startswith("http")
+                    else f"https://www.quintoandar.com.br/img/{p}"
+                )
             elif isinstance(p, dict):
                 url = p.get("url") or p.get("imagePath")
                 if url:
-                    image_urls.append(url if url.startswith("http") else f"https://www.quintoandar.com.br/img/{url}")
+                    image_urls.append(
+                        url
+                        if url.startswith("http")
+                        else f"https://www.quintoandar.com.br/img/{url}"
+                    )
 
         # Determine price and transaction types
         rent_price = float(raw.get("rentPrice") or 0.0)
@@ -229,7 +239,8 @@ class QuintoAndarScraper(BaseScraper):
         return {
             "platform": "quintoandar",
             "platform_id": str(raw.get("id", "")),
-            "title": raw.get("type", "Imóvel") + f" em {neighbourhood or 'Belo Horizonte'}",
+            "title": raw.get("type", "Imóvel")
+            + f" em {neighbourhood or 'Belo Horizonte'}",
             "description": raw.get("description", ""),
             "price": price,
             "area_m2": float(raw.get("area") or 0.0),
