@@ -4,7 +4,8 @@ from __future__ import annotations
 import subprocess
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from api.auth import verify_api_key
 
 from infra.logging import get_logger
 from infra.redis_client import get_redis
@@ -103,7 +104,7 @@ def system_status() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/ollama/ensure")
+@router.post("/ollama/ensure", dependencies=[Depends(verify_api_key)])
 def ensure_ollama():
     """Attempt to start ollama serve if not already running."""
     try:

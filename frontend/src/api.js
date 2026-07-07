@@ -32,13 +32,20 @@ export async function triggerScrape(platform, checkpoint = {}, scrapeType = 'bot
 }
 
 export async function fetchProperties({
-  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, sortBy = 'combined_score', sortDir = 'desc',
+  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, minParking, neighborhoodName, listingType, propertyType, isFurnished, acceptsPets, sortBy = 'combined_score', sortDir = 'desc',
 } = {}) {
   const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_dir: sortDir })
   if (platform)    params.set('platform', platform)
   if (minScore != null) params.set('min_score', minScore)
   if (maxPrice != null) params.set('max_price', maxPrice)
   if (minBedrooms != null) params.set('min_bedrooms', minBedrooms)
+  if (minParking != null) params.set('min_parking', minParking)
+  if (neighborhoodName) params.set('neighborhood_name', neighborhoodName)
+  if (listingType && listingType !== 'both') params.set('listing_type', listingType)
+  if (propertyType) params.set('property_type', propertyType)
+  if (isFurnished) params.set('is_furnished', 'true')
+  if (acceptsPets) params.set('accepts_pets', 'true')
+
   const r = await fetch(`${BASE}/properties?${params}`)
   if (!r.ok) throw new Error('Properties fetch failed')
   return r.json()
@@ -51,25 +58,37 @@ export async function fetchProperty(id) {
 }
 
 export async function pauseWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/pause`, { method: 'POST' })
+  const r = await fetch(`${BASE}/admin/workers/pause`, { 
+    method: 'POST',
+    headers: { 'X-API-Key': 'dev-secret-key' }
+  })
   return r.json()
 }
 
 export async function resumeWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/resume`, { method: 'POST' })
+  const r = await fetch(`${BASE}/admin/workers/resume`, { 
+    method: 'POST',
+    headers: { 'X-API-Key': 'dev-secret-key' }
+  })
   return r.json()
 }
 
 export async function recalculateScores(weights) {
   const r = await fetch(`${BASE}/admin/scoring/recalculate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'X-API-Key': 'dev-secret-key'
+    },
     body: JSON.stringify(weights || null),
   })
   return r.json()
 }
 
 export async function ensureOllama() {
-  const r = await fetch(`${BASE}/system/ollama/ensure`, { method: 'POST' })
+  const r = await fetch(`${BASE}/system/ollama/ensure`, { 
+    method: 'POST',
+    headers: { 'X-API-Key': 'dev-secret-key' }
+  })
   return r.json()
 }

@@ -33,3 +33,16 @@ ENV/
 *.swo
 *~
 .DS_Store
+
+# Logs
+*.log
+scraper_logs.txt
+
+# Local tools/cache
+.claude/
+.pytest_cache/
+opencode.jsonc
+ollama-provider.json
+
+# Data files
+qa_data.json

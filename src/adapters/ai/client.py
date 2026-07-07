@@ -1,10 +1,30 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import asyncio
 import aiohttp
+from pydantic import BaseModel
+import base64
+
+import json
 
 logger = logging.getLogger(__name__)
+
+class VisualResult(BaseModel):
+    condition_score: float
+    analysis: str = ""
+    category: str = "Standard"
+    reasoning: str = ""
+    features_detected: List[str] = []
+    issues_detected: List[str] = []
+
+class SentimentResult(BaseModel):
+    sentiment_score: float
+    analysis: str = ""
+    category: str = "Standard"
+    reasoning: str = ""
+    green_flags: List[str] = []
+    red_flags: List[str] = []
 
 class LocalAIClient(ABC):
     """Abstract client for local LLM/VLM HTTP services (Ollama, LM Studio, etc.)."""
@@ -73,6 +93,44 @@ class OllamaClient(LocalAIClient):
             logger.error(f"Error calling Ollama API: {e}")
             raise
 
+    async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
+        try:
+            images = []
+            for path in local_paths:
+                with open(path, "rb") as f:
+                    images.append(base64.b64encode(f.read()).decode('utf-8'))
+            
+            res = await self.generate("llava", prompt, images=images, stream=False, format="json")
+            data = json.loads(res.get("response", "{}"))
+            return VisualResult(
+                condition_score=data.get("condition_score", 0.5),
+                analysis=res.get("response", ""),
+                category=data.get("category", "Average"),
+                reasoning=data.get("reasoning", ""),
+                features_detected=data.get("features_detected", []),
+                issues_detected=data.get("issues_detected", [])
+            )
+        except Exception as e:
+            logger.error(f"Error in analyze_visuals: {e}")
+            return VisualResult(condition_score=0.5, analysis="Error")
+
+    async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
+        try:
+            full_prompt = f"{prompt}\n\nDescription: {description}"
+            res = await self.generate("llama3", full_prompt, stream=False, format="json")
+            data = json.loads(res.get("response", "{}"))
+            return SentimentResult(
+                sentiment_score=data.get("sentiment_score", 0.5),
+                analysis=res.get("response", ""),
+                category=data.get("category", "Average"),
+                reasoning=data.get("reasoning", ""),
+                green_flags=data.get("green_flags", []),
+                red_flags=data.get("red_flags", [])
+            )
+        except Exception as e:
+            logger.error(f"Error in analyze_text: {e}")
+            return SentimentResult(sentiment_score=0.5, analysis="Error")
+
 class LMStudioClient(LocalAIClient):
     """Client for LM Studio using the OpenAI-compatible chat completions API."""
 
@@ -112,3 +170,16 @@ class LMStudioClient(LocalAIClient):
         except Exception as e:
             logger.error(f"Error calling LM Studio API: {e}")
             raise
+
+def create_ai_client() -> LocalAIClient:
+    """Factory to create an AI client based on configuration."""
+    from infra.config import get_config
+    
+    cfg = get_config()
+    provider = getattr(cfg.ai, 'provider', 'ollama')
+    
+    if provider == 'lmstudio':
+        return LMStudioClient(base_url=cfg.ai.ollama_url) # Reusing URL config for now
+    else:
+        # Default to Ollama
+        return OllamaClient(base_url=cfg.ai.ollama_url)

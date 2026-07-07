@@ -27,7 +27,7 @@ for _p in (_repo_root, _src_root):
 # Import all models so every table is registered in Base.metadata
 # ---------------------------------------------------------------------------
 from adapters.db.models import Base  # noqa: E402  (models.py imports extra_models internally)
-import adapters.db.extra_models  # noqa: E402 F401 — side-effect: registers PlatformCheckpoint, GPUControl
+# Removed extra_models import as they were merged into models.py
 
 # ---------------------------------------------------------------------------
 # Alembic Config

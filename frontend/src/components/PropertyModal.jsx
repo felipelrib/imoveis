@@ -24,6 +24,7 @@ export default function PropertyModal({ id, onClose }) {
   const images = p?.image_urls || []
   const visual = p?.ai_analysis?.visual || {}
   const sentiment = p?.ai_analysis?.sentiment || {}
+  const statAnalysis = p?.stat_analysis || {}
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -139,6 +140,30 @@ export default function PropertyModal({ id, onClose }) {
                     )}
                   </div>
                 ))}
+              </div>
+
+              {/* Score Explanations */}
+              <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {statAnalysis.category && (
+                  <div style={{ padding: '12px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0891b2', marginBottom: 4 }}>Statistical: {statAnalysis.category}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{statAnalysis.reasoning}</div>
+                  </div>
+                )}
+                
+                {visual.category && (
+                  <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>Visual Condition: {visual.category}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{visual.reasoning}</div>
+                  </div>
+                )}
+
+                {sentiment.category && (
+                  <div style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>Location Sentiment: {sentiment.category}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sentiment.reasoning}</div>
+                  </div>
+                )}
               </div>
 
               {/* AI analysis */}

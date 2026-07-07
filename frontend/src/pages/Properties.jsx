@@ -16,9 +16,19 @@ export default function Properties() {
   const [page, setPage] = useState(1)
   const [sortBy, setSortBy] = useState('combined_score')
   const [sortDir, setSortDir] = useState('desc')
+  
+  // Advanced filters state
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [listingType, setListingType] = useState('both')
+  const [propertyType, setPropertyType] = useState('')
   const [maxPrice, setMaxPrice] = useState('')
   const [minBedrooms, setMinBedrooms] = useState('')
+  const [minParking, setMinParking] = useState('')
   const [minScore, setMinScore] = useState('')
+  const [neighborhood, setNeighborhood] = useState('')
+  const [isFurnished, setIsFurnished] = useState(false)
+  const [acceptsPets, setAcceptsPets] = useState(false)
+  
   const [selectedId, setSelectedId] = useState(null)
 
   const load = async (p = page) => {
@@ -35,6 +45,12 @@ export default function Properties() {
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
         minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
         minScore: minScore ? parseFloat(minScore) : undefined,
+        minParking: minParking ? parseInt(minParking) : undefined,
+        neighborhoodName: neighborhood || undefined,
+        listingType: listingType,
+        propertyType: propertyType || undefined,
+        isFurnished: isFurnished ? true : undefined,
+        acceptsPets: acceptsPets ? true : undefined,
       })
       setData(res)
     } catch (e) {
@@ -44,11 +60,44 @@ export default function Properties() {
     }
   }
 
-  useEffect(() => { load(1); setPage(1) }, [sortBy, maxPrice, minBedrooms, minScore])
-  useEffect(() => { load(page) }, [page])
+  useEffect(() => { 
+    load(1); 
+    setPage(1); 
+  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets])
+  
+  useEffect(() => { 
+    if (page !== 1) load(page); 
+  }, [page])
 
   const properties = data?.properties || []
   const pages = data?.pages || 1
+  
+  const bhNeighborhoods = [
+    "Savassi", "Lourdes", "Centro", "Funcionários", "Sion", "Santo Agostinho",
+    "Belvedere", "Buritis", "Castelo", "Pampulha", "Gutierrez", "Santo Antônio",
+    "Prado", "Cidade Nova", "Sagrada Família", "Santa Efigênia", "Serra",
+    "Cruzeiro", "Mangabeiras", "Anchieta", "Ouro Preto", "Coração Eucarístico",
+    "Floresta", "Padre Eustáquio", "Caiçara", "Alípio de Melo", "Santa Tereza",
+    "Santa Amélia", "Luxemburgo", "Carmo"
+  ]
+
+  const toggleNeighborhood = (n) => {
+    let current = neighborhood ? neighborhood.split(',') : []
+    if (current.includes(n)) {
+      current = current.filter(x => x !== n)
+    } else {
+      current.push(n)
+    }
+    setNeighborhood(current.join(','))
+    // We can't automatically call load here due to stale closures if we use an inline handler,
+    // so we rely on the user clicking a Search button or we add `neighborhood` to the useEffect dependency array.
+  }
+
+  // Neighborhood effect
+  useEffect(() => { 
+    load(1); 
+    setPage(1);
+  }, [neighborhood])
 
   return (
     <div>
@@ -60,44 +109,124 @@ export default function Properties() {
       </div>
 
       {/* Toolbar */}
-      <div className="toolbar">
-        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Sort by</label>
-          <select className="form-select" style={{ width: 160 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
-            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
+        
+        {/* Row 1 (Always visible) */}
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
+          <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+            <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Sort by</label>
+            <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+
+          <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+            <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Transaction</label>
+            <select className="form-select" style={{ width: 110 }} value={listingType} onChange={e => setListingType(e.target.value)}>
+              <option value="both">Rent & Sale</option>
+              <option value="rent">Rent Only</option>
+              <option value="sale">Sale Only</option>
+            </select>
+          </div>
+
+          <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+            <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Type</label>
+            <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)}>
+              <option value="">Any</option>
+              <option value="Apartamento">Apartamento</option>
+              <option value="Casa">Casa</option>
+              <option value="CasaCondominio">Casa em Condomínio</option>
+              <option value="Studio">Studio</option>
+            </select>
+          </div>
+          
+          <button 
+            className="btn btn-ghost btn-sm" 
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            {showAdvanced ? '▲ Hide Advanced' : '▼ Advanced Filters'}
+          </button>
         </div>
 
-        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Max price R$</label>
-          <input
-            className="form-input" style={{ width: 120 }}
-            type="number" placeholder="Any"
-            value={maxPrice} onChange={e => setMaxPrice(e.target.value)}
-          />
-        </div>
+        {/* Row 2 (Collapsible Advanced Filters) */}
+        {showAdvanced && (
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'flex-start', background: 'rgba(0,0,0,0.1)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+            
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+              <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Max price R$</label>
+              <input
+                className="form-input" style={{ width: 100 }}
+                type="number" placeholder="Any"
+                value={maxPrice} onChange={e => setMaxPrice(e.target.value)}
+              />
+            </div>
+            
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+              <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Beds</label>
+              <select className="form-select" style={{ width: 70 }} value={minBedrooms} onChange={e => setMinBedrooms(e.target.value)}>
+                <option value="">Any</option>
+                {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}+</option>)}
+              </select>
+            </div>
+            
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+              <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Parking</label>
+              <select className="form-select" style={{ width: 70 }} value={minParking} onChange={e => setMinParking(e.target.value)}>
+                <option value="">Any</option>
+                {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}+</option>)}
+              </select>
+            </div>
 
-        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min bedrooms</label>
-          <select className="form-select" style={{ width: 90 }} value={minBedrooms} onChange={e => setMinBedrooms(e.target.value)}>
-            <option value="">Any</option>
-            {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}+</option>)}
-          </select>
-        </div>
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+              <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min AI score</label>
+              <select className="form-select" style={{ width: 80 }} value={minScore} onChange={e => setMinScore(e.target.value)}>
+                <option value="">Any</option>
+                <option value="0.7">0.7+</option>
+                <option value="0.8">0.8+</option>
+                <option value="0.9">0.9+</option>
+              </select>
+            </div>
 
-        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min AI score</label>
-          <select className="form-select" style={{ width: 100 }} value={minScore} onChange={e => setMinScore(e.target.value)}>
-            <option value="">Any</option>
-            <option value="0.7">0.7+</option>
-            <option value="0.8">0.8+</option>
-            <option value="0.9">0.9+</option>
-          </select>
-        </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} />
+                Furnished
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={acceptsPets} onChange={e => setAcceptsPets(e.target.checked)} />
+                Pet Friendly
+              </label>
+            </div>
+            
+            {/* Multi-select Neighborhoods */}
+            <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '200px' }}>
+              <label className="form-label" style={{ marginBottom: 0 }}>Neighborhoods (Belo Horizonte)</label>
+              <select 
+                multiple 
+                className="form-select" 
+                style={{ height: '100px' }} 
+                value={neighborhood ? neighborhood.split(',') : []} 
+                onChange={e => {
+                  const opts = Array.from(e.target.selectedOptions).map(o => o.value)
+                  setNeighborhood(opts.join(','))
+                }}
+              >
+                {bhNeighborhoods.map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
 
-        <button className="btn btn-ghost btn-sm" onClick={() => { setMaxPrice(''); setMinBedrooms(''); setMinScore('') }}>
-          ✕ Clear
-        </button>
+            <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => { 
+              setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
+              setNeighborhood(''); setPropertyType(''); setListingType('both');
+              setIsFurnished(false); setAcceptsPets(false);
+            }}>
+              ✕ Clear All
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Grid */}

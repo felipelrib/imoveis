@@ -19,3 +19,4 @@ pytest-cov
 pytest-asyncio
 
 beautifulsoup4
+aiohttp

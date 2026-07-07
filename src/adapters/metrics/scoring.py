@@ -34,7 +34,7 @@ def _sigmoid_undervalued(z_score: float) -> float:
 
 def compute_neighborhood_stats(
     session: Session,
-    neighborhood_id: Optional[UUID] = None,
+    neighborhood_key: Optional[str] = None,
 ) -> int:
     """Compute per-neighbourhood price statistics using SQL window functions.
 
@@ -43,7 +43,7 @@ def compute_neighborhood_stats(
 
     Args:
         session: Active SQLAlchemy session.
-        neighborhood_id: If provided, only recompute for that neighbourhood.
+        neighborhood_key: If provided, only recompute for that neighbourhood key.
 
     Returns:
         Number of property rows processed.
@@ -55,36 +55,36 @@ def compute_neighborhood_stats(
     )
 
     where_clause = (
-        "AND p.neighborhood_id = :nid" if neighborhood_id is not None else ""
+        "AND COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = :nkey" if neighborhood_key is not None else ""
     )
 
     sql = text(
         f"""
         WITH medians AS (
             SELECT
-                neighborhood_id,
+                COALESCE(neighborhood_id::text, props_json->>'neighborhood', 'Unknown') as n_key,
                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price / NULLIF(area_m2, 0)) AS neighborhood_median
             FROM properties
             WHERE area_m2 IS NOT NULL AND area_m2 > 0 AND active = true
-            GROUP BY neighborhood_id
+            GROUP BY 1
         ),
         stats AS (
             SELECT
                 p.id                                                  AS property_id,
-                p.neighborhood_id,
+                COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') as n_key,
                 p.price / NULLIF(p.area_m2, 0)                       AS price_per_m2,
                 AVG(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY p.neighborhood_id)             AS neighborhood_mean,
+                    OVER (PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')) AS neighborhood_mean,
                 m.neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY p.neighborhood_id)             AS neighborhood_stddev,
+                    OVER (PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')) AS neighborhood_stddev,
                 PERCENT_RANK()
                     OVER (
-                        PARTITION BY p.neighborhood_id
+                        PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
                         ORDER BY p.price / NULLIF(p.area_m2, 0)
                     )                                                 AS percentile_rank
             FROM properties p
-            LEFT JOIN medians m ON p.neighborhood_id = m.neighborhood_id
+            LEFT JOIN medians m ON COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = m.n_key
             WHERE p.area_m2 IS NOT NULL
               AND p.area_m2 > 0
               AND p.active = true
@@ -106,8 +106,8 @@ def compute_neighborhood_stats(
     )
 
     params: dict = {}
-    if neighborhood_id is not None:
-        params["nid"] = str(neighborhood_id)
+    if neighborhood_key is not None:
+        params["nkey"] = str(neighborhood_key)
 
     rows = session.execute(sql, params).fetchall()
     count = len(rows)
@@ -117,10 +117,27 @@ def compute_neighborhood_stats(
         price_per_m2 = row[1]
         n_mean = row[2]
         n_median = row[3]
-        z = float(row[5]) if row[5] is not None else 0.0
-        pct_rank = float(row[6]) if row[6] is not None else 0.5
+        z = float(row[4]) if row[4] is not None else 0.0
+        pct_rank = float(row[5]) if row[5] is not None else 0.5
 
         stat_score = _sigmoid_undervalued(z)
+        
+        stat_category = "Average"
+        stat_reasoning = "Priced closely to the neighborhood average."
+        if z < -1.0:
+            stat_category = "Highly Undervalued"
+            stat_reasoning = "Significantly cheaper than similar properties in the area."
+        elif z < -0.2:
+            stat_category = "Slightly Undervalued"
+            stat_reasoning = "Priced slightly below the neighborhood average."
+        elif z > 1.0:
+            stat_category = "Highly Overvalued"
+            stat_reasoning = "Significantly more expensive than similar properties in the area."
+        elif z > 0.2:
+            stat_category = "Slightly Overvalued"
+            stat_reasoning = "Priced slightly above the neighborhood average."
+
+        stat_analysis = {"category": stat_category, "reasoning": stat_reasoning}
 
         ms = (
             session.query(MetricsScoring)
@@ -138,7 +155,7 @@ def compute_neighborhood_stats(
                 neighborhood_median=n_median,
                 z_score=z,
                 percentile_rank=pct_rank,
-                meta={},
+                meta={"stat_analysis": stat_analysis},
             )
             session.add(ms)
         else:
@@ -150,12 +167,16 @@ def compute_neighborhood_stats(
             ms.percentile_rank = pct_rank
             ai = float(ms.ai_score or 0.0)
             ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
+            
+            meta = dict(ms.meta or {})
+            meta["stat_analysis"] = stat_analysis
+            ms.meta = meta
 
     session.flush()
     logger.info(
         "neighborhood_stats_computed",
         rows=count,
-        neighborhood_id=str(neighborhood_id) if neighborhood_id else "all",
+        neighborhood_key=str(neighborhood_key) if neighborhood_key else "all",
     )
     return count
 
@@ -227,20 +248,10 @@ def score_single_property(session: Session, property_id: str) -> None:
         logger.warning("score_single_property_not_found", property_id=property_id)
         return
 
-    # Compute per-neighbourhood stats for just this neighbourhood
-    if prop.neighborhood_id:
-        compute_neighborhood_stats(session, neighborhood_id=prop.neighborhood_id)
-    else:
-        # No neighbourhood assigned — recompute only this row's combined score
-        ms = (
-            session.query(MetricsScoring)
-            .filter_by(property_id=property_id)
-            .one_or_none()
-        )
-        if ms:
-            stat = float(ms.stat_score or 0.0)
-            ai = float(ms.ai_score or 0.0)
-            ms.combined_score = stat * weights.stat_weight + ai * weights.ai_weight
-            session.flush()
+    n_key = (str(prop.neighborhood_id) if prop.neighborhood_id else None) or (prop.props_json or {}).get('neighborhood') or 'Unknown'
+    compute_neighborhood_stats(session, neighborhood_key=n_key)
+
+    # Note: the single row's fallback code was removed because we now 
+    # always group by n_key and compute neighborhood stats properly.
 
     logger.info("single_property_scored", property_id=property_id)

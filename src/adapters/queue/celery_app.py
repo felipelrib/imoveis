@@ -5,14 +5,18 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
+import os
+
 def make_celery() -> Celery:
     """Create and configure Celery app."""
     celery_app = Celery('real_estate_scraper')
     
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    
     # Configurações básicas do Celery
     celery_app.conf.update(
-        broker_url='redis://localhost:6379/0',
-        result_backend='redis://localhost:6379/0',
+        broker_url=redis_url,
+        result_backend=redis_url,
         task_serializer='json',
         accept_content=['json'],
         result_serializer='json',

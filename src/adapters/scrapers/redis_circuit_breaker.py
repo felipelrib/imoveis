@@ -29,7 +29,8 @@ class RedisCircuitBreaker:
         self.platform = platform
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
-        self.redis_client = None
+        from infra.redis_client import get_redis
+        self.redis_client = get_redis()
 
     def _get_state(self) -> RedisCircuitBreakerState:
         """Get the current state from Redis."""
@@ -89,9 +90,6 @@ class RedisCircuitBreaker:
         if state.failure_count >= self.failure_threshold:
             state.is_open = True
             state.cooldown_end_time = time.time() + self.cooldown_seconds
-        else:
-            # Reset failure count to avoid false positives
-            state.failure_count = 0
             
         self._set_state(state)
 

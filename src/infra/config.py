@@ -11,6 +11,8 @@ class PlatformConfig:
     delay_range: tuple = (1, 3)  # seconds between requests
     max_retries: int = 3
     timeout: int = 30
+    enabled: bool = True
+    rate_limit: Optional[int] = None
 
 @dataclass(frozen=True)
 class DedupeConfig:
@@ -20,7 +22,7 @@ class DedupeConfig:
 @dataclass(frozen=True)
 class ScoringConfig:
     ai_weight: float = 0.5
-    statistical_weight: float = 0.5
+    stat_weight: float = 0.5
 
 @dataclass(frozen=True)
 class AIConfig:
@@ -48,6 +50,7 @@ class AppConfig:
     dedupe: DedupeConfig = field(default_factory=DedupeConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     ai: AIConfig = field(default_factory=AIConfig)
+    image_storage_path: str = "data/images"
     gpu: GPUConfig = field(default_factory=GPUConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
 
@@ -99,7 +102,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         platforms=platforms,
         dedupe=DedupeConfig(),
         scoring=ScoringConfig(),
-        ai=AIConfig(),
+        ai=AIConfig(ollama_url=os.getenv("OLLAMA_HOST", "http://localhost:11434")),
         gpu=GPUConfig(),
         proxy=ProxyConfig(),
     )

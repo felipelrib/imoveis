@@ -21,7 +21,12 @@ def list_properties(
     min_score: Optional[float] = Query(None, ge=0, le=1),
     max_price: Optional[float] = None,
     min_bedrooms: Optional[int] = None,
-    neighborhood_id: Optional[str] = None,
+    min_parking: Optional[int] = None,
+    neighborhood_name: Optional[str] = None,
+    listing_type: Optional[str] = Query(None, pattern="^(rent|sale|both)$"),
+    property_type: Optional[str] = None,
+    is_furnished: Optional[bool] = None,
+    accepts_pets: Optional[bool] = None,
     sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|area_m2)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> Dict[str, Any]:
@@ -43,12 +48,35 @@ def list_properties(
         if min_bedrooms is not None:
             filters.append("p.bedrooms >= :min_bedrooms")
             params["min_bedrooms"] = min_bedrooms
-        if neighborhood_id:
-            filters.append("p.neighborhood_id = :neighborhood_id")
-            params["neighborhood_id"] = neighborhood_id
+        if min_parking is not None:
+            filters.append("p.parking >= :min_parking")
+            params["min_parking"] = min_parking
+        if neighborhood_name:
+            names = [n.strip() for n in neighborhood_name.split(",")]
+            nbr_filters = []
+            for i, name in enumerate(names):
+                nbr_filters.append(f"(n.name ILIKE :nbr_{i} OR p.props_json->>'neighborhood' ILIKE :nbr_{i})")
+                params[f"nbr_{i}"] = f"%{name}%"
+            filters.append(f"({' OR '.join(nbr_filters)})")
         if min_score is not None:
             filters.append("COALESCE(ms.combined_score, 0) >= :min_score")
             params["min_score"] = min_score
+            
+        if listing_type and listing_type != 'both':
+            filters.append(f"(p.props_json->>'available_for_{listing_type}')::boolean = true")
+            
+        if property_type:
+            filters.append("p.props_json->>'type' ILIKE :property_type")
+            params["property_type"] = f"%{property_type}%"
+            
+        if is_furnished is not None:
+            filters.append(f"(p.props_json->>'isFurnished')::boolean = {'true' if is_furnished else 'false'}")
+            
+        if accepts_pets is not None:
+            if accepts_pets:
+                filters.append("p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'")
+            else:
+                filters.append("NOT (p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO')")
 
         where = " AND ".join(filters)
         sort_col_map = {
@@ -109,6 +137,7 @@ def list_properties(
             SELECT COUNT(*)
             FROM properties p
             LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE {where}
         """)
 
@@ -125,7 +154,7 @@ def list_properties(
             sentiment = meta.get("sentiment", {})
             props_json = row[22] or {}
             
-            neighborhood_name = row[19] or props_json.get("neighborhood")
+            neighborhood_name_val = row[19] or props_json.get("neighborhood")
             
             properties.append({
                 "id": str(row[0]),
@@ -146,7 +175,7 @@ def list_properties(
                 "z_score": round(float(row[15]), 3) if row[15] is not None else None,
                 "price_per_m2": round(float(row[16]), 2) if row[16] is not None else None,
                 "neighborhood_mean": round(float(row[17]), 2) if row[17] is not None else None,
-                "neighborhood_name": neighborhood_name,
+                "neighborhood_name": neighborhood_name_val,
                 "parking": row[20],
                 "description": row[21],
                 "available_for_rent": props_json.get("available_for_rent", False),
@@ -157,6 +186,12 @@ def list_properties(
                 "ai_red_flags": sentiment.get("red_flags", []),
                 "condition_score": visual.get("condition_score"),
                 "sentiment_score": sentiment.get("sentiment_score"),
+                "stat_category": meta.get("stat_analysis", {}).get("category"),
+                "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
+                "visual_category": visual.get("category"),
+                "visual_reasoning": visual.get("reasoning"),
+                "sentiment_category": sentiment.get("category"),
+                "sentiment_reasoning": sentiment.get("reasoning"),
                 "listings": row[23] or [],
             })
 
@@ -233,9 +268,10 @@ def get_property(property_id: str) -> Dict[str, Any]:
             "price_per_m2": float(row[19]) if row[19] is not None else None,
             "neighborhood_mean": float(row[20]) if row[20] is not None else None,
             "neighborhood_median": float(row[21]) if row[21] is not None else None,
-            "neighborhood_name": row[23],
+            "neighborhood_name": row[23] or (row[13] or {}).get("neighborhood"),
             "location": {"lon": row[24], "lat": row[25]},
             "listings": row[26] or [],
+            "stat_analysis": meta.get("stat_analysis", {}),
             "ai_analysis": {
                 "visual": meta.get("visual", {}),
                 "sentiment": meta.get("sentiment", {}),

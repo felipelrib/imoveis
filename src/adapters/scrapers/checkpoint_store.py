@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from src.adapters.db.models import PlatformCheckpoint
+from adapters.db.models import PlatformCheckpoint
 from typing import Dict, Any
 
 class CheckpointStore:
@@ -12,7 +12,7 @@ class CheckpointStore:
         """Get checkpoint for a platform."""
         checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
         if checkpoint:
-            return checkpoint.checkpoint_data
+            return checkpoint.data
         return {}
 
     def set(self, platform_name: str, data: dict) -> None:
@@ -20,9 +20,9 @@ class CheckpointStore:
         try:
             checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
             if checkpoint:
-                checkpoint.checkpoint_data = data
+                checkpoint.data = data
             else:
-                checkpoint = PlatformCheckpoint(platform_name=platform_name, checkpoint_data=data)
+                checkpoint = PlatformCheckpoint(platform_name=platform_name, data=data)
                 self.session.add(checkpoint)
             self.session.commit()
         except Exception as e:

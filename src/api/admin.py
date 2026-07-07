@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from adapters.metrics.scoring import (
@@ -23,9 +23,10 @@ from core.entities import ScoringWeights
 from infra.db import get_session
 from infra.logging import get_logger
 from infra.redis_client import get_redis
+from api.auth import verify_api_key
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_api_key)])
 
 
 # ---------------------------------------------------------------------------

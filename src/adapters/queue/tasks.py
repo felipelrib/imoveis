@@ -96,10 +96,12 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     skipped += 1
                     continue
                 except Exception as exc:
+                    import traceback
                     logger.error(
                         "scrape_normalize_error",
                         platform=platform_name,
                         error=str(exc),
+                        trace=traceback.format_exc()
                     )
                     errors += 1
                     continue
@@ -111,10 +113,13 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     # Enqueue AI enrichment if images are present and property
                     # is new or updated (not a noop duplicate)
                     if candidate.image_urls and result.action != "noop":
-                        ai_enrich.delay(
-                            result.property_id,
-                            candidate.image_urls,
-                            candidate.description or "",
+                        ai_enrich.apply_async(
+                            args=[
+                                str(result.property_id),
+                                candidate.image_urls,
+                                candidate.description or "",
+                            ],
+                            queue="ai"
                         )
 
                     processed += 1
@@ -250,10 +255,11 @@ def ai_enrich(
                 .filter_by(property_id=property_id)
                 .one_or_none()
             )
-            meta = {
+            meta = dict(ms.meta or {}) if ms is not None else {}
+            meta.update({
                 "visual": visual_result.model_dump(),
                 "sentiment": sentiment_result.model_dump(),
-            }
+            })
             if ms is None:
                 ms = MetricsScoring(
                     property_id=property_id,

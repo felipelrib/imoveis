@@ -13,12 +13,12 @@ from sqlalchemy.orm import sessionmaker
 import redis
 
 # Assuming project is added to PYTHONPATH or run from project root
-from src.adapters.db.models import Base, Property, PriceHistory, MetricsScoring
-from src.api.main import app
-from src.core.dedupe import match_or_create_property, find_candidates
-from src.adapters.scrapers.circuit_breaker import CircuitBreaker
-from src.adapters.scrapers.base import BaseScraper
-from src.adapters.queue.gpu_semaphore import GPUSemaphore
+from adapters.db.models import Base, Property, PriceHistory, MetricsScoring
+from api.main import app
+from core.dedupe import match_or_create_property, find_candidates
+from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
+from adapters.scrapers.base import BaseScraper
+from adapters.queue.gpu_semaphore import GPUSemaphore
 from fastapi.testclient import TestClient
 
 
@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture(scope="function")
 def test_db():
     """Create an in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory://", connect_args={"check_same_thread": False})
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
@@ -76,13 +76,13 @@ class TestAPIEndpoints:
 
     def test_admin_health(self, test_client):
         """Verify admin health endpoint."""
-        response = test_client.get("/admin/health")
+        response = test_client.get("/admin/health", headers={"X-API-Key": "imoveis_secret"})
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
     def test_admin_workers_status(self, test_client, mock_redis):
         """Verify admin workers status endpoint."""
-        response = test_client.get("/admin/workers/status")
+        response = test_client.get("/admin/workers/status", headers={"X-API-Key": "imoveis_secret"})
         assert response.status_code == 200
         data = response.json()
         assert "ai_workers_paused" in data
@@ -90,19 +90,19 @@ class TestAPIEndpoints:
 
     def test_pause_workers(self, test_client, mock_redis):
         """Test pausing AI workers."""
-        response = test_client.post("/admin/workers/pause")
+        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": "imoveis_secret"})
         assert response.status_code == 200
         assert response.json() == {"paused": True}
 
     def test_resume_workers(self, test_client, mock_redis):
         """Test resuming AI workers."""
-        response = test_client.post("/admin/workers/resume")
+        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": "imoveis_secret"})
         assert response.status_code == 200
         assert response.json() == {"paused": False}
 
     def test_gpu_scale_endpoint(self, test_client, mock_redis):
         """Test GPU scaling endpoint."""
-        response = test_client.post("/admin/gpu/scale", json={"limit": 2})
+        response = test_client.post("/admin/gpu/scale", json={"limit": 2}, headers={"X-API-Key": "imoveis_secret"})
         assert response.status_code == 200
         assert response.json() == {"gpu_limit": 2}
 
@@ -236,7 +236,7 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_opens_on_failures(self):
         """Test that circuit breaker opens after threshold failures."""
-        cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=60)
+        cb = RedisCircuitBreaker(platform="test", failure_threshold=3, cooldown_seconds=60)
         
         assert not cb.is_open()
         
@@ -251,7 +251,7 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_resets_on_success(self):
         """Test that circuit breaker resets on success."""
-        cb = CircuitBreaker(failure_threshold=2, cooldown_seconds=1)
+        cb = RedisCircuitBreaker(platform="test", failure_threshold=2, cooldown_seconds=1)
         
         cb.record_failure()
         cb.record_failure()
@@ -271,7 +271,7 @@ class TestGPUSemaphore:
     def test_semaphore_basic_acquire_release(self, mock_redis):
         """Test basic semaphore acquire and release."""
         # Note: This test uses mocked Redis
-        sem = GPUSemaphore(redis_url="redis://localhost:6379/0", name="gpu", limit=1)
+        sem = GPUSemaphore(name="gpu", max_concurrent=1)
         
         # Mock Redis behavior
         sem.r = mock_redis
@@ -304,7 +304,7 @@ class TestScraperInterface:
             def normalize(self, raw):
                 return {"platform_id": raw["id"]}
         
-        scraper = MinimalScraper({})
+        scraper = MinimalScraper("test", {})
         scraper.start()
         
         pages = list(scraper.fetch_pages({}))
@@ -316,8 +316,8 @@ class TestScraperInterface:
     def test_scraper_with_checkpoint(self):
         """Test scraper checkpoint persistence."""
         class PagedScraper(BaseScraper):
-            def __init__(self, config):
-                super().__init__(config)
+            def __init__(self, platform_name: str, config: dict):
+                super().__init__(platform_name, config)
                 self.max_pages = 3
             
             def start(self):
@@ -333,7 +333,7 @@ class TestScraperInterface:
             def normalize(self, raw):
                 return raw
         
-        scraper = PagedScraper({})
+        scraper = PagedScraper("test", {})
         checkpoint = {"page": 1}
         scraper.start()
         
