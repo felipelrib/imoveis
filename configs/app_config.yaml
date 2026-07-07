@@ -23,10 +23,12 @@ platforms:
     jitter_max: 7           # maximum delay between requests (seconds)
   olx:
     base_url: https://www.olx.com.br
-    enabled: false
+    enabled: true
     rate_limit: 20
     jitter_min: 2
     jitter_max: 6
+    extra:
+      max_pages: 5
 
 # ---------------------------------------------------------------------------
 # Deduplication Engine
