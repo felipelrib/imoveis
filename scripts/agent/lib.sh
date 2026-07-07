@@ -44,6 +44,65 @@ sanitize_proj() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'
 }
 
+# Conventional Branch v1.1.0 — valid type prefixes.
+# See https://conventionalbranch.org/
+VALID_BRANCH_TYPES="feature|feat|bugfix|fix|hotfix|release|chore|ai|copilot|cursor|claude|codex"
+
+# build_branch <type> <description>
+# Constructs a conventional branch name: <type>/<description>
+build_branch() {
+  local btype="$1" desc="$2"
+  printf '%s/%s' "$btype" "$desc"
+}
+
+# parse_branch <full-branch-name>
+# Splits "type/description" into BRANCH_TYPE and BRANCH_DESC.
+# Sets BRANCH_TYPE and BRANCH_DESC as globals.
+parse_branch() {
+  local full="$1"
+  BRANCH_TYPE="${full%%/*}"
+  BRANCH_DESC="${full#*/}"
+  # If there was no slash, description equals the whole thing (no type).
+  if [ "$BRANCH_TYPE" = "$full" ]; then BRANCH_TYPE=""; BRANCH_DESC="$full"; fi
+}
+
+# validate_conventional_branch <full-branch-name>
+# Returns 0 if the branch name conforms to Conventional Branch v1.1.0, 1 otherwise.
+validate_conventional_branch() {
+  local name="$1"
+  parse_branch "$name"
+
+  # Trunk branches are always valid.
+  case "$name" in
+    main|master|develop) return 0 ;;
+  esac
+
+  # Must have a valid type prefix.
+  if [ -z "$BRANCH_TYPE" ]; then
+    warn "branch '$name' has no type prefix (expected <type>/<description>)"
+    return 1
+  fi
+  if ! echo "$BRANCH_TYPE" | grep -qE "^($VALID_BRANCH_TYPES)$"; then
+    warn "branch type '$BRANCH_TYPE' is not a recognised Conventional Branch type"
+    return 1
+  fi
+
+  # Description must not be empty.
+  if [ -z "$BRANCH_DESC" ]; then
+    warn "branch '$name' has an empty description"
+    return 1
+  fi
+
+  # Description rules: lowercase alnum, hyphens, dots. No consecutive hyphens/dots,
+  # no leading/trailing hyphens/dots.
+  if ! printf '%s' "$BRANCH_DESC" | grep -qE '^[a-z0-9]([a-z0-9]*[.]?[a-z0-9]*)(-[a-z0-9]([a-z0-9]*[.]?[a-z0-9]*))*$'; then
+    warn "branch description '$BRANCH_DESC' violates Conventional Branch naming rules (lowercase alnum, hyphens, dots; no consecutive/leading/trailing hyphens or dots)"
+    return 1
+  fi
+
+  return 0
+}
+
 # --- Registry locking (race-free across parallel setup runs) ----------------
 registry_lock() {
   mkdir -p "$REGISTRY_DIR"

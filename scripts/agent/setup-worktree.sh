@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# setup-worktree.sh <feature-slug> [base-branch]
+# setup-worktree.sh <branch> [base-branch]
 #
 # Creates an isolated git worktree + branch for one feature, allocates a
 # unique, race-free block of host ports, and writes the worktree's .env.local.
+#
+# <branch> follows the Conventional Branch v1.1.0 spec:
+#   <type>/<description>          — e.g. feature/eng-123-add-login
+#   <slug>                       — shorthand, defaults to feature/<slug>
+#
+# Valid types: feature, feat, bugfix, fix, hotfix, release, chore, ai,
+#              copilot, cursor, claude, codex
 #
 # Prints the worktree path on the LAST line so the caller can `cd` into it.
 # ---------------------------------------------------------------------------
@@ -12,14 +19,41 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-[ $# -ge 1 ] || die "usage: setup-worktree.sh <feature-slug> [base-branch]"
-SLUG="$(sanitize_proj "$1")"
+[ $# -ge 1 ] || die "usage: setup-worktree.sh <branch|slug> [base-branch]"
+
+# Accept either "feature/eng-123-add-login" or plain "add-login" (defaults to feature/).
+INPUT="$1"
+if echo "$INPUT" | grep -q '/'; then
+  # Full conventional branch name — validate it.
+  BRANCH="$INPUT"
+  validate_conventional_branch "$BRANCH" || die "branch '$BRANCH' violates Conventional Branch v1.1.0"
+else
+  # Plain slug — default to feature/ unless it starts with a known type prefix.
+  SLUG="$(sanitize_proj "$INPUT")"
+  [ -n "$SLUG" ] || die "empty/invalid feature slug"
+  # Check if the slug starts with a recognized branch type (e.g. "fix-" → fix/)
+  DETECTED_TYPE=""
+  while IFS='|' read -ra _types; do
+    for _t in "${_types[@]}"; do
+      if [[ "$SLUG" == "$_t-"* ]]; then
+        DETECTED_TYPE="$_t"
+        SLUG="${SLUG#$_t-}"
+        break 2
+      fi
+    done
+  done <<< "$VALID_BRANCH_TYPES"
+  if [ -n "$DETECTED_TYPE" ]; then
+    BRANCH="$DETECTED_TYPE/$SLUG"
+  else
+    BRANCH="feature/$SLUG"
+  fi
+fi
+
+parse_branch "$BRANCH"
+SLUG="$BRANCH_DESC"   # worktree directory and docker project use the description part.
 BASE_BRANCH="${2:-main}"
-BRANCH="feat/$SLUG"
 PROJ="$(sanitize_proj "$BRANCH")"
 WORKTREE="$REGISTRY_DIR/$SLUG"
-
-[ -n "$SLUG" ] || die "empty/invalid feature slug"
 
 log "Preparing isolated workspace for '$BRANCH'"
 
