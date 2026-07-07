@@ -4,14 +4,17 @@ services:
   # ---------------------------------------------------------------------------
   postgres:
     image: postgis/postgis:15-3.3-alpine
-    container_name: imoveis_postgres
+    # NOTE: no container_name — a fixed name is global and ignores `-p <project>`,
+    # so it would collide across parallel agent worktrees. Compose derives a
+    # project-scoped name automatically (<project>-postgres-1).
     restart: unless-stopped
     environment:
       POSTGRES_USER: imoveis
       POSTGRES_PASSWORD: imoveis_secret
       POSTGRES_DB: realestate
     ports:
-      - "5432:5432"
+      # Host port is parametrized; defaults preserve single-instance behavior.
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,10 +28,9 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    container_name: imoveis_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -44,10 +46,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: imoveis_api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
       DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
@@ -69,7 +70,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: imoveis_worker_ai
     restart: unless-stopped
     command: >
       celery -A adapters.queue.tasks worker
@@ -96,7 +96,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: imoveis_worker_scraper
     restart: unless-stopped
     command: >
       celery -A adapters.queue.tasks worker
