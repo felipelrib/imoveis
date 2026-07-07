@@ -38,6 +38,11 @@ If dirty, commit or stash before proceeding.
 bash scripts/agent/finish-feature.sh "<feature_slug>"
 ```
 
+**Flags:**
+- `--validate-only` — sync with main and re-validate without merging
+- `--skip-docs` — skip the gen-docs step
+- `--dry-run` — preview what would happen
+
 Handle exit codes:
 - **Exit 0** → merged, validated, cleaned up — proceed to Step 4
 - **Exit 2** → merge conflicts — resolve each file, `git add` + `git commit --no-edit`, then re-run
@@ -56,10 +61,21 @@ Report: merge result, validation status, docs path, final FEATURES.md status.
 
 ## What finish-feature.sh does
 
-1. Switches to `main` in the primary checkout
-2. Merges the feature branch (`feat/<slug>`) into `main`
-3. Runs `validate.sh all` post-merge
-4. If validation fails, rolls back the merge (`git reset --hard HEAD~1`) and switches back to the feature branch
-5. Tears down Docker containers and removes the worktree
-6. Removes the branch from the registry
-7. Deletes the feature branch (`git branch -D`)
+1. Syncs with latest main before merge (prevents unnecessary conflicts)
+2. Switches to `main` in the primary checkout
+3. Merges the feature branch (`feat/<slug>`) into `main`
+4. Runs `validate.sh all` post-merge
+5. If validation fails, rolls back the merge (`git reset --hard HEAD~1`) and switches back to the feature branch
+6. Optionally runs `gen-docs.sh` for feature docs
+7. Tears down Docker containers and removes the worktree
+8. Removes the branch from the registry
+9. Deletes the feature branch (`git branch -D`)
+
+## Validate-only mode
+
+To sync with main and re-validate without merging:
+```bash
+bash scripts/agent/finish-feature.sh --validate-only
+```
+
+This is useful for checking if a feature branch is ready for merge.

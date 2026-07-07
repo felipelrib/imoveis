@@ -36,16 +36,13 @@ If `all` scope is not needed, allow `backend` or `frontend` only.
 
 ### Step 3 — Quick review (optional)
 
-If the user wants a review too, switch to reviewer mode
-(see `.clinerules/reviewer.md`) and run the review workflow.
-
-### Step 4 — Merge check (optional)
-
+If the user wants a review, read the diff against main:
 ```bash
-bash scripts/agent/merge-revalidate.sh
+git diff main --stat
 ```
 
-Handle exit codes as documented in `.clinerules/coder.md`.
+Then review the key changes for correctness, test coverage, and adherence
+to the implementation plan.
 
 ## Output
 

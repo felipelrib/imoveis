@@ -1,17 +1,103 @@
-Local Real-Estate Ingestor
+# Imoveis — Deal Tracker
 
-This repository contains a modular ingestion pipeline, heuristic deduplication, PostGIS-backed geospatial storage, and a pluggable local AI enrichment stack. Use the configs/app_config.yaml to configure platforms, Redis and DB.
+Real-estate ingestion pipeline. Multi-platform scraping, heuristic deduplication,
+PostGIS-backed geospatial storage, local AI enrichment, and price tracking.
 
-Quickstart (developer):
-- Create Python venv and install dependencies: sqlalchemy, geoalchemy2, httpx, celery, redis, psycopg2-binary
-- Start Redis and Postgres(+PostGIS)
-- Run alembic migrations (not provided in this skeleton)
-- Start API: uvicorn src.api.main:app --reload
-- Start Celery workers: celery -A src.adapters.queue.tasks.celery worker -Q scrapers -c 4
-- Start AI workers: celery -A src.adapters.queue.tasks.celery worker -Q ai -c 1
+**Stack:** Python FastAPI + Celery · PostGIS (Postgres 15) · Redis · React/Vite · Ollama
 
-See docs/rocm_directml_setup.md for GPU guidance.
+## Quickstart
 
-## Features
+### Using Docker Compose (recommended)
 
-- [config-yaml-loader](docs/features/config-yaml-loader.md)
+```bash
+bash scripts/agent/setup-worktree.sh <feature-slug>
+cd .worktrees/<feature-slug>
+bash scripts/agent/run-services.sh
+# API: http://localhost:$API_PORT/health
+# Frontend: http://localhost:$FRONTEND_PORT
+```
+
+### Manual setup
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+createdb realestate_dev && psql realestate_dev -c "CREATE EXTENSION postgis;"
+cd alembic && alembic upgrade head && cd ..
+uvicorn src.api.main:app --reload
+celery -A src.adapters.queue.tasks.celery worker -Q scrapers -c 4
+celery -A src.adapters.queue.tasks.celery worker -Q ai -c 1
+```
+
+## Architecture
+
+```
+src/
+├── api/                          # FastAPI routers, admin endpoints
+├── adapters/                     # External integrations
+│   ├── db/                       # SQLAlchemy ORM models
+│   ├── scrapers/                 # Platform scrapers (add-on pattern)
+│   ├── ai/                       # LocalAIClient abstraction (Ollama, LM Studio)
+│   ├── queue/                    # Celery tasks + GPU semaphore
+│   └── metrics/                  # Statistical scoring
+├── core/                         # Business logic (dedup, entities)
+├── infra/                        # Config, DB, Redis, logging
+└── tests/                        # pytest suite (unit + integration)
+frontend/                         # React 18 + Vite
+configs/app_config.yaml           # Single source of truth for all settings
+scripts/agent/                    # Workflow tooling (worktree, services, validate)
+```
+
+**Data flow:** Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
+
+## Working on Features
+
+1. **Find next feature:** Check [FEATURES.md](FEATURES.md) or the [Linear board](https://linear.app/felipelrib/)
+2. **Tell Cline:** "Work on feature `<slug>` from FEATURES.md"
+3. **Cline will:** plan → implement → commit → validate → merge → cleanup
+
+### Key commands
+
+| Task | Command |
+|------|---------|
+| Create worktree | `bash scripts/agent/setup-worktree.sh <slug>` |
+| Start services | `bash scripts/agent/run-services.sh` |
+| Validate | `bash scripts/agent/validate.sh [backend\|frontend\|all]` |
+| Finish feature | `bash scripts/agent/finish-feature.sh [slug] [--validate-only]` |
+| Dry run | `bash scripts/agent/finish-feature.sh --dry-run` |
+
+## Documentation
+
+- [SETUP_GUIDE.md](docs/SETUP_GUIDE.md) — local environment setup
+- [local_agent_architecture.md](docs/local_agent_architecture.md) — Cline agent workflow
+- [docs/features/](docs/features/) — completed feature documentation
+- [Linear board](https://linear.app/felipelrib/) — feature queue, backlog, reference docs
+
+## Configuration
+
+All settings are in `configs/app_config.yaml`. Environment variable overrides
+use `${ENV}` syntax (e.g., `${DATABASE_URL}`, `${REDIS_URL}`).
+
+## Development
+
+### Commit conventions
+
+Commit messages MUST use conventional format: `feat:`, `fix:`, `test:`, `docs:`,
+`refactor:`, `chore:`.
+
+### Testing
+
+```bash
+pytest src/tests/ -v                    # All tests
+pytest src/tests/unit/ -v               # Unit only
+bash scripts/agent/validate.sh backend  # Full backend validation
+```
+
+### Adding a new scraper
+
+Implement `src/adapters/scrapers/base.py::BaseScraper`, register with
+`@register("platform-name")`, add to `configs/app_config.yaml`.
+
+## License
+
+MIT

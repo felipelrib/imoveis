@@ -1,5 +1,0 @@
-model_list:
-  - model_name: claude-3-5-sonnet-20241022
-    litellm_params:
-      model: ollama/qwen3.6:35b  # Replace with your exact Ollama tag
-      api_base: http://localhost:11434

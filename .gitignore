@@ -39,26 +39,22 @@ ENV/
 scraper_logs.txt
 
 # Local tools/cache
-.claude/
 .pytest_cache/
-opencode.jsonc
 ollama-provider.json
 
 # Data files
 qa_data.json
 
-# Parallel agent workspaces (git worktrees live here, per-worktree env, local memory)
+# Runtime artifacts (orphan at root)
+scratch.log
+worker.log
+
+# Parallel agent workspaces (git worktrees live here, per-worktree env)
 .worktrees/
 .env.local
-.goose/memory/
 
 # Cursor IDE
 .cursor/
 
-# Goose agent (not used with Cline)
-.agents/
-.goose/
-.goosehints
-recipes/
-llms.txt
-
+# Cline workspace files (local, not committed)
+.cline/

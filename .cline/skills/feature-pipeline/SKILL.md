@@ -14,21 +14,27 @@ This skill bundles the entire feature lifecycle into a single dispatch.
 
 ## Pipeline steps
 
-### Step 1 — Setup worktree (if not exists)
+### Step 1 — Setup worktree
 
 ```bash
 bash scripts/agent/setup-worktree.sh "<feature_slug>"
 cd .worktrees/<feature_slug>
 ```
 
-### Step 2 — Check/create plan
+### Step 2 — Plan the feature
 
-If `implementation_plan.md` does not exist in the worktree, switch to planner mode
-(see `.clinerules/planner.md`) and create it. Then return to this pipeline.
+Read the feature spec from FEATURES.md, analyze affected code areas, then write
+`implementation_plan.md` with these sections:
+1. Goal (one paragraph)
+2. Affected areas (files/modules)
+3. Step-by-step implementation (ordered, committable)
+4. Data / schema changes
+5. Validation plan
+6. Risks and conflict surface
 
-Verify the plan is committed:
+Commit the plan:
 ```bash
-git log --oneline -1
+git add implementation_plan.md && git commit -m "docs: plan <feature_slug>"
 ```
 
 Update FEATURES.md: `<feature_slug>` status to `planned`.
@@ -41,30 +47,29 @@ bash scripts/agent/run-services.sh
 
 ### Step 4 — Implement
 
-Switch to coder mode (see `.clinerules/coder.md`). Implement each step from
-`implementation_plan.md`, committing after each meaningful step.
+Implement each step from `implementation_plan.md`, committing after each
+meaningful step with conventional messages.
 
 Update FEATURES.md: `<feature_slug>` status to `in-progress`.
 
-### Step 5 — Finish the feature
+### Step 5 — Validate
 
-When implementation and docs are complete, run:
+```bash
+bash scripts/agent/validate.sh all
+```
+
+### Step 6 — Finish the feature
+
 ```bash
 bash scripts/agent/finish-feature.sh "<feature_slug>"
 ```
 
-This single script:
-- Merges the feature branch into main
-- Runs post-merge validation (`validate.sh all`)
-- Tears down the worktree and containers
-- Deletes the feature branch
-
 Handle exit codes:
-- **Exit 0** → merged, validated, cleaned up — proceed to Step 6
+- **Exit 0** → merged, validated, cleaned up — proceed to Step 7
 - **Exit 2** → merge conflicts — resolve, commit, re-run
 - **Exit 1** → validation failed after merge — fix, commit, re-run
 
-### Step 6 — Update status
+### Step 7 — Update status
 
 Update FEATURES.md: `<feature_slug>` status to `done`.
 ```bash
