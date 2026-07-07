@@ -86,3 +86,27 @@ class PriceHistory(Base):
     price = Column(Float, nullable=False)
     start_ts = Column(DateTime, server_default=sa.text('now()'))
     end_ts = Column(DateTime)
+
+
+class PropertyListing(Base):
+    __tablename__ = 'property_listings'
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()'))
+    property_id = Column(UUID(as_uuid=True), ForeignKey('properties.id', ondelete='CASCADE'), nullable=False, index=True)
+    platform = Column(String, nullable=False)
+    platform_listing_id = Column(String, nullable=False)
+    listing_type = Column(String, nullable=False)  # 'rent' or 'sale'
+    price = Column(Float, nullable=False)
+    currency = Column(String(3))
+    url = Column(String)
+    is_furnished = Column(Boolean)
+    accepts_pets = Column(Boolean)
+    condo_fee = Column(Float)
+    iptu = Column(Float)
+    raw_json = Column(JSON)
+    first_seen = Column(DateTime, server_default=sa.text('now()'))
+    last_seen = Column(DateTime, server_default=sa.text('now()'), onupdate=sa.text('now()'))
+    active = Column(Boolean, server_default=sa.text('true'))
+
+    __table_args__ = (
+        sa.UniqueConstraint('platform', 'platform_listing_id', 'listing_type', name='uq_platform_listing'),
+    )

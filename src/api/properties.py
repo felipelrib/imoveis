@@ -116,10 +116,15 @@ def list_properties(
                     SELECT json_agg(
                         json_build_object(
                             'platform', pl.platform,
-                            'platform_id', pl.platform_id,
+                            'platform_listing_id', pl.platform_listing_id,
                             'listing_type', pl.listing_type,
                             'price', pl.price,
-                            'url', pl.url
+                            'currency', pl.currency,
+                            'url', pl.url,
+                            'is_furnished', pl.is_furnished,
+                            'accepts_pets', pl.accepts_pets,
+                            'condo_fee', pl.condo_fee,
+                            'iptu', pl.iptu
                         )
                     )
                     FROM property_listings pl
@@ -225,10 +230,15 @@ def get_property(property_id: str) -> Dict[str, Any]:
                     SELECT json_agg(
                         json_build_object(
                             'platform', pl.platform,
-                            'platform_id', pl.platform_id,
+                            'platform_listing_id', pl.platform_listing_id,
                             'listing_type', pl.listing_type,
                             'price', pl.price,
-                            'url', pl.url
+                            'currency', pl.currency,
+                            'url', pl.url,
+                            'is_furnished', pl.is_furnished,
+                            'accepts_pets', pl.accepts_pets,
+                            'condo_fee', pl.condo_fee,
+                            'iptu', pl.iptu
                         )
                     )
                     FROM property_listings pl

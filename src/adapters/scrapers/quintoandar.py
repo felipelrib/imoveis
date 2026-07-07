@@ -173,18 +173,26 @@ class QuintoAndarScraper(BaseScraper):
         if is_rent:
             listings.append({
                 "platform": "quintoandar",
-                "platform_id": str(raw.get("id", "")),
+                "platform_listing_id": str(raw.get("id", "")),
                 "listing_type": "rent",
                 "price": rent_price,
-                "url": base_url
+                "currency": "BRL",
+                "url": base_url,
+                "is_furnished": raw.get("isFurnished"),
+                "condo_fee": raw.get("condoFee"),
+                "iptu": raw.get("iptu"),
             })
         if is_sale:
             listings.append({
                 "platform": "quintoandar",
-                "platform_id": str(raw.get("id", "")),
+                "platform_listing_id": str(raw.get("id", "")),
                 "listing_type": "sale",
                 "price": sale_price,
-                "url": base_url
+                "currency": "BRL",
+                "url": base_url,
+                "is_furnished": raw.get("isFurnished"),
+                "condo_fee": raw.get("condoFee"),
+                "iptu": raw.get("iptu"),
             })
             
         amenities = raw.get("amenities") or []

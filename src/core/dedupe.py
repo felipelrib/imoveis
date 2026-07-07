@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
@@ -84,6 +85,7 @@ def match_or_create_property(
         existing.image_urls = candidate.image_urls
         existing.props_json = candidate.props_json
         existing.active = True
+        _upsert_listings(session, str(existing.id), candidate.listings or [])
         session.flush()
         return DedupeMatchResult(property_id=str(existing.id), action="updated")
 
@@ -120,6 +122,7 @@ def match_or_create_property(
                     prop.active = True
                     prop.image_urls = candidate.image_urls
                     prop.props_json = candidate.props_json
+                    _upsert_listings(session, str(prop.id), candidate.listings or [])
                     session.flush()
                     return DedupeMatchResult(property_id=str(prop.id), action="updated")
 
@@ -150,7 +153,94 @@ def match_or_create_property(
     )
     session.add(new_prop)
     session.flush()
+    _upsert_listings(session, str(new_prop.id), candidate.listings or [])
     return DedupeMatchResult(property_id=str(new_prop.id), action="created")
+
+
+def _upsert_listings(
+    session: Session,
+    property_id: str,
+    listings: List[dict],
+) -> None:
+    """Upsert PropertyListing rows keyed on (platform, platform_listing_id, listing_type).
+
+    For each listing dict from the scraper normalizer, either update an existing
+    row or insert a new one.  This keeps the property_listings table in sync with
+    every scrape run.  Uses raw SQL for database-agnostic operation.
+    """
+    import uuid as _uuid
+
+    for listing in listings:
+        # Check if listing already exists
+        check = session.execute(
+            text(
+                "SELECT id FROM property_listings "
+                "WHERE property_id = :pid "
+                "AND platform = :platform "
+                "AND platform_listing_id = :plid "
+                "AND listing_type = :lt"
+            ),
+            {
+                "pid": property_id,
+                "platform": listing["platform"],
+                "plid": listing["platform_listing_id"],
+                "lt": listing["listing_type"],
+            },
+        ).fetchone()
+
+        now = datetime.now(timezone.utc)
+
+        if check:
+            session.execute(
+                text(
+                    "UPDATE property_listings "
+                    "SET price = :price, currency = :currency, url = :url, "
+                    "is_furnished = :is_furnished, accepts_pets = :accepts_pets, "
+                    "condo_fee = :condo_fee, iptu = :iptu, raw_json = :raw_json, "
+                    "last_seen = :now, active = 1 "
+                    "WHERE id = :id"
+                ),
+                {
+                    "price": listing["price"],
+                    "currency": listing.get("currency", "BRL"),
+                    "url": listing.get("url"),
+                    "is_furnished": listing.get("is_furnished"),
+                    "accepts_pets": listing.get("accepts_pets"),
+                    "condo_fee": listing.get("condo_fee"),
+                    "iptu": listing.get("iptu"),
+                    "raw_json": str(listing.get("raw_json")) if listing.get("raw_json") is not None else None,
+                    "now": now,
+                    "id": str(check.id),
+                },
+            )
+        else:
+            session.execute(
+                text(
+                    "INSERT INTO property_listings "
+                    "(id, property_id, platform, platform_listing_id, listing_type, "
+                    "price, currency, url, is_furnished, accepts_pets, condo_fee, iptu, "
+                    "raw_json, first_seen, last_seen, active) "
+                    "VALUES (:id, :pid, :platform, :plid, :lt, "
+                    ":price, :currency, :url, :is_furnished, :accepts_pets, :condo_fee, :iptu, "
+                    ":raw_json, :now, :now, 1)"
+                ),
+                {
+                    "id": str(_uuid.uuid4()),
+                    "pid": property_id,
+                    "platform": listing["platform"],
+                    "plid": listing["platform_listing_id"],
+                    "lt": listing["listing_type"],
+                    "price": listing["price"],
+                    "currency": listing.get("currency", "BRL"),
+                    "url": listing.get("url"),
+                    "is_furnished": listing.get("is_furnished"),
+                    "accepts_pets": listing.get("accepts_pets"),
+                    "condo_fee": listing.get("condo_fee"),
+                    "iptu": listing.get("iptu"),
+                    "raw_json": str(listing.get("raw_json")) if listing.get("raw_json") is not None else None,
+                    "now": now,
+                },
+            )
 
 
 def find_candidates(
