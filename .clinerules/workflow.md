@@ -1,6 +1,6 @@
 ---
 paths:
-  - "FEATURES.md"
+  - ".clinerules/workflow.md"
   - "implementation_plan.md"
   - "docs/features/*"
 ---
@@ -12,19 +12,19 @@ Read `.clinerules/guardrails.md` and `.clinerules/project.md` first.
 
 ## Reading the feature queue
 
-1. Read `FEATURES.md` — the status table at the top is the ordered work queue.
-2. Find the first `pending` feature (top-down = priority order).
-3. Check its **Tier** and **Depends on** fields in the spec below the table.
-4. If it has dependencies, verify they are `done` before proceeding.
+1. Use `linear_search_issues` MCP tool to find issues in the Bino team.
+2. Find the first issue in **Todo** or **Backlog** state with met dependencies.
+3. Check its **labels** and **priority** for context.
+4. If it has dependencies (mentioned in the description), verify they are `Done` in Linear before proceeding.
 
 ## Dispatching a feature
 
 ### Full pipeline (recommended)
 
-Say: `"Work on feature <slug> from FEATURES.md"`
+Say: `"Work on feature <slug> from Linear"`
 
 This triggers:
-1. Read the feature spec from FEATURES.md
+1. Read the feature spec from the Linear issue via MCP
 2. Analyze affected codebase areas
 3. Write `implementation_plan.md` in the worktree
 4. Commit the plan
@@ -46,7 +46,7 @@ This triggers:
 
 When asked to plan a feature:
 
-1. **Read FEATURES.md** — find the feature row and its full spec.
+1. **Read the Linear issue** via `linear_search_issues` MCP tool — get the full description and acceptance criteria.
 2. **Create the worktree** (if not already done):
    ```bash
    bash scripts/agent/setup-worktree.sh "<feature-slug>"
@@ -64,31 +64,33 @@ When asked to plan a feature:
    ```bash
    git add implementation_plan.md && git commit -m "docs: plan <feature-slug>"
    ```
-6. **Update FEATURES.md** status from `pending` to `planned`.
+6. **Update Linear issue** status from Backlog to Todo (or In Progress when starting).
 
 ## Implementation workflow
 
 When asked to implement a feature:
 
 1. **Confirm the plan exists** (`implementation_plan.md`). If not, plan first.
-2. **Ensure services are running:**
+2. **Update Linear issue** to `In Progress` via `linear_search_issues` + `linear_bulk_update_issues`.
+3. **Ensure services are running:**
    ```bash
    bash scripts/agent/run-services.sh
    ```
-3. **Implement the plan step by step.** After each meaningful step:
+4. **Implement the plan step by step.** After each meaningful step:
    - Run relevant tests
    - `git commit` with a conventional message
-4. **Add/extend pytest tests** for backend changes; keep the frontend building.
-5. **Finish the feature:**
+5. **Add/extend pytest tests** for backend changes; keep the frontend building.
+6. **Finish the feature:**
    ```bash
    bash scripts/agent/finish-feature.sh <slug>
    ```
    Handle exit codes: 0=done, 1=fix+re-run, 2=resolve conflicts+re-run.
-6. **Push to remote** after merge:
+7. **Push to remote** after merge:
    ```bash
    git push origin main
    ```
-7. **Update FEATURES.md** status to `done` and commit.
+8. **Update Linear issue** status to Done via `linear_bulk_update_issues`.
+9. **Generate feature docs** in `docs/features/` (via `gen-docs.sh` or manually).
 
 ## Validation workflow
 
@@ -109,15 +111,13 @@ Report results explicitly. If validation fails:
 Features in the same tier that share files should NOT be implemented in parallel
 (important when pausing/resuming):
 - Foundation features share: `config.py`, `dedupe.py`, `models.py`, `alembic/`
-- `price-history-tracking` depends on `property-listings-table`
-- `configurable-ai-models` depends on `config-yaml-loader`
-- `price-drop-alerts` depends on `price-history-tracking`
-- `olx-scraper` depends on `property-listings-table`
+- Check dependency relationships in Linear issue descriptions before starting
+- Dependencies are tracked in the issue description, not in a local file
 
 ## Tracking progress across sessions
 
 If a session is interrupted:
-1. Check `FEATURES.md` for the current status column.
-2. If `in-progress`, check the worktree for `implementation_plan.md` and
+1. Check Linear for the current issue status (use `linear_search_issues`).
+2. If `In Progress`, check the worktree for `implementation_plan.md` and
    `git log --oneline` to see what's been committed.
 3. Resume from the last committed step.

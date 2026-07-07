@@ -65,22 +65,28 @@ if ! grep -q "($SLUG.md)" "$INDEX"; then
   ok "linked in $INDEX"
 fi
 
-# --- Ensure the root README has a Features section that links the doc -------
-README="README.md"
-if [ -f "$README" ]; then
-  grep -qi '^## Features' "$README" || printf '\n## Features\n\nSee [docs/features/](docs/features/README.md).\n' >> "$README"
-  if ! grep -q "docs/features/$SLUG.md" "$README"; then
-    # Append the link right under the Features heading.
-    awk -v line="- [$TITLE](docs/features/$SLUG.md)" '
-      { print }
-      tolower($0) ~ /^## features/ && !done { print ""; print line; done=1 }
-    ' "$README" > "$README.tmp" && mv "$README.tmp" "$README"
-    ok "linked in $README"
+# --- Add to mkdocs.yml nav if present ---------------------------------------
+MKDOCS="mkdocs.yml"
+if [ -f "$MKDOCS" ]; then
+  # Add entry under "Features:" nav section if not already present
+  if ! grep -q "features/$SLUG.md" "$MKDOCS"; then
+    # Find the line with "- Config YAML Loader:" (last feature entry) and append after it
+    if grep -q "features/config-yaml-loader.md" "$MKDOCS"; then
+      sed -i "/features\/config-yaml-loader.md/a\\      - $TITLE: features/$SLUG.md" "$MKDOCS"
+      ok "added to $MKDOCS nav"
+    else
+      # Fallback: append to the Features nav section
+      awk -v slug="$SLUG" -v title="$TITLE" '
+        /features\/README\.md/ && !done { print; printf "      - %s: features/%s.md\n", title, slug; done=1; next }
+        { print }
+      ' "$MKDOCS" > "$MKDOCS.tmp" && mv "$MKDOCS.tmp" "$MKDOCS"
+      ok "added to $MKDOCS nav (fallback)"
+    fi
   fi
 fi
 
 echo ""
 echo "  Now WRITE the content in $DOC, then commit docs:"
-echo "    git add docs/ README.md && git commit -m \"docs: $TITLE\""
+echo "    git add docs/ mkdocs.yml README.md && git commit -m \"docs: $TITLE\""
 echo ""
 echo "$DOC"

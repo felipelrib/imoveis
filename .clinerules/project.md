@@ -14,16 +14,22 @@ models for AI enrichment.
 - `configs/app_config.yaml` — platforms, Redis, DB, `gpu.semaphore_limit`.
 - `alembic/` — DB migrations. `docker-compose.yml` — the stack.
 - `scripts/agent/*.sh` — the workflow tooling below.
+- `docs/` — published via MkDocs Material to GitHub Pages.
+- `docs/features/` — implementation notes per shipped feature (agentic validation).
 
 ## Feature workflow (single-agent Cline CLI)
+
+Features are tracked in **[Linear](https://linear.app/felipelrib/)** (team "Bino").
+Use `linear_search_issues` MCP tool to find the next issue to work on.
 
 Work through the shell scripts for each feature. The scripts handle port
 isolation and docker project names so parallel worktrees don't conflict.
 
 ### Lifecycle
 
-1. **Plan.** Write `implementation_plan.md` in the worktree (steps, files, tests, risks).
-   No implementation code before the plan exists.
+1. **Plan.** Read the Linear issue via MCP, then write `implementation_plan.md`
+   in the worktree (steps, files, tests, risks). No implementation code before
+   the plan exists.
 2. **Isolate workspace.** `bash scripts/agent/setup-worktree.sh <feature-slug>`
    creates `.worktrees/<slug>` on branch `feat/<slug>` with unique ports in
    `.env.local`. Then `cd` into that worktree. Never work on `main`.
@@ -40,6 +46,9 @@ isolation and docker project names so parallel worktrees don't conflict.
    - **Exit 1** → validation failed after merge — fix, commit, re-run.
 
    Flags: `--validate-only` (sync + validate without merging), `--skip-docs` (skip gen-docs), `--dry-run` (preview).
+
+7. **Update Linear.** Set the issue status to Done via Linear MCP.
+8. **Document.** Generate feature docs in `docs/features/` via `gen-docs.sh`.
 
 ### Pausing and switching features
 
@@ -63,8 +72,8 @@ cd .worktrees/feature-a
 ### Dispatching from Cline CLI
 
 To work a feature, say:
-- `"Work on feature <slug> from FEATURES.md"` — triggers the full workflow
-- `"Plan feature <slug> from FEATURES.md"` — creates the implementation plan
+- `"Work on feature <slug> from Linear"` — triggers the full workflow
+- `"Plan feature <slug>"` — creates the implementation plan
 - `"Implement feature <slug>"` — starts coding from the plan
 - `"Validate the current feature"` — runs validation only
 
@@ -72,10 +81,12 @@ You can also use skills: `/feature-pipeline`, `/validate-feature`, `/finish-feat
 
 ## Feature tracking
 
-- **FEATURES.md** — the local feature queue with status, tiers, and full specs.
-  Read the queue top-down: first pending feature with met dependencies is next.
-- **Linear board** — https://linear.app/felipelrib/ — the external tracker for
-  features, docs, and infrastructure tasks. Use the Linear MCP to update statuses.
+- **Linear board** — https://linear.app/felipelrib/ — the primary source of truth
+  for features, docs, and infrastructure tasks. All feature specs, statuses, and
+  dependencies live here. Use the Linear MCP to read issues and update statuses.
+- **FEATURES.md** — lightweight dispatch guide for Cline/Cursor. Points to Linear.
+- **docs/features/** — implementation notes per shipped feature (useful for
+  agentic validation and reference).
 
 ### Tiers (for reference, not used as Linear milestones)
 

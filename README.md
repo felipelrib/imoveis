@@ -52,9 +52,9 @@ scripts/agent/                    # Workflow tooling (worktree, services, valida
 
 ## Working on Features
 
-1. **Find next feature:** Check [FEATURES.md](FEATURES.md) or the [Linear board](https://linear.app/felipelrib/)
-2. **Tell Cline:** "Work on feature `<slug>` from FEATURES.md"
-3. **Cline will:** plan → implement → commit → validate → merge → cleanup
+1. **Find next feature:** Check the [Linear board](https://linear.app/felipelrib/) — the source of truth for all features
+2. **Tell Cline:** "Work on feature `<slug>` from Linear"
+3. **Cline will:** read issue → plan → implement → commit → validate → merge → update Linear
 
 ### Key commands
 
@@ -68,10 +68,16 @@ scripts/agent/                    # Workflow tooling (worktree, services, valida
 
 ## Documentation
 
-- [SETUP_GUIDE.md](docs/SETUP_GUIDE.md) — local environment setup
-- [local_agent_architecture.md](docs/local_agent_architecture.md) — Cline agent workflow
-- [docs/features/](docs/features/) — completed feature documentation
-- [Linear board](https://linear.app/felipelrib/) — feature queue, backlog, reference docs
+Full documentation is published via MkDocs Material: [docs/](docs/)
+
+| Doc | Description |
+|-----|-------------|
+| [Setup Guide](docs/setup.md) | Local environment setup |
+| [Architecture](docs/architecture.md) | System design, Cline workflow |
+| [API Reference](docs/api.md) | Endpoints and request/response formats |
+| [Feature Docs](docs/features/) | Implementation notes per shipped feature |
+| [Deployment](docs/deployment.md) | Production deployment guide |
+| [Linear Board](https://linear.app/felipelrib/) | Feature queue, issues, backlog |
 
 ## Configuration
 

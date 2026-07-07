@@ -1,0 +1,53 @@
+site_name: Imoveis — Deal Tracker
+site_description: Documentation for the real-estate deal-finding pipeline
+repo_url: https://github.com/felipelrib/imoveis
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Architecture: architecture.md
+  - Features:
+      - features/README.md
+      - Config YAML Loader: features/config-yaml-loader.md
+  - API Reference: api.md
+  - Deployment: deployment.md
+
+plugins:
+  - search
+  - minify:
+      minify_html: true

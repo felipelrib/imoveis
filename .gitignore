@@ -58,3 +58,6 @@ worker.log
 
 # Cline workspace files (local, not committed)
 .cline/
+
+# MkDocs build output
+site/
