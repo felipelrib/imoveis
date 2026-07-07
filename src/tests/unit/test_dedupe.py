@@ -76,10 +76,10 @@ class TestRecordPriceChange:
         insert_call = session.execute.call_args_list[1]
         sql = str(insert_call[0][0])
         assert "INSERT INTO price_history" in sql
+        assert "NULL" in sql  # open interval — end_ts is NULL in SQL
         params = insert_call[0][1]
         assert params["pid"] == "prop-1"
         assert params["price"] == 5000.0
-        assert params["end_ts"] is None  # open interval
 
     def test_unchanged_price_noop(self):
         """When the open interval has the same price, nothing is inserted."""
@@ -103,9 +103,10 @@ class TestRecordPriceChange:
         update_call = session.execute.call_args_list[1]
         assert "UPDATE price_history SET end_ts" in str(update_call[0][0])
         insert_call = session.execute.call_args_list[2]
-        assert "INSERT INTO price_history" in str(insert_call[0][0])
+        insert_sql = str(insert_call[0][0])
+        assert "INSERT INTO price_history" in insert_sql
+        assert "NULL" in insert_sql  # open interval
         assert insert_call[0][1]["price"] == 5500.0
-        assert insert_call[0][1]["end_ts"] is None
 
     def test_price_drop_still_records(self):
         """A price decrease is treated the same as an increase."""
