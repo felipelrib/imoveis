@@ -40,9 +40,18 @@ scraper_logs.txt
 
 # Local tools/cache
 .claude/
+.cline/
 .pytest_cache/
 opencode.jsonc
 ollama-provider.json
 
 # Data files
 qa_data.json
+
+# Parallel agent workspaces (git worktrees live here, per-worktree env, local memory)
+.worktrees/
+.env.local
+.goose/memory/
+
+# Cursor IDE
+.cursor/
