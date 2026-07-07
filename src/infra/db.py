@@ -6,7 +6,7 @@ from infra.config import get_config
 # Initialize engine and SessionLocal at import time
 _config = get_config()
 engine = create_engine(
-    _config.database_url,
+    _config.database.url,
     pool_pre_ping=True,
     pool_recycle=3600,
     pool_size=10,
