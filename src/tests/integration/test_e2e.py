@@ -30,13 +30,23 @@ from core.dedupe import find_candidates, match_or_create_property
 
 @pytest.fixture(scope="function")
 def test_db():
-    """Create an in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    """Create a database session for testing.
+
+    Uses DATABASE_URL env var (PostGIS) when available, otherwise skips.
+    """
+    import os
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
+
+    engine = create_engine(database_url, pool_pre_ping=True)
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
     yield session
     session.close()
+    engine.dispose()
 
 
 @pytest.fixture(scope="function")
@@ -47,11 +57,23 @@ def test_client():
 
 @pytest.fixture(scope="function")
 def mock_redis():
-    """Mock Redis client for testing without a real Redis instance."""
-    with patch("redis.Redis.from_url") as mock_from_url:
-        mock_client = MagicMock()
-        mock_from_url.return_value = mock_client
-        yield mock_client
+    """Use real Redis from CI when available, otherwise mock it."""
+    import os
+
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        import redis
+
+        client = redis.Redis.from_url(redis_url)
+        client.flushdb()
+        yield client
+        client.flushdb()
+        client.close()
+    else:
+        with patch("redis.Redis.from_url") as mock_from_url:
+            mock_client = MagicMock()
+            mock_from_url.return_value = mock_client
+            yield mock_client
 
 
 # ============================================================================
@@ -66,7 +88,10 @@ class TestAPIEndpoints:
         """Verify health check endpoint responds OK."""
         response = test_client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        data = response.json()
+        assert "status" in data
+        # Status may be "ok" or "degraded" depending on available services
+        assert data["status"] in ("ok", "degraded")
 
     def test_index_endpoint(self, test_client):
         """Verify index endpoint returns service info."""
@@ -245,6 +270,12 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_opens_on_failures(self):
         """Test that circuit breaker opens after threshold failures."""
+        import os
+
+        redis_url = os.environ.get("REDIS_URL")
+        if not redis_url:
+            pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
+
         cb = RedisCircuitBreaker(platform="test", failure_threshold=3, cooldown_seconds=60)
 
         assert not cb.is_open()
@@ -260,6 +291,12 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_resets_on_success(self):
         """Test that circuit breaker resets on success."""
+        import os
+
+        redis_url = os.environ.get("REDIS_URL")
+        if not redis_url:
+            pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
+
         cb = RedisCircuitBreaker(platform="test", failure_threshold=2, cooldown_seconds=1)
 
         cb.record_failure()

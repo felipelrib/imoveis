@@ -20,20 +20,23 @@ from core.entities import PropertyCandidate
 
 @pytest.fixture()
 def session():
-    """Create an in-memory SQLite session with only non-geometry tables."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    # Only create tables that don't depend on PostGIS geometry functions
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Property.__table__,
-            PropertyListing.__table__,
-        ],
-    )
+    """Create a database session for testing.
+
+    Uses DATABASE_URL env var (PostGIS) when available, otherwise skips.
+    """
+    import os
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     s = Session()
     yield s
     s.close()
+    engine.dispose()
 
 
 def _make_candidate(**overrides) -> PropertyCandidate:
