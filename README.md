@@ -11,3 +11,7 @@ Quickstart (developer):
 - Start AI workers: celery -A src.adapters.queue.tasks.celery worker -Q ai -c 1
 
 See docs/rocm_directml_setup.md for GPU guidance.
+
+## Features
+
+- [config-yaml-loader](docs/features/config-yaml-loader.md)
