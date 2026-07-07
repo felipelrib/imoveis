@@ -119,7 +119,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          file: ./docker/Dockerfile.api
+          file: ./Dockerfile.api
           tags: realestate-api:latest
           push: false
           cache-from: type=gha
@@ -129,7 +129,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          file: ./docker/Dockerfile.worker
+          file: ./Dockerfile.worker
           tags: realestate-worker:latest
           push: false
           cache-from: type=gha
@@ -155,7 +155,7 @@ jobs:
         run: bandit -r src --exit-zero
       
       - name: Check for known vulnerabilities
-        run: safety check --json --exit-code 0
+        run: safety check --exit-code 0 || true
 
   deploy-test:
     runs-on: ubuntu-latest

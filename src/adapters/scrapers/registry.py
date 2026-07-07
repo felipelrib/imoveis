@@ -28,7 +28,7 @@ class ScraperRegistry:
             raise ValueError(f"No scraper registered for platform '{platform_name}'")
             
         scraper_cls = cls._registry[platform_name]
-        return scraper_cls(platform_config)
+        return scraper_cls(platform_name, platform_config)
 
     @classmethod
     def available(cls) -> list[str]:
