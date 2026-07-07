@@ -8,6 +8,7 @@
 def __getattr__(name: str):  # noqa: ANN001
     if name == "match_or_create_property":
         from .dedupe import match_or_create_property
+
         return match_or_create_property
     if name in {
         "DedupeResult",
@@ -18,5 +19,6 @@ def __getattr__(name: str):  # noqa: ANN001
         "VisualAnalysisResult",
     }:
         from . import entities
+
         return getattr(entities, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

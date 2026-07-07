@@ -6,6 +6,7 @@ Replaces the original global in-memory approach with:
 - Single-query bulk recalculation when weights change (instantaneous)
 - score_single_property() for post-AI-enrichment updates
 """
+
 from __future__ import annotations
 
 import math
@@ -55,11 +56,12 @@ def compute_neighborhood_stats(
     )
 
     where_clause = (
-        "AND COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = :nkey" if neighborhood_key is not None else ""
+        "AND COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = :nkey"
+        if neighborhood_key is not None
+        else ""
     )
 
-    sql = text(
-        f"""
+    sql = text(f"""
         WITH medians AS (
             SELECT
                 COALESCE(neighborhood_id::text, props_json->>'neighborhood', 'Unknown') as n_key,
@@ -102,8 +104,7 @@ def compute_neighborhood_stats(
             END AS z_score,
             percentile_rank
         FROM stats
-        """
-    )
+        """)
 
     params: dict = {}
     if neighborhood_key is not None:
@@ -121,7 +122,7 @@ def compute_neighborhood_stats(
         pct_rank = float(row[5]) if row[5] is not None else 0.5
 
         stat_score = _sigmoid_undervalued(z)
-        
+
         stat_category = "Average"
         stat_reasoning = "Priced closely to the neighborhood average."
         if z < -1.0:
@@ -139,11 +140,7 @@ def compute_neighborhood_stats(
 
         stat_analysis = {"category": stat_category, "reasoning": stat_reasoning}
 
-        ms = (
-            session.query(MetricsScoring)
-            .filter_by(property_id=prop_id)
-            .one_or_none()
-        )
+        ms = session.query(MetricsScoring).filter_by(property_id=prop_id).one_or_none()
         if ms is None:
             ms = MetricsScoring(
                 property_id=prop_id,
@@ -167,7 +164,7 @@ def compute_neighborhood_stats(
             ms.percentile_rank = pct_rank
             ai = float(ms.ai_score or 0.0)
             ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
-            
+
             meta = dict(ms.meta or {})
             meta["stat_analysis"] = stat_analysis
             ms.meta = meta
@@ -204,15 +201,13 @@ def recalculate_all_combined_scores(
         )
 
     result = session.execute(
-        text(
-            """
+        text("""
             UPDATE metrics_scoring
             SET combined_score =
                     COALESCE(stat_score, 0) * :w_stat
                     + COALESCE(ai_score, 0)  * :w_ai,
                 updated_at = NOW()
-            """
-        ),
+            """),
         {"w_stat": weights.stat_weight, "w_ai": weights.ai_weight},
     )
     count = result.rowcount
@@ -248,10 +243,14 @@ def score_single_property(session: Session, property_id: str) -> None:
         logger.warning("score_single_property_not_found", property_id=property_id)
         return
 
-    n_key = (str(prop.neighborhood_id) if prop.neighborhood_id else None) or (prop.props_json or {}).get('neighborhood') or 'Unknown'
+    n_key = (
+        (str(prop.neighborhood_id) if prop.neighborhood_id else None)
+        or (prop.props_json or {}).get("neighborhood")
+        or "Unknown"
+    )
     compute_neighborhood_stats(session, neighborhood_key=n_key)
 
-    # Note: the single row's fallback code was removed because we now 
+    # Note: the single row's fallback code was removed because we now
     # always group by n_key and compute neighborhood stats properly.
 
     logger.info("single_property_scored", property_id=property_id)

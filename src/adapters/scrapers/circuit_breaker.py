@@ -1,14 +1,17 @@
-from dataclasses import dataclass
-from typing import Optional, Dict
 import time
+from dataclasses import dataclass
+from typing import Dict, Optional
+
 
 @dataclass
 class CircuitBreakerState:
     """Represents the state of a circuit breaker."""
+
     is_open: bool = False
     failure_count: int = 0
     last_failure_time: Optional[float] = None
     cooldown_end_time: Optional[float] = None
+
 
 class CircuitBreaker:
     """Simple in-process circuit breaker.
@@ -33,11 +36,11 @@ class CircuitBreaker:
         """Check if the circuit breaker is currently open."""
         if not self._state.is_open:
             return False
-            
+
         # If we're in cooldown, check if it's time to retry
         if self._state.cooldown_end_time and time.time() < self._state.cooldown_end_time:
             return True
-            
+
         # Cooldown expired, reset state
         self._state = CircuitBreakerState()
         return False
@@ -46,10 +49,10 @@ class CircuitBreaker:
         """Record a failure in the circuit breaker."""
         if self.is_open():
             return
-            
+
         self._state.failure_count += 1
         self._state.last_failure_time = time.time()
-        
+
         if self._state.failure_count >= self.failure_threshold:
             self._state.is_open = True
             self._state.cooldown_end_time = time.time() + self.cooldown_seconds

@@ -1,4 +1,5 @@
 """Unit tests for the YAML config loader with Pydantic validation."""
+
 from __future__ import annotations
 
 import os
@@ -6,9 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from src.infra.config import AppConfig, DatabaseConfig, load_config, get_config
 from src.core.exceptions import ConfigError
-
+from src.infra.config import AppConfig, DatabaseConfig, get_config, load_config
 
 # ---------------------------------------------------------------------------
 # Helpers

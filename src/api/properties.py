@@ -1,4 +1,5 @@
 """Properties query API — used by the GUI property browser."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -61,17 +62,17 @@ def list_properties(
         if min_score is not None:
             filters.append("COALESCE(ms.combined_score, 0) >= :min_score")
             params["min_score"] = min_score
-            
-        if listing_type and listing_type != 'both':
+
+        if listing_type and listing_type != "both":
             filters.append(f"(p.props_json->>'available_for_{listing_type}')::boolean = true")
-            
+
         if property_type:
             filters.append("p.props_json->>'type' ILIKE :property_type")
             params["property_type"] = f"%{property_type}%"
-            
+
         if is_furnished is not None:
             filters.append(f"(p.props_json->>'isFurnished')::boolean = {'true' if is_furnished else 'false'}")
-            
+
         if accepts_pets is not None:
             if accepts_pets:
                 filters.append("p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'")
@@ -158,47 +159,49 @@ def list_properties(
             visual = meta.get("visual", {})
             sentiment = meta.get("sentiment", {})
             props_json = row[22] or {}
-            
+
             neighborhood_name_val = row[19] or props_json.get("neighborhood")
-            
-            properties.append({
-                "id": str(row[0]),
-                "platform": row[1],
-                "platform_id": row[2],
-                "title": row[3],
-                "price": row[4],
-                "area_m2": row[5],
-                "bedrooms": row[6],
-                "bathrooms": row[7],
-                "address": row[8],
-                "image_urls": row[9] or [],
-                "created_at": row[10].isoformat() if row[10] else None,
-                "stat_score": round(float(row[11]), 3) if row[11] is not None else None,
-                "ai_score": round(float(row[12]), 3) if row[12] is not None else None,
-                "combined_score": round(float(row[13]), 3) if row[13] is not None else None,
-                "percentile_rank": round(float(row[14]), 3) if row[14] is not None else None,
-                "z_score": round(float(row[15]), 3) if row[15] is not None else None,
-                "price_per_m2": round(float(row[16]), 2) if row[16] is not None else None,
-                "neighborhood_mean": round(float(row[17]), 2) if row[17] is not None else None,
-                "neighborhood_name": neighborhood_name_val,
-                "parking": row[20],
-                "description": row[21],
-                "available_for_rent": props_json.get("available_for_rent", False),
-                "available_for_sale": props_json.get("available_for_sale", False),
-                "ai_features": visual.get("features_detected", []),
-                "ai_issues": visual.get("issues_detected", []),
-                "ai_green_flags": sentiment.get("green_flags", []),
-                "ai_red_flags": sentiment.get("red_flags", []),
-                "condition_score": visual.get("condition_score"),
-                "sentiment_score": sentiment.get("sentiment_score"),
-                "stat_category": meta.get("stat_analysis", {}).get("category"),
-                "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
-                "visual_category": visual.get("category"),
-                "visual_reasoning": visual.get("reasoning"),
-                "sentiment_category": sentiment.get("category"),
-                "sentiment_reasoning": sentiment.get("reasoning"),
-                "listings": row[23] or [],
-            })
+
+            properties.append(
+                {
+                    "id": str(row[0]),
+                    "platform": row[1],
+                    "platform_id": row[2],
+                    "title": row[3],
+                    "price": row[4],
+                    "area_m2": row[5],
+                    "bedrooms": row[6],
+                    "bathrooms": row[7],
+                    "address": row[8],
+                    "image_urls": row[9] or [],
+                    "created_at": row[10].isoformat() if row[10] else None,
+                    "stat_score": (round(float(row[11]), 3) if row[11] is not None else None),
+                    "ai_score": (round(float(row[12]), 3) if row[12] is not None else None),
+                    "combined_score": (round(float(row[13]), 3) if row[13] is not None else None),
+                    "percentile_rank": (round(float(row[14]), 3) if row[14] is not None else None),
+                    "z_score": (round(float(row[15]), 3) if row[15] is not None else None),
+                    "price_per_m2": (round(float(row[16]), 2) if row[16] is not None else None),
+                    "neighborhood_mean": (round(float(row[17]), 2) if row[17] is not None else None),
+                    "neighborhood_name": neighborhood_name_val,
+                    "parking": row[20],
+                    "description": row[21],
+                    "available_for_rent": props_json.get("available_for_rent", False),
+                    "available_for_sale": props_json.get("available_for_sale", False),
+                    "ai_features": visual.get("features_detected", []),
+                    "ai_issues": visual.get("issues_detected", []),
+                    "ai_green_flags": sentiment.get("green_flags", []),
+                    "ai_red_flags": sentiment.get("red_flags", []),
+                    "condition_score": visual.get("condition_score"),
+                    "sentiment_score": sentiment.get("sentiment_score"),
+                    "stat_category": meta.get("stat_analysis", {}).get("category"),
+                    "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
+                    "visual_category": visual.get("category"),
+                    "visual_reasoning": visual.get("reasoning"),
+                    "sentiment_category": sentiment.get("category"),
+                    "sentiment_reasoning": sentiment.get("reasoning"),
+                    "listings": row[23] or [],
+                }
+            )
 
         return {
             "total": total,
@@ -252,6 +255,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
         row = session.execute(sql, {"id": property_id}).fetchone()
         if row is None:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404, detail="Property not found")
 
         meta = row[22] or {}
@@ -303,6 +307,7 @@ def get_price_history(property_id: str) -> List[Dict[str, Any]]:
         ).fetchone()
         if check is None:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404, detail="Property not found")
 
         rows = session.execute(

@@ -6,6 +6,7 @@ Usage:
     from infra.redis_client import get_redis
     r = get_redis()
 """
+
 from __future__ import annotations
 
 from typing import Optional

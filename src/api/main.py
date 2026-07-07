@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
@@ -21,7 +22,11 @@ app = FastAPI(
 # CORS — allow the Vite dev server and any local origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,8 +46,10 @@ def index():
 def health():
     status: dict = {"db": "unknown", "redis": "unknown"}
     try:
-        from infra.db import engine
         import sqlalchemy
+
+        from infra.db import engine
+
         with engine.connect() as conn:
             conn.execute(sqlalchemy.text("SELECT 1"))
         status["db"] = "ok"
@@ -50,6 +57,7 @@ def health():
         status["db"] = f"error: {exc}"
     try:
         from infra.redis_client import get_redis
+
         get_redis().ping()
         status["redis"] = "ok"
     except Exception as exc:
@@ -67,11 +75,10 @@ class ScrapeRequest(BaseModel):
 @app.post("/scrape", tags=["ingestion"])
 def trigger_scrape(req: ScrapeRequest):
     try:
-        from adapters.queue.tasks import scrape_listings
-        from adapters.scrapers.registry import ScraperRegistry
-
         # Import scrapers so they self-register
         import adapters.scrapers.quintoandar  # noqa: F401
+        from adapters.queue.tasks import scrape_listings
+        from adapters.scrapers.registry import ScraperRegistry
 
         available = ScraperRegistry.available()
         if req.platform not in available:
@@ -82,7 +89,12 @@ def trigger_scrape(req: ScrapeRequest):
         checkpoint = req.checkpoint or {}
         checkpoint["scrape_type"] = req.scrape_type
         task = scrape_listings.delay(req.platform, checkpoint)
-        logger.info("scrape_enqueued", platform=req.platform, scrape_type=req.scrape_type, task_id=task.id)
+        logger.info(
+            "scrape_enqueued",
+            platform=req.platform,
+            scrape_type=req.scrape_type,
+            task_id=task.id,
+        )
         return {"task_id": task.id, "platform": req.platform, "status": "queued"}
     except HTTPException:
         raise
@@ -97,13 +109,16 @@ def list_platforms():
     import adapters.scrapers.quintoandar  # noqa: F401 — triggers registration
     from adapters.scrapers.registry import ScraperRegistry
     from infra.config import get_config
+
     cfg = get_config()
     result = []
     for name in ScraperRegistry.available():
         pcfg = cfg.platforms.get(name)
-        result.append({
-            "name": name,
-            "enabled": pcfg.enabled if pcfg else True,
-            "rate_limit": pcfg.rate_limit if pcfg else None,
-        })
+        result.append(
+            {
+                "name": name,
+                "enabled": pcfg.enabled if pcfg else True,
+                "rate_limit": pcfg.rate_limit if pcfg else None,
+            }
+        )
     return result

@@ -1,15 +1,16 @@
 """System status and control API — used by the GUI control panel."""
+
 from __future__ import annotations
 
 import subprocess
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
-from api.auth import verify_api_key
 
+from api.auth import verify_api_key
+from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
-from infra.config import get_config
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
@@ -22,8 +23,10 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 def _check_db() -> dict:
     try:
-        from infra.db import engine
         import sqlalchemy
+
+        from infra.db import engine
+
         with engine.connect() as conn:
             conn.execute(sqlalchemy.text("SELECT 1"))
         return {"status": "ok"}
@@ -42,6 +45,7 @@ def _check_redis() -> dict:
 def _check_ollama() -> dict:
     try:
         import httpx
+
         r = httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=3)
         models = [m["name"] for m in (r.json().get("models") or [])]
         return {"status": "ok", "models": models}
@@ -51,8 +55,10 @@ def _check_ollama() -> dict:
 
 def _count_properties() -> int:
     try:
-        from infra.db import SessionLocal
         import sqlalchemy
+
+        from infra.db import SessionLocal
+
         s = SessionLocal()
         try:
             result = s.execute(sqlalchemy.text("SELECT COUNT(*) FROM properties")).scalar()
@@ -65,14 +71,14 @@ def _count_properties() -> int:
 
 def _count_enriched() -> int:
     try:
-        from infra.db import SessionLocal
         import sqlalchemy
+
+        from infra.db import SessionLocal
+
         s = SessionLocal()
         try:
             result = s.execute(
-                sqlalchemy.text(
-                    "SELECT COUNT(*) FROM metrics_scoring WHERE ai_score IS NOT NULL AND ai_score > 0"
-                )
+                sqlalchemy.text("SELECT COUNT(*) FROM metrics_scoring WHERE ai_score IS NOT NULL AND ai_score > 0")
             ).scalar()
             return int(result or 0)
         finally:
@@ -109,6 +115,7 @@ def ensure_ollama():
     """Attempt to start ollama serve if not already running."""
     try:
         import httpx
+
         httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=2)
         return {"status": "already_running"}
     except Exception:
@@ -124,6 +131,7 @@ def ensure_ollama():
     except FileNotFoundError:
         return {"status": "error", "detail": "ollama not found on PATH"}
 
+
 # ---------------------------------------------------------------------------
 # Pipeline Tracking
 # ---------------------------------------------------------------------------
@@ -133,13 +141,14 @@ def ensure_ollama():
 def system_pipeline() -> Dict[str, Any]:
     """Return live status of the ingestion pipeline (queues and active tasks)."""
     import json
+
     r = get_redis()
-    
+
     # Celery default queue lengths in Redis
     # Note: Using LLEN on the queue names returns the number of pending tasks
     scrapers_queued = r.llen("scrapers")
     ai_queued = r.llen("ai")
-    
+
     # Get active scraper statuses
     # We look for all keys matching pipeline:scraper:*:status
     scrapers_status = {}
@@ -153,9 +162,14 @@ def system_pipeline() -> Dict[str, Any]:
 
     # AI Telemetry
     ai_telemetry = r.lrange("pipeline:ai:telemetry", 0, -1)
-    ai_metrics = {"throughput_per_min": 0, "avg_duration_sec": 0, "total_recorded": len(ai_telemetry)}
+    ai_metrics = {
+        "throughput_per_min": 0,
+        "avg_duration_sec": 0,
+        "total_recorded": len(ai_telemetry),
+    }
     if ai_telemetry:
         import time
+
         now = time.time()
         durations = []
         recent_count = 0
@@ -163,11 +177,11 @@ def system_pipeline() -> Dict[str, Any]:
             try:
                 data = json.loads(item)
                 durations.append(data["duration"])
-                if now - data["timestamp"] <= 300: # Last 5 minutes
+                if now - data["timestamp"] <= 300:  # Last 5 minutes
                     recent_count += 1
             except Exception:
                 pass
-        
+
         if durations:
             ai_metrics["avg_duration_sec"] = round(sum(durations) / len(durations), 2)
         # throughput = items in last 5 min / 5
@@ -179,5 +193,5 @@ def system_pipeline() -> Dict[str, Any]:
             "ai": ai_queued,
         },
         "scrapers_status": scrapers_status,
-        "ai_metrics": ai_metrics
+        "ai_metrics": ai_metrics,
     }

@@ -1,5 +1,7 @@
-from typing import Type, Dict, Any
+from typing import Any, Dict, Type
+
 from adapters.scrapers.base import BaseScraper
+
 
 class ScraperRegistry:
     """Central registry that maps platform name → scraper class.
@@ -26,7 +28,7 @@ class ScraperRegistry:
         """Get a ready-to-use scraper instance for *platform_name*."""
         if platform_name not in cls._registry:
             raise ValueError(f"No scraper registered for platform '{platform_name}'")
-            
+
         scraper_cls = cls._registry[platform_name]
         return scraper_cls(platform_name, platform_config)
 

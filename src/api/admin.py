@@ -6,12 +6,13 @@ Fixes from gap analysis:
 - Added POST /admin/scoring/recalculate for dynamic weight recalculation
 - Added POST /admin/scoring/weights to persist weights to Redis
 """
+
 from __future__ import annotations
 
 import json
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from adapters.metrics.scoring import (
@@ -19,11 +20,11 @@ from adapters.metrics.scoring import (
     recalculate_all_combined_scores,
 )
 from adapters.queue.gpu_semaphore import GPUSemaphore
+from api.auth import verify_api_key
 from core.entities import ScoringWeights
 from infra.db import get_session
 from infra.logging import get_logger
 from infra.redis_client import get_redis
-from api.auth import verify_api_key
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_api_key)])

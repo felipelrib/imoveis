@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any, Iterator, Dict, List
+from typing import Any, Dict, Iterator, List
+
+
 class CircuitBreakerException(Exception):
     """Exception raised when a circuit breaker is open."""
+
     pass
+
 
 class BaseScraper(ABC):
     """Base interface for scraper adapters.
@@ -25,9 +29,10 @@ class BaseScraper(ABC):
 
     def __enter__(self):
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         import asyncio
+
         # We need to call async close() but we are in a sync context manager
         # If tasks.py uses `with scraper:`, it's sync. If it should be async, `tasks.py` is wrong.
         # Let's provide a sync __exit__ that runs the async close in the event loop.

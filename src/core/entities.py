@@ -1,6 +1,8 @@
-from pydantic import BaseModel, validator
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, validator
+
 
 class LocationData(BaseModel):
     """Location information for a property."""
@@ -13,11 +15,12 @@ class LocationData(BaseModel):
     latitude: float
     longitude: float
 
-    @validator('address')
+    @validator("address")
     def validate_address(cls, v):
         if not v or len(v.strip()) == 0:
-            raise ValueError('Address cannot be empty')
+            raise ValueError("Address cannot be empty")
         return v.strip()
+
 
 class ListingInfo(BaseModel):
     """Information about a property listing."""
@@ -31,11 +34,12 @@ class ListingInfo(BaseModel):
     parking_spaces: int
     area: float
 
-    @validator('title')
+    @validator("title")
     def validate_title(cls, v):
         if not v or len(v.strip()) == 0:
-            raise ValueError('Title cannot be empty')
+            raise ValueError("Title cannot be empty")
         return v.strip()
+
 
 class PropertyCandidate(BaseModel):
     """Validated scraper output.  All scrapers must produce this before DB persistence."""
@@ -49,24 +53,25 @@ class PropertyCandidate(BaseModel):
     bedrooms: Optional[int] = None
     bathrooms: Optional[int] = None
     parking: Optional[int] = None
-    location: Optional[dict] = None      # {"lat": float, "lon": float}
+    location: Optional[dict] = None  # {"lat": float, "lon": float}
     address: Optional[str] = None
     image_urls: Optional[List[str]] = []
     props_json: Optional[dict] = None
     listings: Optional[List[dict]] = None
     currency: Optional[str] = "BRL"
 
-    @validator('platform_id')
+    @validator("platform_id")
     def coerce_platform_id(cls, v):
         if not v:
-            raise ValueError('Platform ID cannot be empty')
+            raise ValueError("Platform ID cannot be empty")
         return str(v)
 
-    @validator('price')
+    @validator("price")
     def validate_price(cls, v):
         if v <= 0:
-            raise ValueError('Price must be positive')
+            raise ValueError("Price must be positive")
         return v
+
 
 class DedupeResult(BaseModel):
     """Result of deduplication process."""
@@ -74,19 +79,21 @@ class DedupeResult(BaseModel):
     is_duplicate: bool
     matched_property_id: Optional[str] = None
 
+
 class ScoringWeights(BaseModel):
     """Blending weights for statistical vs. AI scores."""
 
     ai_weight: float = 0.5
     stat_weight: float = 0.5
 
-    @validator('ai_weight', 'stat_weight')
+    @validator("ai_weight", "stat_weight")
     def weights_must_sum_to_one(cls, v, values):
-        if 'ai_weight' in values or 'stat_weight' in values:
-            other_weight = values.get('stat_weight', 0.5) if 'ai_weight' not in values else values.get('ai_weight', 0.5)
+        if "ai_weight" in values or "stat_weight" in values:
+            other_weight = values.get("stat_weight", 0.5) if "ai_weight" not in values else values.get("ai_weight", 0.5)
             # We can't strictly validate during sequential field assignment easily in v1 without checking both
             # so we just let it pass or check if both are present
         return v
+
 
 class VisualAnalysisResult(BaseModel):
     """Result of visual analysis (image processing)."""
@@ -94,6 +101,7 @@ class VisualAnalysisResult(BaseModel):
     sentiment: str
     features: List[str] = []
     confidence: float = 0.0
+
 
 class SentimentAnalysisResult(BaseModel):
     """Result of sentiment analysis."""

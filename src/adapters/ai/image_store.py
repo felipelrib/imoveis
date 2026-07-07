@@ -4,6 +4,7 @@ Downloaded images are stored under ``{base_path}/{property_id}/{hash}.jpg``
 and de-duplicated by MD5 content hash so repeated scrapes don't waste disk
 space or VLM tokens.
 """
+
 from __future__ import annotations
 
 import base64
@@ -58,9 +59,7 @@ class ImageStore:
             )
             return saved_paths[:max_images]
 
-        async with httpx.AsyncClient(
-            timeout=30, follow_redirects=True
-        ) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             for url in urls:
                 if remaining <= 0:
                     break

@@ -4,27 +4,29 @@ Tests cover API endpoints, deduplication, scraping, and async task processing.
 
 Run with: pytest src/tests/integration/ -v
 """
-import pytest
+
 import json
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+import redis
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-import redis
 
 # Assuming project is added to PYTHONPATH or run from project root
-from adapters.db.models import Base, Property, PriceHistory, MetricsScoring
-from api.main import app
-from core.dedupe import match_or_create_property, find_candidates
-from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
-from adapters.scrapers.base import BaseScraper
+from adapters.db.models import Base, MetricsScoring, PriceHistory, Property
 from adapters.queue.gpu_semaphore import GPUSemaphore
-from fastapi.testclient import TestClient
-
+from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
+from api.main import app
+from core.dedupe import find_candidates, match_or_create_property
 
 # ============================================================================
 # Fixtures
 # ============================================================================
+
 
 @pytest.fixture(scope="function")
 def test_db():
@@ -46,7 +48,7 @@ def test_client():
 @pytest.fixture(scope="function")
 def mock_redis():
     """Mock Redis client for testing without a real Redis instance."""
-    with patch('redis.Redis.from_url') as mock_from_url:
+    with patch("redis.Redis.from_url") as mock_from_url:
         mock_client = MagicMock()
         mock_from_url.return_value = mock_client
         yield mock_client
@@ -55,6 +57,7 @@ def mock_redis():
 # ============================================================================
 # API Tests
 # ============================================================================
+
 
 class TestAPIEndpoints:
     """Test FastAPI endpoints."""
@@ -102,7 +105,11 @@ class TestAPIEndpoints:
 
     def test_gpu_scale_endpoint(self, test_client, mock_redis):
         """Test GPU scaling endpoint."""
-        response = test_client.post("/admin/gpu/scale", json={"limit": 2}, headers={"X-API-Key": "imoveis_secret"})
+        response = test_client.post(
+            "/admin/gpu/scale",
+            json={"limit": 2},
+            headers={"X-API-Key": "imoveis_secret"},
+        )
         assert response.status_code == 200
         assert response.json() == {"gpu_limit": 2}
 
@@ -110,6 +117,7 @@ class TestAPIEndpoints:
 # ============================================================================
 # Deduplication Tests
 # ============================================================================
+
 
 class TestDeduplication:
     """Test deduplication logic."""
@@ -130,12 +138,12 @@ class TestDeduplication:
             "address": "Rua A, 100, São Paulo, SP",
             "props_json": {"raw": "data"},
         }
-        
+
         result = match_or_create_property(test_db, incoming)
-        
+
         assert result["action"] == "created"
         assert "property_id" in result
-        
+
         # Verify property was persisted
         prop = test_db.query(Property).filter_by(platform_id="123456").first()
         assert prop is not None
@@ -161,7 +169,7 @@ class TestDeduplication:
         }
         result1 = match_or_create_property(test_db, incoming1)
         assert result1["action"] == "created"
-        
+
         # Try to ingest same property (duplicate)
         incoming2 = {
             "platform": "olx",
@@ -200,7 +208,7 @@ class TestDeduplication:
         }
         result1 = match_or_create_property(test_db, incoming1)
         prop_id = result1["property_id"]
-        
+
         # Update with new price
         incoming2 = {
             "platform": "quintoandar",
@@ -217,10 +225,10 @@ class TestDeduplication:
             "props_json": {},
         }
         result2 = match_or_create_property(test_db, incoming2)
-        
+
         assert result2["action"] == "updated"
         assert result2["property_id"] == prop_id
-        
+
         # Verify price history
         history = test_db.query(PriceHistory).filter_by(property_id=prop_id).all()
         assert len(history) > 0
@@ -231,20 +239,21 @@ class TestDeduplication:
 # Circuit Breaker Tests
 # ============================================================================
 
+
 class TestCircuitBreaker:
     """Test circuit breaker pattern for resilience."""
 
     def test_circuit_breaker_opens_on_failures(self):
         """Test that circuit breaker opens after threshold failures."""
         cb = RedisCircuitBreaker(platform="test", failure_threshold=3, cooldown_seconds=60)
-        
+
         assert not cb.is_open()
-        
+
         # Record 2 failures (below threshold)
         cb.record_failure()
         cb.record_failure()
         assert not cb.is_open()
-        
+
         # Record 3rd failure (threshold met)
         cb.record_failure()
         assert cb.is_open()
@@ -252,11 +261,11 @@ class TestCircuitBreaker:
     def test_circuit_breaker_resets_on_success(self):
         """Test that circuit breaker resets on success."""
         cb = RedisCircuitBreaker(platform="test", failure_threshold=2, cooldown_seconds=1)
-        
+
         cb.record_failure()
         cb.record_failure()
         assert cb.is_open()
-        
+
         cb.record_success()
         assert not cb.is_open()
 
@@ -265,6 +274,7 @@ class TestCircuitBreaker:
 # GPU Semaphore Tests
 # ============================================================================
 
+
 class TestGPUSemaphore:
     """Test GPU resource semaphore."""
 
@@ -272,15 +282,15 @@ class TestGPUSemaphore:
         """Test basic semaphore acquire and release."""
         # Note: This test uses mocked Redis
         sem = GPUSemaphore(name="gpu", max_concurrent=1)
-        
+
         # Mock Redis behavior
         sem.r = mock_redis
         mock_redis.decr.return_value = 0  # Acquired
         mock_redis.incr.return_value = 1  # Released
-        
+
         acquired = sem.acquire(timeout=5)
         assert acquired is not None
-        
+
         sem.release()
         mock_redis.incr.assert_called()
 
@@ -289,58 +299,61 @@ class TestGPUSemaphore:
 # Scraper Interface Tests
 # ============================================================================
 
+
 class TestScraperInterface:
     """Test scraper base interface and implementations."""
 
     def test_base_scraper_interface(self):
         """Test that BaseScraper enforces required methods."""
+
         class MinimalScraper(BaseScraper):
             def start(self):
                 pass
-            
+
             def fetch_pages(self, checkpoint):
                 yield {"id": 1, "price": 100}
-            
+
             def normalize(self, raw):
                 return {"platform_id": raw["id"]}
-        
+
         scraper = MinimalScraper("test", {})
         scraper.start()
-        
+
         pages = list(scraper.fetch_pages({}))
         assert len(pages) == 1
-        
+
         normalized = scraper.normalize(pages[0])
         assert "platform_id" in normalized
 
     def test_scraper_with_checkpoint(self):
         """Test scraper checkpoint persistence."""
+
         class PagedScraper(BaseScraper):
             def __init__(self, platform_name: str, config: dict):
                 super().__init__(platform_name, config)
                 self.max_pages = 3
-            
+
             def start(self):
                 pass
-            
+
             def fetch_pages(self, checkpoint):
                 page = checkpoint.get("page", 1)
                 while page <= self.max_pages:
                     yield {"page": page, "items": []}
                     page += 1
                     checkpoint["page"] = page
-            
+
             def normalize(self, raw):
                 return raw
-        
+
         scraper = PagedScraper("test", {})
         checkpoint = {"page": 1}
         scraper.start()
-        
+
         pages = []
         for page_data in scraper.fetch_pages(checkpoint):
             pages.append(page_data)
-        
+
         assert len(pages) == 3
         assert checkpoint["page"] == 4  # Advanced by fetch_pages
 
@@ -348,6 +361,7 @@ class TestScraperInterface:
 # ============================================================================
 # Metrics Scoring Tests
 # ============================================================================
+
 
 class TestMetricsScoring:
     """Test scoring and metrics computation."""
@@ -363,18 +377,18 @@ class TestMetricsScoring:
         )
         test_db.add(prop)
         test_db.commit()
-        
+
         # Create scoring record
         scoring = MetricsScoring(
             property_id=prop.id,
             stat_score=0.65,
             ai_score=0.72,
             combined_score=0.685,
-            meta={"neighborhood": "Downtown", "condition": "Good"}
+            meta={"neighborhood": "Downtown", "condition": "Good"},
         )
         test_db.add(scoring)
         test_db.commit()
-        
+
         # Verify
         result = test_db.query(MetricsScoring).filter_by(property_id=prop.id).first()
         assert result is not None
@@ -386,6 +400,7 @@ class TestMetricsScoring:
 # ============================================================================
 # End-to-End Workflow Tests
 # ============================================================================
+
 
 class TestEndToEndWorkflow:
     """Test complete ingestion workflow."""
@@ -407,11 +422,11 @@ class TestEndToEndWorkflow:
             "address": "Rua A, 100",
             "props_json": {"images": ["img1.jpg"]},
         }
-        
+
         result1 = match_or_create_property(test_db, prop1_data)
         assert result1["action"] == "created"
         prop1_id = result1["property_id"]
-        
+
         # Step 2: Create scoring record
         scoring1 = MetricsScoring(
             property_id=prop1_id,
@@ -421,7 +436,7 @@ class TestEndToEndWorkflow:
         )
         test_db.add(scoring1)
         test_db.commit()
-        
+
         # Step 3: Ingest duplicate from different platform
         prop2_data = {
             "platform": "olx",
@@ -437,13 +452,13 @@ class TestEndToEndWorkflow:
             "address": "Rua A, 100",
             "props_json": {"images": ["img2.jpg"]},
         }
-        
+
         result2 = match_or_create_property(test_db, prop2_data, radius_m=50, area_tol=2.0, text_threshold=0.6)
-        
+
         # Should match as duplicate (updated)
         assert result2["action"] == "updated"
         assert result2["property_id"] == prop1_id
-        
+
         # Verify price history
         histories = test_db.query(PriceHistory).filter_by(property_id=prop1_id).all()
         assert len(histories) > 0

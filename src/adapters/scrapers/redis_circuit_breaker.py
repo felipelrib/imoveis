@@ -1,16 +1,20 @@
-import redis
 import json
-from typing import Dict, Any
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
+from typing import Any, Dict
+
+import redis
+
 
 @dataclass
 class RedisCircuitBreakerState:
     """Represents the state of a Redis circuit breaker."""
+
     is_open: bool = False
     failure_count: int = 0
     last_failure_time: float = 0.0
     cooldown_end_time: float = 0.0
+
 
 class RedisCircuitBreaker:
     """Circuit breaker whose state lives in Redis.
@@ -30,13 +34,14 @@ class RedisCircuitBreaker:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         from infra.redis_client import get_redis
+
         self.redis_client = get_redis()
 
     def _get_state(self) -> RedisCircuitBreakerState:
         """Get the current state from Redis."""
         if not self.redis_client:
             return RedisCircuitBreakerState()
-            
+
         try:
             key = f"circuit_breaker:{self.platform}"
             data = self.redis_client.get(key)
@@ -46,14 +51,14 @@ class RedisCircuitBreaker:
         except Exception as e:
             # If we can't read from Redis, return default state
             print(f"Error reading circuit breaker state for {self.platform}: {e}")
-            
+
         return RedisCircuitBreakerState()
 
     def _set_state(self, state: RedisCircuitBreakerState) -> None:
         """Set the current state in Redis."""
         if not self.redis_client:
             return
-            
+
         try:
             key = f"circuit_breaker:{self.platform}"
             data = json.dumps(state.__dict__)
@@ -65,14 +70,14 @@ class RedisCircuitBreaker:
     def is_open(self) -> bool:
         """Check if the circuit breaker is currently open."""
         state = self._get_state()
-        
+
         if not state.is_open:
             return False
-            
+
         # If we're in cooldown, check if it's time to retry
         if state.cooldown_end_time and time.time() < state.cooldown_end_time:
             return True
-            
+
         # Cooldown expired, reset state
         new_state = RedisCircuitBreakerState()
         self._set_state(new_state)
@@ -82,15 +87,15 @@ class RedisCircuitBreaker:
         """Record a failure in the circuit breaker."""
         if self.is_open():
             return
-            
+
         state = self._get_state()
         state.failure_count += 1
         state.last_failure_time = time.time()
-        
+
         if state.failure_count >= self.failure_threshold:
             state.is_open = True
             state.cooldown_end_time = time.time() + self.cooldown_seconds
-            
+
         self._set_state(state)
 
     def record_success(self) -> None:

@@ -3,10 +3,10 @@
 Each builder function returns a ready-to-send prompt string that instructs the
 model to output **strict JSON** matching the expected schema.
 """
+
 from __future__ import annotations
 
 from typing import List
-
 
 # ---------------------------------------------------------------------------
 # Visual Condition Analysis

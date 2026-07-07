@@ -1,6 +1,9 @@
+from typing import Any, Dict
+
 from sqlalchemy.orm import Session
+
 from adapters.db.models import PlatformCheckpoint
-from typing import Dict, Any
+
 
 class CheckpointStore:
     """Persist per-platform checkpoints using DB table platform_checkpoints."""

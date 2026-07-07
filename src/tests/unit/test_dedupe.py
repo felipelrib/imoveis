@@ -1,4 +1,5 @@
 """Unit tests for the text similarity function (now using rapidfuzz Jaro-Winkler)."""
+
 from __future__ import annotations
 
 import pytest
@@ -47,11 +48,13 @@ def test_returns_normalized_float():
 # ---------------------------------------------------------------------------
 
 from unittest.mock import MagicMock, call
+
 from core.dedupe import _record_price_change
 
 
 class FakeRow:
     """Minimal stand-in for a SQLAlchemy row with .id and .price attributes."""
+
     def __init__(self, row_id: str, price: float):
         self.id = row_id
         self.price = price

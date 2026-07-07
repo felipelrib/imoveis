@@ -1,10 +1,12 @@
 import logging
 import uuid as _uuid
-from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
-from sqlalchemy.orm import Session
+from datetime import datetime, timezone
+from typing import List, Optional, Tuple
+
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from core.entities import PropertyCandidate
 
 logger = logging.getLogger(__name__)
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DedupeMatchResult:
     """Result of a deduplication match."""
+
     property_id: str
     action: str  # "created", "updated", "noop"
 
@@ -26,13 +29,15 @@ def text_similarity(
     try:
         if not a or not b:
             return 0.0
-            
+
         # Importação condicional para evitar dependências desnecessárias
         if algorithm == "jaro_winkler":
             from jellyfish import jaro_winkler_similarity
+
             return jaro_winkler_similarity(a, b)
         elif algorithm == "levenshtein":
             from jellyfish import levenshtein_distance
+
             max_len = max(len(a), len(b))
             if max_len == 0:
                 return 1.0
@@ -40,7 +45,7 @@ def text_similarity(
             return 1.0 - (distance / max_len)
         else:
             raise ValueError(f"Unknown similarity algorithm: {algorithm}")
-            
+
     except Exception as e:
         logger.error(f"Error calculating text similarity: {e}")
         return 0.0
@@ -73,11 +78,7 @@ def match_or_create_property(
     from adapters.db.models import Property
 
     # --- Step 1: Exact platform match ---
-    existing = (
-        session.query(Property)
-        .filter_by(platform=candidate.platform, platform_id=candidate.platform_id)
-        .one_or_none()
-    )
+    existing = session.query(Property).filter_by(platform=candidate.platform, platform_id=candidate.platform_id).one_or_none()
     if existing is not None:
         # Update mutable fields
         existing.price = candidate.price
@@ -107,16 +108,12 @@ def match_or_create_property(
             )
             AND active = true
         """)
-        nearby = session.execute(nearby_query, {
-            "lat": lat, "lon": lon, "radius": radius_m
-        }).fetchall()
+        nearby = session.execute(nearby_query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
 
         for row in nearby:
             title_sim = text_similarity(candidate.title, row.title)
             area_close = (
-                abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol
-                if candidate.area_m2 and row.area_m2
-                else True
+                abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol if candidate.area_m2 and row.area_m2 else True
             )
             if title_sim >= text_threshold and area_close:
                 # Merge: update the matched property
@@ -194,9 +191,7 @@ def _record_price_change(
             return  # price unchanged — no-op
         # Close the current open interval
         session.execute(
-            text(
-                "UPDATE price_history SET end_ts = :now WHERE id = :id"
-            ),
+            text("UPDATE price_history SET end_ts = :now WHERE id = :id"),
             {"now": now, "id": str(open_row.id)},
         )
         # Insert new open interval
@@ -279,7 +274,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": str(listing.get("raw_json")) if listing.get("raw_json") is not None else None,
+                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
                     "now": now,
                     "id": str(check.id),
                 },
@@ -308,7 +303,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": str(listing.get("raw_json")) if listing.get("raw_json") is not None else None,
+                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
                     "now": now,
                 },
             )
@@ -325,11 +320,11 @@ def find_candidates(
         if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
             logger.warning("Invalid coordinates provided")
             return []
-            
+
         if radius_m <= 0:
             logger.warning("Invalid radius provided")
             return []
-        
+
         query = text("""
             SELECT id, ST_Y(location::geometry) as lat, ST_X(location::geometry) as lon, address
             FROM properties
@@ -339,21 +334,16 @@ def find_candidates(
                 :radius
             )
         """)
-        
-        result = session.execute(query, {
-            'lat': lat,
-            'lon': lon,
-            'radius': radius_m
-        }).fetchall()
-        
+
+        result = session.execute(query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
+
         candidates = []
         for row in result:
             candidates.append((row.lat, row.lon, row.address))
-            
+
         logger.debug(f"Found {len(candidates)} candidates near ({lat}, {lon})")
         return candidates
-        
+
     except Exception as e:
         logger.error(f"Error finding candidates: {e}")
         return []
-

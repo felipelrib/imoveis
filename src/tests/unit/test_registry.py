@@ -1,16 +1,22 @@
 """Unit tests for the ScraperRegistry."""
+
 from __future__ import annotations
 
 import pytest
 
-from adapters.scrapers.registry import ScraperRegistry
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.registry import ScraperRegistry
 
 
 class _DummyScraper(BaseScraper):
-    def start(self): pass
-    def fetch_pages(self, checkpoint): return iter([])
-    def normalize(self, raw): return {}
+    def start(self):
+        pass
+
+    def fetch_pages(self, checkpoint):
+        return iter([])
+
+    def normalize(self, raw):
+        return {}
 
 
 def test_register_and_get():

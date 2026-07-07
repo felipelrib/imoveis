@@ -1,4 +1,5 @@
 """Unit tests for domain entities (Pydantic validation)."""
+
 from __future__ import annotations
 
 import pytest

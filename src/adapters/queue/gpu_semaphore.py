@@ -1,9 +1,12 @@
 import logging
 from typing import Optional
+
 import redis
+
 from infra.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
+
 
 class GPUSemaphore:
     """A Redis-backed counting semaphore to control concurrent GPU jobs.
@@ -46,13 +49,13 @@ class GPUSemaphore:
             while True:
                 try:
                     pipe.watch(f"semaphore:{self.name}")
-                    
+
                     current_value = pipe.get(f"semaphore:{self.name}")
                     if current_value is None:
                         current_value = self.max_concurrent
                     else:
                         current_value = int(current_value)
-                        
+
                     if current_value > 0:
                         # Reduzir o contador
                         pipe.multi()
@@ -64,7 +67,7 @@ class GPUSemaphore:
                         return False
                 except redis.WatchError:
                     continue
-                
+
         except Exception as e:
             logger.error(f"Error acquiring semaphore for {self.name}: {e}")
             # Fallback para permitir a operação em caso de falha Redis
@@ -78,23 +81,23 @@ class GPUSemaphore:
             while True:
                 try:
                     pipe.watch(f"semaphore:{self.name}")
-                    
+
                     current_value = pipe.get(f"semaphore:{self.name}")
                     if current_value is None:
                         current_value = 0
                     else:
                         current_value = int(current_value)
-                        
+
                     # Aumentar o contador, mas não ultrapassar o máximo
                     new_value = min(current_value + 1, self.max_concurrent)
-                    
+
                     pipe.multi()
                     pipe.setex(f"semaphore:{self.name}", 3600, new_value)
                     pipe.execute()
                     break
                 except redis.WatchError:
                     continue
-            
+
         except Exception as e:
             logger.error(f"Error releasing semaphore for {self.name}: {e}")
 

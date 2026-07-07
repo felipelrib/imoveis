@@ -3,6 +3,7 @@
 Uses raw DDL to create SQLite tables matching the real schema but without
 GeoAlchemy2 geometry columns, so tests run without PostGIS.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -14,7 +15,6 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
 from core.dedupe import _upsert_listings
-
 
 # ---------------------------------------------------------------------------
 # Raw DDL for properties + property_listings, matching the real schema
@@ -156,10 +156,14 @@ class TestUpsertListings:
 
     def test_creates_dual_listings_rent_and_sale(self, db_session, sample_property):
         """A dual rent+sale property should create two distinct rows."""
-        _upsert_listings(db_session, sample_property.id, [
-            _make_listing(listing_type="rent", price=2500.0),
-            _make_listing(listing_type="sale", price=500000.0),
-        ])
+        _upsert_listings(
+            db_session,
+            sample_property.id,
+            [
+                _make_listing(listing_type="rent", price=2500.0),
+                _make_listing(listing_type="sale", price=500000.0),
+            ],
+        )
         db_session.commit()
 
         rows = db_session.execute(text("SELECT * FROM property_listings")).fetchall()
@@ -200,10 +204,24 @@ class TestUpsertListings:
 
     def test_lists_from_different_platforms_are_separate(self, db_session, sample_property):
         """Listings from different platforms should be distinct rows."""
-        _upsert_listings(db_session, sample_property.id, [
-            _make_listing(platform="quintoandar", platform_listing_id="qa-111", listing_type="rent", price=2500),
-            _make_listing(platform="olx", platform_listing_id="olx-222", listing_type="rent", price=2600),
-        ])
+        _upsert_listings(
+            db_session,
+            sample_property.id,
+            [
+                _make_listing(
+                    platform="quintoandar",
+                    platform_listing_id="qa-111",
+                    listing_type="rent",
+                    price=2500,
+                ),
+                _make_listing(
+                    platform="olx",
+                    platform_listing_id="olx-222",
+                    listing_type="rent",
+                    price=2600,
+                ),
+            ],
+        )
         db_session.commit()
 
         rows = db_session.execute(text("SELECT * FROM property_listings")).fetchall()
@@ -211,7 +229,11 @@ class TestUpsertListings:
 
     def test_extra_fields_persisted(self, db_session, sample_property):
         """Extra fields like condo_fee and iptu should be stored."""
-        _upsert_listings(db_session, sample_property.id, [_make_listing(condo_fee=800.0, iptu=150.0, is_furnished=True)])
+        _upsert_listings(
+            db_session,
+            sample_property.id,
+            [_make_listing(condo_fee=800.0, iptu=150.0, is_furnished=True)],
+        )
         db_session.commit()
 
         row = db_session.execute(text("SELECT * FROM property_listings")).one()

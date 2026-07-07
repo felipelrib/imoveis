@@ -31,8 +31,8 @@ from src.core.exceptions import ConfigError
 # Paths
 # ---------------------------------------------------------------------------
 
-_HERE = Path(__file__).resolve().parent                # src/infra/
-_REPO_ROOT = _HERE.parent.parent                       # repo root
+_HERE = Path(__file__).resolve().parent  # src/infra/
+_REPO_ROOT = _HERE.parent.parent  # repo root
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "configs" / "app_config.yaml"
 
 # Prefix for environment variable overrides
@@ -73,10 +73,7 @@ class DatabaseConfig(BaseModel, frozen=True):
     @property
     def url(self) -> str:
         """Compute a SQLAlchemy connection string from individual fields."""
-        return (
-            f"postgresql://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.name}"
-        )
+        return f"postgresql://{self.user}:{self.password}" f"@{self.host}:{self.port}/{self.name}"
 
 
 class RedisConfig(BaseModel, frozen=True):
@@ -198,16 +195,14 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise ConfigError(
-            f"Configuration file {path} must contain a mapping at the top level, "
-            f"got {type(data).__name__}"
-        )
+        raise ConfigError(f"Configuration file {path} must contain a mapping at the top level, " f"got {type(data).__name__}")
     return data
 
 
 # ---------------------------------------------------------------------------
 # Environment variable overrides
 # ---------------------------------------------------------------------------
+
 
 def _parse_database_url(url: str) -> dict[str, Any]:
     """Parse a PostgreSQL connection URL into individual config fields."""
@@ -313,9 +308,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     try:
         return AppConfig.model_validate(raw)
     except Exception as exc:
-        raise ConfigError(
-            f"Configuration validation failed: {exc}"
-        ) from exc
+        raise ConfigError(f"Configuration validation failed: {exc}") from exc
 
 
 @lru_cache(maxsize=1)

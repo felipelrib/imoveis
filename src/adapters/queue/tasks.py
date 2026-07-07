@@ -10,6 +10,7 @@ Changes from original:
 - Structured logging throughout
 - Celery bind=True + self.retry() for proper retry semantics
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ from typing import List, Optional
 
 from pydantic import ValidationError
 
+import adapters.scrapers.quintoandar  # Force registry registration
 from adapters.ai.client import create_ai_client
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
@@ -27,7 +29,6 @@ from adapters.queue.celery_app import make_celery
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.registry import ScraperRegistry
-import adapters.scrapers.quintoandar  # Force registry registration
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 from infra.config import get_config
@@ -81,7 +82,6 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         r = get_redis()
         status_key = f"pipeline:scraper:{platform_name}:status"
 
-
         with scraper:
             for raw in scraper.fetch_pages(cp):
                 try:
@@ -97,11 +97,12 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     continue
                 except Exception as exc:
                     import traceback
+
                     logger.error(
                         "scrape_normalize_error",
                         platform=platform_name,
                         error=str(exc),
-                        trace=traceback.format_exc()
+                        trace=traceback.format_exc(),
                     )
                     errors += 1
                     continue
@@ -119,7 +120,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                                 candidate.image_urls,
                                 candidate.description or "",
                             ],
-                            queue="ai"
+                            queue="ai",
                         )
 
                     processed += 1
@@ -134,29 +135,33 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
                 # Persist checkpoint after every item so we can resume mid-run
                 store.set(platform_name, cp)
-                
+
                 # Update telemetry
                 r.set(
                     status_key,
-                    json.dumps({
-                        "processed": processed,
-                        "skipped": skipped,
-                        "errors": errors,
-                        "status": "running"
-                    }),
-                    ex=3600
+                    json.dumps(
+                        {
+                            "processed": processed,
+                            "skipped": skipped,
+                            "errors": errors,
+                            "status": "running",
+                        }
+                    ),
+                    ex=3600,
                 )
 
         # Mark as completed
         r.set(
             status_key,
-            json.dumps({
-                "processed": processed,
-                "skipped": skipped,
-                "errors": errors,
-                "status": "completed"
-            }),
-            ex=3600
+            json.dumps(
+                {
+                    "processed": processed,
+                    "skipped": skipped,
+                    "errors": errors,
+                    "status": "completed",
+                }
+            ),
+            ex=3600,
         )
 
         logger.info(
@@ -216,14 +221,13 @@ def ai_enrich(
         raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
 
     import time
+
     start_time = time.time()
     client = None
     try:
         # --- Image pipeline ------------------------------------------------
         image_store = ImageStore()
-        local_paths: List[str] = asyncio.run(
-            image_store.download_images(property_id, image_urls, max_images=5)
-        )
+        local_paths: List[str] = asyncio.run(image_store.download_images(property_id, image_urls, max_images=5))
 
         # --- Build prompts -------------------------------------------------
         visual_prompt = build_visual_condition_prompt(len(local_paths))
@@ -240,26 +244,21 @@ def ai_enrich(
         visual_result, sentiment_result = asyncio.run(run_ai())
 
         # Weighted blend: visual condition 60%, location sentiment 40%
-        ai_score = (
-            visual_result.condition_score * 0.6
-            + sentiment_result.sentiment_score * 0.4
-        )
+        ai_score = visual_result.condition_score * 0.6 + sentiment_result.sentiment_score * 0.4
 
         # --- Persist -------------------------------------------------------
         from adapters.db.models import MetricsScoring  # local import avoids circular
 
         session = SessionLocal()
         try:
-            ms = (
-                session.query(MetricsScoring)
-                .filter_by(property_id=property_id)
-                .one_or_none()
-            )
+            ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
             meta = dict(ms.meta or {}) if ms is not None else {}
-            meta.update({
-                "visual": visual_result.model_dump(),
-                "sentiment": sentiment_result.model_dump(),
-            })
+            meta.update(
+                {
+                    "visual": visual_result.model_dump(),
+                    "sentiment": sentiment_result.model_dump(),
+                }
+            )
             if ms is None:
                 ms = MetricsScoring(
                     property_id=property_id,
@@ -274,10 +273,7 @@ def ai_enrich(
                 ms.meta = meta
                 # Recompute combined using existing stat_score
                 stat = float(ms.stat_score or 0.0)
-                ms.combined_score = (
-                    stat * cfg.scoring.stat_weight
-                    + ai_score * cfg.scoring.ai_weight
-                )
+                ms.combined_score = stat * cfg.scoring.stat_weight + ai_score * cfg.scoring.ai_weight
             session.flush()
 
             # Recompute neighbourhood-relative stat_score for this property
@@ -287,12 +283,17 @@ def ai_enrich(
             session.close()
 
         duration = time.time() - start_time
-        r.lpush("pipeline:ai:telemetry", json.dumps({
-            "property_id": property_id,
-            "duration": duration,
-            "timestamp": time.time()
-        }))
-        r.ltrim("pipeline:ai:telemetry", 0, 999) # Keep last 1000
+        r.lpush(
+            "pipeline:ai:telemetry",
+            json.dumps(
+                {
+                    "property_id": property_id,
+                    "duration": duration,
+                    "timestamp": time.time(),
+                }
+            ),
+        )
+        r.ltrim("pipeline:ai:telemetry", 0, 999)  # Keep last 1000
 
         logger.info(
             "ai_enrich_completed",
@@ -301,7 +302,7 @@ def ai_enrich(
             condition_score=visual_result.condition_score,
             sentiment_score=sentiment_result.sentiment_score,
             images_processed=len(local_paths),
-            duration_sec=round(duration, 2)
+            duration_sec=round(duration, 2),
         )
         return {"status": "completed", "ai_score": ai_score, "duration": duration}
 

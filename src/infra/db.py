@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
+
 from infra.config import get_config
 
 # Initialize engine and SessionLocal at import time
@@ -15,6 +16,7 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 def get_session():
     """Get a new database session."""
     db = SessionLocal()
@@ -22,6 +24,7 @@ def get_session():
         yield db
     finally:
         db.close()
+
 
 def close_db():
     """Close all database connections."""
