@@ -65,9 +65,7 @@ CREATE TABLE IF NOT EXISTS property_listings (
 @pytest.fixture()
 def db_session():
     """Create an in-memory SQLite session with matching tables."""
-    engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}
-    )
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, _):
@@ -195,11 +193,7 @@ class TestUpsertListings:
         _upsert_listings(db_session, sample_property.id, [_make_listing()])
         db_session.commit()
 
-        original = (
-            db_session.execute(text("SELECT first_seen FROM property_listings"))
-            .one()
-            .first_seen
-        )
+        original = db_session.execute(text("SELECT first_seen FROM property_listings")).one().first_seen
 
         _upsert_listings(db_session, sample_property.id, [_make_listing(price=3000.0)])
         db_session.commit()
@@ -208,9 +202,7 @@ class TestUpsertListings:
         assert updated.first_seen == original
         assert updated.price == pytest.approx(3000.0)
 
-    def test_lists_from_different_platforms_are_separate(
-        self, db_session, sample_property
-    ):
+    def test_lists_from_different_platforms_are_separate(self, db_session, sample_property):
         """Listings from different platforms should be distinct rows."""
         _upsert_listings(
             db_session,

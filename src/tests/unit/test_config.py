@@ -226,9 +226,7 @@ def test_generic_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 @pytest.mark.unit
-def test_imoveis_env_override_int_coercion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_imoveis_env_override_int_coercion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """IMOVEIS_ env vars are coerced to the target field's type."""
     cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
     monkeypatch.setenv("IMOVEIS_APP__API_PORT", "9999")

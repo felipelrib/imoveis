@@ -227,9 +227,7 @@ def ai_enrich(
     try:
         # --- Image pipeline ------------------------------------------------
         image_store = ImageStore()
-        local_paths: List[str] = asyncio.run(
-            image_store.download_images(property_id, image_urls, max_images=5)
-        )
+        local_paths: List[str] = asyncio.run(image_store.download_images(property_id, image_urls, max_images=5))
 
         # --- Build prompts -------------------------------------------------
         visual_prompt = build_visual_condition_prompt(len(local_paths))
@@ -246,20 +244,14 @@ def ai_enrich(
         visual_result, sentiment_result = asyncio.run(run_ai())
 
         # Weighted blend: visual condition 60%, location sentiment 40%
-        ai_score = (
-            visual_result.condition_score * 0.6 + sentiment_result.sentiment_score * 0.4
-        )
+        ai_score = visual_result.condition_score * 0.6 + sentiment_result.sentiment_score * 0.4
 
         # --- Persist -------------------------------------------------------
         from adapters.db.models import MetricsScoring  # local import avoids circular
 
         session = SessionLocal()
         try:
-            ms = (
-                session.query(MetricsScoring)
-                .filter_by(property_id=property_id)
-                .one_or_none()
-            )
+            ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
             meta = dict(ms.meta or {}) if ms is not None else {}
             meta.update(
                 {
@@ -281,9 +273,7 @@ def ai_enrich(
                 ms.meta = meta
                 # Recompute combined using existing stat_score
                 stat = float(ms.stat_score or 0.0)
-                ms.combined_score = (
-                    stat * cfg.scoring.stat_weight + ai_score * cfg.scoring.ai_weight
-                )
+                ms.combined_score = stat * cfg.scoring.stat_weight + ai_score * cfg.scoring.ai_weight
             session.flush()
 
             # Recompute neighbourhood-relative stat_score for this property

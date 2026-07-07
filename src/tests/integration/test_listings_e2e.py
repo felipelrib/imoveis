@@ -28,9 +28,7 @@ def session():
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
-        pytest.skip(
-            "DATABASE_URL not set — skipping integration test that requires PostGIS"
-        )
+        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
 
     engine = create_engine(database_url, pool_pre_ping=True)
     Base.metadata.create_all(engine)
@@ -130,11 +128,7 @@ class TestListingPersistence:
         assert result2.property_id == result1.property_id
 
         # Should still be 1 listing row (updated, not duplicated)
-        listings = (
-            session.query(PropertyListing)
-            .filter_by(property_id=result1.property_id)
-            .all()
-        )
+        listings = session.query(PropertyListing).filter_by(property_id=result1.property_id).all()
         assert len(listings) == 1
         assert listings[0].price == pytest.approx(3500.0)
 
@@ -165,11 +159,7 @@ class TestListingPersistence:
 
         assert result.action == "created"
 
-        listings = (
-            session.query(PropertyListing)
-            .filter_by(property_id=result.property_id)
-            .all()
-        )
+        listings = session.query(PropertyListing).filter_by(property_id=result.property_id).all()
         assert len(listings) == 2
         types = {l.listing_type for l in listings}
         assert types == {"rent", "sale"}
@@ -181,11 +171,7 @@ class TestListingPersistence:
         session.flush()
 
         assert result.action == "created"
-        listings = (
-            session.query(PropertyListing)
-            .filter_by(property_id=result.property_id)
-            .all()
-        )
+        listings = session.query(PropertyListing).filter_by(property_id=result.property_id).all()
         assert len(listings) == 0
 
     def test_no_listings_attribute_does_not_fail(self, session):

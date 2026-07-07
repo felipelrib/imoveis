@@ -89,11 +89,7 @@ class ScoringWeights(BaseModel):
     @validator("ai_weight", "stat_weight")
     def weights_must_sum_to_one(cls, v, values):
         if "ai_weight" in values or "stat_weight" in values:
-            other_weight = (
-                values.get("stat_weight", 0.5)
-                if "ai_weight" not in values
-                else values.get("ai_weight", 0.5)
-            )
+            other_weight = values.get("stat_weight", 0.5) if "ai_weight" not in values else values.get("ai_weight", 0.5)
             # We can't strictly validate during sequential field assignment easily in v1 without checking both
             # so we just let it pass or check if both are present
         return v

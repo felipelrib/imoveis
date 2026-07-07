@@ -40,9 +40,7 @@ def make_celery() -> Celery:
 
 # Sinal para tratamento de falhas em tarefas
 @task_failure.connect
-def handle_task_failure(
-    sender=None, task_id=None, exception=None, traceback=None, **kwargs
-):
+def handle_task_failure(sender=None, task_id=None, exception=None, traceback=None, **kwargs):
     """Handle task failures with detailed logging."""
     try:
         logger.error(
@@ -62,9 +60,7 @@ def handle_task_failure(
 
 # Sinal para tratamento de tarefas revogadas
 @task_revoked.connect
-def handle_task_revoked(
-    sender=None, request=None, terminated=None, signum=None, expired=None, **kwargs
-):
+def handle_task_revoked(sender=None, request=None, terminated=None, signum=None, expired=None, **kwargs):
     """Handle revoked tasks."""
     try:
         logger.warning(

@@ -39,9 +39,7 @@ def test_db():
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
-        pytest.skip(
-            "DATABASE_URL not set — skipping integration test that requires PostGIS"
-        )
+        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
 
     engine = create_engine(database_url, pool_pre_ping=True)
     Base.metadata.create_all(engine)
@@ -107,17 +105,13 @@ class TestAPIEndpoints:
 
     def test_admin_health(self, test_client):
         """Verify admin health endpoint."""
-        response = test_client.get(
-            "/admin/health", headers={"X-API-Key": "dev-secret-key"}
-        )
+        response = test_client.get("/admin/health", headers={"X-API-Key": "dev-secret-key"})
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
     def test_admin_workers_status(self, test_client, mock_redis):
         """Verify admin workers status endpoint."""
-        response = test_client.get(
-            "/admin/workers/status", headers={"X-API-Key": "dev-secret-key"}
-        )
+        response = test_client.get("/admin/workers/status", headers={"X-API-Key": "dev-secret-key"})
         assert response.status_code == 200
         data = response.json()
         assert "ai_workers_paused" in data
@@ -125,17 +119,13 @@ class TestAPIEndpoints:
 
     def test_pause_workers(self, test_client, mock_redis):
         """Test pausing AI workers."""
-        response = test_client.post(
-            "/admin/workers/pause", headers={"X-API-Key": "dev-secret-key"}
-        )
+        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": "dev-secret-key"})
         assert response.status_code == 200
         assert response.json() == {"paused": True}
 
     def test_resume_workers(self, test_client, mock_redis):
         """Test resuming AI workers."""
-        response = test_client.post(
-            "/admin/workers/resume", headers={"X-API-Key": "dev-secret-key"}
-        )
+        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": "dev-secret-key"})
         assert response.status_code == 200
         assert response.json() == {"paused": False}
 
@@ -221,9 +211,7 @@ class TestDeduplication:
             "address": "Rua A, 100",
             "props_json": {"raw": "data2"},
         }
-        result2 = match_or_create_property(
-            test_db, PropertyCandidate(**incoming2), radius_m=50, text_threshold=0.6
-        )
+        result2 = match_or_create_property(test_db, PropertyCandidate(**incoming2), radius_m=50, text_threshold=0.6)
         assert result2.action == "updated"
         assert result2.property_id == result1.property_id
 
@@ -289,9 +277,7 @@ class TestCircuitBreaker:
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
-        cb = RedisCircuitBreaker(
-            platform="test", failure_threshold=3, cooldown_seconds=60
-        )
+        cb = RedisCircuitBreaker(platform="test", failure_threshold=3, cooldown_seconds=60)
 
         assert not cb.is_open()
 
@@ -312,9 +298,7 @@ class TestCircuitBreaker:
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
-        cb = RedisCircuitBreaker(
-            platform="test", failure_threshold=2, cooldown_seconds=1
-        )
+        cb = RedisCircuitBreaker(platform="test", failure_threshold=2, cooldown_seconds=1)
 
         cb.record_failure()
         cb.record_failure()

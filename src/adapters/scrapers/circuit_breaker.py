@@ -26,9 +26,7 @@ class CircuitBreaker:
         How long the circuit stays open before allowing a retry.
     """
 
-    def __init__(
-        self, platform_name: str, failure_threshold: int = 5, cooldown_seconds: int = 60
-    ):
+    def __init__(self, platform_name: str, failure_threshold: int = 5, cooldown_seconds: int = 60):
         self.platform_name = platform_name
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
@@ -40,10 +38,7 @@ class CircuitBreaker:
             return False
 
         # If we're in cooldown, check if it's time to retry
-        if (
-            self._state.cooldown_end_time
-            and time.time() < self._state.cooldown_end_time
-        ):
+        if self._state.cooldown_end_time and time.time() < self._state.cooldown_end_time:
             return True
 
         # Cooldown expired, reset state

@@ -27,9 +27,7 @@ from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
-router = APIRouter(
-    prefix="/admin", tags=["admin"], dependencies=[Depends(verify_api_key)]
-)
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_api_key)])
 
 
 # ---------------------------------------------------------------------------
