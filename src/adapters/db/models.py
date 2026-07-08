@@ -96,7 +96,7 @@ class Property(Base):
     props_json = Column(JSON)
     first_seen = Column(DateTime, server_default=sa.text("now()"))
     last_updated = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
-    active = Column(Boolean)
+    active = Column(Boolean, server_default=sa.text("true"))
     neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
 
 

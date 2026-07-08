@@ -30,9 +30,11 @@ export default function Properties() {
   const [acceptsPets, setAcceptsPets] = useState(false)
   
   const [selectedId, setSelectedId] = useState(null)
+  const [loadError, setLoadError] = useState(null)
 
   const load = async (p = page) => {
     setLoading(true)
+    setLoadError(null)
     try {
       const isPriceDesc = sortBy === 'price_desc'
       const actualSortBy = isPriceDesc ? 'price' : sortBy
@@ -55,6 +57,8 @@ export default function Properties() {
       setData(res)
     } catch (e) {
       console.error(e)
+      setLoadError(e.message || 'Failed to load properties')
+      setData(null)
     } finally {
       setLoading(false)
     }
@@ -229,43 +233,55 @@ export default function Properties() {
         )}
       </div>
 
-      {/* Grid */}
-      {loading ? (
-        <div className="loading-grid">
-          {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}
+      {/* Error state */}
+      {loadError && !loading && (
+        <div className="empty-state" style={{ borderColor: 'var(--accent-rose)', background: 'rgba(244,63,94,0.08)' }}>
+          <div className="empty-state-icon">⚠️</div>
+          <h3 style={{ color: 'var(--accent-rose)' }}>Failed to load properties</h3>
+          <p style={{ maxWidth: 600, margin: '0 auto' }}>{loadError}</p>
+          <button className="btn btn-primary" onClick={() => load(page)} style={{ marginTop: 16 }}>Try Again</button>
         </div>
-      ) : properties.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🏚️</div>
-          <h3>No properties yet</h3>
-          <p>Go to Scraper Control and trigger your first ingestion job to start building the database.</p>
-          <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>
-        </div>
-      ) : (
-        <>
-          <div className="property-grid">
-            {properties.map(p => (
-              <PropertyCard key={p.id} property={p} onClick={() => setSelectedId(p.id)} />
-            ))}
-          </div>
+      )}
 
-          {pages > 1 && (
-            <div className="pagination">
-              <button className="page-btn" onClick={() => setPage(1)} disabled={page === 1}>«</button>
-              <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>‹</button>
-              {Array.from({ length: Math.min(7, pages) }, (_, i) => {
-                const n = Math.max(1, Math.min(pages - 6, page - 3)) + i
-                return (
-                  <button key={n} className={`page-btn ${n === page ? 'active' : ''}`} onClick={() => setPage(n)}>
-                    {n}
-                  </button>
-                )
-              })}
-              <button className="page-btn" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}>›</button>
-              <button className="page-btn" onClick={() => setPage(pages)} disabled={page === pages}>»</button>
+      {/* Grid */}
+      {!loadError && (
+        loading ? (
+          <div className="loading-grid">
+            {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}
+          </div>
+        ) : properties.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">🏚️</div>
+            <h3>No properties yet</h3>
+            <p>Go to Scraper Control and trigger your first ingestion job to start building the database.</p>
+            <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>
+          </div>
+        ) : (
+          <>
+            <div className="property-grid">
+              {properties.map(p => (
+                <PropertyCard key={p.id} property={p} onClick={() => setSelectedId(p.id)} />
+              ))}
             </div>
-          )}
-        </>
+
+            {pages > 1 && (
+              <div className="pagination">
+                <button className="page-btn" onClick={() => setPage(1)} disabled={page === 1}>«</button>
+                <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>‹</button>
+                {Array.from({ length: Math.min(7, pages) }, (_, i) => {
+                  const n = Math.max(1, Math.min(pages - 6, page - 3)) + i
+                  return (
+                    <button key={n} className={`page-btn ${n === page ? 'active' : ''}`} onClick={() => setPage(n)}>
+                      {n}
+                    </button>
+                  )
+                })}
+                <button className="page-btn" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}>›</button>
+                <button className="page-btn" onClick={() => setPage(pages)} disabled={page === pages}>»</button>
+              </div>
+            )}
+          </>
+        )
       )}
 
       {selectedId && <PropertyModal id={selectedId} onClose={() => setSelectedId(null)} />}

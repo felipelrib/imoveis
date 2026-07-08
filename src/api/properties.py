@@ -28,7 +28,7 @@ def list_properties(
     property_type: Optional[str] = None,
     is_furnished: Optional[bool] = None,
     accepts_pets: Optional[bool] = None,
-    sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|area_m2)$"),
+    sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> Dict[str, Any]:
     """Return paginated, filtered, scored properties for the GUI grid."""
@@ -84,6 +84,7 @@ def list_properties(
             "combined_score": "COALESCE(ms.combined_score, 0)",
             "price": "p.price",
             "first_seen": "p.first_seen",
+            "created_at": "p.first_seen",
             "area_m2": "p.area_m2",
         }
         order = f"{sort_col_map[sort_by]} {sort_dir.upper()}"

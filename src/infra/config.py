@@ -245,7 +245,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     1. ``DATABASE_URL`` — parsed into ``database.*`` fields
     2. ``REDIS_URL``    — parsed into ``redis.*`` fields
     3. ``AI_MODEL``     — overrides ``ai.providers.ollama.default_model``
-    4. ``IMOVEIS_<SECTION>_<KEY>`` — generic override for any leaf value
+    4. ``OLLAMA_HOST``  — overrides ``ai.providers.ollama.base_url``
+    5. ``IMOVEIS_<SECTION>_<KEY>`` — generic override for any leaf value
     """
     # 1. DATABASE_URL → database section
     db_url = os.environ.get("DATABASE_URL")
@@ -270,6 +271,14 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         data["ai"].setdefault("providers", {})
         data["ai"]["providers"].setdefault("ollama", {})
         data["ai"]["providers"]["ollama"]["default_model"] = ai_model
+
+    # 3.5. OLLAMA_HOST → ai.providers.ollama.base_url
+    ollama_host = os.environ.get("OLLAMA_HOST")
+    if ollama_host:
+        data.setdefault("ai", {})
+        data["ai"].setdefault("providers", {})
+        data["ai"]["providers"].setdefault("ollama", {})
+        data["ai"]["providers"]["ollama"]["base_url"] = ollama_host
 
     # 4. Generic IMOVEIS_* overrides
     prefix = _ENV_PREFIX
