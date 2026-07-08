@@ -46,7 +46,7 @@ def _check_ollama() -> dict:
     try:
         import httpx
 
-        r = httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=3)
+        r = httpx.get(f"{get_config().ai.providers.ollama.base_url}/api/tags", timeout=3)
         models = [m["name"] for m in (r.json().get("models") or [])]
         return {"status": "ok", "models": models}
     except Exception as exc:
@@ -116,7 +116,7 @@ def ensure_ollama():
     try:
         import httpx
 
-        httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=2)
+        httpx.get(f"{get_config().ai.providers.ollama.base_url}/api/tags", timeout=2)
         return {"status": "already_running"}
     except Exception:
         pass
