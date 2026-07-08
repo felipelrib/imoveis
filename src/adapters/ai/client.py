@@ -177,7 +177,7 @@ def create_ai_client() -> LocalAIClient:
     provider = getattr(cfg.ai, "provider", "ollama")
 
     if provider == "lmstudio":
-        return LMStudioClient(base_url=cfg.ai.ollama_url)  # Reusing URL config for now
+        return LMStudioClient(base_url=cfg.ai.providers.ollama.base_url)  # Reusing URL config for now
     else:
         # Default to Ollama
-        return OllamaClient(base_url=cfg.ai.ollama_url)
+        return OllamaClient(base_url=cfg.ai.providers.ollama.base_url)
