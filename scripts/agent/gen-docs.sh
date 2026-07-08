@@ -2,9 +2,8 @@
 # ---------------------------------------------------------------------------
 # gen-docs.sh <feature-slug> "<Human Readable Title>"
 #
-# Scaffolds docs/features/<slug>.md (if absent) and wires links into
-# docs/features/README.md (the index) and the root README "Features" section.
-# It does the deterministic plumbing; the AGENT fills in the prose, then commits.
+# Scaffolds docs/features/<slug>.md (if absent) and adds it to the
+# mkdocs.yml nav. The agent fills in the prose, then commits.
 #
 # Prints the doc path on the last line.
 # ---------------------------------------------------------------------------
@@ -45,9 +44,9 @@ $DIFFSTAT
 _List any added packages/services, or "none". (fill in)_
 
 ## How to test
-1. \`bash scripts/agent/run-services.sh\`
+1. \`bash scripts/start.sh\`
 2. _steps to exercise this feature (fill in)_
-3. \`bash scripts/agent/validate.sh\`
+3. \`bash scripts/test.sh all\`
 
 ## Notes / follow-ups
 _Known limitations or future work. (fill in)_
@@ -57,36 +56,23 @@ else
   warn "$DOC already exists — leaving content as-is"
 fi
 
-# --- Ensure the features index exists and links this doc --------------------
-INDEX="docs/features/README.md"
-[ -f "$INDEX" ] || printf '# Features\n\nImplementation notes for each shipped feature.\n\n' > "$INDEX"
-if ! grep -q "($SLUG.md)" "$INDEX"; then
-  printf -- '- [%s](%s.md)\n' "$TITLE" "$SLUG" >> "$INDEX"
-  ok "linked in $INDEX"
-fi
-
 # --- Add to mkdocs.yml nav if present ---------------------------------------
 MKDOCS="mkdocs.yml"
 if [ -f "$MKDOCS" ]; then
-  # Add entry under "Features:" nav section if not already present
   if ! grep -q "features/$SLUG.md" "$MKDOCS"; then
-    # Find the line with "- Config YAML Loader:" (last feature entry) and append after it
-    if grep -q "features/config-yaml-loader.md" "$MKDOCS"; then
-      sed -i "/features\/config-yaml-loader.md/a\\      - $TITLE: features/$SLUG.md" "$MKDOCS"
+    LAST_FEATURE=$(grep -n "features/" "$MKDOCS" | tail -1)
+    if [ -n "$LAST_FEATURE" ]; then
+      LINE_NUM=$(echo "$LAST_FEATURE" | cut -d: -f1)
+      sed -i "${LINE_NUM}a\\      - $TITLE: features/$SLUG.md" "$MKDOCS"
       ok "added to $MKDOCS nav"
     else
-      # Fallback: append to the Features nav section
-      awk -v slug="$SLUG" -v title="$TITLE" '
-        /features\/README\.md/ && !done { print; printf "      - %s: features/%s.md\n", title, slug; done=1; next }
-        { print }
-      ' "$MKDOCS" > "$MKDOCS.tmp" && mv "$MKDOCS.tmp" "$MKDOCS"
-      ok "added to $MKDOCS nav (fallback)"
+      warn "could not find Features nav section in $MKDOCS"
     fi
   fi
 fi
 
 echo ""
 echo "  Now WRITE the content in $DOC, then commit docs:"
-echo "    git add docs/ mkdocs.yml README.md && git commit -m \"docs: $TITLE\""
+echo "    git add docs/ mkdocs.yml && git commit -m \"docs: $TITLE\""
 echo ""
 echo "$DOC"
