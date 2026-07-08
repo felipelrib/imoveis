@@ -5,29 +5,29 @@ PostGIS-backed geospatial storage, local AI enrichment, and price tracking.
 
 **Stack:** Python FastAPI + Celery · PostGIS (Postgres 15) · Redis · React/Vite · Ollama
 
-## Quickstart
-
-### Using Docker Compose (recommended)
+## Quick Start
 
 ```bash
-bash scripts/agent/setup-worktree.sh <feature-slug>
-cd .worktrees/<feature-slug>
-bash scripts/agent/run-services.sh
-# API: http://localhost:$API_PORT/health
-# Frontend: http://localhost:$FRONTEND_PORT
+git clone https://github.com/felipelrib/imoveis.git
+cd imoveis
+./scripts/setup.sh          # builds images, starts stack, runs migrations
 ```
 
-### Manual setup
+Then open:
+- **Frontend:** http://localhost:5173
+- **API:** http://localhost:8000
+- **API docs:** http://localhost:8000/docs
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-createdb realestate_dev && psql realestate_dev -c "CREATE EXTENSION postgis;"
-cd alembic && alembic upgrade head && cd ..
-uvicorn src.api.main:app --reload
-celery -A src.adapters.queue.tasks.celery worker -Q scrapers -c 4
-celery -A src.adapters.queue.tasks.celery worker -Q ai -c 1
-```
+## Day-to-Day Commands
+
+| Script | What it does |
+|--------|-------------|
+| `./scripts/start.sh` | Start the stack (builds if needed, runs migrations) |
+| `./scripts/stop.sh` | Stop containers (volumes preserved) |
+| `./scripts/restart.sh` | Stop + start (`--build` to rebuild images) |
+| `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
+| `./scripts/dev.sh` | Start backend + frontend dev server (hot-reload) |
+| `./scripts/clean.sh` | Tear down + remove volumes (`--all` removes images too) |
 
 ## Architecture
 
@@ -45,38 +45,21 @@ src/
 └── tests/                        # pytest suite (unit + integration)
 frontend/                         # React 18 + Vite
 configs/app_config.yaml           # Single source of truth for all settings
-scripts/agent/                    # Workflow tooling (worktree, services, validate)
+scripts/                          # Project management scripts (see table above)
 ```
 
 **Data flow:** Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 
-## Working on Features
-
-1. **Find next feature:** Check the [Linear board](https://linear.app/felipelrib/) — the source of truth for all features
-2. **Tell Cline:** "Work on feature `<slug>` from Linear"
-3. **Cline will:** read issue → plan → implement → commit → validate → merge → update Linear
-
-### Key commands
-
-| Task | Command |
-|------|---------|
-| Create worktree | `bash scripts/agent/setup-worktree.sh <slug>` |
-| Start services | `bash scripts/agent/run-services.sh` |
-| Validate | `bash scripts/agent/validate.sh [backend\|frontend\|all]` |
-| Finish feature | `bash scripts/agent/finish-feature.sh [slug] [--validate-only]` |
-| Dry run | `bash scripts/agent/finish-feature.sh --dry-run` |
-
 ## Documentation
 
-Full documentation is published via MkDocs Material: [docs/](docs/)
+Full documentation is published via [GitHub Pages](https://felipelrib.github.io/imoveis/) (MkDocs Material):
 
 | Doc | Description |
 |-----|-------------|
-| [Setup Guide](docs/setup.md) | Local environment setup |
-| [Architecture](docs/architecture.md) | System design, Cline workflow |
-| [API Reference](docs/api.md) | Endpoints and request/response formats |
-| [Feature Docs](docs/features/) | Implementation notes per shipped feature |
-| [Deployment](docs/deployment.md) | Production deployment guide |
+| [Setup Guide](https://felipelrib.github.io/imoveis/setup/) | Local environment setup + deployment |
+| [Architecture](https://felipelrib.github.io/imoveis/architecture/) | System design and data flow |
+| [API Reference](https://felipelrib.github.io/imoveis/api/) | Endpoints and request/response formats |
+| [Feature Docs](https://felipelrib.github.io/imoveis/features/) | Implementation notes per shipped feature |
 | [Linear Board](https://linear.app/felipelrib/) | Feature queue, issues, backlog |
 
 ## Configuration
@@ -94,9 +77,9 @@ Commit messages MUST use conventional format: `feat:`, `fix:`, `test:`, `docs:`,
 ### Testing
 
 ```bash
-pytest src/tests/ -v                    # All tests
-pytest src/tests/unit/ -v               # Unit only
-bash scripts/agent/validate.sh backend  # Full backend validation
+./scripts/test.sh unit        # Unit tests only
+./scripts/test.sh integration # Integration tests (needs running stack)
+./scripts/test.sh all         # Everything
 ```
 
 ### Adding a new scraper

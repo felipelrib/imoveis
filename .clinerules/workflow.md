@@ -1,7 +1,6 @@
 ---
 paths:
   - ".clinerules/workflow.md"
-  - "implementation_plan.md"
   - "docs/features/*"
 ---
 

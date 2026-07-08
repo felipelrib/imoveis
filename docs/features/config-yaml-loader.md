@@ -24,7 +24,6 @@ Files touched:
  src/core/exceptions.py   | NEW — ConfigError + base exceptions
  src/infra/config.py      | REWRITTEN — Pydantic models, YAML loader, env overrides, singleton
  src/tests/unit/test_config.py | REWRITTEN — 17 unit tests
- FEATURES.md              | status updated to done
 ```
 
 ## New dependencies

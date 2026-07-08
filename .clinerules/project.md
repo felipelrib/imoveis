@@ -13,7 +13,8 @@ models for AI enrichment.
 - `frontend/` — React 18 + Vite (port & API target are env-driven).
 - `configs/app_config.yaml` — platforms, Redis, DB, `gpu.semaphore_limit`.
 - `alembic/` — DB migrations. `docker-compose.yml` — the stack.
-- `scripts/agent/*.sh` — the workflow tooling below.
+- `scripts/` — project management scripts (`start.sh`, `stop.sh`, `test.sh`, etc.).
+- `scripts/agent/*.sh` — agent-specific workflow tooling (worktree isolation, validation pipeline).
 - `docs/` — published via MkDocs Material to GitHub Pages.
 - `docs/features/` — implementation notes per shipped feature (agentic validation).
 
@@ -84,7 +85,6 @@ You can also use skills: `/feature-pipeline`, `/validate-feature`, `/finish-feat
 - **Linear board** — https://linear.app/felipelrib/ — the primary source of truth
   for features, docs, and infrastructure tasks. All feature specs, statuses, and
   dependencies live here. Use the Linear MCP to read issues and update statuses.
-- **FEATURES.md** — lightweight dispatch guide for Cline/Cursor. Points to Linear.
 - **docs/features/** — implementation notes per shipped feature (useful for
   agentic validation and reference).
 

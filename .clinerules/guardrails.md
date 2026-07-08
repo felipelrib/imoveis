@@ -51,5 +51,5 @@
 
 ## Session continuity
 
-10. If a session is interrupted, check `FEATURES.md` status columns and the
-    worktree state to resume where you left off.
+10. If a session is interrupted, check `Linear` status and the
+     worktree state to resume where you left off.

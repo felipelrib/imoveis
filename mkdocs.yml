@@ -41,11 +41,9 @@ nav:
   - Home: index.md
   - Setup: setup.md
   - Architecture: architecture.md
-  - Features:
-      - features/README.md
-      - Config YAML Loader: features/config-yaml-loader.md
   - API Reference: api.md
-  - Deployment: deployment.md
+  - Features:
+      - Config YAML Loader: features/config-yaml-loader.md
 
 plugins:
   - search

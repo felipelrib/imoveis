@@ -4,25 +4,6 @@
 
 Imoveis is a local-first real-estate deal-finding pipeline. The system scrapes multiple platforms, deduplicates listings, tracks prices, enriches with AI, and alerts users to deals.
 
-## System Diagram
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Cline (Development Hub)                │
-│  Reads Linear via MCP  ·  Edits code + docs in repo     │
-│  Runs validate.sh / finish-feature.sh                   │
-└──────────┬────────────────────┬──────────────────────────┘
-           │                    │
-           ▼                    ▼
-    ┌─────────────┐    ┌──────────────────┐
-    │  Linear      │    │  GitHub Repo     │
-    │  (issues,    │    │  - src/          │
-    │   project,   │    │  - docs/         │
-    │   status)    │    │  - scripts/      │
-    └──────────────┘    │  - configs/      │
-                        └──────────────────┘
-```
-
 ## Data Flow
 
 ```
@@ -49,29 +30,8 @@ src/
 └── tests/                        # pytest suite (unit + integration)
 frontend/                         # React 18 + Vite
 configs/app_config.yaml           # Single source of truth for all settings
-scripts/agent/                    # Workflow tooling (worktree, services, validate)
+scripts/                          # Project management scripts
 ```
-
-## Worktree Isolation
-
-Each feature branch gets its own isolated workspace:
-
-1. **Git worktree** — separate working directory with its own branch
-2. **Docker containers** — unique ports and compose project name
-3. **Database + Redis** — separate named volumes per worktree
-4. **No port conflicts** — deterministic port allocation via `.worktrees/registry.tsv`
-
-This means multiple features can be developed in parallel without interference.
-
-## Feature Development Flow
-
-1. **Linear** — feature is tracked as an issue with spec, status, and labels
-2. **Worktree** — `setup-worktree.sh` creates isolated workspace
-3. **Implementation** — Cline writes code and commits to the feature branch
-4. **Validation** — `validate.sh` runs tests and checks
-5. **Merge** — `finish-feature.sh` merges to main, cleans up
-6. **Docs** — `gen-docs.sh` scaffolds feature documentation
-7. **Linear** — issue status updated to Done
 
 ## Key Technologies
 
@@ -86,3 +46,27 @@ This means multiple features can be developed in parallel without interference.
 | Migrations | Alembic | Schema versioning |
 | CI/CD | GitHub Actions | Tests, lint, build |
 | Issue Tracking | Linear | Feature queue, project management |
+
+## Components
+
+### API Layer (`src/api/`)
+
+FastAPI application with routers for properties, scraper control, admin endpoints, and system health. Interactive docs at `/docs` when running.
+
+### Scrapers (`src/adapters/scrapers/`)
+
+Plugin-based scraper architecture. Each platform implements `BaseScraper` and registers via `@register("platform-name")`. Currently supports QuintoAndar and OLX.
+
+### AI Enrichment (`src/adapters/ai/`)
+
+Local AI pipeline using Ollama (primary) or LM Studio (fallback). Enriches listings with visual condition assessment, neighbourhood sentiment, and statistical valuation. GPU concurrency controlled by a semaphore to prevent OOM.
+
+### Task Queue (`src/adapters/queue/`)
+
+Celery workers split into two queues:
+- **scrapers** (I/O-bound, higher concurrency) — platform scraping tasks
+- **ai** (GPU-bound, concurrency=1) — AI enrichment tasks
+
+### Frontend (`frontend/`)
+
+React 18 + Vite application with a dark-themed property grid. Properties are scored and colour-coded by deal quality. Includes a dashboard with system status, scraper controls, and price history charts.

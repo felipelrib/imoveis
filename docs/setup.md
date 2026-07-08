@@ -9,27 +9,42 @@
 - Docker & Docker Compose (for containerized workflow)
 - Ollama (for local AI enrichment)
 
-## Docker Compose (Recommended)
+## Quick Setup (Recommended)
 
-The recommended workflow uses git worktrees with isolated Docker stacks:
+One command to get everything running:
 
 ```bash
-bash scripts/agent/setup-worktree.sh <feature-slug>
-cd .worktrees/<feature-slug>
-bash scripts/agent/run-services.sh
+./scripts/setup.sh
 ```
 
-This sets up:
+This will:
+1. Create `.env.local` from the template (if missing)
+2. Build Docker images (postgres, redis, api, workers)
+3. Start the full stack with health checks
+4. Run Alembic database migrations
+5. Install frontend dependencies
 
-- PostgreSQL (PostGIS) on a unique port
-- Redis on a unique port
-- FastAPI backend
-- Celery workers (scraper + AI)
-- React frontend
+## Day-to-Day Commands
 
-Each worktree gets its own ports and Docker containers, so parallel feature work is isolated.
+| Script | What it does |
+|--------|-------------|
+| `./scripts/start.sh` | Start the stack (builds if needed, runs migrations) |
+| `./scripts/stop.sh` | Stop containers (volumes preserved for fast restart) |
+| `./scripts/restart.sh` | Stop + start (`--build` to rebuild images) |
+| `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
+| `./scripts/dev.sh` | Start backend + frontend dev server (hot-reload) |
+| `./scripts/clean.sh` | Tear down + remove volumes (`--all` also removes images) |
+
+Start specific services only:
+
+```bash
+./scripts/start.sh postgres redis   # just database services
+./scripts/start.sh api               # just the API
+```
 
 ## Manual Setup
+
+If you prefer to set up without Docker Compose:
 
 ### Python Environment
 
@@ -87,14 +102,72 @@ ollama pull llama-3-2-vision  # Vision model (~11GB)
 3. Start local server (typically on `http://localhost:1234`)
 4. Update `configs/app_config.yaml` accordingly
 
-## Testing
+## Development
+
+### Testing
 
 ```bash
-# Unit tests
-pytest src/tests/unit/ -v
+./scripts/test.sh unit        # Unit tests only (fast)
+./scripts/test.sh integration # Integration tests (needs running stack)
+./scripts/test.sh all         # Everything
+./scripts/test.sh unit --args "-v -k test_dedupe"  # Filter tests
+```
 
-# Integration tests
-pytest src/tests/integration/ -v --tb=short
+### Frontend Development
 
-# Full validation (backend + frontend)
-bash scripts/agent/validate.sh all
+```bash
+./scripts/dev.sh  # Starts backend stack + frontend dev server
+```
+
+Or start them separately:
+```bash
+./scripts/start.sh                    # Backend containers
+cd frontend && npm run dev            # Frontend dev server (port 5173)
+```
+
+## Production Deployment
+
+For a solo/small-team deployment, Docker Compose on a single server is sufficient:
+
+```bash
+# Clone and configure
+git clone https://github.com/felipelrib/imoveis.git
+cd imoveis
+cp .env.local.example .env.local
+# Edit .env.local with production values
+
+# Start all services
+./scripts/start.sh
+
+# Or with explicit env
+docker compose --env-file .env.local up -d
+```
+
+### Required Environment Variables
+
+```env
+DATABASE_URL=postgresql://user:password@db-host:5432/realestate_prod
+REDIS_URL=redis://redis-host:6379/0
+OLLAMA_BASE_URL=http://gpu-host:11434
+```
+
+### Scaling Considerations
+
+- **Scraper workers**: Scale horizontally (more replicas)
+- **AI workers**: Keep at 1-2 (GPU-bound, monitor VRAM)
+- **Database**: Read replicas for analytics, keep writes on primary
+- **Redis**: Managed Redis for HA in production
+
+### CI/CD
+
+GitHub Actions runs on every push and PR:
+- Linting, tests, Docker build verification, and security checks
+
+### Docs Deployment
+
+Documentation auto-deploys to GitHub Pages on push to `main`:
+
+```bash
+# Local preview
+pip install mkdocs-material
+mkdocs serve
