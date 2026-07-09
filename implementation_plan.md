@@ -1,112 +1,72 @@
-# Implementation Plan — Saved Searches & Favourites (BIN-13)
+# Implementation Plan — Per-Platform Listings with Price Comparison (BIN-30)
 
 ## Goal
 
-Add filter persistence and property shortlisting to the Properties page. Users can save their current filter set and reapply it later, and favourite individual properties for quick access.
+Enhance the Properties UI to show per-platform prices with attribution on property cards, and add a grouped listings table in the PropertyModal for easy cross-platform price comparison.
 
 ## Affected Areas
 
-### Backend
-- `src/adapters/db/models.py` — add `SavedSearch` and `Favourite` models
-- `alembic/versions/` — new migration for both tables
-- `src/api/saved_searches.py` — **new file**: CRUD for saved searches
-- `src/api/favourites.py` — **new file**: CRUD for favourites
-- `src/api/main.py` — register new routers
+- `frontend/src/pages/Properties.jsx` — Card redesign with per-listing-type prices
+- `frontend/src/components/PropertyModal.jsx` — Listings table with links and best-price highlight
+- `frontend/src/index.css` — New styles for listings table and price comparison layout
+- `frontend/src/api.js` — No changes expected (API already returns `listings` array)
 
-### Frontend
-- `frontend/src/api.js` — add fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, checkFavourite
-- `frontend/src/pages/Properties.jsx` — add Saved Searches sidebar, ★ favourite toggle on PropertyCard, favourites view mode
-- `frontend/src/index.css` — styles for sidebar and favourite button
-- `frontend/src/components/PropertyModal.jsx` — add ★ favourite toggle in modal header
-
-## Database Schema
-
-### saved_searches
-```sql
-CREATE TABLE saved_searches (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR NOT NULL,
-    filters JSONB NOT NULL,
-    owner UUID,
-    created_at TIMESTAMP DEFAULT now()
-);
-```
-
-### favourites
-```sql
-CREATE TABLE favourites (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-    owner UUID,
-    created_at TIMESTAMP DEFAULT now(),
-    UNIQUE(property_id)
-);
-```
+**No backend changes needed** — `GET /properties` and `GET /properties/{id}` already return the `listings` array with per-platform prices, listing types, URLs, fees, etc.
 
 ## Step-by-Step Implementation
 
-### Step 1: Add database models (commit: `feat: add SavedSearch and Favourite models`)
+### Step 1: Update PropertyCard to show per-listing-type prices with platform attribution
 
-Add to `src/adapters/db/models.py`:
+In `Properties.jsx`, modify the PropertyCard to:
+- Extract listings from `p.listings` array
+- Group listings by `listing_type` (rent vs sale)
+- For each listing type, show the **best price** (lowest) with platform name
+- If both rent and sale exist, show both with independent prices
+- Add a "2 plataformas" badge when property appears on multiple platforms
+- Keep backward compatibility: if no listings array, fall back to `p.price`
 
-```python
-class SavedSearch(Base):
-    __tablename__ = "saved_searches"
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-    name = Column(String, nullable=False)
-    filters = Column(JSON, nullable=False)
-    owner = Column(UUID(as_uuid=True), nullable=True)
-    created_at = Column(DateTime, server_default=sa.text("now()"))
+### Step 2: Update PropertyModal to show a grouped listings table
 
-class Favourite(Base):
-    __tablename__ = "favourites"
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
-    owner = Column(UUID(as_uuid=True), nullable=True)
-    created_at = Column(DateTime, server_default=sa.text("now()"))
-    __table_args__ = (sa.UniqueConstraint("property_id", name="uq_favourite_property"),)
-```
+In `PropertyModal.jsx`, add a listings section:
+- Group listings by listing_type ("Aluguel" / "Venda")
+- Show a table with: Platform | Price | Condo Fee | IPTU | Furnished | Pets | Link
+- Highlight the best price row (lowest per listing type) with a green indicator
+- Each listing links to the original platform URL (`listing.url`)
 
-### Step 2: Create Alembic migration (commit: `feat: add migration for saved_searches and favourites tables`)
+### Step 3: Sort by price using appropriate listing type
 
-Create `alembic/versions/<hash>_add_saved_searches_favourites.py`:
-- `upgrade()`: CREATE TABLE saved_searches, CREATE TABLE favourites
-- `downgrade()`: DROP TABLE favourites, DROP TABLE saved_searches
+In `Properties.jsx`, update the price sorting logic:
+- When sorting by price, use the lowest price from the user's selected listing_type filter
+- If no filter, use the lowest price across all listing types
 
-### Step 3: Create backend API for saved searches (commit: `feat: add saved searches API endpoints`)
+### Step 4: Add CSS styles for the new listings components
 
-Create `src/api/saved_searches.py` following the watchlist pattern:
-- `GET /saved-searches` — list all (ordered by created_at DESC)
-- `POST /saved-searches` — create with `{name, filters: {...}}`
-- `DELETE /saved-searches/{id}` — delete by ID
-- `GET /saved-searches/{id}` — get single (to retrieve filters)
+In `index.css`:
+- Listings table styles (grouped by listing type)
+- Best-price highlight (subtle green background)
+- Platform badge styles
+- Listing type section headers
 
-### Step 4: Create backend API for favourites (commit: `feat: add favourites API endpoints`)
+### Step 5: Test and validate
 
-Create `src/api/favourites.py` following the watchlist pattern:
-- `GET /favourites` — list all (JOIN properties to return property data)
-- `POST /favourites` — add `{property_id}`
-- `DELETE /favourites/{property_id}` — remove by property_id
-- `GET /favourites/check/{property_id}` — check if property is favourited
+- Verify cards show correct per-platform prices
+- Verify modal shows full listings table
+- Verify best price is highlighted
+- Run `validate.sh frontend`
 
-### Step 5: Register new routers in main.py (commit: `feat: register saved_searches and favourites routers`)
+## Data / Schema Changes
 
-### Step 6: Add frontend API functions (commit: `feat: add saved search and favourites API functions`)
-
-### Step 7: Implement Saved Searches sidebar + Favourites toggle (commit: `feat: add saved searches sidebar and favourites toggle to Properties page`)
-
-### Step 8: Add favourite toggle to PropertyModal (commit: `feat: add favourite toggle to PropertyModal`)
-
-### Step 9: Add styles (commit: `feat: add styles for saved searches sidebar`)
+None — all data is already available in the API response.
 
 ## Validation Plan
 
-1. `bash scripts/agent/validate.sh backend` — lint, unit, integration, contract tests
-2. `bash scripts/agent/validate.sh frontend` — frontend build
+- Manual testing: verify card layout with properties that have multiple listings
+- Visual check: best price highlighted, platform badges shown
+- `validate.sh frontend` must pass
+- Edge cases: properties with no listings (fallback to `p.price`), properties with single listing
 
 ## Risks and Conflict Surface
 
-- **Low risk**: Entirely additive — no existing code significantly modified
-- **Migration**: New tables only, no changes to existing schema
-- **Frontend layout**: Sidebar addition requires careful CSS (use flexbox)
-- **Single-user**: No auth — `owner` column nullable for future use
+- **Low risk**: Frontend-only change, no backend modifications
+- **Data dependency**: Need properties with multiple platform listings to test properly
+- **Fallback**: Must handle properties with no `listings` array gracefully (backward compat)
