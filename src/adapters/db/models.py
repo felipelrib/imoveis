@@ -197,3 +197,41 @@ class Watchlist(Base):
     __table_args__ = (
         sa.UniqueConstraint("property_id", name="uq_watchlist_property"),
     )
+
+
+class SavedSearch(Base):
+    """Persist filter sets so users can reapply them later."""
+
+    __tablename__ = "saved_searches"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    name = Column(String, nullable=False)
+    filters = Column(JSON, nullable=False)
+    owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
+    created_at = Column(DateTime, server_default=sa.text("now()"))
+
+
+class Favourite(Base):
+    """Track properties the user has favourited for quick access."""
+
+    __tablename__ = "favourites"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    property_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
+    created_at = Column(DateTime, server_default=sa.text("now()"))
+
+    __table_args__ = (
+        sa.UniqueConstraint("property_id", name="uq_favourite_property"),
+    )
