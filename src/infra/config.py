@@ -109,25 +109,21 @@ class GPUConfig(BaseModel, frozen=True):
     semaphore_limit: int = 1
 
 
-class OllamaProviderConfig(BaseModel, frozen=True):
-    """Settings for the Ollama AI backend."""
-
-    base_url: str = "http://localhost:11434"
-    default_model: str = "devstral:24b"
-    request_timeout: int = 120
-    max_retries: int = 3
-
-
-class AIProvidersConfig(BaseModel, frozen=True):
-    """Map of AI provider configs (currently only ``ollama``)."""
-
-    ollama: OllamaProviderConfig = Field(default_factory=OllamaProviderConfig)
-
-
 class AIConfig(BaseModel, frozen=True):
-    """AI / VLM settings."""
+    """AI / VLM settings.
 
-    providers: AIProvidersConfig = Field(default_factory=AIProvidersConfig)
+    Read from the ``ai:`` section of ``app_config.yaml``.  Individual model
+    names can be overridden via ``AI_MODEL`` (visual) and ``AI_TEXT_MODEL``
+    (text) environment variables.
+    """
+
+    backend: str = "ollama"  # ollama | lmstudio
+    ollama_url: str = "http://localhost:11434"
+    lmstudio_url: str = "http://localhost:1234"
+    visual_model: str = "llava"
+    text_model: str = "llama3"
+    timeout: int = 120
+    max_tokens: int = 1024
 
 
 class PlatformConfig(BaseModel, frozen=True):
@@ -224,7 +220,7 @@ def _parse_database_url(url: str) -> dict[str, Any]:
 
 
 def _set_nested(d: dict[str, Any], dotted_key: str, value: Any) -> None:
-    """Set a value in a nested dict using dot notation (e.g. ``ai.providers.ollama.default_model``)."""
+    """Set a value in a nested dict using dot notation (e.g. ``ai.visual_model``)."""
     keys = dotted_key.split(".")
     for k in keys[:-1]:
         d = d.setdefault(k, {})
@@ -251,8 +247,8 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
     1. ``DATABASE_URL`` — parsed into ``database.*`` fields
     2. ``REDIS_URL``    — parsed into ``redis.*`` fields
-    3. ``AI_MODEL``     — overrides ``ai.providers.ollama.default_model``
-    4. ``OLLAMA_HOST``  — overrides ``ai.providers.ollama.base_url``
+    3. ``AI_MODEL``     — overrides ``ai.visual_model``
+    4. ``OLLAMA_HOST``  — overrides ``ai.ollama_url``
     5. ``IMOVEIS_<SECTION>_<KEY>`` — generic override for any leaf value
     """
     # 1. DATABASE_URL → database section
@@ -271,21 +267,23 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
         data["redis"]["db"] = int((parsed.path or "/0").lstrip("/") or "0")
         data["redis"]["password"] = parsed.password or ""
 
-    # 3. AI_MODEL → ai.providers.ollama.default_model
+    # 3. AI_MODEL → ai.visual_model
     ai_model = os.environ.get("AI_MODEL")
     if ai_model:
         data.setdefault("ai", {})
-        data["ai"].setdefault("providers", {})
-        data["ai"]["providers"].setdefault("ollama", {})
-        data["ai"]["providers"]["ollama"]["default_model"] = ai_model
+        data["ai"]["visual_model"] = ai_model
 
-    # 3.5. OLLAMA_HOST → ai.providers.ollama.base_url
+    # 3.1 AI_TEXT_MODEL → ai.text_model
+    ai_text_model = os.environ.get("AI_TEXT_MODEL")
+    if ai_text_model:
+        data.setdefault("ai", {})
+        data["ai"]["text_model"] = ai_text_model
+
+    # 3.5. OLLAMA_HOST → ai.ollama_url
     ollama_host = os.environ.get("OLLAMA_HOST")
     if ollama_host:
         data.setdefault("ai", {})
-        data["ai"].setdefault("providers", {})
-        data["ai"]["providers"].setdefault("ollama", {})
-        data["ai"]["providers"]["ollama"]["base_url"] = ollama_host
+        data["ai"]["ollama_url"] = ollama_host
 
     # 4. Generic IMOVEIS_* overrides
     prefix = _ENV_PREFIX

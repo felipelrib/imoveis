@@ -55,8 +55,9 @@ ai:
   backend: ollama             # ollama | lmstudio
   ollama_url: http://localhost:11434
   lmstudio_url: http://localhost:1234
-  default_model: llava
-  timeout_seconds: 120
+  visual_model: llava          # model for image analysis (VLM)
+  text_model: llama3           # model for text/sentiment analysis
+  timeout: 120
   max_tokens: 1024
 
 # ---------------------------------------------------------------------------

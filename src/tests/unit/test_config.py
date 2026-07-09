@@ -109,7 +109,7 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.database.password == "testpass"
     assert cfg.redis.host == "localhost"
     assert cfg.redis.port == 6379
-    assert cfg.ai.providers.ollama.default_model == "llava"
+    assert cfg.ai.visual_model == "llava"
     assert cfg.gpu.enabled is True
     assert cfg.features.property_enrichment is False
 
@@ -239,7 +239,7 @@ def test_ai_model_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     cfg = load_config(cfg_file)
 
-    assert cfg.ai.providers.ollama.default_model == "deepseek-r1:14b"
+    assert cfg.ai.visual_model == "deepseek-r1:14b"
 
 
 @pytest.mark.unit
