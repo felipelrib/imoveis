@@ -86,18 +86,27 @@ class TestOllamaClientModels:
 
     def test_analyze_visuals_uses_visual_model(self):
         """analyze_visuals should call generate() with self.visual_model."""
+        import tempfile
+
         client = OllamaClient(
             base_url="http://localhost:11434",
             visual_model="custom-vlm",
         )
         client.generate = AsyncMock(return_value=_make_ollama_response(FAKE_VISUAL_RESPONSE))
 
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(b"\xff\xd8\xff\xe0" + b"\x00" * 10)
+            tmp_path = f.name
+
         async def _run():
-            result = await client.analyze_visuals(["fake.jpg"], "test prompt")
-            client.generate.assert_called_once()
-            call_args = client.generate.call_args
-            assert call_args[0][0] == "custom-vlm"  # positional: model
-            return result
+            try:
+                result = await client.analyze_visuals([tmp_path], "test prompt")
+                client.generate.assert_called_once()
+                call_args = client.generate.call_args
+                assert call_args[0][0] == "custom-vlm"  # positional: model
+                return result
+            finally:
+                os.unlink(tmp_path)
 
         result = asyncio.run(_run())
         assert result.condition_score == 0.85
