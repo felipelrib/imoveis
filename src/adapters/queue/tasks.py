@@ -287,6 +287,40 @@ def ai_enrich(
 
             # Recompute neighbourhood-relative stat_score for this property
             score_single_property(session, property_id)
+
+            # --- Deal verdict synthesis ---
+            from adapters.ai.client import template_deal_verdict
+
+            # Read back the updated meta (stat_analysis was just set by score_single_property)
+            ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+            updated_meta = dict(ms.meta or {}) if ms is not None else {}
+            stat_analysis = updated_meta.get("stat_analysis", {})
+            neighborhood_name = (meta.get("sentiment", {}).get("reasoning") or "")[:0]  # placeholder
+            # Try to get neighbourhood name from property
+            from adapters.db.models import Property as _Prop
+            _prop = session.get(_Prop, property_id)
+            if _prop is not None:
+                neighborhood_name = (
+                    (str(_prop.neighborhood_id) if _prop.neighborhood_id else None)
+                    or (_prop.props_json or {}).get("neighborhood")
+                    or ""
+                )
+
+            verdict_result = await client.summarize_deal(
+                stat_analysis=stat_analysis,
+                visual=meta.get("visual", {}),
+                sentiment=meta.get("sentiment", {}),
+                neighborhood_name=neighborhood_name,
+            )
+            if ms is not None:
+                updated_meta = dict(ms.meta or {})
+                updated_meta["deal_verdict"] = {
+                    "verdict": verdict_result.verdict,
+                    "confidence": verdict_result.confidence,
+                }
+                ms.meta = updated_meta
+                session.flush()
+
             session.commit()
         finally:
             session.close()

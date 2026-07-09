@@ -196,6 +196,7 @@ def list_properties(
                     "sentiment_score": sentiment.get("sentiment_score"),
                     "stat_category": meta.get("stat_analysis", {}).get("category"),
                     "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
+                    "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
                     "visual_category": visual.get("category"),
                     "visual_reasoning": visual.get("reasoning"),
                     "sentiment_category": sentiment.get("category"),
@@ -286,6 +287,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
             "neighborhood_name": row[23] or (row[13] or {}).get("neighborhood"),
             "location": {"lon": row[24], "lat": row[25]},
             "listings": row[26] or [],
+            "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
             "stat_analysis": meta.get("stat_analysis", {}),
             "ai_analysis": {
                 "visual": meta.get("visual", {}),

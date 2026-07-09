@@ -156,3 +156,69 @@ Now analyze the following property description and return the JSON object.
 ---
 {description}\
 """
+
+
+
+# ---------------------------------------------------------------------------
+# Deal Verdict Synthesis
+# ---------------------------------------------------------------------------
+
+
+def build_deal_verdict_prompt(
+    stat_analysis: dict | None = None,
+    visual: dict | None = None,
+    sentiment: dict | None = None,
+    neighborhood_name: str | None = None,
+) -> str:
+    """Return a prompt that asks the LLM to produce a concise PT-BR deal verdict.
+
+    Combines the three scoring signals into a single natural-language sentence
+    that serves as the property's "deal verdict" — the product's punchline.
+
+    Parameters
+    ----------
+    stat_analysis:
+        Dict with ``category`` and ``reasoning`` from statistical scoring.
+    visual:
+        Dict with ``condition_score``, ``category``, ``reasoning`` from VLM.
+    sentiment:
+        Dict with ``sentiment_score``, ``category``, ``reasoning``,
+        ``green_flags``, ``red_flags`` from text LLM.
+    neighborhood_name:
+        The neighbourhood/area name for context (e.g. "Savassi").
+    """
+    stat_cat = (stat_analysis or {}).get("category", "N/A")
+    stat_reason = (stat_analysis or {}).get("reasoning", "")
+    vis_cat = (visual or {}).get("category", "N/A")
+    vis_reason = (visual or {}).get("reasoning", "")
+    sent_cat = (sentiment or {}).get("category", "N/A")
+    sent_reason = (sentiment or {}).get("reasoning", "")
+    red_flags = (sentiment or {}).get("red_flags", [])
+    green_flags = (sentiment or {}).get("green_flags", [])
+
+    red_flags_str = ", ".join(red_flags) if red_flags else "nenhum"
+    green_flags_str = ", ".join(green_flags) if green_flags else "nenhum"
+
+    return f"""You are a Brazilian real-estate deal evaluator.  Given three analysis signals for a property in {neighborhood_name or "N/A"}, write a SHORT 1-2 sentence verdict in Portuguese (Brazil) that fuses them into a single punchline.
+
+**Statistical Analysis**: {stat_cat}
+{stat_reason}
+
+**Visual Condition**: {vis_cat}
+{vis_reason}
+
+**Location Sentiment**: {sent_cat}
+{sent_reason}
+
+**Green Flags**: {green_flags_str}
+
+**Red Flags**: {red_flags_str}
+
+Write the verdict as a concise sentence (max ~30 words).  Start with the most impactful signal.
+If signals conflict, mention the tension briefly.
+
+Return ONLY a JSON object — no markdown fences, no explanation:
+
+{{"verdict": "<PT-BR sentence>", "confidence": <float 0.0 to 1.0>}}
+
+Now produce the verdict JSON object."""

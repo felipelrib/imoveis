@@ -170,6 +170,24 @@ export default function PropertyModal({ id, onClose }) {
                 ))}
               </div>
 
+              {/* Deal Verdict */}
+              {p.deal_summary && (
+                <div style={{
+                  marginBottom: 20,
+                  padding: '16px 20px',
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))',
+                  border: '1px solid rgba(99,102,241,0.3)',
+                  borderRadius: 12,
+                }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
+                    💡 Veredicto do Deal
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.5, background: 'linear-gradient(135deg, #6366f1, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                    {p.deal_summary}
+                  </div>
+                </div>
+              )}
+
               {/* Score Explanations */}
               <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {statAnalysis.category && (

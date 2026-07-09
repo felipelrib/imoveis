@@ -31,6 +31,88 @@ class VisualResult(BaseModel):
     issues_detected: List[str] = []
 
 
+
+
+class DealVerdictResult(BaseModel):
+    """Result of deal verdict synthesis combining all scoring signals."""
+    verdict: str = ""
+    confidence: float = 0.0
+
+
+def template_deal_verdict(
+    stat_analysis: dict | None = None,
+    visual: dict | None = None,
+    sentiment: dict | None = None,
+    neighborhood_name: str | None = None,
+) -> str:
+    """Deterministic PT-BR deal verdict from the three scoring signals.
+
+    Works without GPU/LLM.  Returns a concise sentence combining:
+    - Statistical positioning relative to neighbourhood median
+    - Visual condition assessment
+    - Location sentiment / red-flag count
+
+    Examples
+    --------
+    >>> template_deal_verdict(
+    ...     stat_analysis={"category": "Slightly Undervalued", "reasoning": "..."},
+    ...     visual={"category": "Good", "reasoning": "..."},
+    ...     sentiment={"category": "Highly Desirable", "reasoning": "...", "red_flags": []},
+    ...     neighborhood_name="Savassi",
+    ... )
+    'Ligeiramente subvalorizado — boa condição, localização desejável, sem alertas'
+    """
+    parts: list[str] = []
+
+    # --- Statistical component ---
+    if stat_analysis and stat_analysis.get("category"):
+        cat = stat_analysis["category"]
+        # Map English categories to PT-BR
+        stat_map = {
+            "Highly Undervalued": "Altamente subvalorizado",
+            "Slightly Undervalued": "Ligeiramente subvalorizado",
+            "Average": "Preço dentro da média",
+            "Slightly Overvalued": "Ligeiramente acima da média",
+            "Highly Overvalued": "Altamente acima da média",
+        }
+        parts.append(stat_map.get(cat, cat))
+
+    # --- Visual component ---
+    if visual and visual.get("category"):
+        vis_cat = visual["category"]
+        vis_map = {
+            "Pristine": "excelente estado",
+            "Good": "boa condição",
+            "Average": "estado razoável",
+            "Needs Renovation": "precisa de reforma",
+            "Poor": "estado precário",
+        }
+        vis_label = vis_map.get(vis_cat, vis_cat.lower())
+        parts.append(vis_label)
+
+    # --- Sentiment component ---
+    if sentiment:
+        red_flags = sentiment.get("red_flags", []) if isinstance(sentiment.get("red_flags"), list) else []
+        green_flags = sentiment.get("green_flags", []) if isinstance(sentiment.get("green_flags"), list) else []
+
+        if len(red_flags) == 0:
+            parts.append("sem alertas")
+        elif len(red_flags) == 1:
+            parts.append("1 preocupação na localização")
+        else:
+            parts.append(f"{len(red_flags)} preocupações na localização")
+
+        if len(green_flags) >= 2:
+            parts.append(f"{len(green_flags)} aspectos positivos")
+
+    if not parts:
+        return "Sem dados suficientes para avaliação"
+
+    # Join with em-dash for first part, commas for rest
+    if len(parts) == 1:
+        return parts[0]
+    return parts[0] + " — " + ", ".join(parts[1:])
+
 class SentimentResult(BaseModel):
     sentiment_score: float
     analysis: str = ""
@@ -61,6 +143,39 @@ class LocalAIClient(ABC):
     async def close(self) -> None:
         """Close any open connections."""
 
+    async def summarize_deal(
+        self,
+        stat_analysis: dict | None = None,
+        visual: dict | None = None,
+        sentiment: dict | None = None,
+        neighborhood_name: str | None = None,
+    ) -> DealVerdictResult:
+        """Generate a natural-language deal verdict.
+
+        Tries the LLM first; falls back to deterministic template on failure.
+        """
+        try:
+            from adapters.ai.prompts import build_deal_verdict_prompt
+            prompt = build_deal_verdict_prompt(
+                stat_analysis=stat_analysis,
+                visual=visual,
+                sentiment=sentiment,
+                neighborhood_name=neighborhood_name,
+            )
+            # Subclasses override to call their specific LLM endpoint
+            result = await self._llm_verdict(prompt)
+            return result
+        except Exception as exc:
+            logger.warning("deal_verdict_llm_fallback: %s", str(exc))
+            return DealVerdictResult(
+                verdict=template_deal_verdict(stat_analysis, visual, sentiment, neighborhood_name),
+                confidence=0.0,
+            )
+
+    async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
+        """LLM call — to be overridden by concrete clients."""
+        raise NotImplementedError
+
     async def _ensure_session(self):
         """Ensure HTTP session is initialized."""
         if self.session is None:
@@ -90,6 +205,22 @@ class OllamaClient(LocalAIClient):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
+
+    async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
+        """Call Ollama for deal verdict synthesis."""
+        try:
+            res = await self.generate(self.text_model, prompt, stream=False, format="json")
+            data = json.loads(res.get("response", "{}"))
+            return DealVerdictResult(
+                verdict=data.get("verdict", ""),
+                confidence=float(data.get("confidence", 0.8)),
+            )
+        except Exception as exc:
+            logger.warning("ollama_verdict_error: %s", str(exc))
+            return DealVerdictResult(
+                verdict=template_deal_verdict(),
+                confidence=0.0,
+            )
 
     async def close(self) -> None:
         """Close any open connections."""
@@ -186,6 +317,28 @@ class LMStudioClient(LocalAIClient):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
+
+    async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
+        """Call LM Studio for deal verdict synthesis."""
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            result = await self.chat_completions(
+                model=self.text_model,
+                messages=messages,
+                max_tokens=256,
+            )
+            text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+            data = json.loads(text)
+            return DealVerdictResult(
+                verdict=data.get("verdict", ""),
+                confidence=float(data.get("confidence", 0.8)),
+            )
+        except Exception as exc:
+            logger.warning("lmstudio_verdict_error: %s", str(exc))
+            return DealVerdictResult(
+                verdict=template_deal_verdict(),
+                confidence=0.0,
+            )
 
     async def close(self) -> None:
         """Close any open connections."""

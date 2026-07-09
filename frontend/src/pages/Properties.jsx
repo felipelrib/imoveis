@@ -359,6 +359,11 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist }) {
           </div>
         </div>
         <div className="property-title">{p.title || p.address || 'Sem título'}</div>
+        {p.deal_summary && (
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent, #6366f1)', marginTop: 6, lineHeight: 1.4 }}>
+            💡 {p.deal_summary}
+          </div>
+        )}
 
         <div className="property-attrs">
           {p.bedrooms != null  && <span className="property-attr">🛏 {p.bedrooms}</span>}
