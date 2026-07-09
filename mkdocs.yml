@@ -47,6 +47,7 @@ nav:
       - deal-summary-enrichment: features/deal-summary-enrichment.md
       - saved-searches-favourites: features/saved-searches-favourites.md
       - per-platform-listings: features/per-platform-listings.md
+      - interactive-map: features/interactive-map.md
 
 plugins:
   - search
