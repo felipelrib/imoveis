@@ -72,3 +72,16 @@
      `DATABASE_URL` and `REDIS_URL` env vars are set by docker-compose.
      The fixture must call `get_config.cache_clear()` AND remove those env
      vars via `monkeypatch.delenv`.
+
+## Test discipline
+
+14. NEVER dismiss test failures as "pre-existing" without confirming. Before
+     merging, run `validate.sh backend` on a FRESH Docker volume (`docker
+     compose -p <project> down -v` first) to eliminate stale data. If tests
+     fail, investigate the root cause. Only proceed once ALL tests pass or
+     you have explicit user approval to merge with known failures.
+
+15. Integration test fixtures MUST clean up after themselves. Every `test_db`
+     or `session` fixture that creates a database session must truncate all
+     tables in its teardown. Stale data across test runs causes flaky
+     failures and false-negative validation.
