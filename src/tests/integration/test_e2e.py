@@ -34,6 +34,7 @@ def test_db():
     """Create a database session for testing.
 
     Uses DATABASE_URL env var (PostGIS) when available, otherwise skips.
+    Truncates all tables after each test for isolation.
     """
     import os
 
@@ -47,6 +48,11 @@ def test_db():
     session = SessionLocal()
     yield session
     session.close()
+    # Truncate all tables for test isolation
+    with engine.connect() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(table.delete())
+        conn.commit()
     engine.dispose()
 
 
