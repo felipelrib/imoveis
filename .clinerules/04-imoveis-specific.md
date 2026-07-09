@@ -94,6 +94,21 @@ models for AI enrichment.
 Features are tracked in **[Linear](https://linear.app/felipelrib/)** (team "Bino").
 Use `linear_search_issues` MCP tool to find the next issue to work on.
 
+### Milestone ordering (NON-NEGOTIABLE)
+
+When selecting the next issue to work on, you MUST:
+
+1. **Check milestones first.** Use `linear_get_project_milestones` to list all
+   milestones for project `2b293958-ee46-48f1-98aa-6d54abba468d`.
+2. **Work through milestones in order.** Start with the earliest uncompleted
+   milestone (lowest `sortOrder` where `status != done`). Do NOT skip ahead to
+   a later milestone.
+3. **Within a milestone, pick the highest-priority unfinished issue.** Use
+   `linear_search_issues` scoped to that milestone's issues. Lower priority
+   number = higher priority (0 > 1 > 2 > 3 > 4).
+4. **Only promote to the next milestone** when ALL issues in the current
+   milestone are in "Done" state.
+
 ### Lifecycle
 
 1. **Plan.** Read the Linear issue via MCP, then write `implementation_plan.md`
