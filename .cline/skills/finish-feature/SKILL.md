@@ -42,6 +42,7 @@ bash scripts/agent/finish-feature.sh "<feature_slug>"
 **Flags:**
 - `--validate-only` — sync with main and re-validate without merging
 - `--skip-docs` — skip the gen-docs step
+- `--skip-validate` — skip post-merge validation (for rules/docs-only changes where Python is not installed on the host)
 - `--dry-run` — preview what would happen
 
 Handle exit codes:

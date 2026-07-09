@@ -12,8 +12,9 @@
 #   1  validation failed after merge — fix, commit, re-run
 #
 # Flags:
-#   --dry-run   Show what would happen without doing it
-#   --skip-docs Skip the gen-docs step
+#   --dry-run        Show what would happen without doing it
+#   --skip-docs      Skip the gen-docs step
+#   --skip-validate  Skip post-merge validation (use for rules/docs-only changes)
 #   --validate-only  Only validate, don't merge (sync with main + re-validate)
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -25,12 +26,14 @@ source "$HERE/lib.sh"
 DRY_RUN=false
 SKIP_DOCS=false
 VALIDATE_ONLY=false
+SKIP_VALIDATE=false
 
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)       DRY_RUN=true ;;
-    --skip-docs)     SKIP_DOCS=true ;;
-    --validate-only) VALIDATE_ONLY=true ;;
+    --dry-run)        DRY_RUN=true ;;
+    --skip-docs)      SKIP_DOCS=true ;;
+    --skip-validate)  SKIP_VALIDATE=true ;;
+    --validate-only)  VALIDATE_ONLY=true ;;
   esac
 done
 
@@ -133,16 +136,20 @@ fi
 ok "merged $BRANCH into main"
 
 # --- Post-merge validation --------------------------------------------------
-log "Running post-merge validation..."
-if bash "$HERE/validate.sh" all; then
-  ok "VALIDATION PASSED after merge"
+if [ "$SKIP_VALIDATE" = true ]; then
+  warn "Skipping post-merge validation (--skip-validate)"
 else
-  warn "VALIDATION FAILED after merge"
-  warn "Rolling back merge: git reset --hard HEAD~1"
-  git reset --hard HEAD~1
-  warn "Switching back to feature branch..."
-  git checkout "$BRANCH"
-  exit 1
+  log "Running post-merge validation..."
+  if bash "$HERE/validate.sh" all; then
+    ok "VALIDATION PASSED after merge"
+  else
+    warn "VALIDATION FAILED after merge"
+    warn "Rolling back merge: git reset --hard HEAD~1"
+    git reset --hard HEAD~1
+    warn "Switching back to feature branch..."
+    git checkout "$BRANCH"
+    exit 1
+  fi
 fi
 
 # --- Generate docs (unless skipped) -----------------------------------------

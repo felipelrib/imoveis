@@ -50,6 +50,18 @@ Before every commit, verify:
 - NEVER disable a failing test to "make CI green" — fix the code or fix the test
 - Integration test fixtures MUST clean up after themselves (truncate tables, flush Redis, close connections)
 
+## Session Start (MANDATORY)
+
+At the start of EVERY session:
+1. Run `git rev-parse --abbrev-ref HEAD`. If it says `main`, STOP immediately.
+   - NEVER edit files on `main`.
+   - Create a worktree: `bash scripts/agent/setup-worktree.sh "<task-slug>" && cd .worktrees/<task-slug>`
+   - If you already made changes on `main`, stash them before creating the worktree.
+2. Read `.clinerules/guardrails.md` and `.clinerules/04-imoveis-specific.md` for isolation rules.
+3. Read `.clinerules/session-workflow.md` for the full pre/post task ceremony.
+
+See `.clinerules/session-workflow.md` for the complete lifecycle (start → work → finish → clean up).
+
 ## Session Continuity
 
 - If a session is interrupted, check the worktree state and Linear status to resume

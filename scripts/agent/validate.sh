@@ -17,7 +17,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-SCOPE="${1:-all}"
+SOFT=false
+SCOPE=""
+for arg in "${@}"; do
+  case "$arg" in
+    --soft) SOFT=true ;;
+    fast|backend|frontend|all) SCOPE="$arg" ;;
+  esac
+done
+[ -z "$SCOPE" ] && SCOPE="all"
 [ -f "$REPO_ROOT/.env.local" ] && { set -a; source "$REPO_ROOT/.env.local"; set +a; }
 cd "$REPO_ROOT"
 PROJ="${COMPOSE_PROJECT_NAME:-imoveis}"
@@ -26,11 +34,31 @@ COMPOSE=(dc --env-file .env.local -p "$PROJ")
 
 rc=0
 
+# Helper: skip a step if the required tool isn't available (--soft mode)
+# or fail hard (default). Rules/docs-only changes should use --soft.
+_require() {
+  local tool="$1"
+  if ! command -v "$tool" &>/dev/null; then
+    if [ "$SOFT" = true ]; then
+      warn "'$tool' not installed — skipping (--soft mode)"
+      return 1
+    fi
+    warn "'$tool' not installed — failing (use --soft for rules/docs-only changes)"
+    rc=1
+    return 1
+  fi
+  return 0
+}
+
 # ---- Lint ----
 run_lint() {
   log "Lint: isort + flake8"
-  isort --check --diff src/ 2>&1 && ok "isort OK" || { warn "isort FAILED"; rc=1; }
-  flake8 src/ --max-line-length=127 --extend-ignore=E203,W503 2>&1 && ok "flake8 OK" || { warn "flake8 FAILED"; rc=1; }
+  if _require isort; then
+    isort --check --diff src/ 2>&1 && ok "isort OK" || { warn "isort FAILED"; rc=1; }
+  fi
+  if _require flake8; then
+    flake8 src/ --max-line-length=127 --extend-ignore=E203,W503 2>&1 && ok "flake8 OK" || { warn "flake8 FAILED"; rc=1; }
+  fi
   if [ -f "$REPO_ROOT/frontend/package.json" ]; then
     ( cd "$REPO_ROOT/frontend" && npm run lint 2>/dev/null ) && ok "eslint OK" || warn "eslint not configured — skip"
   fi
@@ -39,25 +67,33 @@ run_lint() {
 # ---- Unit tests (no Docker) ----
 run_unit() {
   log "Unit: pytest (SQLite, no external services)"
-  python -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+  if _require python; then
+    python -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+  fi
 }
 
 # ---- Integration tests (needs PostGIS + Redis) ----
 run_integration() {
   log "Integration: pytest (requires PostGIS + Redis)"
-  python -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+  if _require python; then
+    python -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+  fi
 }
 
 # ---- Contract tests ----
 run_contract() {
   log "Contract: pytest + alembic check"
   if [ -d "$REPO_ROOT/src/tests/contract" ]; then
-    python -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
+    if _require python; then
+      python -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
+    fi
   else
     warn "src/tests/contract/ directory not found — skip"
   fi
   log "Contract: alembic schema check"
-  alembic check 2>&1 && ok "alembic check passed" || { warn "alembic check FAILED — models may not match DB schema"; rc=1; }
+  if _require alembic; then
+    alembic check 2>&1 && ok "alembic check passed" || { warn "alembic check FAILED — models may not match DB schema"; rc=1; }
+  fi
 }
 
 # ---- Frontend ----
