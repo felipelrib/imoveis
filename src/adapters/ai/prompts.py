@@ -158,7 +158,6 @@ Now analyze the following property description and return the JSON object.
 """
 
 
-
 # ---------------------------------------------------------------------------
 # Deal Verdict Synthesis
 # ---------------------------------------------------------------------------

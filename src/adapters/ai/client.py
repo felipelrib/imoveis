@@ -31,8 +31,6 @@ class VisualResult(BaseModel):
     issues_detected: List[str] = []
 
 
-
-
 class DealVerdictResult(BaseModel):
     """Result of deal verdict synthesis combining all scoring signals."""
     verdict: str = ""
@@ -112,6 +110,7 @@ def template_deal_verdict(
     if len(parts) == 1:
         return parts[0]
     return parts[0] + " — " + ", ".join(parts[1:])
+
 
 class SentimentResult(BaseModel):
     sentiment_score: float

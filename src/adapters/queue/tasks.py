@@ -289,7 +289,6 @@ def ai_enrich(
             score_single_property(session, property_id)
 
             # --- Deal verdict synthesis ---
-            from adapters.ai.client import template_deal_verdict
 
             # Read back the updated meta (stat_analysis was just set by score_single_property)
             ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
