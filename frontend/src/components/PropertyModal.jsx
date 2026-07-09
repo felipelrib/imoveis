@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist } from '../api.js'
+import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, checkFavourite, addFavourite, removeFavourite } from '../api.js'
 
 export default function PropertyModal({ id, onClose }) {
   const [property, setProperty] = useState(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
   const [isWatched, setIsWatched] = useState(false)
+  const [isFavourited, setIsFavourited] = useState(false)
 
   useEffect(() => {
     fetchProperty(id)
@@ -14,6 +15,9 @@ export default function PropertyModal({ id, onClose }) {
       .finally(() => setLoading(false))
     checkWatchlist(id)
       .then(data => setIsWatched(data.watched))
+      .catch(() => {})
+    checkFavourite(id)
+      .then(data => setIsFavourited(data.favourited))
       .catch(() => {})
   }, [id])
 
@@ -31,7 +35,20 @@ export default function PropertyModal({ id, onClose }) {
     }
   }
 
-  // Close on Escape
+  const toggleFavourite = async () => {
+    try {
+      if (isFavourited) {
+        await removeFavourite(id)
+        setIsFavourited(false)
+      } else {
+        await addFavourite(id)
+        setIsFavourited(true)
+      }
+    } catch (err) {
+      console.error('Favourite toggle failed:', err)
+    }
+  }
+
   useEffect(() => {
     const handler = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', handler)
@@ -58,14 +75,24 @@ export default function PropertyModal({ id, onClose }) {
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {!loading && (
-              <button
-                className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
-                onClick={toggleWatchlist}
-                title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
-                style={{ fontSize: 18, padding: '6px 10px' }}
-              >
-                {isWatched ? '🔔' : '☆'}
-              </button>
+              <>
+                <button
+                  className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}
+                  onClick={toggleFavourite}
+                  title={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
+                  style={{ fontSize: 18, padding: '6px 10px' }}
+                >
+                  {isFavourited ? '★' : '☆'}
+                </button>
+                <button
+                  className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+                  onClick={toggleWatchlist}
+                  title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                  style={{ fontSize: 18, padding: '6px 10px' }}
+                >
+                  {isWatched ? '🔔' : '☆'}
+                </button>
+              </>
             )}
             {!loading && p?.listings && p.listings.map((l, i) => (
               <a 
@@ -101,7 +128,6 @@ export default function PropertyModal({ id, onClose }) {
             </div>
           ) : (
             <>
-              {/* Image gallery */}
               {images.length > 0 && (
                 <div style={{ marginBottom: 20 }}>
                   <img
@@ -127,7 +153,6 @@ export default function PropertyModal({ id, onClose }) {
                 </div>
               )}
 
-              {/* Key details */}
               <div style={{ marginBottom: 20 }}>
                 {[
                   ['Platform', p.platform],
@@ -149,7 +174,6 @@ export default function PropertyModal({ id, onClose }) {
                 ))}
               </div>
 
-              {/* Score bars */}
               <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                 {[
                   { label: 'Combined', val: p.combined_score, color: '#6366f1' },
@@ -170,7 +194,6 @@ export default function PropertyModal({ id, onClose }) {
                 ))}
               </div>
 
-              {/* Deal Verdict */}
               {p.deal_summary && (
                 <div style={{
                   marginBottom: 20,
@@ -188,7 +211,6 @@ export default function PropertyModal({ id, onClose }) {
                 </div>
               )}
 
-              {/* Score Explanations */}
               <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {statAnalysis.category && (
                   <div style={{ padding: '12px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: 8 }}>
@@ -196,14 +218,12 @@ export default function PropertyModal({ id, onClose }) {
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{statAnalysis.reasoning}</div>
                   </div>
                 )}
-                
                 {visual.category && (
                   <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>Visual Condition: {visual.category}</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{visual.reasoning}</div>
                   </div>
                 )}
-
                 {sentiment.category && (
                   <div style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>Location Sentiment: {sentiment.category}</div>
@@ -212,13 +232,11 @@ export default function PropertyModal({ id, onClose }) {
                 )}
               </div>
 
-              {/* AI analysis */}
               {(visual.features_detected?.length > 0 || visual.issues_detected?.length > 0 || sentiment.green_flags?.length > 0 || sentiment.red_flags?.length > 0) && (
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
                     🤖 AI Analysis
                   </div>
-
                   {visual.features_detected?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Modern features</div>
@@ -227,7 +245,6 @@ export default function PropertyModal({ id, onClose }) {
                       </div>
                     </div>
                   )}
-
                   {visual.issues_detected?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Issues detected</div>
@@ -236,7 +253,6 @@ export default function PropertyModal({ id, onClose }) {
                       </div>
                     </div>
                   )}
-
                   {sentiment.green_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Location positives</div>
@@ -245,7 +261,6 @@ export default function PropertyModal({ id, onClose }) {
                       </div>
                     </div>
                   )}
-
                   {sentiment.red_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Location concerns</div>
@@ -257,7 +272,6 @@ export default function PropertyModal({ id, onClose }) {
                 </div>
               )}
 
-              {/* Description */}
               {p.description && (
                 <div style={{ marginTop: 16, padding: '14px', background: 'rgba(0,0,0,0.2)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
                   {p.description}
