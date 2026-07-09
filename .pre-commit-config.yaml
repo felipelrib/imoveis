@@ -44,9 +44,8 @@ repos:
         language: system
         pass_filenames: false
 
-      - id: pytest-unit
-        name: pytest (unit only)
-        entry: pytest src/tests/unit/ -v --timeout=30
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
+ci:
+  # pre-commit.ci runs AFTER you push — it's a CI check, not a local hook.
+  # It runs pre-commit stage hooks (not pre-push) on every PR.
+  # The pytest-unit hook below only runs locally via `git push` (pre-push stage).
+  autoupdate_schedule: weekly

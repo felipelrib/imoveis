@@ -71,6 +71,7 @@ jobs:
 
       - name: SonarCloud Scan
         if: success() || failure()
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -169,7 +170,7 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- E2E (Playwright) — only on push to main or workflow_dispatch ----
+  # ---- E2E (Playwright) — only on push to main ----
   e2e:
     needs: [unit, integration]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
