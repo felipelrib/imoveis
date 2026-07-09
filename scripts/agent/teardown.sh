@@ -2,8 +2,8 @@
 # ---------------------------------------------------------------------------
 # teardown.sh [--remove]
 #
-# Stops and removes this worktree's containers + volumes (frees the ports).
-# With --remove, also removes the git worktree and its registry entry.
+# Stops and removes this worktree's containers + volumes + images (frees the
+# ports). With --remove, also removes the git worktree and its registry entry.
 # Run from INSIDE the worktree.
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -17,9 +17,12 @@ cd "$REPO_ROOT"
 if [ -f "$REPO_ROOT/.env.local" ]; then
   set -a; source "$REPO_ROOT/.env.local"; set +a
   PROJ="${COMPOSE_PROJECT_NAME:-imoveis}"
-  log "Tearing down containers + volumes for project '$PROJ'"
-  dc --env-file .env.local -p "$PROJ" down -v --remove-orphans || warn "compose down had issues"
-  ok "containers + volumes removed"
+  log "Tearing down containers + volumes + images for project '$PROJ'"
+  # Stop containers, remove volumes, and remove images built by compose
+  dc --env-file .env.local -p "$PROJ" down -v --remove-orphans --rmi local 2>/dev/null || warn "compose down had issues"
+  # Clean up build cache left behind by this project
+  docker builder prune --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true
+  ok "containers + volumes + images removed"
 else
   warn "no .env.local — nothing to tear down here"
 fi

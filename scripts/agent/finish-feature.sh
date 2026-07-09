@@ -167,7 +167,10 @@ log "Tearing down worktree..."
 if [ -f "$PRIMARY_ROOT/.env.local" ]; then
   set -a; source "$PRIMARY_ROOT/.env.local"; set +a
   PROJ="${COMPOSE_PROJECT_NAME:-imoveis}"
-  dc --env-file .env.local -p "$PROJ" down -v --remove-orphans 2>/dev/null || true
+  # Stop containers, remove volumes AND images built by compose
+  dc --env-file .env.local -p "$PROJ" down -v --remove-orphans --rmi local 2>/dev/null || true
+  # Clean up build cache left behind by this project
+  docker builder prune --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true
 fi
 
 if [ -d "$WT" ]; then

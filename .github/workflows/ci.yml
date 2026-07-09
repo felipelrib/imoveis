@@ -4,7 +4,14 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches:
+      - main
+      - feat/**
+      - fix/**
+      - feature/**
+      - chore/**
+      - docs/**
+      - release/**
   workflow_dispatch:
 
 jobs:
@@ -162,10 +169,10 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- E2E (Playwright) — only on push to main, CRITICAL path only ----
+  # ---- E2E (Playwright) — only on push to main or workflow_dispatch ----
   e2e:
     needs: [unit, integration]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
