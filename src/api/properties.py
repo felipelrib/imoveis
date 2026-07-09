@@ -86,7 +86,8 @@ def list_properties(
                 if len(parts) == 4:
                     min_lon, min_lat, max_lon, max_lat = parts
                     filters.append(
-                        "ST_Within(p.location, ST_MakeEnvelope(:bbox_min_lon, :bbox_min_lat, :bbox_max_lon, :bbox_max_lat, 4326)) = true"
+                        "ST_Within(p.location, ST_MakeEnvelope("
+                        ":bbox_min_lon, :bbox_min_lat, :bbox_max_lon, :bbox_max_lat, 4326)) = true"
                     )
                     params["bbox_min_lon"] = min_lon
                     params["bbox_min_lat"] = min_lat
