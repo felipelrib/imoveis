@@ -92,3 +92,27 @@ export async function ensureOllama() {
   })
   return r.json()
 }
+
+export async function fetchSchedule() {
+  const r = await fetch(`${BASE}/admin/schedule`, {
+    headers: { 'X-API-Key': 'dev-secret-key' }
+  })
+  if (!r.ok) throw new Error('Schedule fetch failed')
+  return r.json()
+}
+
+export async function updateSchedule(platform, interval_minutes) {
+  const r = await fetch(`${BASE}/admin/schedule`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': 'dev-secret-key'
+    },
+    body: JSON.stringify({ platform, interval_minutes }),
+  })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    throw new Error(err.detail || 'Schedule update failed')
+  }
+  return r.json()
+}

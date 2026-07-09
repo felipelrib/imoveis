@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline } from '../api.js'
+import { fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline, fetchSchedule, updateSchedule } from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 
 function ts() {
@@ -23,6 +23,12 @@ export default function ScraperControl() {
     ai_metrics: { throughput_per_min: 0, avg_duration_sec: 0, total_recorded: 0 }
   })
 
+  // Schedule state
+  const [schedules, setSchedules] = useState([])
+  const [editingPlatform, setEditingPlatform] = useState(null)
+  const [editInterval, setEditInterval] = useState('')
+  const [savingSchedule, setSavingSchedule] = useState(false)
+
   // Logs state initialized from localStorage
   const [logs, setLogs] = useState(() => {
     const saved = localStorage.getItem('scraperLogs')
@@ -43,6 +49,20 @@ export default function ScraperControl() {
     }
     poll()
     const id = setInterval(poll, 3000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
+
+  // Poll schedule status
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const s = await fetchSchedule()
+        if (!cancelled && s?.schedules) setSchedules(s.schedules)
+      } catch (e) { /* ignore */ }
+    }
+    poll()
+    const id = setInterval(poll, 15000)
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
@@ -104,6 +124,30 @@ export default function ScraperControl() {
     const fresh = [{ type: 'info', text: `[${ts()}] Logs cleared.` }]
     setLogs(fresh)
     localStorage.setItem('scraperLogs', JSON.stringify(fresh))
+  }
+
+  const handleSaveSchedule = async (platform) => {
+    const minutes = parseInt(editInterval, 10)
+    if (isNaN(minutes) || minutes < 0) return
+    setSavingSchedule(true)
+    try {
+      await updateSchedule(platform, minutes)
+      addLog('success', `[${ts()}] ✔ Schedule updated: ${platform} → every ${minutes === 0 ? 'manual only' : minutes + ' min'} (restart beat to apply)`)
+      setEditingPlatform(null)
+      setEditInterval('')
+      // Refresh schedules
+      const s = await fetchSchedule()
+      if (s?.schedules) setSchedules(s.schedules)
+    } catch (e) {
+      addLog('error', `[${ts()}] ✖ ${e.message}`)
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  const formatTs = (ts) => {
+    if (!ts) return '—'
+    return new Date(ts * 1000).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })
   }
 
   const aiOk = status?.ollama?.status === 'ok'
@@ -264,6 +308,81 @@ export default function ScraperControl() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* ── Scheduled Runs ── */}
+      <div className="card">
+        <div className="panel-section-title">🕐 Scheduled Runs</div>
+        {schedules.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            No platforms configured for scheduling.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {schedules.map(s => (
+              <div key={s.platform} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                <div style={{ minWidth: 100 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>{s.platform}</div>
+                </div>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 16, fontSize: 12 }}>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Interval: </span>
+                    {editingPlatform === s.platform ? (
+                      <input
+                        type="number"
+                        value={editInterval}
+                        onChange={e => setEditInterval(e.target.value)}
+                        min="0"
+                        style={{ width: 56, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-subtle)', background: 'var(--bg-app)', color: 'var(--text-primary)', fontSize: 12 }}
+                      />
+                    ) : (
+                      <span style={{ fontWeight: 600, color: s.interval_minutes > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                        {s.interval_minutes > 0 ? `${s.interval_minutes} min` : 'manual'}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Last: </span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{formatTs(s.last_run)}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Next: </span>
+                    <span style={{ color: 'var(--accent-cyan)' }}>{formatTs(s.next_run)}</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {editingPlatform === s.platform ? (
+                    <>
+                      <button
+                        className="btn btn-sm btn-success"
+                        onClick={() => handleSaveSchedule(s.platform)}
+                        disabled={savingSchedule}
+                      >
+                        {savingSchedule ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => { setEditingPlatform(null); setEditInterval('') }}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => { setEditingPlatform(s.platform); setEditInterval(String(s.interval_minutes)) }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '0 4px' }}>
+              💡 Interval changes persist in Redis and take effect when the Celery beat process restarts.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Activity log */}

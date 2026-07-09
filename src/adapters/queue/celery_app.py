@@ -1,12 +1,56 @@
 import logging
+import os
 import traceback
 
 from celery import Celery
 from celery.signals import task_failure, task_revoked
 
+from infra.config import get_config
+from infra.redis_client import get_redis
+
 logger = logging.getLogger(__name__)
 
-import os
+
+# ---------------------------------------------------------------------------
+# Beat schedule builder
+# ---------------------------------------------------------------------------
+
+
+def build_beat_schedule() -> dict:
+    """Build a Celery beat schedule from the app config.
+
+    Reads per-platform ``scrape_interval`` (minutes) from the YAML config and
+    checks Redis for runtime overrides (``scheduler:interval:<platform>``).
+    Platforms with interval <= 0 or ``enabled: false`` are excluded.
+
+    Returns a dict suitable for ``celery_app.conf.beat_schedule``.
+    """
+    schedule: dict = {}
+    try:
+        cfg = get_config()
+        r = get_redis()
+
+        for name, platform_cfg in cfg.scraping.platforms.items():
+            if not platform_cfg.enabled:
+                continue
+
+            # Redis override takes precedence over config
+            override = r.get(f"scheduler:interval:{name}")
+            interval = int(override) if override is not None else platform_cfg.scrape_interval
+
+            if interval <= 0:
+                continue
+
+            schedule[f"scrape-{name}"] = {
+                "task": "tasks.scrape_listings",
+                "schedule": interval * 60,  # convert minutes to seconds (Celery periodic task)
+                "args": [name],
+                "kwargs": {},
+            }
+    except Exception:
+        logger.warning("beat_schedule_build_failed", exc_info=True)
+
+    return schedule
 
 
 def make_celery() -> Celery:
@@ -34,6 +78,9 @@ def make_celery() -> Celery:
     # Configuração de retries para tarefas críticas
     celery_app.conf.task_default_retry_delay = 30
     celery_app.conf.task_default_max_retries = 3
+
+    # Build and apply the beat schedule from config
+    celery_app.conf.beat_schedule = build_beat_schedule()
 
     return celery_app
 

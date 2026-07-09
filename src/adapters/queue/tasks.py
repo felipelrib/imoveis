@@ -164,6 +164,15 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             ex=3600,
         )
 
+        # Record last-run timestamp for schedule display
+        import time as _ts
+
+        r.set(
+            f"pipeline:scraper:{platform_name}:last_run",
+            str(int(_ts.time())),
+            ex=86400 * 7,  # keep for 7 days
+        )
+
         logger.info(
             "scrape_completed",
             platform=platform_name,

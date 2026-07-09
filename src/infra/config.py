@@ -140,6 +140,7 @@ class PlatformConfig(BaseModel, frozen=True):
     base_url: str = ""
     listing_selector: str = ""
     pagination_strategy: str = ""
+    scrape_interval: int = 60  # minutes between scheduled scrapes (0 = manual only)
 
 
 class ScrapingConfig(BaseModel, frozen=True):

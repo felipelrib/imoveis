@@ -90,6 +90,28 @@ services:
       - image_store:/app/data/images
 
   # ---------------------------------------------------------------------------
+  # Celery beat — scheduled scrape dispatcher
+  # ---------------------------------------------------------------------------
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    command: >
+      celery -A adapters.queue.tasks beat
+      --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs
+
+  # ---------------------------------------------------------------------------
   # Celery scraper worker
   # ---------------------------------------------------------------------------
   worker_scraper:
