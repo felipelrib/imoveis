@@ -1,6 +1,6 @@
 ---
 name: finish-feature
-description: Finish a feature by merging the branch into main, validating, tearing down the worktree, and cleaning up. Use when the user says "finish the feature", "merge and clean up", or "close out the feature".
+description: Finish a feature by merging the branch into main, validating, tearing down the worktree, cleaning up, and updating Linear. Use when the user says "finish the feature", "merge and clean up", or "close out the feature".
 ---
 
 # Finish Feature
@@ -12,6 +12,7 @@ the branch.
 ## Input
 
 - `feature_slug` (optional): if not provided, detect from the current git branch name.
+- `linear_issue_id` (optional): Linear issue identifier (e.g., `BIN-7`). If not provided, detect from the current git branch name or ask.
 
 ## Steps
 
@@ -48,16 +49,40 @@ Handle exit codes:
 - **Exit 2** → merge conflicts — resolve each file, `git add` + `git commit --no-edit`, then re-run
 - **Exit 1** → validation failed after merge — the script rolls back the merge automatically; fix the feature on the branch and re-run
 
-### Step 4 — Update FEATURES.md
+### Step 4 — Mark Linear issue as Done
 
-Update the feature status to `done`:
+After `finish-feature.sh` succeeds (exit 0), update the Linear issue to "Done":
+
 ```bash
-git add FEATURES.md && git commit -m "docs: mark <feature_slug> done"
+linear_bulk_update_issues --issueIds "<linear_issue_id>" --update '{"stateId": "fa058318-6dde-441e-91cb-5939c33e4fb1"}'
 ```
 
-### Step 5 — Report
+Done stateId: `fa058318-6dde-441e-91cb-5939c33e4fb1`
 
-Report: merge result, validation status, docs path, final FEATURES.md status.
+### Step 5 — Verify Linear hygiene
+
+Confirm the issue:
+- Has `projectId: "2b293958-ee46-48f1-98aa-6d54abba468d"` (Imoveis — Deal Tracker)
+- Belongs to the correct milestone
+
+### Step 6 — Push to remote
+
+```bash
+git push origin main
+```
+
+### Step 7 — Return to main and clean up worktree
+
+After the merge, return to the primary checkout:
+
+```bash
+cd /home/felipe/workfolder/imoveis
+git worktree remove .worktrees/<feature_slug>
+```
+
+### Step 8 — Report
+
+Report: merge result, validation status, docs path, Linear status updated to Done, worktree cleaned up.
 
 ## What finish-feature.sh does
 

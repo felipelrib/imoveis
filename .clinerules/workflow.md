@@ -120,3 +120,72 @@ If a session is interrupted:
 2. If `In Progress`, check the worktree for `implementation_plan.md` and
    `git log --oneline` to see what's been committed.
 3. Resume from the last committed step.
+
+## Task completion checklist
+
+After EVERY task is complete — whether a feature, a config change, or a documentation
+update — run this checklist before declaring "done":
+
+1. **Commit all changes.** No uncommitted files should remain. Use conventional
+   commit messages (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`).
+2. **Close the worktree.** Tear down the isolated workspace:
+   ```bash
+   cd /home/felipe/workfolder/imoveis
+   git worktree remove .worktrees/<feature-slug>
+   ```
+3. **Return to main** in the primary checkout. Never leave a dirty or orphaned
+   worktree behind.
+
+## Linear ticket hygiene
+
+### 1. Always mark Done when done
+
+After `finish-feature.sh` exits with code 0, the feature is complete. You MUST
+immediately update the Linear issue to "Done" using `linear_bulk_update_issues`.
+Never leave a completed feature in "In Progress" or "In Review."
+
+```bash
+# After finish-feature.sh succeeds:
+# Update Linear issue status
+linear_bulk_update_issues --issueIds "<issue-id>" --update '{"stateId": "<done-state-id>"}'
+```
+
+done-state-id for Bino: `fa058318-6dde-441e-91cb-5939c33e4fb1`
+
+> **Note on tool limitations:** The `linear_bulk_update_issues` MCP tool only
+> supports updating `stateId`, `assigneeId`, `priority`, and `estimate`. It
+> cannot set a project or milestone. For project/milestone assignment, use the
+> Linear web UI at https://linear.app/felipelrib/ and assign manually, then
+> continue with the next step.
+
+### 2. Always assign tickets to a project
+
+Every issue in the Bino team MUST be assigned to a project. When creating a new
+issue via `linear_create_issue` or `linear_create_issues`, always include the
+`projectId` parameter. When picking up an existing issue that lacks a project,
+assign it before starting work.
+
+projectId for "Imoveis — Deal Tracker": `2b293958-ee46-48f1-98aa-6d54abba468d`
+
+### 3. Always assign tickets to a milestone
+
+Every issue should live within a milestone that groups related work. Before
+starting a feature:
+
+1. Check the current milestones via `linear_search_project_milestones` with
+   `projectId: "2b293958-ee46-48f1-98aa-6d54abba468d"`.
+2. Assign the issue to the best-fitting milestone based on the issue's tier/theme.
+3. If no existing milestone fits, create a new one via
+   `linear_create_project_milestone`.
+4. Backlog ideas and future-tier features go under "Future / Beyond MVP"
+   (create it if it doesn't exist).
+
+**Current milestone mapping:**
+
+| Milestone | Tier | Theme |
+|-----------|------|-------|
+| v0.1 — Foundation & Pipeline | Foundation | Config, DB, dedup, price history, scrapers, beat |
+| v0.2 — Deal Intelligence | AI & Insights | Alerts, configurable AI, deal verdicts |
+| v0.3 — User Experience | UX Polish | Saved searches, map, charts, toasts |
+| v0.4 — Production Hardening | Robustness | Circuit breakers, skip unchanged AI |
+| Future / Beyond MVP | Future | Backlog ideas not yet prioritized |
