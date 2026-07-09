@@ -87,10 +87,11 @@ def match_or_create_property(
         existing.image_urls = candidate.image_urls
         existing.props_json = candidate.props_json
         existing.active = True
-        _upsert_listings(session, str(existing.id), candidate.listings or [])
-        session.flush()
-        # Record price history (compare before/after)
-        _record_price_change(session, str(existing.id), candidate.price)
+        listings = candidate.listings or []
+        _upsert_listings(session, str(existing.id), listings)
+        # Fallback: if no listings provided, record property-level price history
+        if not listings:
+            _record_price_change(session, str(existing.id), candidate.price)
         session.flush()
         return DedupeMatchResult(property_id=str(existing.id), action="updated")
 
@@ -123,9 +124,11 @@ def match_or_create_property(
                     prop.active = True
                     prop.image_urls = candidate.image_urls
                     prop.props_json = candidate.props_json
-                    _upsert_listings(session, str(prop.id), candidate.listings or [])
-                    session.flush()
-                    _record_price_change(session, str(prop.id), candidate.price)
+                    listings = candidate.listings or []
+                    _upsert_listings(session, str(prop.id), listings)
+                    # Fallback: if no listings provided, record property-level price history
+                    if not listings:
+                        _record_price_change(session, str(prop.id), candidate.price)
                     session.flush()
                     return DedupeMatchResult(property_id=str(prop.id), action="updated")
 
@@ -156,9 +159,11 @@ def match_or_create_property(
     )
     session.add(new_prop)
     session.flush()
-    _upsert_listings(session, str(new_prop.id), candidate.listings or [])
-    # Seed initial price history (open interval)
-    _record_price_change(session, str(new_prop.id), candidate.price)
+    listings = candidate.listings or []
+    _upsert_listings(session, str(new_prop.id), listings)
+    # Fallback: if no listings provided, seed property-level price history
+    if not listings:
+        _record_price_change(session, str(new_prop.id), candidate.price)
     session.flush()
     return DedupeMatchResult(property_id=str(new_prop.id), action="created")
 
@@ -167,22 +172,27 @@ def _record_price_change(
     session: Session,
     property_id: str,
     new_price: float,
+    listing_type: str = "sale",
+    platform: Optional[str] = None,
+    property_listing_id: Optional[str] = None,
 ) -> None:
     """Record a price change in the price_history table.
 
-    If an open interval (end_ts IS NULL) exists and the price differs,
-    close it and insert a new row.  If the price is the same, do nothing.
-    If no open interval exists, seed one (handles first-seen).
+    Each (property_id, listing_type, platform) triplet maintains its own
+    independent open interval.  If an open interval exists and the price
+    differs, close it and insert a new row.  If the price is the same,
+    do nothing.  If no open interval exists, seed one (handles first-seen).
     """
     now = datetime.now(timezone.utc)
 
     open_row = session.execute(
         text(
             "SELECT id, price FROM price_history "
-            "WHERE property_id = :pid AND end_ts IS NULL "
+            "WHERE property_id = :pid AND listing_type = :lt AND platform = :platform "
+            "AND end_ts IS NULL "
             "ORDER BY start_ts DESC LIMIT 1"
         ),
-        {"pid": property_id},
+        {"pid": property_id, "lt": listing_type, "platform": platform},
     ).fetchone()
 
     if open_row is not None:
@@ -197,12 +207,16 @@ def _record_price_change(
         # Insert new open interval
         session.execute(
             text(
-                "INSERT INTO price_history (id, property_id, price, start_ts, end_ts) "
-                "VALUES (:id, :pid, :price, :now, NULL)"
+                "INSERT INTO price_history "
+                "(id, property_id, listing_type, platform, property_listing_id, price, start_ts, end_ts) "
+                "VALUES (:id, :pid, :lt, :platform, :plid, :price, :now, NULL)"
             ),
             {
                 "id": str(_uuid.uuid4()),
                 "pid": property_id,
+                "lt": listing_type,
+                "platform": platform,
+                "plid": property_listing_id,
                 "price": new_price,
                 "now": now,
             },
@@ -211,12 +225,16 @@ def _record_price_change(
         # No open interval — seed initial history row
         session.execute(
             text(
-                "INSERT INTO price_history (id, property_id, price, start_ts, end_ts) "
-                "VALUES (:id, :pid, :price, :now, NULL)"
+                "INSERT INTO price_history "
+                "(id, property_id, listing_type, platform, property_listing_id, price, start_ts, end_ts) "
+                "VALUES (:id, :pid, :lt, :platform, :plid, :price, :now, NULL)"
             ),
             {
                 "id": str(_uuid.uuid4()),
                 "pid": property_id,
+                "lt": listing_type,
+                "platform": platform,
+                "plid": property_listing_id,
                 "price": new_price,
                 "now": now,
             },
@@ -232,15 +250,14 @@ def _upsert_listings(
 
     For each listing dict from the scraper normalizer, either update an existing
     row or insert a new one.  This keeps the property_listings table in sync with
-    every scrape run.  Uses raw SQL for database-agnostic operation.
+    every scrape run.  Records price history per-listing (per platform + listing_type).
+    Uses raw SQL for database-agnostic operation.
     """
-    import uuid as _uuid
-
     for listing in listings:
         # Check if listing already exists
         check = session.execute(
             text(
-                "SELECT id FROM property_listings "
+                "SELECT id, price FROM property_listings "
                 "WHERE property_id = :pid "
                 "AND platform = :platform "
                 "AND platform_listing_id = :plid "
@@ -257,6 +274,9 @@ def _upsert_listings(
         now = datetime.now(timezone.utc)
 
         if check:
+            old_price = float(check.price) if check.price is not None else None
+            new_price = float(listing["price"])
+
             session.execute(
                 text(
                     "UPDATE property_listings "
@@ -267,7 +287,7 @@ def _upsert_listings(
                     "WHERE id = :id"
                 ),
                 {
-                    "price": listing["price"],
+                    "price": new_price,
                     "currency": listing.get("currency", "BRL"),
                     "url": listing.get("url"),
                     "is_furnished": listing.get("is_furnished"),
@@ -279,7 +299,19 @@ def _upsert_listings(
                     "id": str(check.id),
                 },
             )
+
+            # Record price history only if price actually changed
+            if old_price is None or old_price != new_price:
+                _record_price_change(
+                    session,
+                    property_id,
+                    new_price,
+                    listing_type=listing["listing_type"],
+                    platform=listing["platform"],
+                    property_listing_id=str(check.id),
+                )
         else:
+            listing_id = str(_uuid.uuid4())
             session.execute(
                 text(
                     "INSERT INTO property_listings "
@@ -291,7 +323,7 @@ def _upsert_listings(
                     ":raw_json, :now, :now, true)"
                 ),
                 {
-                    "id": str(_uuid.uuid4()),
+                    "id": listing_id,
                     "pid": property_id,
                     "platform": listing["platform"],
                     "plid": listing["platform_listing_id"],
@@ -306,6 +338,16 @@ def _upsert_listings(
                     "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
                     "now": now,
                 },
+            )
+
+            # Seed initial price history for new listing
+            _record_price_change(
+                session,
+                property_id,
+                float(listing["price"]),
+                listing_type=listing["listing_type"],
+                platform=listing["platform"],
+                property_listing_id=listing_id,
             )
 
 

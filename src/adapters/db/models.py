@@ -128,6 +128,13 @@ class PriceHistory(Base):
         server_default=sa.text("gen_random_uuid()"),
     )
     property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"))
+    listing_type = Column(String, nullable=False, default="sale")  # 'rent' or 'sale'
+    platform = Column(String, nullable=True)
+    property_listing_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("property_listings.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     price = Column(Float, nullable=False)
     start_ts = Column(DateTime, server_default=sa.text("now()"))
     end_ts = Column(DateTime)

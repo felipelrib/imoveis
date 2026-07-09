@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS property_listings (
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     active BOOLEAN DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS price_history (
+    id TEXT PRIMARY KEY,
+    property_id TEXT NOT NULL,
+    listing_type TEXT NOT NULL DEFAULT 'sale',
+    platform TEXT,
+    property_listing_id TEXT,
+    price REAL NOT NULL,
+    start_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    end_ts TIMESTAMP
+);
 """
 
 

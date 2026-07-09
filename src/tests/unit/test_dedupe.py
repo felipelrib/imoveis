@@ -121,3 +121,103 @@ class TestRecordPriceChange:
         assert session.execute.call_count == 3
         insert_call = session.execute.call_args_list[2]
         assert insert_call[0][1]["price"] == 4500.0
+
+    def test_listing_type_and_platform_included_in_seed(self):
+        """First-seen seed includes listing_type and platform parameters."""
+        session = _make_mock_session(open_row=None)
+
+        _record_price_change(
+            session, "prop-1", 2000.0,
+            listing_type="rent", platform="olx", property_listing_id="pl-1",
+        )
+
+        assert session.execute.call_count == 2
+        insert_call = session.execute.call_args_list[1]
+        params = insert_call[0][1]
+        assert params["lt"] == "rent"
+        assert params["platform"] == "olx"
+        assert params["plid"] == "pl-1"
+        sql = str(insert_call[0][0])
+        assert "INSERT INTO price_history" in sql
+
+    def test_listing_type_filters_open_interval_query(self):
+        """SELECT filters by listing_type and platform."""
+        session = _make_mock_session(open_row=None)
+
+        _record_price_change(
+            session, "prop-1", 2000.0,
+            listing_type="rent", platform="quintoandar",
+        )
+
+        # Verify the SELECT query includes listing_type and platform filters
+        select_call = session.execute.call_args_list[0]
+        sql = str(select_call[0][0])
+        assert "listing_type = :lt" in sql
+        assert "platform = :platform" in sql
+        params = select_call[0][1]
+        assert params["lt"] == "rent"
+        assert params["platform"] == "quintoandar"
+
+    def test_rent_and_sale_independent_noop(self):
+        """Changing rent price does not affect sale history (noop on sale)."""
+        # First: record a sale price
+        session_seed = _make_mock_session(open_row=None)
+        _record_price_change(session_seed, "prop-1", 500000.0, listing_type="sale", platform="olx")
+        assert session_seed.execute.call_count == 2  # SELECT + INSERT
+
+        # Now: record a rent price — sale has no open interval, so it seeds rent
+        session_rent = _make_mock_session(open_row=None)
+        _record_price_change(session_rent, "prop-1", 2000.0, listing_type="rent", platform="olx")
+        assert session_rent.execute.call_count == 2  # SELECT + INSERT (new rent)
+
+        # Verify rent params are correct (not confused with sale)
+        insert_call = session_rent.execute.call_args_list[1]
+        params = insert_call[0][1]
+        assert params["lt"] == "rent"
+        assert params["price"] == 2000.0
+
+    def test_per_platform_independence(self):
+        """Price change on one platform does not affect another platform's history."""
+        # Seed OLX open interval
+        session_olx = _make_mock_session(open_row=None)
+        _record_price_change(session_olx, "prop-1", 2000.0, listing_type="rent", platform="olx")
+        assert session_olx.execute.call_count == 2
+
+        # Seed QuintoAndar open interval
+        session_qa = _make_mock_session(open_row=None)
+        _record_price_change(session_qa, "prop-1", 2200.0, listing_type="rent", platform="quintoandar")
+        assert session_qa.execute.call_count == 2
+
+        # Now change OLX price — should only affect OLX
+        olx_open = FakeRow("hist-olx", 2000.0)
+        session_update = _make_mock_session(open_row=olx_open)
+        _record_price_change(session_update, "prop-1", 1900.0, listing_type="rent", platform="olx")
+        # SELECT + UPDATE (close) + INSERT (new)
+        assert session_update.execute.call_count == 3
+        insert_call = session_update.execute.call_args_list[2]
+        params = insert_call[0][1]
+        assert params["platform"] == "olx"
+        assert params["price"] == 1900.0
+
+    def test_property_listing_id_in_insert(self):
+        """property_listing_id is included in INSERT statements."""
+        session = _make_mock_session(open_row=None)
+
+        _record_price_change(
+            session, "prop-1", 3000.0,
+            listing_type="rent", platform="olx", property_listing_id="pl-42",
+        )
+
+        insert_call = session.execute.call_args_list[1]
+        params = insert_call[0][1]
+        assert params["plid"] == "pl-42"
+
+    def test_untyped_default_is_sale(self):
+        """When listing_type is not specified, defaults to 'sale'."""
+        session = _make_mock_session(open_row=None)
+
+        _record_price_change(session, "prop-1", 500000.0)
+
+        select_call = session.execute.call_args_list[0]
+        params = select_call[0][1]
+        assert params["lt"] == "sale"

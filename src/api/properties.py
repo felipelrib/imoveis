@@ -297,8 +297,15 @@ def get_property(property_id: str) -> Dict[str, Any]:
 
 
 @router.get("/{property_id}/price-history")
-def get_price_history(property_id: str) -> List[Dict[str, Any]]:
-    """Return ordered price-history intervals for a property."""
+def get_price_history(
+    property_id: str,
+    listing_type: Optional[str] = Query(None, pattern="^(rent|sale)$"),
+    platform: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return ordered price-history intervals for a property.
+
+    Optionally filter by listing_type (rent/sale) and/or platform.
+    """
     session = SessionLocal()
     try:
         # Verify property exists
@@ -311,14 +318,26 @@ def get_price_history(property_id: str) -> List[Dict[str, Any]]:
 
             raise HTTPException(status_code=404, detail="Property not found")
 
+        filters = ["property_id = :pid"]
+        params: Dict[str, Any] = {"pid": property_id}
+
+        if listing_type:
+            filters.append("listing_type = :lt")
+            params["lt"] = listing_type
+        if platform:
+            filters.append("platform = :platform")
+            params["platform"] = platform
+
+        where = " AND ".join(filters)
+
         rows = session.execute(
             text(
-                "SELECT id, price, start_ts, end_ts "
+                "SELECT id, price, start_ts, end_ts, listing_type, platform, property_listing_id "
                 "FROM price_history "
-                "WHERE property_id = :pid "
+                f"WHERE {where} "
                 "ORDER BY start_ts DESC"
             ),
-            {"pid": property_id},
+            params,
         ).fetchall()
 
         return [
@@ -327,6 +346,9 @@ def get_price_history(property_id: str) -> List[Dict[str, Any]]:
                 "price": float(r[1]),
                 "start_ts": r[2].isoformat() if r[2] else None,
                 "end_ts": r[3].isoformat() if r[3] else None,
+                "listing_type": r[4],
+                "platform": r[5],
+                "property_listing_id": str(r[6]) if r[6] else None,
             }
             for r in rows
         ]
