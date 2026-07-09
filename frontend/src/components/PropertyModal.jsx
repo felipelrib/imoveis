@@ -174,6 +174,77 @@ export default function PropertyModal({ id, onClose }) {
                 ))}
               </div>
 
+              {/* Per-platform listings table */}
+              {p?.listings && p.listings.length > 0 && (() => {
+                const groups = {}
+                for (const l of p.listings) {
+                  const key = l.listing_type || 'sale'
+                  if (!groups[key]) groups[key] = []
+                  groups[key].push(l)
+                }
+                const typeLabel = (t) => t === 'rent' ? 'Aluguel' : 'Venda'
+                const typeColor = (t) => t === 'rent'
+                  ? { bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)', header: '#818cf8' }
+                  : { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', header: '#34d399' }
+                return (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+                      📋 Listings by Platform
+                    </div>
+                    {Object.entries(groups).map(([type, listings]) => {
+                      const colors = typeColor(type)
+                      const minPrice = Math.min(...listings.map(l => l.price || Infinity))
+                      return (
+                        <div key={type} style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: colors.header, marginBottom: 6, padding: '4px 8px', background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '6px 6px 0 0' }}>
+                            {typeLabel(type)} ({listings.length} {listings.length === 1 ? 'listing' : 'listings'})
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table className="listings-table">
+                              <thead>
+                                <tr>
+                                  <th>Platform</th>
+                                  <th>Price</th>
+                                  <th>Condo</th>
+                                  <th>IPTU</th>
+                                  <th>Furnished</th>
+                                  <th>Pets</th>
+                                  <th></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {listings.sort((a, b) => (a.price || Infinity) - (b.price || Infinity)).map((l, i) => {
+                                  const isBest = l.price === minPrice
+                                  return (
+                                    <tr key={`${l.platform}-${l.platform_id}`} className={isBest ? 'best-price' : ''}>
+                                      <td style={{ fontWeight: 600 }}>{l.platform}</td>
+                                      <td style={{ fontWeight: isBest ? 800 : 400, color: isBest ? '#34d399' : 'inherit' }}>
+                                        {isBest && '★ '}{l.price ? `R$ ${l.price.toLocaleString('pt-BR')}` : '—'}
+                                      </td>
+                                      <td>{l.condo_fee ? `R$ ${l.condo_fee.toLocaleString('pt-BR')}` : '—'}</td>
+                                      <td>{l.iptu ? `R$ ${l.iptu.toLocaleString('pt-BR')}` : '—'}</td>
+                                      <td>{l.furnished ? '✔' : '—'}</td>
+                                      <td>{l.pets_allowed ? '✔' : '—'}</td>
+                                      <td>
+                                        {l.url && (
+                                          <a href={l.url} target="_blank" rel="noreferrer" className="listing-link" title="Open on platform">
+                                            →
+                                          </a>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
               <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                 {[
                   { label: 'Combined', val: p.combined_score, color: '#6366f1' },

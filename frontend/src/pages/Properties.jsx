@@ -458,8 +458,43 @@ function scoreColor(v) {
   return 'var(--score-low)'
 }
 
+function groupListings(listings) {
+  if (!listings || listings.length === 0) return {}
+  const groups = {}
+  for (const l of listings) {
+    const key = l.listing_type || 'sale'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(l)
+  }
+  // Sort each group by price (lowest first)
+  for (const key of Object.keys(groups)) {
+    groups[key].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))
+  }
+  return groups
+}
+
+function getPlatformCount(listings) {
+  if (!listings || listings.length === 0) return 0
+  return new Set(listings.map(l => l.platform)).size
+}
+
+function formatListingType(type) {
+  if (type === 'rent') return 'ALUGUEL'
+  return 'VENDA'
+}
+
+function listingTypeColor(type) {
+  if (type === 'rent') return { bg: 'rgba(99,102,241,0.2)', color: '#818cf8' }
+  return { bg: 'rgba(16,185,129,0.2)', color: '#34d399' }
+}
+
 function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFavourited, onToggleFavourite }) {
   const img = (p.image_urls || [])[0]
+  const listings = p.listings || []
+  const groups = groupListings(listings)
+  const groupKeys = Object.keys(groups)
+  const platformCount = getPlatformCount(listings)
+  const hasListings = listings.length > 0
 
   return (
     <div className="property-card" onClick={onClick}>
@@ -471,15 +506,43 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
 
       <div className="property-body">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div className="property-price">
-            R$ {p.price ? p.price.toLocaleString('pt-BR') : '—'}
+          <div>
+            {hasListings ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {groupKeys.map(type => {
+                  const best = groups[type][0]
+                  const colors = listingTypeColor(type)
+                  return (
+                    <div key={type} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span className="property-price" style={{ fontSize: groupKeys.length > 1 ? 16 : 20 }}>
+                        R$ {best.price ? best.price.toLocaleString('pt-BR') : '—'}
+                      </span>
+                      <span style={{ padding: '1px 5px', fontSize: 9, background: colors.bg, color: colors.color, borderRadius: 3, fontWeight: 700 }}>
+                        {formatListingType(type)}
+                      </span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                        {best.platform}
+                      </span>
+                      {groups[type].length > 1 && (
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                          ({groups[type].length})
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="property-price">
+                R$ {p.price ? p.price.toLocaleString('pt-BR') : '—'}
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {(p.available_for_rent || p.available_for_sale) && (
-              <div style={{ display: 'flex', gap: 4 }}>
-                {p.available_for_rent && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(99,102,241,0.2)', color: '#818cf8', borderRadius: 4, fontWeight: 700 }}>ALUGUEL</span>}
-                {p.available_for_sale && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(16,185,129,0.2)', color: '#34d399', borderRadius: 4, fontWeight: 700 }}>VENDA</span>}
-              </div>
+            {platformCount > 1 && (
+              <span style={{ padding: '2px 6px', fontSize: 9, background: 'rgba(251,191,36,0.15)', color: '#fbbf24', borderRadius: 4, fontWeight: 700 }}>
+                {platformCount} plataformas
+              </span>
             )}
             <button
               className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}

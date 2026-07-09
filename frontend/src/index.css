@@ -866,3 +866,51 @@ body {
     min-width: 160px;
   }
 }
+
+/* ── Listings table (per-platform comparison) ─────────────── */
+.listings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.listings-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(0,0,0,0.15);
+}
+.listings-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+}
+.listings-table tr:hover td {
+  background: rgba(255,255,255,0.03);
+}
+.listings-table tr.best-price td {
+  background: rgba(16,185,129,0.08);
+  border-bottom-color: rgba(16,185,129,0.15);
+}
+.listing-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(99,102,241,0.15);
+  color: #818cf8;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 14px;
+  transition: background 0.15s;
+}
+.listing-link:hover {
+  background: rgba(99,102,241,0.3);
+}
