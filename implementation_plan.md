@@ -1,121 +1,112 @@
-# BIN-10: Watchlist Price-Drop Alerts
+# Implementation Plan — Saved Searches & Favourites (BIN-13)
 
-## Overview
+## Goal
 
-Add a watchlist feature that lets users track properties and receive notifications when prices drop. This is the core payoff of the price-history tracking shipped in v0.1.
+Add filter persistence and property shortlisting to the Properties page. Users can save their current filter set and reapply it later, and favourite individual properties for quick access.
 
-## Scope (this iteration)
+## Affected Areas
 
-1. **Watchlist model + migration** — DB table to track watched properties
-2. **Notifier module** — pluggable alert interface (log channel + optional webhook)
-3. **Price-drop detection** — fire alert when a watched property's price decreases past a threshold
-4. **API endpoints** — CRUD for the watchlist
-5. **Frontend toggle** — star/notify button on PropertyCard and PropertyModal
+### Backend
+- `src/adapters/db/models.py` — add `SavedSearch` and `Favourite` models
+- `alembic/versions/` — new migration for both tables
+- `src/api/saved_searches.py` — **new file**: CRUD for saved searches
+- `src/api/favourites.py` — **new file**: CRUD for favourites
+- `src/api/main.py` — register new routers
 
-## Implementation Steps
+### Frontend
+- `frontend/src/api.js` — add fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, checkFavourite
+- `frontend/src/pages/Properties.jsx` — add Saved Searches sidebar, ★ favourite toggle on PropertyCard, favourites view mode
+- `frontend/src/index.css` — styles for sidebar and favourite button
+- `frontend/src/components/PropertyModal.jsx` — add ★ favourite toggle in modal header
 
-### Step 1: Watchlist model + migration
+## Database Schema
 
-**File:** `src/adapters/db/models.py`
+### saved_searches
+```sql
+CREATE TABLE saved_searches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR NOT NULL,
+    filters JSONB NOT NULL,
+    owner UUID,
+    created_at TIMESTAMP DEFAULT now()
+);
+```
 
-Add `Watchlist` model:
+### favourites
+```sql
+CREATE TABLE favourites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    owner UUID,
+    created_at TIMESTAMP DEFAULT now(),
+    UNIQUE(property_id)
+);
+```
+
+## Step-by-Step Implementation
+
+### Step 1: Add database models (commit: `feat: add SavedSearch and Favourite models`)
+
+Add to `src/adapters/db/models.py`:
+
 ```python
-class Watchlist(Base):
-    __tablename__ = "watchlist"
-    id = Column(UUID, primary_key=True, server_default=...)
-    property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
-    min_drop_pct = Column(Float, default=5.0)  # alert when price drops ≥ 5%
-    last_notified_price = Column(Float)  # suppress repeated alerts
-    created_at = Column(DateTime, server_default=now())
+class SavedSearch(Base):
+    __tablename__ = "saved_searches"
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    name = Column(String, nullable=False)
+    filters = Column(JSON, nullable=False)
+    owner = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime, server_default=sa.text("now()"))
+
+class Favourite(Base):
+    __tablename__ = "favourites"
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime, server_default=sa.text("now()"))
+    __table_args__ = (sa.UniqueConstraint("property_id", name="uq_favourite_property"),)
 ```
 
-**Migration:** Alembic revision to create `watchlist` table with upgrade + downgrade.
+### Step 2: Create Alembic migration (commit: `feat: add migration for saved_searches and favourites tables`)
 
-### Step 2: Notifier module
+Create `alembic/versions/<hash>_add_saved_searches_favourites.py`:
+- `upgrade()`: CREATE TABLE saved_searches, CREATE TABLE favourites
+- `downgrade()`: DROP TABLE favourites, DROP TABLE saved_searches
 
-**New directory:** `src/adapters/notify/`
+### Step 3: Create backend API for saved searches (commit: `feat: add saved searches API endpoints`)
 
-- `__init__.py` — exports `get_notifier()`
-- `base.py` — abstract `Notifier` class with `send(property_id, old_price, new_price, platform, listing_type)` 
-- `log_notifier.py` — `LogNotifier` — logs the alert (always available)
-- `redis_notifier.py` — `RedisNotifier` — pushes alert to Redis list `alerts:price_drops` for frontend consumption
+Create `src/api/saved_searches.py` following the watchlist pattern:
+- `GET /saved-searches` — list all (ordered by created_at DESC)
+- `POST /saved-searches` — create with `{name, filters: {...}}`
+- `DELETE /saved-searches/{id}` — delete by ID
+- `GET /saved-searches/{id}` — get single (to retrieve filters)
 
-Config reads from `app_config.yaml`:
-```yaml
-alerts:
-  enabled: true
-  min_drop_pct: 5.0
-  channels:
-    - type: log
-    - type: redis  # for frontend polling
-```
+### Step 4: Create backend API for favourites (commit: `feat: add favourites API endpoints`)
 
-### Step 3: Price-drop detection in dedupe.py
+Create `src/api/favourites.py` following the watchlist pattern:
+- `GET /favourites` — list all (JOIN properties to return property data)
+- `POST /favourites` — add `{property_id}`
+- `DELETE /favourites/{property_id}` — remove by property_id
+- `GET /favourites/check/{property_id}` — check if property is favourited
 
-**File:** `src/core/dedupe.py`
+### Step 5: Register new routers in main.py (commit: `feat: register saved_searches and favourites routers`)
 
-In `_record_price_change()`, after closing an open interval (price changed):
-1. Query `watchlist` for properties matching `property_id`
-2. For each watcher, check if `old_price - new_price >= old_price * (min_drop_pct / 100)`
-3. If yes and `last_notified_price != new_price`, fire the notifier and update `last_notified_price`
+### Step 6: Add frontend API functions (commit: `feat: add saved search and favourites API functions`)
 
-This keeps detection inline with the write transaction — no separate consumer needed initially.
+### Step 7: Implement Saved Searches sidebar + Favourites toggle (commit: `feat: add saved searches sidebar and favourites toggle to Properties page`)
 
-### Step 4: API endpoints
+### Step 8: Add favourite toggle to PropertyModal (commit: `feat: add favourite toggle to PropertyModal`)
 
-**New file:** `src/api/watchlist.py`
+### Step 9: Add styles (commit: `feat: add styles for saved searches sidebar`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET /watchlist` | List all watched property IDs |
-| `POST /watchlist` | Add property to watchlist (body: `{property_id, min_drop_pct?}`) |
-| `DELETE /watchlist/{property_id}` | Remove property from watchlist |
-| `GET /watchlist/check/{property_id}` | Check if a specific property is watched |
+## Validation Plan
 
-**Wire in:** `src/api/main.py` — `app.include_router(watchlist_router)`
+1. `bash scripts/agent/validate.sh backend` — lint, unit, integration, contract tests
+2. `bash scripts/agent/validate.sh frontend` — frontend build
 
-### Step 5: Frontend watchlist toggle
+## Risks and Conflict Surface
 
-**Files:** `frontend/src/pages/Properties.jsx`, `frontend/src/components/PropertyModal.jsx`, `frontend/src/api.js`
-
-- `api.js`: `fetchWatchlist()`, `addToWatchlist(propertyId)`, `removeFromWatchlist(propertyId)`, `checkWatchlist(propertyId)`
-- PropertyCard: small star/🔔 icon that toggles watchlist status
-- PropertyModal: watchlist toggle button in the header area
-- Load watchlist set on page mount for bulk status check
-
-### Step 6: Config additions
-
-**File:** `configs/app_config.yaml`
-
-Add `alerts` block under the existing config structure.
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `src/adapters/db/models.py` | Add `Watchlist` model |
-| `alembic/versions/` | New migration for watchlist table |
-| `src/adapters/notify/` (new) | Notifier module (base + log + redis) |
-| `src/core/dedupe.py` | Price-drop detection in `_record_price_change` |
-| `src/api/watchlist.py` (new) | CRUD API endpoints |
-| `src/api/main.py` | Register watchlist router |
-| `configs/app_config.yaml` | Add alerts config block |
-| `src/infra/config.py` | Parse alerts config |
-| `frontend/src/api.js` | Watchlist API functions |
-| `frontend/src/pages/Properties.jsx` | Watchlist toggle on cards |
-| `frontend/src/components/PropertyModal.jsx` | Watchlist toggle in modal |
-| `frontend/src/index.css` | Star/toggle styles |
-
-## Testing Strategy
-
-- **Unit tests:** `test_watchlist.py` — notifier logic, price-drop threshold detection
-- **Integration tests:** `test_watchlist_e2e.py` — full flow: add to watchlist → ingest price drop → verify alert
-- **Contract tests:** API response shapes for watchlist endpoints
-- **Frontend:** Manual verification of toggle behavior
-- **validate.sh backend** must pass
-
-## Risks
-
-- Alert suppression: `last_notified_price` prevents duplicate alerts for the same drop
-- Single-user for now: `owner` column is nullable, ready for future auth
-- The notifier module is pluggable — can add Telegram/email later without changing detection logic
+- **Low risk**: Entirely additive — no existing code significantly modified
+- **Migration**: New tables only, no changes to existing schema
+- **Frontend layout**: Sidebar addition requires careful CSS (use flexbox)
+- **Single-user**: No auth — `owner` column nullable for future use
