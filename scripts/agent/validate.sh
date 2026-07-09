@@ -121,11 +121,6 @@ run_integration() {
     rc=1
   fi
 }
-  else
-    warn "python not installed — skipping integration tests"
-    rc=1
-  fi
-}
 
 # ---- Alembic: ensure DB is migrated before checks ----
 run_alembic_migrate() {
