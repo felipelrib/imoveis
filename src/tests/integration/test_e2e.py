@@ -28,19 +28,18 @@ from core.entities import PropertyCandidate
 
 @pytest.fixture(scope="function")
 def test_db():
-    """Create a database session for testing.
+    """Connect to the test database and provide a session.
 
-    Uses DATABASE_URL env var (PostGIS) when available, otherwise skips.
+    DATABASE_URL must be set by the test runner (validate.sh guarantees this).
     Truncates all tables after each test for isolation.
     """
     import os
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
-        pytest.skip("DATABASE_URL not set — skipping integration test that requires PostGIS")
+        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
 
     engine = create_engine(database_url, pool_pre_ping=True)
-    Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
     yield session

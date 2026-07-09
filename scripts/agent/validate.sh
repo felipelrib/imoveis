@@ -109,9 +109,18 @@ run_unit() {
 
 # ---- Integration tests (needs PostGIS + Redis) ----
 run_integration() {
-  log "Integration: pytest (requires PostGIS + Redis)"
+  log "Integration: ensuring services are up (Postgres + Redis)"
+  "${COMPOSE[@]}" up -d postgres redis 2>/dev/null
+  log "Integration: applying migrations (alembic upgrade head)"
+  "${COMPOSE[@]}" run --rm api python -m alembic upgrade head 2>/dev/null
+  log "Integration: pytest (real PostGIS + Redis)"
   if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
     "$PYTHON_BIN" -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+  else
+    warn "python not installed — skipping integration tests"
+    rc=1
+  fi
+}
   else
     warn "python not installed — skipping integration tests"
     rc=1
@@ -145,7 +154,7 @@ run_contract() {
   # PostGIS system tables (tiger, topology, spatial_ref_sys) always appear as
   # "extra" in autogenerate, so alembic check always reports false positives.
   # This check is informational only — never fails the build for PostGIS projects.
-  "${COMPOSE[@]}" run --rm api python -m alembic check 2>&1 && ok "alembic check passed" \
+  "${COMPOSE[@]}" run --rm api python -m alembic check 2>/dev/null && ok "alembic check passed" \
     || warn "alembic check: PostGIS system tables detected (expected — informational only)"
 }
 
