@@ -209,7 +209,7 @@ class SavedSearch(Base):
         server_default=sa.text("gen_random_uuid()"),
     )
     name = Column(String, nullable=False)
-    filters = Column(JSON, nullable=False)
+    filters = Column(sa.JSON, nullable=False)
     owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
     created_at = Column(DateTime, server_default=sa.text("now()"))
 
