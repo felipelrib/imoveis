@@ -53,3 +53,22 @@
 
 10. If a session is interrupted, check `Linear` status and the
      worktree state to resume where you left off.
+
+## Skill usage
+
+11. When the user says "work on the next ticket", "run feature X", or similar
+     pipeline-like requests, you MUST use the `feature-pipeline` skill via
+     `use_skill(skill_name="feature-pipeline")`. Do not attempt to manually
+     replicate the skill's steps.
+
+## Docker validation
+
+12. Before running `bash scripts/agent/validate.sh backend`, ensure the Docker
+     image is up to date with: `docker compose build api` (or `--no-cache` if
+     test files changed). Stale images cause phantom test failures.
+
+13. Config tests (`test_config.py`) must clear `get_config()`'s `lru_cache` in
+     an `autouse` fixture when running inside Docker containers where
+     `DATABASE_URL` and `REDIS_URL` env vars are set by docker-compose.
+     The fixture must call `get_config.cache_clear()` AND remove those env
+     vars via `monkeypatch.delenv`.

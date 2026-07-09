@@ -48,7 +48,6 @@ qa_data.json
 # Runtime artifacts (orphan at root)
 scratch.log
 worker.log
-implementation_plan.md
 
 # Parallel agent workspaces (git worktrees live here, per-worktree env)
 .worktrees/
