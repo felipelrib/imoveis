@@ -57,8 +57,9 @@ worker.log
 # Cursor IDE
 .cursor/
 
-# Cline workspace files (local, not committed)
-.cline/
+# Cline transient state (skills are committed, memory/kanban are local-only)
+.cline/memory/
+.cline/kanban/
 
 # MkDocs build output
 site/
