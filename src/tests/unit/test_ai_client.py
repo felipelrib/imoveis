@@ -12,10 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from adapters.ai.client import (
     LMStudioClient,
@@ -25,7 +22,6 @@ from adapters.ai.client import (
     VisualResult,
     create_ai_client,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

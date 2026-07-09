@@ -230,7 +230,13 @@ class LMStudioClient(LocalAIClient):
                     b64 = base64.b64encode(f.read()).decode("utf-8")
                 # Determine media type from extension
                 ext = path.rsplit(".", 1)[-1].lower() if "." in path else "jpeg"
-                media_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+                media_map = {
+                    "jpg": "image/jpeg",
+                    "jpeg": "image/jpeg",
+                    "png": "image/png",
+                    "gif": "image/gif",
+                    "webp": "image/webp",
+                }
                 media_type = media_map.get(ext, "image/jpeg")
                 content.append({
                     "type": "image_url",
