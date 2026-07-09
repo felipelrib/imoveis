@@ -71,12 +71,16 @@ def _clear_config_env(monkeypatch):
     REDIS_URL, which would override the test YAML values.  We temporarily
     clear them for every test in this module, and also remove any
     ``IMOVEIS_*`` generic overrides.
+
+    We also clear ``get_config()``'s lru_cache so the singleton picks up
+    the clean environment.
     """
     for key in _CONFIG_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     for key in list(os.environ):
         if key.startswith("IMOVEIS_"):
             monkeypatch.delenv(key, raising=False)
+    get_config.cache_clear()
 
 
 def _write_yaml(tmp_path: Path, content: str) -> Path:
