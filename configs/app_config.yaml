@@ -79,6 +79,16 @@ proxy:
   #   - http://user:pass@proxy2:8080
 
 # ---------------------------------------------------------------------------
+# Price-Drop Alerts
+# ---------------------------------------------------------------------------
+alerts:
+  enabled: true
+  min_drop_pct: 5.0           # alert when price drops ≥ 5%
+  channels:
+    - type: log               # always log alerts
+    - type: redis             # push to Redis for frontend polling
+
+# ---------------------------------------------------------------------------
 # Image Storage
 # ---------------------------------------------------------------------------
 image_storage_path: data/images

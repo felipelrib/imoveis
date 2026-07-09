@@ -176,3 +176,27 @@ class PropertyListing(Base):
             name="uq_platform_listing",
         ),
     )
+
+
+class Watchlist(Base):
+    """Track properties the user wants price-drop alerts for."""
+
+    __tablename__ = "watchlist"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    property_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    min_drop_pct = Column(Float, default=5.0, nullable=False)
+    last_notified_price = Column(Float, nullable=True)
+    created_at = Column(DateTime, server_default=sa.text("now()"))
+
+    __table_args__ = (
+        sa.UniqueConstraint("property_id", name="uq_watchlist_property"),
+    )

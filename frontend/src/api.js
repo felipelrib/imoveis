@@ -121,3 +121,41 @@ export async function updateSchedule(platform, interval_minutes) {
   }
   return r.json()
 }
+
+// ---------------------------------------------------------------------------
+// Watchlist API
+// ---------------------------------------------------------------------------
+
+export async function fetchWatchlist() {
+  const r = await fetch(`${BASE}/watchlist`)
+  if (!r.ok) throw new Error('Watchlist fetch failed')
+  return r.json()
+}
+
+export async function addToWatchlist(propertyId, minDropPct = 5.0) {
+  const r = await fetch(`${BASE}/watchlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ property_id: propertyId, min_drop_pct: minDropPct }),
+  })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    throw new Error(err.detail || 'Add to watchlist failed')
+  }
+  return r.json()
+}
+
+export async function removeFromWatchlist(propertyId) {
+  const r = await fetch(`${BASE}/watchlist/${propertyId}`, { method: 'DELETE' })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    throw new Error(err.detail || 'Remove from watchlist failed')
+  }
+  return r.json()
+}
+
+export async function checkWatchlist(propertyId) {
+  const r = await fetch(`${BASE}/watchlist/check/${propertyId}`)
+  if (!r.ok) throw new Error('Watchlist check failed')
+  return r.json()
+}

@@ -1,17 +1,35 @@
 import { useState, useEffect } from 'react'
-import { fetchProperty } from '../api.js'
+import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist } from '../api.js'
 
 export default function PropertyModal({ id, onClose }) {
   const [property, setProperty] = useState(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
+  const [isWatched, setIsWatched] = useState(false)
 
   useEffect(() => {
     fetchProperty(id)
       .then(setProperty)
       .catch(console.error)
       .finally(() => setLoading(false))
+    checkWatchlist(id)
+      .then(data => setIsWatched(data.watched))
+      .catch(() => {})
   }, [id])
+
+  const toggleWatchlist = async () => {
+    try {
+      if (isWatched) {
+        await removeFromWatchlist(id)
+        setIsWatched(false)
+      } else {
+        await addToWatchlist(id)
+        setIsWatched(true)
+      }
+    } catch (err) {
+      console.error('Watchlist toggle failed:', err)
+    }
+  }
 
   // Close on Escape
   useEffect(() => {
@@ -39,6 +57,16 @@ export default function PropertyModal({ id, onClose }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {!loading && (
+              <button
+                className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+                onClick={toggleWatchlist}
+                title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                style={{ fontSize: 18, padding: '6px 10px' }}
+              >
+                {isWatched ? '🔔' : '☆'}
+              </button>
+            )}
             {!loading && p?.listings && p.listings.map((l, i) => (
               <a 
                 key={`${l.platform}-${l.platform_id}-${l.listing_type}`}

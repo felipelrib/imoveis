@@ -1,111 +1,121 @@
-# Implementation Plan: Scheduled Scrapes via Celery Beat
+# BIN-10: Watchlist Price-Drop Alerts
 
-**Linear:** [BIN-8](https://linear.app/felipelrib/issue/BIN-8/recurring-scrapes-via-celery-beat)
-**Feature slug:** `scheduled-scraping`
+## Overview
 
-## Goal
+Add a watchlist feature that lets users track properties and receive notifications when prices drop. This is the core payoff of the price-history tracking shipped in v0.1.
 
-Enable automatic, recurring scrapes via Celery Beat so the deal tracker collects fresh data without manual clicks.
+## Scope (this iteration)
 
-## Current State
+1. **Watchlist model + migration** — DB table to track watched properties
+2. **Notifier module** — pluggable alert interface (log channel + optional webhook)
+3. **Price-drop detection** — fire alert when a watched property's price decreases past a threshold
+4. **API endpoints** — CRUD for the watchlist
+5. **Frontend toggle** — star/notify button on PropertyCard and PropertyModal
 
-- `celery_app.py` creates a Celery app with no `beat_schedule`
-- `configs/app_config.yaml` has platform configs (enabled, rate_limit) but no scrape interval
-- `docker-compose.yml` has `worker_ai` and `worker_scraper` but no `beat` service
-- `src/api/admin.py` has worker management but no schedule management
-- `ScraperControl.jsx` shows live pipeline but no schedule info
-- `src/infra/config.py` already has `CeleryConfig.beat_schedule` field and `PlatformConfig` model
+## Implementation Steps
 
-## Steps
+### Step 1: Watchlist model + migration
 
-### 1. Config: Add `scrape_interval` to platform config
+**File:** `src/adapters/db/models.py`
 
-**Files:**
-- `configs/app_config.yaml` — add `scrape_interval: 60` (minutes) to each platform
-- `src/infra/config.py` — add `scrape_interval: int = 60` field to `PlatformConfig`
+Add `Watchlist` model:
+```python
+class Watchlist(Base):
+    __tablename__ = "watchlist"
+    id = Column(UUID, primary_key=True, server_default=...)
+    property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    min_drop_pct = Column(Float, default=5.0)  # alert when price drops ≥ 5%
+    last_notified_price = Column(Float)  # suppress repeated alerts
+    created_at = Column(DateTime, server_default=now())
+```
 
-### 2. Celery beat schedule builder
+**Migration:** Alembic revision to create `watchlist` table with upgrade + downgrade.
 
-**File:** `src/adapters/queue/celery_app.py`
+### Step 2: Notifier module
 
-- Import `get_config` and `get_redis`
-- After creating the Celery app, iterate `cfg.scraping.platforms` and build `beat_schedule`:
-  - Key: `"scrape-{platform_name}"`
-  - Task: `"tasks.scrape_listings"`
-  - Schedule: `crontab(minute="*/{interval}")` for each enabled platform
-  - Args: `[platform_name]`
-- Apply the built schedule to `celery_app.conf.beat_schedule`
-- Read override intervals from Redis key `scheduler:interval:{platform}` if present, falling back to config
+**New directory:** `src/adapters/notify/`
 
-### 3. Write `last_run` timestamp on scrape completion
+- `__init__.py` — exports `get_notifier()`
+- `base.py` — abstract `Notifier` class with `send(property_id, old_price, new_price, platform, listing_type)` 
+- `log_notifier.py` — `LogNotifier` — logs the alert (always available)
+- `redis_notifier.py` — `RedisNotifier` — pushes alert to Redis list `alerts:price_drops` for frontend consumption
 
-**File:** `src/adapters/queue/tasks.py`
+Config reads from `app_config.yaml`:
+```yaml
+alerts:
+  enabled: true
+  min_drop_pct: 5.0
+  channels:
+    - type: log
+    - type: redis  # for frontend polling
+```
 
-- After `scrape_listings` completes successfully, write `pipeline:scraper:{platform_name}:last_run` to Redis with current timestamp
+### Step 3: Price-drop detection in dedupe.py
 
-### 4. Docker beat service
+**File:** `src/core/dedupe.py`
 
-**File:** `docker-compose.yml`
+In `_record_price_change()`, after closing an open interval (price changed):
+1. Query `watchlist` for properties matching `property_id`
+2. For each watcher, check if `old_price - new_price >= old_price * (min_drop_pct / 100)`
+3. If yes and `last_notified_price != new_price`, fire the notifier and update `last_notified_price`
 
-- Add `beat` service:
-  ```yaml
-  beat:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    restart: unless-stopped
-    command: >
-      celery -A adapters.queue.tasks beat
-      --loglevel=info
-    environment:
-      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./configs:/app/configs
-  ```
+This keeps detection inline with the write transaction — no separate consumer needed initially.
 
-### 5. Admin schedule API endpoints
+### Step 4: API endpoints
 
-**File:** `src/api/admin.py`
+**New file:** `src/api/watchlist.py`
 
-- `GET /admin/schedule` — returns per-platform schedule:
-  - Read from Redis `scheduler:interval:{platform}` for overrides
-  - Fall back to config `scrape_interval`
-  - Also return `last_run` from `pipeline:scraper:{platform}:last_run`
-  - Compute `next_run` based on last_run + interval
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET /watchlist` | List all watched property IDs |
+| `POST /watchlist` | Add property to watchlist (body: `{property_id, min_drop_pct?}`) |
+| `DELETE /watchlist/{property_id}` | Remove property from watchlist |
+| `GET /watchlist/check/{property_id}` | Check if a specific property is watched |
 
-- `POST /admin/schedule` — update interval:
-  - Body: `{platform: str, interval_minutes: int}` (0 to disable)
-  - Persist to Redis key `scheduler:interval:{platform}`
-  - Note: beat reads schedule at startup; interval changes take effect on beat restart
+**Wire in:** `src/api/main.py` — `app.include_router(watchlist_router)`
 
-### 6. Frontend: schedule display and editing
+### Step 5: Frontend watchlist toggle
 
-**Files:**
-- `frontend/src/api.js` — add `fetchSchedule()` and `updateSchedule(platform, interval)`
-- `frontend/src/pages/ScraperControl.jsx` — add a "Scheduled Runs" section:
-  - Table with columns: Platform | Interval | Last Run | Next Run | Actions (edit/save)
-  - Show badge "beat running" or "manual only" based on schedule presence
-  - Editable interval input with save button
+**Files:** `frontend/src/pages/Properties.jsx`, `frontend/src/components/PropertyModal.jsx`, `frontend/src/api.js`
 
-### 7. Tests
+- `api.js`: `fetchWatchlist()`, `addToWatchlist(propertyId)`, `removeFromWatchlist(propertyId)`, `checkWatchlist(propertyId)`
+- PropertyCard: small star/🔔 icon that toggles watchlist status
+- PropertyModal: watchlist toggle button in the header area
+- Load watchlist set on page mount for bulk status check
 
-- Unit test for `build_beat_schedule()` (testable pure function extracted)
+### Step 6: Config additions
 
-## Acceptance Criteria
+**File:** `configs/app_config.yaml`
 
-- [ ] Enabled platform is scraped automatically on its interval
-- [ ] Changing interval via `POST /admin/schedule` takes effect (after beat restart)
-- [ ] Disabled platforms (`enabled: false` or `interval: 0`) are skipped
-- [ ] Live Pipeline panel shows last-run/next-run per platform
-- [ ] `validate.sh` passes
+Add `alerts` block under the existing config structure.
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `src/adapters/db/models.py` | Add `Watchlist` model |
+| `alembic/versions/` | New migration for watchlist table |
+| `src/adapters/notify/` (new) | Notifier module (base + log + redis) |
+| `src/core/dedupe.py` | Price-drop detection in `_record_price_change` |
+| `src/api/watchlist.py` (new) | CRUD API endpoints |
+| `src/api/main.py` | Register watchlist router |
+| `configs/app_config.yaml` | Add alerts config block |
+| `src/infra/config.py` | Parse alerts config |
+| `frontend/src/api.js` | Watchlist API functions |
+| `frontend/src/pages/Properties.jsx` | Watchlist toggle on cards |
+| `frontend/src/components/PropertyModal.jsx` | Watchlist toggle in modal |
+| `frontend/src/index.css` | Star/toggle styles |
+
+## Testing Strategy
+
+- **Unit tests:** `test_watchlist.py` — notifier logic, price-drop threshold detection
+- **Integration tests:** `test_watchlist_e2e.py` — full flow: add to watchlist → ingest price drop → verify alert
+- **Contract tests:** API response shapes for watchlist endpoints
+- **Frontend:** Manual verification of toggle behavior
+- **validate.sh backend** must pass
 
 ## Risks
 
-- Celery beat re-reads `beat_schedule` only at startup (or via `--autoreload`). Interval changes via API persist to Redis but require beat restart to take effect on the schedule. A future improvement could use `celery.beat.Scheduler` with Redis-backed schedule.
-- For now, the frontend will note that changes take effect on next deployment restart.
+- Alert suppression: `last_notified_price` prevents duplicate alerts for the same drop
+- Single-user for now: `owner` column is nullable, ready for future auth
+- The notifier module is pluggable — can add Telegram/email later without changing detection logic

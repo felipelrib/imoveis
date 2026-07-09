@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { fetchProperties } from '../api.js'
+import { useState, useEffect, useCallback } from 'react'
+import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 
 const SORT_OPTIONS = [
@@ -31,6 +31,7 @@ export default function Properties() {
   
   const [selectedId, setSelectedId] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [watchedIds, setWatchedIds] = useState(new Set())
 
   const load = async (p = page) => {
     setLoading(true)
@@ -63,6 +64,28 @@ export default function Properties() {
       setLoading(false)
     }
   }
+
+  // Load watchlist on mount
+  useEffect(() => {
+    fetchWatchlist()
+      .then(items => setWatchedIds(new Set(items.map(i => i.property_id))))
+      .catch(() => {}) // silently fail — non-critical
+  }, [])
+
+  const toggleWatchlist = useCallback(async (e, propertyId) => {
+    e.stopPropagation() // don't open modal
+    try {
+      if (watchedIds.has(propertyId)) {
+        await removeFromWatchlist(propertyId)
+        setWatchedIds(prev => { const s = new Set(prev); s.delete(propertyId); return s })
+      } else {
+        await addToWatchlist(propertyId)
+        setWatchedIds(prev => new Set([...prev, propertyId]))
+      }
+    } catch (err) {
+      console.error('Watchlist toggle failed:', err)
+    }
+  }, [watchedIds])
 
   useEffect(() => { 
     load(1); 
@@ -260,7 +283,13 @@ export default function Properties() {
           <>
             <div className="property-grid">
               {properties.map(p => (
-                <PropertyCard key={p.id} property={p} onClick={() => setSelectedId(p.id)} />
+                <PropertyCard
+                  key={p.id}
+                  property={p}
+                  onClick={() => setSelectedId(p.id)}
+                  isWatched={watchedIds.has(p.id)}
+                  onToggleWatchlist={toggleWatchlist}
+                />
               ))}
             </div>
 
@@ -296,7 +325,7 @@ function scoreColor(v) {
   return 'var(--score-low)'
 }
 
-function PropertyCard({ property: p, onClick }) {
+function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist }) {
   const img = (p.image_urls || [])[0]
   const combined = p.combined_score
 
@@ -313,12 +342,21 @@ function PropertyCard({ property: p, onClick }) {
           <div className="property-price">
             R$ {p.price ? p.price.toLocaleString('pt-BR') : '—'}
           </div>
-          {(p.available_for_rent || p.available_for_sale) && (
-            <div style={{ display: 'flex', gap: 4 }}>
-              {p.available_for_rent && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(99,102,241,0.2)', color: '#818cf8', borderRadius: 4, fontWeight: 700 }}>ALUGUEL</span>}
-              {p.available_for_sale && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(16,185,129,0.2)', color: '#34d399', borderRadius: 4, fontWeight: 700 }}>VENDA</span>}
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {(p.available_for_rent || p.available_for_sale) && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                {p.available_for_rent && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(99,102,241,0.2)', color: '#818cf8', borderRadius: 4, fontWeight: 700 }}>ALUGUEL</span>}
+                {p.available_for_sale && <span style={{ padding: '2px 6px', fontSize: 10, background: 'rgba(16,185,129,0.2)', color: '#34d399', borderRadius: 4, fontWeight: 700 }}>VENDA</span>}
+              </div>
+            )}
+            <button
+              className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+              onClick={(e) => onToggleWatchlist(e, p.id)}
+              title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+            >
+              {isWatched ? '🔔' : '☆'}
+            </button>
+          </div>
         </div>
         <div className="property-title">{p.title || p.address || 'Sem título'}</div>
 

@@ -664,6 +664,30 @@ body {
 .toggle input:checked + .toggle-track { background: var(--accent); }
 .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
 
+/* ── Watchlist button ────────────────────────────────────────── */
+.watchlist-btn {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px 6px;
+  color: var(--text-muted);
+  transition: all 0.15s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.watchlist-btn:hover {
+  border-color: var(--accent-amber);
+  color: var(--accent-amber);
+  background: rgba(245, 158, 11, 0.1);
+}
+.watchlist-btn.watched {
+  border-color: var(--accent-amber);
+  color: var(--accent-amber);
+  background: rgba(245, 158, 11, 0.15);
+}
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar { display: none; }

@@ -158,6 +158,14 @@ class FeaturesConfig(BaseModel, frozen=True):
     price_alerts: bool = False
 
 
+class AlertsConfig(BaseModel, frozen=True):
+    """Price-drop alert settings."""
+
+    enabled: bool = True
+    min_drop_pct: float = 5.0
+    channels: list[dict[str, Any]] = Field(default_factory=lambda: [{"type": "log"}])
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -176,6 +184,7 @@ class AppConfig(BaseModel, frozen=True):
     ai: AIConfig = Field(default_factory=AIConfig)
     scraping: ScrapingConfig = Field(default_factory=ScrapingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
 
 
 # ---------------------------------------------------------------------------

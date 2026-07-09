@@ -182,6 +182,8 @@ def _record_price_change(
     independent open interval.  If an open interval exists and the price
     differs, close it and insert a new row.  If the price is the same,
     do nothing.  If no open interval exists, seed one (handles first-seen).
+
+    Also checks the watchlist for price-drop alerts.
     """
     now = datetime.now(timezone.utc)
 
@@ -221,6 +223,8 @@ def _record_price_change(
                 "now": now,
             },
         )
+        # Check for price-drop alerts
+        _check_watchlist_alerts(session, property_id, old_price, new_price, platform, listing_type)
     else:
         # No open interval — seed initial history row
         session.execute(
@@ -239,6 +243,65 @@ def _record_price_change(
                 "now": now,
             },
         )
+
+
+def _check_watchlist_alerts(
+    session: Session,
+    property_id: str,
+    old_price: float,
+    new_price: float,
+    platform: Optional[str],
+    listing_type: Optional[str],
+) -> None:
+    """Check if any watchlist entries should be alerted for this price drop."""
+    rows = session.execute(
+        text(
+            "SELECT id, min_drop_pct, last_notified_price "
+            "FROM watchlist WHERE property_id = :pid"
+        ),
+        {"pid": property_id},
+    ).fetchall()
+
+    if not rows:
+        return
+
+    for row in rows:
+        min_drop_pct = float(row.min_drop_pct or 5.0)
+        last_notified_price = float(row.last_notified_price) if row.last_notified_price is not None else None
+
+        # Calculate percentage drop
+        if old_price <= 0:
+            continue
+        drop_pct = ((old_price - new_price) / old_price) * 100.0
+
+        if drop_pct >= min_drop_pct and last_notified_price != new_price:
+            # Fire alert
+            try:
+                from adapters.notify import get_notifiers
+                from adapters.notify.base import PriceDropAlert
+
+                alert = PriceDropAlert(
+                    property_id=property_id,
+                    old_price=old_price,
+                    new_price=new_price,
+                    drop_pct=drop_pct,
+                    platform=platform,
+                    listing_type=listing_type,
+                )
+                for notifier in get_notifiers():
+                    notifier.send(alert)
+
+                # Update last_notified_price
+                session.execute(
+                    text("UPDATE watchlist SET last_notified_price = :price WHERE id = :id"),
+                    {"price": new_price, "id": str(row.id)},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "watchlist_alert_error",
+                    property_id=property_id,
+                    error=str(exc),
+                )
 
 
 def _upsert_listings(
