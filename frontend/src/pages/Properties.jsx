@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
+import MapView from '../components/MapView.jsx'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', label: '⭐ Best Score' },
@@ -60,10 +61,42 @@ export default function Properties() {
   const [neighborhoods, setNeighborhoods] = useState([])
   const [neighborhoodsLoading, setNeighborhoodsLoading] = useState(false)
 
+  // View mode: 'grid' | 'map'
+  const [viewType, setViewType] = useState('grid')
+  const [mapProperties, setMapProperties] = useState([])
+  const [mapLoading, setMapLoading] = useState(false)
+
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, maxPrice,
     minBedrooms, minParking, minScore, neighborhood, isFurnished, acceptsPets,
   }
+
+  const handleBboxChange = useCallback(async (bboxStr) => {
+    setMapLoading(true)
+    try {
+      const res = await fetchProperties({
+        page: 1,
+        pageSize: 200,
+        sortBy: sortBy === 'price_desc' ? 'price' : sortBy,
+        sortDir: sortBy === 'price_desc' ? 'desc' : sortDir,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
+        minScore: minScore ? parseFloat(minScore) : undefined,
+        minParking: minParking ? parseInt(minParking) : undefined,
+        neighborhoodName: neighborhood || undefined,
+        listingType: listingType,
+        propertyType: propertyType || undefined,
+        isFurnished: isFurnished ? true : undefined,
+        acceptsPets: acceptsPets ? true : undefined,
+        bbox: bboxStr,
+      })
+      setMapProperties(res.properties || [])
+    } catch (e) {
+      console.error('Map fetch failed:', e)
+    } finally {
+      setMapLoading(false)
+    }
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets])
 
   const applyFilters = useCallback((filters) => {
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
@@ -313,13 +346,31 @@ export default function Properties() {
                 </select>
               </div>
 
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                {showAdvanced ? '▲ Hide Advanced' : '▼ Advanced Filters'}
-              </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', border: '1px solid var(--border-subtle)', borderRadius: 6, overflow: 'hidden' }}>
+                  <button
+                    className={`btn btn-sm ${viewType === 'grid' ? '' : 'btn-ghost'}`}
+                    style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'grid' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'grid' ? 'white' : 'var(--text-secondary)' }}
+                    onClick={() => setViewType('grid')}
+                  >
+                    ☷ List
+                  </button>
+                  <button
+                    className={`btn btn-sm ${viewType === 'map' ? '' : 'btn-ghost'}`}
+                    style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'map' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'map' ? 'white' : 'var(--text-secondary)', borderLeft: '1px solid var(--border-subtle)' }}
+                    onClick={() => setViewType('map')}
+                  >
+                    🗺 Map
+                  </button>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  {showAdvanced ? '▲ Hide Advanced' : '▼ Advanced Filters'}
+                </button>
+              </div>
             </div>
 
             {showAdvanced && (
@@ -401,8 +452,23 @@ export default function Properties() {
           </div>
         )}
 
+        {/* Map View */}
+        {!loadError && viewType === 'map' && (
+          mapLoading ? (
+            <div className="loading-grid">
+              {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}
+            </div>
+          ) : (
+            <MapView
+              properties={data?.properties || []}
+              onSelectProperty={(id) => setSelectedId(id)}
+              onBboxChange={handleBboxChange}
+            />
+          )
+        )}
+
         {/* Grid */}
-        {!loadError && (
+        {!loadError && viewType === 'grid' && (
           loading ? (
             <div className="loading-grid">
               {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}

@@ -914,3 +914,43 @@ body {
 .listing-link:hover {
   background: rgba(99,102,241,0.3);
 }
+
+/* Map View */
+.map-container .maplibregl-popup-content {
+  background: var(--bg-card, #1a1a2e);
+  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border-subtle, #2d2d44);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.map-container .maplibregl-popup-tip {
+  border-top-color: var(--bg-card, #1a1a2e);
+}
+.map-container .maplibregl-popup-close-button {
+  color: var(--text-muted, #9ca3af);
+  font-size: 16px;
+  padding: 4px 8px;
+}
+.map-container .maplibregl-popup-close-button:hover {
+  color: var(--text-primary, #e2e8f0);
+}
+.map-container .maplibregl-ctrl-group {
+  background: var(--bg-card, #1a1a2e);
+  border: 1px solid var(--border-subtle, #2d2d44);
+}
+.map-container .maplibregl-ctrl-group button {
+  background: var(--bg-card, #1a1a2e);
+  color: var(--text-secondary, #94a3b8);
+}
+.map-container .maplibregl-ctrl-group button:hover {
+  background: var(--bg-elevated, #252540);
+}
+.map-container .maplibregl-ctrl-attrib {
+  background: rgba(0,0,0,0.5);
+  color: var(--text-muted, #9ca3af);
+  font-size: 10px;
+}
+.map-container .maplibregl-ctrl-attrib a {
+  color: var(--text-muted, #9ca3af);
+}

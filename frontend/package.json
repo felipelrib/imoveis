@@ -11,16 +11,17 @@
     "test:e2e": "npx playwright test"
   },
   "dependencies": {
+    "lucide-react": "^0.395.0",
+    "maplibre-gl": "^5.24.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",
-    "recharts": "^2.12.7",
-    "lucide-react": "^0.395.0"
+    "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.45.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@playwright/test": "^1.45.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.3.1"
   }

@@ -37,7 +37,7 @@ export async function triggerScrape(platform, checkpoint = {}, scrapeType = 'bot
 }
 
 export async function fetchProperties({
-  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, minParking, neighborhoodName, listingType, propertyType, isFurnished, acceptsPets, sortBy = 'combined_score', sortDir = 'desc',
+  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, minParking, neighborhoodName, listingType, propertyType, isFurnished, acceptsPets, sortBy = 'combined_score', sortDir = 'desc', bbox,
 } = {}) {
   const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_dir: sortDir })
   if (platform)    params.set('platform', platform)
@@ -50,6 +50,7 @@ export async function fetchProperties({
   if (propertyType) params.set('property_type', propertyType)
   if (isFurnished) params.set('is_furnished', 'true')
   if (acceptsPets) params.set('accepts_pets', 'true')
+  if (bbox) params.set('bbox', bbox)
 
   const r = await fetch(`${BASE}/properties?${params}`)
   if (!r.ok) throw new Error('Properties fetch failed')
