@@ -30,6 +30,7 @@ def list_properties(
     accepts_pets: Optional[bool] = None,
     sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    bbox: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return paginated, filtered, scored properties for the GUI grid."""
     session = SessionLocal()
@@ -78,6 +79,21 @@ def list_properties(
                 filters.append("p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'")
             else:
                 filters.append("NOT (p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO')")
+
+        if bbox:
+            try:
+                parts = [float(x.strip()) for x in bbox.split(",")]
+                if len(parts) == 4:
+                    min_lon, min_lat, max_lon, max_lat = parts
+                    filters.append(
+                        "ST_Within(p.location, ST_MakeEnvelope(:bbox_min_lon, :bbox_min_lat, :bbox_max_lon, :bbox_max_lat, 4326)) = true"
+                    )
+                    params["bbox_min_lon"] = min_lon
+                    params["bbox_min_lat"] = min_lat
+                    params["bbox_max_lon"] = max_lon
+                    params["bbox_max_lat"] = max_lat
+            except (ValueError, IndexError):
+                pass  # ignore malformed bbox
 
         where = " AND ".join(filters)
         sort_col_map = {
@@ -156,12 +172,12 @@ def list_properties(
 
         properties = []
         for row in rows:
-            meta = row[18] or {}
+            meta = row[21] or {}
             visual = meta.get("visual", {})
             sentiment = meta.get("sentiment", {})
-            props_json = row[22] or {}
+            props_json = row[25] or {}
 
-            neighborhood_name_val = row[19] or props_json.get("neighborhood")
+            neighborhood_name_val = row[22] or props_json.get("neighborhood")
 
             properties.append(
                 {
@@ -173,19 +189,21 @@ def list_properties(
                     "area_m2": row[5],
                     "bedrooms": row[6],
                     "bathrooms": row[7],
-                    "address": row[8],
-                    "image_urls": row[9] or [],
-                    "created_at": row[10].isoformat() if row[10] else None,
-                    "stat_score": (round(float(row[11]), 3) if row[11] is not None else None),
-                    "ai_score": (round(float(row[12]), 3) if row[12] is not None else None),
-                    "combined_score": (round(float(row[13]), 3) if row[13] is not None else None),
-                    "percentile_rank": (round(float(row[14]), 3) if row[14] is not None else None),
-                    "z_score": (round(float(row[15]), 3) if row[15] is not None else None),
-                    "price_per_m2": (round(float(row[16]), 2) if row[16] is not None else None),
-                    "neighborhood_mean": (round(float(row[17]), 2) if row[17] is not None else None),
+                    "address": row[11],
+                    "image_urls": row[12] or [],
+                    "created_at": row[13].isoformat() if row[13] else None,
+                    "lat": float(row[10]) if row[10] is not None else None,
+                    "lon": float(row[9]) if row[9] is not None else None,
+                    "stat_score": (round(float(row[14]), 3) if row[14] is not None else None),
+                    "ai_score": (round(float(row[15]), 3) if row[15] is not None else None),
+                    "combined_score": (round(float(row[16]), 3) if row[16] is not None else None),
+                    "percentile_rank": (round(float(row[17]), 3) if row[17] is not None else None),
+                    "z_score": (round(float(row[18]), 3) if row[18] is not None else None),
+                    "price_per_m2": (round(float(row[19]), 2) if row[19] is not None else None),
+                    "neighborhood_mean": (round(float(row[20]), 2) if row[20] is not None else None),
                     "neighborhood_name": neighborhood_name_val,
-                    "parking": row[20],
-                    "description": row[21],
+                    "parking": row[23],
+                    "description": row[24],
                     "available_for_rent": props_json.get("available_for_rent", False),
                     "available_for_sale": props_json.get("available_for_sale", False),
                     "ai_features": visual.get("features_detected", []),
@@ -201,7 +219,7 @@ def list_properties(
                     "visual_reasoning": visual.get("reasoning"),
                     "sentiment_category": sentiment.get("category"),
                     "sentiment_reasoning": sentiment.get("reasoning"),
-                    "listings": row[23] or [],
+                    "listings": row[26] or [],
                 }
             )
 
