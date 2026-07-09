@@ -35,18 +35,34 @@ for arg in "$@"; do
 done
 
 # --- Resolve the feature branch and worktree --------------------------------
+resolve_branch() {
+  local slug="$1"
+  # Try both common prefixes: feat/ and feature/
+  local type
+  for type in feat feature; do
+    if git rev-parse --verify "$type/$slug" >/dev/null 2>&1; then
+      echo "$type/$slug"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [ -n "${1:-}" ] && [[ ! "$1" =~ ^-- ]]; then
   SLUG="$(sanitize_proj "$1")"
-  BRANCH="feat/$SLUG"
+  BRANCH="$(resolve_branch "$SLUG")" || die "could not find branch 'feat/$SLUG' or 'feature/$SLUG'"
   WT="$REGISTRY_DIR/$SLUG"
 else
   BRANCH="$(current_branch)"
-  SLUG="${BRANCH#feat/}"
+  # Extract slug: strip the type prefix (feat/, fix/, feature/, etc.)
+  SLUG="${BRANCH#*/}"
   WT="$(git rev-parse --show-toplevel)"
 fi
 
 [ "$BRANCH" != "main" ] || die "you are ON main — run this from a feature worktree"
-echo "$BRANCH" | grep -q "^feat/" || die "branch '$BRANCH' does not start with feat/"
+# Accept any branch under a recognized conventional type prefix.
+BRANCH_TYPE="${BRANCH%%/*}"
+echo "$BRANCH_TYPE" | grep -qE "^($VALID_BRANCH_TYPES)$" || die "branch '$BRANCH' does not have a valid conventional type prefix (expected one of: $VALID_BRANCH_TYPES)"
 
 # --- Validate-only mode (sync with main + re-validate) ----------------------
 if [ "$VALIDATE_ONLY" = true ]; then

@@ -6,8 +6,8 @@
 # unique, race-free block of host ports, and writes the worktree's .env.local.
 #
 # <branch> follows the Conventional Branch v1.1.0 spec:
-#   <type>/<description>          — e.g. feature/eng-123-add-login
-#   <slug>                       — shorthand, defaults to feature/<slug>
+#   <type>/<description>          — e.g. feat/eng-123-add-login
+#   <slug>                       — shorthand, defaults to feat/<slug>
 #
 # Valid types: feature, feat, bugfix, fix, hotfix, release, chore, ai,
 #              copilot, cursor, claude, codex
@@ -21,14 +21,14 @@ source "$HERE/lib.sh"
 
 [ $# -ge 1 ] || die "usage: setup-worktree.sh <branch|slug> [base-branch]"
 
-# Accept either "feature/eng-123-add-login" or plain "add-login" (defaults to feature/).
+# Accept either "feat/eng-123-add-login" or plain "add-login" (defaults to feat/).
 INPUT="$1"
 if echo "$INPUT" | grep -q '/'; then
   # Full conventional branch name — validate it.
   BRANCH="$INPUT"
   validate_conventional_branch "$BRANCH" || die "branch '$BRANCH' violates Conventional Branch v1.1.0"
 else
-  # Plain slug — default to feature/ unless it starts with a known type prefix.
+  # Plain slug — default to feat/ unless it starts with a known type prefix.
   SLUG="$(sanitize_proj "$INPUT")"
   [ -n "$SLUG" ] || die "empty/invalid feature slug"
   # Check if the slug starts with a recognized branch type (e.g. "fix-" → fix/)
@@ -45,7 +45,7 @@ else
   if [ -n "$DETECTED_TYPE" ]; then
     BRANCH="$DETECTED_TYPE/$SLUG"
   else
-    BRANCH="feature/$SLUG"
+    BRANCH="feat/$SLUG"
   fi
 fi
 
