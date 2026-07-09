@@ -89,6 +89,23 @@ models for AI enrichment.
     `use_skill(skill_name="feature-pipeline")`. Do not attempt to manually
     replicate the skill's steps.
 
+## Validation discipline (NON-NEGOTIABLE)
+
+14. NEVER skip, work around, or ignore validation failures. If `validate.sh`,
+    `finish-feature.sh`, `npm ci`, `pytest`, `isort`, `flake8`, or any other
+    validation tool fails, you MUST:
+    1. **Diagnose the root cause** — read the error message carefully.
+    2. **Fix the issue** — install missing tools, fix broken configs, resolve
+       dependency problems, fix code errors.
+    3. **Re-run validation** — confirm it passes.
+    4. Only then proceed.
+    If a tool is missing (e.g. `isort`, `flake8`, `pytest`), install it via
+    `pip install` before running validation. If `npm ci` fails because
+    `package-lock.json` is missing, investigate why and fix it — do NOT
+    switch to `npm install` as a workaround.
+    The only exception is using `--soft` mode on `validate.sh` for
+    rules/docs-only changes that don't touch source code.
+
 ## Feature workflow
 
 Features are tracked in **[Linear](https://linear.app/felipelrib/)** (team "Bino").

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -34,7 +34,10 @@ def list_watchlist() -> List[WatchlistItem]:
     session = SessionLocal()
     try:
         rows = session.execute(
-            text("SELECT id, property_id, min_drop_pct, last_notified_price, created_at FROM watchlist ORDER BY created_at DESC")
+            text(
+                "SELECT id, property_id, min_drop_pct, last_notified_price, created_at "
+                "FROM watchlist ORDER BY created_at DESC"
+            )
         ).fetchall()
         return [
             WatchlistItem(

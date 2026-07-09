@@ -10,9 +10,9 @@ page's initial state.
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
-import random
 from typing import Any, Dict, Iterator
 
 from bs4 import BeautifulSoup

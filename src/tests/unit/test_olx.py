@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import MagicMock, patch
 
-from adapters.scrapers.olx import OLXScraper
+import pytest
 
+from adapters.scrapers.olx import OLXScraper
 
 # ---------------------------------------------------------------------------
 # Fixtures

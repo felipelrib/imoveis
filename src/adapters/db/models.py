@@ -1,6 +1,3 @@
-import uuid
-from datetime import datetime, timezone
-
 import sqlalchemy as sa
 from geoalchemy2 import Geometry
 from sqlalchemy import (

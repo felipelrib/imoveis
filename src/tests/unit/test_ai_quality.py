@@ -134,7 +134,7 @@ class TestAIGoldenFiles:
 
     def test_ai_client_imports_and_types(self):
         """Ensure AI client models are importable and correctly typed."""
-        from adapters.ai.client import VisualResult, SentimentResult
+        from adapters.ai.client import SentimentResult, VisualResult
 
         # Instantiate default results without errors
         v = VisualResult(condition_score=0.5)

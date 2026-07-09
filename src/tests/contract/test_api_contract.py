@@ -7,8 +7,10 @@ updating this contract. Uses FastAPI TestClient with minimal dependencies.
 from __future__ import annotations
 
 import os
+
 import pytest
 from fastapi.testclient import TestClient
+
 from api.main import app
 
 

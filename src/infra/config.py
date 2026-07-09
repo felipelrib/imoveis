@@ -15,15 +15,13 @@ Usage::
 from __future__ import annotations
 
 import os
-import re
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from src.core.exceptions import ConfigError
 
