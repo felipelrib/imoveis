@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: imoveis
-      POSTGRES_PASSWORD: imoveis_secret
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imoveis_local_dev}
       POSTGRES_DB: realestate
     ports:
       # Host port is parametrized; defaults preserve single-instance behavior.
@@ -50,7 +50,7 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
       # Point Ollama to host machine (Ollama runs on Windows host, not in Docker)
       OLLAMA_HOST: http://host.docker.internal:11434
@@ -77,7 +77,7 @@ services:
       --queues=ai
       --concurrency=1
     environment:
-      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
       OLLAMA_HOST: http://host.docker.internal:11434
     depends_on:
@@ -101,7 +101,7 @@ services:
       celery -A adapters.queue.tasks beat
       --loglevel=info
     environment:
-      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -125,7 +125,7 @@ services:
       --queues=scrapers
       --concurrency=2
     environment:
-      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:

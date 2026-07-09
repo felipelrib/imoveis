@@ -1,5 +1,10 @@
 const BASE = '/api'
 
+// Admin API key — exposed at build time via Vite (SPA constraint).
+// Set VITE_API_KEY in frontend/.env.development (git-ignored) for local dev.
+// In production, admin endpoints should be protected by a reverse proxy.
+const ADMIN_KEY = import.meta.env.VITE_API_KEY || ''
+
 export async function fetchStatus() {
   const r = await fetch(`${BASE}/system/status`)
   if (!r.ok) throw new Error('Status fetch failed')
@@ -60,15 +65,15 @@ export async function fetchProperty(id) {
 export async function pauseWorkers() {
   const r = await fetch(`${BASE}/admin/workers/pause`, { 
     method: 'POST',
-    headers: { 'X-API-Key': 'dev-secret-key' }
+    headers: { 'X-API-Key': ADMIN_KEY }
   })
   return r.json()
 }
 
 export async function resumeWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/resume`, { 
+  const r = await fetch(`${BASE}/admin/workers/resume`, {
     method: 'POST',
-    headers: { 'X-API-Key': 'dev-secret-key' }
+    headers: { 'X-API-Key': ADMIN_KEY }
   })
   return r.json()
 }
@@ -78,7 +83,7 @@ export async function recalculateScores(weights) {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
-      'X-API-Key': 'dev-secret-key'
+      'X-API-Key': ADMIN_KEY
     },
     body: JSON.stringify(weights || null),
   })
@@ -88,14 +93,14 @@ export async function recalculateScores(weights) {
 export async function ensureOllama() {
   const r = await fetch(`${BASE}/system/ollama/ensure`, { 
     method: 'POST',
-    headers: { 'X-API-Key': 'dev-secret-key' }
+    headers: { 'X-API-Key': ADMIN_KEY }
   })
   return r.json()
 }
 
 export async function fetchSchedule() {
   const r = await fetch(`${BASE}/admin/schedule`, {
-    headers: { 'X-API-Key': 'dev-secret-key' }
+    headers: { 'X-API-Key': ADMIN_KEY }
   })
   if (!r.ok) throw new Error('Schedule fetch failed')
   return r.json()
@@ -106,7 +111,7 @@ export async function updateSchedule(platform, interval_minutes) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': 'dev-secret-key'
+      'X-API-Key': ADMIN_KEY
     },
     body: JSON.stringify({ platform, interval_minutes }),
   })

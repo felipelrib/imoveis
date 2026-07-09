@@ -1,0 +1,52 @@
+# Dependencies (don't waste tokens reading these)
+node_modules/
+__pycache__/
+.venv/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Docker volumes (large binary data)
+pgdata/
+redis_data/
+postgres_data/
+
+# Git worktrees (parallel agent workspaces)
+.worktrees/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+site/
+
+# Large binary files
+*.bin
+*.model
+*.gguf
+*.so
+*.pyd
+
+# Lock files (rarely needed by agent, huge for context)
+frontend/package-lock.json
+
+# Data dumps
+*.json.gz
+*.sql
+
+# IDE settings
+.idea/
+.vscode/
+.cursor/
+
+# MkDocs build output
+site/
+
+# Python cache
+*.py[cod]
+*$py.class
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log

@@ -1,74 +1,29 @@
 # NON-NEGOTIABLE GUARDRAILS (re-read every turn)
 
-## Isolation
+This file provides a quick-reference summary. Full details are in the numbered
+rule files below. All of these rules apply to EVERY turn — no exceptions.
 
-1. NEVER commit, edit files, or run `docker compose up` on the `main` branch or in
-   the primary checkout. You MUST be inside a git worktree under `.worktrees/`.
-   If `git rev-parse --abbrev-ref HEAD` says `main`, STOP and run
-   `bash scripts/agent/setup-worktree.sh <feature-slug>` first.
+## Core principles
 
-2. NEVER use default ports (5432, 6379, 8000, 5173) or `docker compose` without
-   `--env-file .env.local -p "$COMPOSE_PROJECT_NAME"`. Always start services via
-   `bash scripts/agent/run-services.sh`, which uses your worktree's unique ports.
+| Rule | Summary | Full Text |
+|------|---------|-----------|
+| Isolation | Never work on `main`. Always inside `.worktrees/` with port isolation. | `04-imoveis-specific.md` §Isolation |
+| Plan first | `implementation_plan.md` must exist before code. Scope discipline. | `04-imoveis-specific.md` §Workflow |
+| Commit often | Conventional commits (`feat:`, `fix:`, etc.). Never leave tree dirty. | `01-universal.md` §Commit Discipline |
+| Validate before done | `validate.sh` must pass. Use `finish-feature.sh` for merge + teardown. | `04-imoveis-specific.md` §Workflow |
+| No secrets in code | No default passwords, API keys, or tokens. Empty-string defaults only. | `01-universal.md` §Security Rules |
+| TDD | Write test FIRST, show it failing, then implement. No exceptions. | `testing.md` §TDD workflow |
+| Use skills | Don't manually replicate skill steps. Use `use_skill()`. | `04-imoveis-specific.md` §Skill usage |
+| Docker validation | Build fresh image before running tests. Clear config cache in containers. | `04-imoveis-specific.md` §Docker validation |
+| Test discipline | Never dismiss failures as "pre-existing". Clean up fixtures. | `04-imoveis-specific.md` §Test discipline |
 
-## Workflow
+## Rule file map
 
-3. PLAN BEFORE CODE. An `implementation_plan.md` must exist in your worktree
-   before you write any implementation code. Follow the plan.
-
-4. COMMIT FREQUENTLY to your feature branch with conventional messages
-   (`feat:`, `fix:`, `test:`, `docs:`). Never leave the tree dirty for long.
-
-5. VALIDATE before declaring done: `bash scripts/agent/validate.sh` must pass.
-   When the feature is complete, use `bash scripts/agent/finish-feature.sh` to
-   merge into main, validate post-merge, tear down the worktree, and clean up.
-   Handle exit codes: 0 = done, 1 = fix + re-run, 2 = resolve conflicts + re-run.
-
-6. SCOPE DISCIPLINE — do not refactor code beyond what the feature requires.
-   The `implementation_plan.md` defines scope — stick to it.
-
-## Safety
-
-7. NEVER `git push --force`, delete another branch/worktree, or `docker system prune`.
-
-8. Before every commit, verify:
-   - Commit messages MUST use conventional format: `feat:`, `fix:`, `test:`, `docs:`,
-     `refactor:`, `chore:`. Never commit with messages like "update", "WIP", "asdf".
-   - Check the diff for hardcoded ports (5432, 6379, 8000, 5173) or localhost URLs.
-     These must come from environment variables.
-   - No API keys, passwords, tokens, or secrets in the diff.
-   - No `.env.local` files being committed (should be in `.gitignore`).
-   - Never commit directly to `main`. Always be on a `feat/*` branch inside `.worktrees/`.
-
-## Post-edit checks
-
-9. After editing files in `src/`, `frontend/`, or `alembic/`:
-   - If a new function or class was added, ensure a corresponding test exists or
-     is planned.
-   - If `configs/app_config.yaml` was modified, verify the change is reflected in
-     `src/infra/config.py`.
-   - Ensure no circular imports in new code.
-
-## Session continuity
-
-10. If a session is interrupted, check `Linear` status and the
-     worktree state to resume where you left off.
-
-## Skill usage
-
-11. When the user says "work on the next ticket", "run feature X", or similar
-     pipeline-like requests, you MUST use the `feature-pipeline` skill via
-     `use_skill(skill_name="feature-pipeline")`. Do not attempt to manually
-     replicate the skill's steps.
-
-## Docker validation
-
-12. Before running `bash scripts/agent/validate.sh backend`, ensure the Docker
-     image is up to date with: `docker compose build api` (or `--no-cache` if
-     test files changed). Stale images cause phantom test failures.
-
-13. Config tests (`test_config.py`) must clear `get_config()`'s `lru_cache` in
-     an `autouse` fixture when running inside Docker containers where
-     `DATABASE_URL` and `REDIS_URL` env vars are set by docker-compose.
-     The fixture must call `get_config.cache_clear()` AND remove those env
-     vars via `monkeypatch.delenv`.
+| File | Scope |
+|------|-------|
+| `01-universal.md` | Portable — commit discipline, safety, security, TDD |
+| `02-python-backend.md` | Portable — SQLAlchemy, FastAPI, Pydantic, Python testing |
+| `03-react-frontend.md` | Portable — React patterns, Playwright, frontend security |
+| `04-imoveis-specific.md` | Project — worktree isolation, Docker, feature pipeline, Linear |
+| `testing.md` | Project — test pyramid, AI validation, scraper validation, contract tests |
+| `ci.md` | Portable + project — pre-commit, GitHub Actions, security scanning |

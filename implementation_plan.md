@@ -58,7 +58,7 @@ Enable automatic, recurring scrapes via Celery Beat so the deal tracker collects
       celery -A adapters.queue.tasks beat
       --loglevel=info
     environment:
-      DATABASE_URL: postgresql://imoveis:imoveis_secret@postgres:5432/realestate
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
