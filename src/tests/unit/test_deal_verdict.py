@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import pytest
 
 from adapters.ai.client import (
     DealVerdictResult,
     OllamaClient,
-    LMStudioClient,
     template_deal_verdict,
 )
-
 
 # ---------------------------------------------------------------------------
 # template_deal_verdict — deterministic path
