@@ -1,0 +1,21 @@
+# CI-specific overrides — no GPU/AI services, no persistent volumes
+# Used by GitHub Actions to run pytest inside Docker when needed.
+services:
+  api:
+    build:
+      dockerfile: Dockerfile.api
+    environment:
+      OLLAMA_HOST: ""  # disable AI calls in CI
+    volumes: []  # no persistent volumes in CI
+
+  worker_ai:
+    profiles:
+      - manual  # don't start in CI by default
+
+  worker_scraper:
+    profiles:
+      - manual  # don't start in CI by default
+
+  beat:
+    profiles:
+      - manual  # don't start in CI by default

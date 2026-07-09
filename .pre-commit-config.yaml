@@ -1,0 +1,52 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile, black, --line-length, "127"]
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: [--max-line-length, "127", --extend-ignore, "E203,W503"]
+
+  - repo: local
+    hooks:
+      - id: forbid-hardcoded-secrets
+        name: forbid imoveis/dev secrets
+        entry: bash -c '! grep -rnP "(imoveis_secret|dev-secret-key)" src/ frontend/src/ --include="*.py" --include="*.js" --include="*.jsx"'
+        language: system
+        pass_filenames: false
+
+      - id: forbid-only
+        name: forbid .only() in test files
+        entry: bash -c '! grep -rn "\.only(" src/tests/'
+        language: system
+        pass_filenames: false
+
+      - id: forbid-print
+        name: forbid print() in source code
+        entry: bash -c '! grep -rnP "^[^#]*\bprint\s*\(" src/ --include="*.py" | grep -v "__init__.py" | grep -v "test_"'
+        language: system
+        pass_filenames: false
+
+      - id: pytest-unit
+        name: pytest (unit only)
+        entry: pytest src/tests/unit/ -v --timeout=30
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

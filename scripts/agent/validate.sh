@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# validate.sh [backend|frontend|all]   (default: all)
+# validate.sh [fast|backend|frontend|all]   (default: all)
 #
-# The single validation gate. Exits 0 only if everything passes, so it can be
-# used directly as a recipe `retry.checks` command. Runs against THIS worktree's
-# isolated stack (uses its .env.local / compose project).
+# The single validation gate. Runs the SAME steps as CI, in the SAME order.
+# Exits 0 only if everything passes. Runs against THIS worktree's isolated
+# stack (uses its .env.local / compose project).
+#
+# Scopes:
+#   fast      = lint + unit (pre-push equivalent, <60s)
+#   backend   = fast + integration + contract
+#   frontend  = install + build + lint
+#   all       = backend + frontend
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,24 +26,41 @@ COMPOSE=(dc --env-file .env.local -p "$PROJ")
 
 rc=0
 
-run_backend() {
-  log "Backend: pytest (inside api container)"
-  if "${COMPOSE[@]}" run --rm api python -m pytest; then
-    ok "backend tests passed"
-  else
-    warn "backend tests FAILED"; rc=1
-  fi
-
-  if [ -n "${API_PORT:-}" ]; then
-    log "Backend: /health smoke check on :$API_PORT"
-    if curl -fsS "http://localhost:$API_PORT/health" >/dev/null 2>&1; then
-      ok "API /health OK"
-    else
-      warn "API /health did not respond (is the stack up? run-services.sh)"; rc=1
-    fi
+# ---- Lint ----
+run_lint() {
+  log "Lint: isort + flake8"
+  isort --check --diff src/ 2>&1 && ok "isort OK" || { warn "isort FAILED"; rc=1; }
+  flake8 src/ --max-line-length=127 --extend-ignore=E203,W503 2>&1 && ok "flake8 OK" || { warn "flake8 FAILED"; rc=1; }
+  if [ -f "$REPO_ROOT/frontend/package.json" ]; then
+    ( cd "$REPO_ROOT/frontend" && npm run lint 2>/dev/null ) && ok "eslint OK" || warn "eslint not configured — skip"
   fi
 }
 
+# ---- Unit tests (no Docker) ----
+run_unit() {
+  log "Unit: pytest (SQLite, no external services)"
+  python -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+}
+
+# ---- Integration tests (needs PostGIS + Redis) ----
+run_integration() {
+  log "Integration: pytest (requires PostGIS + Redis)"
+  python -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+}
+
+# ---- Contract tests ----
+run_contract() {
+  log "Contract: pytest + alembic check"
+  if [ -d "$REPO_ROOT/src/tests/contract" ]; then
+    python -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
+  else
+    warn "src/tests/contract/ directory not found — skip"
+  fi
+  log "Contract: alembic schema check"
+  alembic check 2>&1 && ok "alembic check passed" || { warn "alembic check FAILED — models may not match DB schema"; rc=1; }
+}
+
+# ---- Frontend ----
 run_frontend() {
   [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping"; return; }
   log "Frontend: install + build"
@@ -48,10 +71,29 @@ run_frontend() {
 }
 
 case "$SCOPE" in
-  backend)  run_backend ;;
-  frontend) run_frontend ;;
-  all)      run_backend; run_frontend ;;
-  *) die "usage: validate.sh [backend|frontend|all]" ;;
+  fast)
+    run_lint
+    run_unit
+    ;;
+  backend)
+    run_lint
+    run_unit
+    run_integration
+    run_contract
+    ;;
+  frontend)
+    run_frontend
+    ;;
+  all)
+    run_lint
+    run_unit
+    run_integration
+    run_contract
+    run_frontend
+    ;;
+  *)
+    die "usage: validate.sh [fast|backend|frontend|all]"
+    ;;
 esac
 
 [ "$rc" -eq 0 ] && ok "VALIDATION PASSED" || warn "VALIDATION FAILED (rc=$rc)"

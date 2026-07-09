@@ -1,0 +1,87 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 3 AM UTC daily
+  workflow_dispatch:
+
+jobs:
+  # ---- Full test suite ----
+  full-suite:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.3-alpine
+        env:
+          POSTGRES_USER: imoveis
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: realestate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U imoveis -d realestate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt pytest pytest-cov pytest-timeout isort flake8
+          npm ci --prefix frontend
+
+      - name: Lint
+        run: |
+          isort --check --diff src/
+          flake8 src/ --max-line-length=127 --extend-ignore=E203,W503
+
+      - name: Unit tests
+        run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30
+
+      - name: Integration tests
+        run: pytest src/tests/integration/ -v
+        env:
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          REDIS_URL: redis://localhost:6379/0
+
+  # ---- Dependency audit ----
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python dependency audit
+        run: |
+          pip install pip-audit
+          pip-audit --requirement requirements.txt || echo "pip-audit warnings"
+
+      - name: Frontend dependency audit
+        run: |
+          cd frontend && npm audit || echo "npm audit warnings"

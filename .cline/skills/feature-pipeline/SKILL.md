@@ -36,7 +36,7 @@ In Progress stateId: `7de50ed1-0de6-4f06-89f6-6816991f106f`
 
 1. Check the issue has `projectId: "2b293958-ee46-48f1-98aa-6d54abba468d"` (Imoveis — Deal Tracker).
 2. Check the issue is assigned to the correct milestone. If not, assign it.
-3. Reference `.clinerules/workflow.md` § "Linear ticket hygiene" for the current milestone mapping.
+3. Reference `.clinerules/04-imoveis-specific.md` for the current milestone mapping and ticket hygiene rules.
 
 ### Step 4 — Plan the feature
 

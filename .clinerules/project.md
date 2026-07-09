@@ -104,3 +104,15 @@ You can also use skills: `/feature-pipeline`, `/validate-feature`, `/finish-feat
 - New feature = a doc in `docs/features/` + a README link.
 - Commit messages: conventional format (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`).
 - Single-user for now (no auth) — but design tables with nullable `owner` for future auth.
+
+## Rule files
+
+| File | Scope |
+|------|-------|
+| `guardrails.md` | Quick-reference summary (this file's rules, condensed) |
+| `01-universal.md` | Portable — commit discipline, safety, security, TDD |
+| `02-python-backend.md` | Portable — SQLAlchemy, FastAPI, Pydantic, Python testing |
+| `03-react-frontend.md` | Portable — React patterns, Playwright, frontend security |
+| `04-imoveis-specific.md` | Project — worktree isolation, Docker, feature pipeline, Linear |
+| `testing.md` | Project — test pyramid, AI validation, scraper validation, contract tests |
+| `ci.md` | Portable + project — pre-commit, GitHub Actions, security scanning |
