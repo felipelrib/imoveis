@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import ScraperControl from './pages/ScraperControl.jsx'
 import Properties from './pages/Properties.jsx'
 import { useSystemStatus } from './hooks/useSystemStatus.js'
+import { ToastProvider } from './components/ToastProvider.jsx'
 
 const NAV = [
   { path: '/',          icon: '⚡', label: 'Dashboard' },
@@ -16,6 +17,7 @@ export default function App() {
   const apiOk = !loading && status?.database?.status === 'ok'
 
   return (
+    <ToastProvider>
     <BrowserRouter>
       <div className="app-shell">
         {/* ── Sidebar ── */}
@@ -64,6 +66,7 @@ export default function App() {
         </main>
       </div>
     </BrowserRouter>
+    </ToastProvider>
   )
 }
 

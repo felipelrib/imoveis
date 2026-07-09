@@ -356,3 +356,22 @@ def get_price_history(
         ]
     finally:
         session.close()
+
+
+@router.get("/neighborhoods")
+def list_neighborhoods() -> List[Dict[str, Any]]:
+    """Return distinct neighborhoods with property counts for dynamic filter options."""
+    session = SessionLocal()
+    try:
+        rows = session.execute(text("""
+            SELECT COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') AS name,
+                   COUNT(p.id) AS property_count
+            FROM properties p
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE p.active = true
+            GROUP BY name
+            ORDER BY name
+        """)).fetchall()
+        return [{"name": r[0], "count": r[1]} for r in rows if r[0]]
+    finally:
+        session.close()

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite } from '../api.js'
+import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
+import { useToast } from '../components/ToastProvider.jsx'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', label: '⭐ Best Score' },
@@ -44,6 +45,7 @@ export default function Properties() {
   const [loadError, setLoadError] = useState(null)
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [favouriteIds, setFavouriteIds] = useState(new Set())
+  const showToast = useToast()
 
   // Saved searches state
   const [savedSearches, setSavedSearches] = useState([])
@@ -53,6 +55,10 @@ export default function Properties() {
   // View mode: 'all' | 'favourites'
   const [viewMode, setViewMode] = useState('all')
   const [favouritesData, setFavouritesData] = useState([])
+
+  // Dynamic neighborhoods from backend
+  const [neighborhoods, setNeighborhoods] = useState([])
+  const [neighborhoodsLoading, setNeighborhoodsLoading] = useState(false)
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, maxPrice,
@@ -120,7 +126,7 @@ export default function Properties() {
     }
   }
 
-  // Load watchlist, favourites, and saved searches on mount
+  // Load watchlist, favourites, saved searches, and neighborhoods on mount
   useEffect(() => {
     fetchWatchlist()
       .then(items => setWatchedIds(new Set(items.map(i => i.property_id))))
@@ -131,6 +137,12 @@ export default function Properties() {
     fetchFavourites()
       .then(favs => setFavouriteIds(new Set(favs.map(f => f.property_id))))
       .catch(() => {})
+    // Fetch dynamic neighborhoods
+    setNeighborhoodsLoading(true)
+    fetchNeighborhoods()
+      .then(setNeighborhoods)
+      .catch(() => {})
+      .finally(() => setNeighborhoodsLoading(false))
   }, [])
 
   const toggleWatchlist = useCallback(async (e, propertyId) => {
@@ -145,8 +157,9 @@ export default function Properties() {
       }
     } catch (err) {
       console.error('Watchlist toggle failed:', err)
+      showToast('Failed to update watchlist: ' + err.message, { type: 'error' })
     }
-  }, [watchedIds])
+  }, [watchedIds, showToast])
 
   const toggleFavourite = useCallback(async (e, propertyId) => {
     e.stopPropagation()
@@ -160,8 +173,9 @@ export default function Properties() {
       }
     } catch (err) {
       console.error('Favourite toggle failed:', err)
+      showToast('Failed to update favourites: ' + err.message, { type: 'error' })
     }
-  }, [favouriteIds])
+  }, [favouriteIds, showToast])
 
   // Reload on filter changes (except in favourites mode)
   useEffect(() => {
@@ -188,8 +202,10 @@ export default function Properties() {
       setSavedSearches(updated)
       setSaveName('')
       setShowSaveDialog(false)
+      showToast('Search saved!', { type: 'success' })
     } catch (err) {
       console.error('Save search failed:', err)
+      showToast('Failed to save search: ' + err.message, { type: 'error' })
     }
   }
 
@@ -198,8 +214,10 @@ export default function Properties() {
     try {
       await deleteSavedSearch(id)
       setSavedSearches(prev => prev.filter(s => s.id !== id))
+      showToast('Saved search deleted', { type: 'info' })
     } catch (err) {
       console.error('Delete saved search failed:', err)
+      showToast('Failed to delete search: ' + err.message, { type: 'error' })
     }
   }
 
@@ -210,15 +228,6 @@ export default function Properties() {
 
   const properties = viewMode === 'favourites' ? favouritesData : (data?.properties || [])
   const pages = data?.pages || 1
-
-  const bhNeighborhoods = [
-    "Savassi", "Lourdes", "Centro", "Funcionários", "Sion", "Santo Agostinho",
-    "Belvedere", "Buritis", "Castelo", "Pampulha", "Gutierrez", "Santo Antônio",
-    "Prado", "Cidade Nova", "Sagrada Família", "Santa Efigênia", "Serra",
-    "Cruzeiro", "Mangabeiras", "Anchieta", "Ouro Preto", "Coração Eucarístico",
-    "Floresta", "Padre Eustáquio", "Caiçara", "Alípio de Melo", "Santa Tereza",
-    "Santa Amélia", "Luxemburgo", "Carmo"
-  ]
 
   return (
     <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 60px)' }}>
@@ -353,9 +362,23 @@ export default function Properties() {
                   </label>
                 </div>
                 <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '200px' }}>
-                  <label className="form-label" style={{ marginBottom: 0 }}>Neighborhoods (Belo Horizonte)</label>
-                  <select multiple className="form-select" style={{ height: '100px' }} value={neighborhood ? neighborhood.split(',') : []} onChange={e => { const opts = Array.from(e.target.selectedOptions).map(o => o.value); setNeighborhood(opts.join(',')) }}>
-                    {bhNeighborhoods.map(n => <option key={n} value={n}>{n}</option>)}
+                  <label className="form-label" style={{ marginBottom: 0 }}>
+                    Neighborhoods
+                    {neighborhoodsLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Loading…</span>}
+                  </label>
+                  <select
+                    multiple
+                    className="form-select"
+                    style={{ height: '100px' }}
+                    value={neighborhood ? neighborhood.split(',') : []}
+                    onChange={e => { const opts = Array.from(e.target.selectedOptions).map(o => o.value); setNeighborhood(opts.join(',')) }}
+                  >
+                    {neighborhoods.length > 0
+                      ? neighborhoods.map(n => (
+                          <option key={n.name} value={n.name}>{n.name} ({n.count})</option>
+                        ))
+                      : <option value="" disabled>No data available</option>
+                    }
                   </select>
                 </div>
                 <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => {
@@ -374,7 +397,7 @@ export default function Properties() {
             <div className="empty-state-icon">⚠️</div>
             <h3 style={{ color: 'var(--accent-rose)' }}>Failed to load properties</h3>
             <p style={{ maxWidth: 600, margin: '0 auto' }}>{loadError}</p>
-            <button className="btn btn-primary" onClick={() => load(page)} style={{ marginTop: 16 }}>Try Again</button>
+            <button className="btn btn-primary" onClick={() => load(page)} style={{ marginTop: 16 }}>🔄 Retry</button>
           </div>
         )}
 
@@ -387,9 +410,21 @@ export default function Properties() {
           ) : properties.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon">{viewMode === 'favourites' ? '☆' : '🏚️'}</div>
-              <h3>{viewMode === 'favourites' ? 'No favourites yet' : 'No properties yet'}</h3>
-              <p>{viewMode === 'favourites' ? 'Star a property to add it to your favourites.' : 'Go to Scraper Control and trigger your first ingestion job to start building the database.'}</p>
-              {viewMode !== 'favourites' && <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>}
+              <h3>{viewMode === 'favourites' ? 'No favourites yet' : 'No properties found'}</h3>
+              <p>{viewMode === 'favourites' ? 'Star a property to add it to your favourites.' : (
+                Object.values(currentFilters).some(v => v && v !== 'combined_score' && v !== 'desc' && v !== 'both')
+                  ? 'Try adjusting your filters to see more results.'
+                  : 'Go to Scraper Control and trigger your first ingestion job to start building the database.'
+              )}</p>
+              {viewMode !== 'favourites' && (
+                Object.values(currentFilters).some(v => v && v !== 'combined_score' && v !== 'desc' && v !== 'both')
+                  ? <button className="btn btn-ghost" onClick={() => {
+                      setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
+                      setNeighborhood(''); setPropertyType(''); setListingType('both');
+                      setIsFurnished(false); setAcceptsPets(false);
+                    }}>✕ Clear Filters</button>
+                  : <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>
+              )}
             </div>
           ) : (
             <>

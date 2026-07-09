@@ -1,6 +1,7 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { ensureOllama, recalculateScores } from '../api.js'
 import { useState } from 'react'
+import { useToast } from '../components/ToastProvider.jsx'
 
 const SERVICES = [
   { key: 'database', icon: '🗄️', label: 'PostgreSQL',  sub: (s) => s?.database?.status === 'ok' ? 'Connected' : s?.database?.detail || 'Offline' },
@@ -19,6 +20,7 @@ export default function Dashboard({ status, loading }) {
   const [recalculating, setRecalculating] = useState(false)
   const [recalcResult, setRecalcResult] = useState(null)
   const [ollamaLoading, setOllamaLoading] = useState(false)
+  const showToast = useToast()
 
   const stats = status?.stats || {}
 
@@ -26,9 +28,9 @@ export default function Dashboard({ status, loading }) {
     setOllamaLoading(true)
     try {
       const r = await ensureOllama()
-      alert(r.status === 'already_running' ? 'Ollama is already running!' : 'Ollama started successfully!')
+      showToast(r.status === 'already_running' ? 'Ollama is already running!' : 'Ollama started successfully!', { type: 'success' })
     } catch (e) {
-      alert('Error: ' + e.message)
+      showToast('Error: ' + e.message, { type: 'error' })
     } finally {
       setOllamaLoading(false)
     }
@@ -40,8 +42,10 @@ export default function Dashboard({ status, loading }) {
     try {
       const r = await recalculateScores()
       setRecalcResult(`✔ Recalculated ${r.combined_rows_updated} properties`)
+      showToast(`Recalculated ${r.combined_rows_updated} properties`, { type: 'success' })
     } catch (e) {
       setRecalcResult('✖ Error: ' + e.message)
+      showToast('Recalculation failed: ' + e.message, { type: 'error' })
     } finally {
       setRecalculating(false)
     }

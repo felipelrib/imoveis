@@ -229,3 +229,13 @@ export async function checkFavourite(propertyId) {
   if (!r.ok) throw new Error('Check favourite failed')
   return r.json()
 }
+
+// ---------------------------------------------------------------------------
+// Neighborhoods API
+// ---------------------------------------------------------------------------
+
+export async function fetchNeighborhoods() {
+  const r = await fetch(`${BASE}/properties/neighborhoods`)
+  if (!r.ok) throw new Error('Neighborhoods fetch failed')
+  return r.json()
+}

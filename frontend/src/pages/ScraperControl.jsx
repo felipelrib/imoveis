@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline, fetchSchedule, updateSchedule } from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
+import { useToast } from '../components/ToastProvider.jsx'
 
 function ts() {
   return new Date().toLocaleTimeString('pt-BR')
@@ -15,6 +16,7 @@ export default function ScraperControl() {
   const [taskId, setTaskId] = useState(null)
   const [workerPaused, setWorkerPaused] = useState(false)
   const logRef = useRef(null)
+  const showToast = useToast()
 
   // Pipeline tracking state
   const [pipeline, setPipeline] = useState({ 
@@ -75,7 +77,9 @@ export default function ScraperControl() {
     fetchPlatforms().then(p => {
       setPlatforms(p)
       if (p.length > 0) setSelectedPlatform(p[0].name)
-    }).catch(() => {})
+    }).catch(e => {
+      showToast('Failed to load platforms: ' + e.message, { type: 'error' })
+    })
   }, [])
 
   useEffect(() => {
@@ -97,8 +101,10 @@ export default function ScraperControl() {
       setTaskId(r.task_id)
       addLog('success', `[${ts()}] ✔ Task enqueued — ID: ${r.task_id}`)
       addLog('info', `[${ts()}] Celery worker is processing. Watch the live pipeline below.`)
+      showToast(`Scraper enqueued for ${selectedPlatform}`, { type: 'success' })
     } catch (e) {
       addLog('error', `[${ts()}] ✖ Error: ${e.message}`)
+      showToast('Scrape failed: ' + e.message, { type: 'error' })
     } finally {
       setScraping(false)
     }
@@ -110,13 +116,16 @@ export default function ScraperControl() {
         await resumeWorkers()
         setWorkerPaused(false)
         addLog('success', `[${ts()}] ✔ AI workers resumed`)
+        showToast('AI workers resumed', { type: 'success' })
       } else {
         await pauseWorkers()
         setWorkerPaused(true)
         addLog('warn', `[${ts()}] ⏸ AI workers paused — scraping continues, enrichment queued`)
+        showToast('AI workers paused', { type: 'warning' })
       }
     } catch (e) {
       addLog('error', `[${ts()}] ✖ ${e.message}`)
+      showToast('Worker toggle failed: ' + e.message, { type: 'error' })
     }
   }
 
@@ -133,6 +142,7 @@ export default function ScraperControl() {
     try {
       await updateSchedule(platform, minutes)
       addLog('success', `[${ts()}] ✔ Schedule updated: ${platform} → every ${minutes === 0 ? 'manual only' : minutes + ' min'} (restart beat to apply)`)
+      showToast(`Schedule updated: ${platform}`, { type: 'success' })
       setEditingPlatform(null)
       setEditInterval('')
       // Refresh schedules
@@ -140,6 +150,7 @@ export default function ScraperControl() {
       if (s?.schedules) setSchedules(s.schedules)
     } catch (e) {
       addLog('error', `[${ts()}] ✖ ${e.message}`)
+      showToast('Schedule update failed: ' + e.message, { type: 'error' })
     } finally {
       setSavingSchedule(false)
     }
