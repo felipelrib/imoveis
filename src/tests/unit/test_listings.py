@@ -7,10 +7,8 @@ GeoAlchemy2 geometry columns, so tests run without PostGIS.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import pytest
-import sqlalchemy as sa
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 

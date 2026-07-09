@@ -5,12 +5,9 @@ Tests cover API endpoints, deduplication, scraping, and async task processing.
 Run with: pytest src/tests/integration/ -v
 """
 
-import json
-from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import redis
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,7 +18,7 @@ from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.base import BaseScraper
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from api.main import app
-from core.dedupe import find_candidates, match_or_create_property
+from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 
 # ============================================================================

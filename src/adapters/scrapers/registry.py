@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type
+from typing import Dict, Type
 
 from adapters.scrapers.base import BaseScraper
 

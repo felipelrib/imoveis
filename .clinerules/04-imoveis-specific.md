@@ -84,10 +84,13 @@ models for AI enrichment.
 
 ## Skill usage
 
-13. When the user says "work on the next ticket", "run feature X", or similar
-    pipeline-like requests, you MUST use the `feature-pipeline` skill via
-    `use_skill(skill_name="feature-pipeline")`. Do not attempt to manually
-    replicate the skill's steps.
+13. When the user says "work on the next ticket", "run feature X", "work on the
+    next task from Linear", or any similar pipeline-like request, your FIRST
+    action MUST be `use_skill(skill_name="feature-pipeline")`. Do NOT manually
+    replicate the skill's steps. Do NOT search Linear and pick an issue yourself.
+    The skill handles milestone ordering, issue selection, worktree setup, and
+    the full lifecycle. Only after the skill is activated should you proceed
+    with implementation.
 
 ## Validation discipline (NON-NEGOTIABLE)
 

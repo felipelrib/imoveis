@@ -17,6 +17,19 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
+# Ensure required tools are installed
+if [ -f "$HERE/setup-tools.sh" ]; then
+    source "$HERE/setup-tools.sh" 2>/dev/null || true
+fi
+
+# Detect python binary (prefer python3)
+PYTHON_BIN=""
+if command -v python3 &>/dev/null; then
+    PYTHON_BIN="python3"
+elif command -v python &>/dev/null; then
+    PYTHON_BIN="python"
+fi
+
 SOFT=false
 SCOPE=""
 for arg in "${@}"; do
@@ -67,16 +80,22 @@ run_lint() {
 # ---- Unit tests (no Docker) ----
 run_unit() {
   log "Unit: pytest (SQLite, no external services)"
-  if _require python; then
-    python -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+  if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
+    "$PYTHON_BIN" -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+  else
+    warn "python not installed — skipping unit tests"
+    rc=1
   fi
 }
 
 # ---- Integration tests (needs PostGIS + Redis) ----
 run_integration() {
   log "Integration: pytest (requires PostGIS + Redis)"
-  if _require python; then
-    python -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+  if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
+    "$PYTHON_BIN" -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
+  else
+    warn "python not installed — skipping integration tests"
+    rc=1
   fi
 }
 
@@ -84,15 +103,21 @@ run_integration() {
 run_contract() {
   log "Contract: pytest + alembic check"
   if [ -d "$REPO_ROOT/src/tests/contract" ]; then
-    if _require python; then
-      python -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
+    if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
+      "$PYTHON_BIN" -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
+    else
+      warn "python not installed — skipping contract tests"
+      rc=1
     fi
   else
     warn "src/tests/contract/ directory not found — skip"
   fi
   log "Contract: alembic schema check"
-  if _require alembic; then
+  if command -v alembic &>/dev/null; then
     alembic check 2>&1 && ok "alembic check passed" || { warn "alembic check FAILED — models may not match DB schema"; rc=1; }
+  else
+    warn "alembic not installed — skipping schema check"
+    rc=1
   fi
 }
 
@@ -101,7 +126,7 @@ run_frontend() {
   [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping"; return; }
   log "Frontend: install + build"
   ( cd "$REPO_ROOT/frontend" \
-      && { [ -d node_modules ] || npm ci; } \
+      && { [ -d node_modules ] || npm install --ignore-scripts; } \
       && npm run build ) \
     && ok "frontend build OK" || { warn "frontend build FAILED"; rc=1; }
 }

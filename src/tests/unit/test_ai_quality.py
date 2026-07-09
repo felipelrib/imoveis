@@ -12,7 +12,6 @@ import os
 import pytest
 
 try:
-    import aiohttp
     HAS_AIOHTTP = True
 except ImportError:
     HAS_AIOHTTP = False
@@ -109,6 +108,7 @@ class TestAIGoldenFiles:
         from adapters.ai.prompts import CONDITION_ANALYSIS_PROMPT
 
         failures = []
+
         async def _run():
             client = OllamaClient(base_url=os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
             async with client:

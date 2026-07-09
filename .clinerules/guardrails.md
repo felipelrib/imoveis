@@ -16,6 +16,7 @@ rule files below. All of these rules apply to EVERY turn — no exceptions.
 | Use skills | Don't manually replicate skill steps. Use `use_skill()`. | `04-imoveis-specific.md` §Skill usage |
 | Docker validation | Build fresh image before running tests. Clear config cache in containers. | `04-imoveis-specific.md` §Docker validation |
 | Test discipline | Never dismiss failures as "pre-existing". Clean up fixtures. | `04-imoveis-specific.md` §Test discipline |
+| Validation discipline | NEVER skip or work around validation failures. Fix root causes. | `04-imoveis-specific.md` §Validation discipline |
 
 ## Rule file map
 

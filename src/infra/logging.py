@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Any, Dict
+from typing import Any
 
 
 class _JSONFormatter(logging.Formatter):

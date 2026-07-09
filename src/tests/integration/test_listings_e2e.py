@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from adapters.db.models import Base, Property, PropertyListing
+from adapters.db.models import Base, PropertyListing
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 
@@ -167,7 +167,7 @@ class TestListingPersistence:
 
         listings = session.query(PropertyListing).filter_by(property_id=result.property_id).all()
         assert len(listings) == 2
-        types = {l.listing_type for l in listings}
+        types = {listing.listing_type for listing in listings}
         assert types == {"rent", "sale"}
 
     def test_empty_listings_does_not_fail(self, session):

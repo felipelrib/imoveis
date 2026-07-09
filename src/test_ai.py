@@ -15,7 +15,7 @@ async def main():
         print("Testing text")
         t = await client.analyze_text("text", "prompt")
         print(t)
-    except Exception as exc:
+    except Exception:
         logging.exception("Error")
     finally:
         await client.close()

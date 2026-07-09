@@ -307,7 +307,6 @@ class OLXScraper(BaseScraper):
         for key in ("price_str", "value_str", "subject"):
             val = raw.get(key)
             if isinstance(val, str):
-                nums = re.findall(r"[\d.]+(?:,\d{2})?", val.replace(".", "").replace(",", "."))
                 # More robust: strip non-numeric except dots and commas
                 cleaned = re.sub(r"[^\d,.]", "", val)
                 cleaned = cleaned.replace(".", "").replace(",", ".")

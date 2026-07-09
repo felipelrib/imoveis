@@ -1,11 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List
 
 
 class CircuitBreakerException(Exception):
     """Exception raised when a circuit breaker is open."""
-
-    pass
 
 
 class BaseScraper(ABC):
@@ -25,7 +22,6 @@ class BaseScraper(ABC):
     @abstractmethod
     async def fetch_pages(self, checkpoint: dict) -> list:
         """Fetch pages of raw data from the platform."""
-        pass
 
     def __enter__(self):
         return self
@@ -47,13 +43,10 @@ class BaseScraper(ABC):
 
     async def close(self) -> None:
         """Close any open resources."""
-        pass
 
     async def start(self):
         """Initialize the scraper."""
-        pass
 
     @abstractmethod
     async def normalize(self, raw_data: dict) -> dict:
         """Normalize raw data into standard format."""
-        pass

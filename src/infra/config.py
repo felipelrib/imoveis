@@ -1,5 +1,4 @@
 """Application configuration from YAML + env overrides (Pydantic v2).
-
 Load the YAML config file, merge environment-variable overrides, validate the
 resulting dict against a Pydantic schema, and expose a frozen typed
 ``AppConfig`` singleton.

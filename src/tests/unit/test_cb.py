@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from adapters.scrapers.circuit_breaker import CircuitBreaker
 
 

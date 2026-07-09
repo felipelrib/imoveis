@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.core.exceptions import ConfigError
-from src.infra.config import AppConfig, DatabaseConfig, get_config, load_config
+from src.infra.config import AppConfig, get_config, load_config
 
 # ---------------------------------------------------------------------------
 # Helpers

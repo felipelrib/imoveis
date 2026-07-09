@@ -47,9 +47,9 @@ def test_returns_normalized_float():
 # Price-history tracking tests
 # ---------------------------------------------------------------------------
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock  # noqa: E402
 
-from core.dedupe import _record_price_change
+from core.dedupe import _record_price_change  # noqa: E402
 
 
 class FakeRow:
@@ -101,8 +101,8 @@ class TestRecordPriceChange:
 
         _record_price_change(session, "prop-1", 5500.0)
 
-        # SELECT + UPDATE (close old) + INSERT (new open interval)
-        assert session.execute.call_count == 3
+        # SELECT + UPDATE (close old) + INSERT (new open interval) + SELECT watchlist
+        assert session.execute.call_count == 4
         update_call = session.execute.call_args_list[1]
         assert "UPDATE price_history SET end_ts" in str(update_call[0][0])
         insert_call = session.execute.call_args_list[2]
@@ -118,7 +118,8 @@ class TestRecordPriceChange:
 
         _record_price_change(session, "prop-2", 4500.0)
 
-        assert session.execute.call_count == 3
+        # SELECT + UPDATE + INSERT + SELECT watchlist
+        assert session.execute.call_count == 4
         insert_call = session.execute.call_args_list[2]
         assert insert_call[0][1]["price"] == 4500.0
 
@@ -192,8 +193,8 @@ class TestRecordPriceChange:
         olx_open = FakeRow("hist-olx", 2000.0)
         session_update = _make_mock_session(open_row=olx_open)
         _record_price_change(session_update, "prop-1", 1900.0, listing_type="rent", platform="olx")
-        # SELECT + UPDATE (close) + INSERT (new)
-        assert session_update.execute.call_count == 3
+        # SELECT + UPDATE (close) + INSERT (new) + SELECT watchlist
+        assert session_update.execute.call_count == 4
         insert_call = session_update.execute.call_args_list[2]
         params = insert_call[0][1]
         assert params["platform"] == "olx"

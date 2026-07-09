@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import aiohttp
 from pydantic import BaseModel
@@ -49,7 +49,6 @@ class LocalAIClient(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Close any open connections."""
-        pass
 
     async def _ensure_session(self):
         """Ensure HTTP session is initialized."""

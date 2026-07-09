@@ -20,7 +20,7 @@ from typing import List, Optional
 
 from pydantic import ValidationError
 
-import adapters.scrapers.quintoandar  # Force registry registration
+import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 from adapters.ai.client import create_ai_client
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
@@ -180,7 +180,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             skipped=skipped,
             errors=errors,
         )
-    except Exception as exc:
+    except Exception:
         # Persist checkpoint before retry so we resume from last page
         try:
             store.set(platform_name, cp)

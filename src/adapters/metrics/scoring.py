@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import math
 from typing import Optional
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -76,10 +75,14 @@ def compute_neighborhood_stats(
                 COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') as n_key,
                 p.price / NULLIF(p.area_m2, 0)                       AS price_per_m2,
                 AVG(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')) AS neighborhood_mean,
+                    OVER (PARTITION BY
+                        COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
+                    ) AS neighborhood_mean,
                 m.neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')) AS neighborhood_stddev,
+                    OVER (PARTITION BY
+                        COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
+                    ) AS neighborhood_stddev,
                 PERCENT_RANK()
                     OVER (
                         PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
@@ -231,12 +234,6 @@ def score_single_property(session: Session, property_id: str) -> None:
         session: Active SQLAlchemy session.
         property_id: UUID string of the property to score.
     """
-    cfg = get_config()
-    weights = ScoringWeights(
-        stat_weight=cfg.scoring.stat_weight,
-        ai_weight=cfg.scoring.ai_weight,
-    )
-
     # Fetch the property to get neighbourhood context
     prop = session.get(Property, property_id)
     if prop is None:

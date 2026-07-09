@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestBuildBeatSchedule:
     """Tests for adapters.queue.celery_app.build_beat_schedule."""

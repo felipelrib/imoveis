@@ -1,0 +1,8 @@
+[flake8]
+max-line-length = 127
+extend-ignore = E203,W503
+per-file-ignores =
+    # Re-exports in __init__.py are intentional
+    src/adapters/scrapers/__init__.py:F401
+    # AI prompts contain naturally long instruction strings
+    src/adapters/ai/prompts.py:E501

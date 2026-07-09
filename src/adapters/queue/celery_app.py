@@ -1,6 +1,5 @@
 import logging
 import os
-import traceback
 
 from celery import Celery
 from celery.signals import task_failure, task_revoked
