@@ -45,6 +45,7 @@ nav:
   - Features:
       - Config YAML Loader: features/config-yaml-loader.md
       - deal-summary-enrichment: features/deal-summary-enrichment.md
+      - saved-searches-favourites: features/saved-searches-favourites.md
 
 plugins:
   - search
