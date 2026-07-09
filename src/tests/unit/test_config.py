@@ -55,6 +55,30 @@ features:
 """
 
 
+_CONFIG_ENV_KEYS = [
+    "DATABASE_URL",
+    "REDIS_URL",
+    "AI_MODEL",
+    "OLLAMA_HOST",
+]
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_env(monkeypatch):
+    """Remove env-var overrides that conflict with deterministic config tests.
+
+    Docker containers (e.g. CI / docker-compose) set DATABASE_URL and
+    REDIS_URL, which would override the test YAML values.  We temporarily
+    clear them for every test in this module, and also remove any
+    ``IMOVEIS_*`` generic overrides.
+    """
+    for key in _CONFIG_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    for key in list(os.environ):
+        if key.startswith("IMOVEIS_"):
+            monkeypatch.delenv(key, raising=False)
+
+
 def _write_yaml(tmp_path: Path, content: str) -> Path:
     """Write YAML content to a temp file and return the path."""
     cfg_file = tmp_path / "app_config.yaml"
