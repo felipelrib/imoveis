@@ -31,6 +31,7 @@ from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
+from core.exceptions import CircuitBreakerOpenError
 from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -87,6 +88,14 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                 try:
                     normalized = scraper.normalize(raw)
                     candidate = PropertyCandidate(**normalized)
+                except CircuitBreakerOpenError:
+                    # Circuit breaker is open — stop this scrape run and let
+                    # Celery retry with backoff instead of hammering the platform.
+                    logger.warning(
+                        "circuit_breaker_open_stopping",
+                        platform=platform_name,
+                    )
+                    break
                 except ValidationError as exc:
                     logger.warning(
                         "scrape_validation_skipped",
