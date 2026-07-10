@@ -102,10 +102,10 @@ export default function PropertyModal({ id, onClose }) {
               </>
             )}
             {!loading && p?.listings && p.listings.map((l, i) => (
-              <a 
+              <a
                 key={`${l.platform}-${l.platform_id}-${l.listing_type}`}
-                href={l.url} 
-                target="_blank" 
+                href={l.url}
+                target="_blank"
                 rel="noreferrer"
                 className="btn btn-ghost btn-sm"
                 style={{ fontSize: 13 }}
@@ -114,9 +114,9 @@ export default function PropertyModal({ id, onClose }) {
               </a>
             ))}
             {!loading && (!p?.listings || p.listings.length === 0) && p?.platform_id && (
-              <a 
-                href={`https://www.quintoandar.com.br/imovel/${p.platform_id}`} 
-                target="_blank" 
+              <a
+                href={`https://www.quintoandar.com.br/imovel/${p.platform_id}`}
+                target="_blank"
                 rel="noreferrer"
                 className="btn btn-ghost btn-sm"
                 style={{ fontSize: 13 }}

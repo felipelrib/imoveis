@@ -17,10 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from adapters.metrics.scoring import (
-    compute_neighborhood_stats,
-    recalculate_all_combined_scores,
-)
+from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_api_key
 from core.entities import ScoringWeights

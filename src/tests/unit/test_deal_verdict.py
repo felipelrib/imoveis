@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.ai.client import (
-    DealVerdictResult,
-    OllamaClient,
-    template_deal_verdict,
-)
+from adapters.ai.client import DealVerdictResult, OllamaClient, template_deal_verdict
 
 # ---------------------------------------------------------------------------
 # template_deal_verdict — deterministic path

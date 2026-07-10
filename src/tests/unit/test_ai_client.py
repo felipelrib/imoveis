@@ -14,14 +14,7 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from adapters.ai.client import (
-    LMStudioClient,
-    LocalAIClient,
-    OllamaClient,
-    SentimentResult,
-    VisualResult,
-    create_ai_client,
-)
+from adapters.ai.client import LMStudioClient, LocalAIClient, OllamaClient, SentimentResult, VisualResult, create_ai_client
 
 # ---------------------------------------------------------------------------
 # Helpers

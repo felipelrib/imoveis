@@ -19,8 +19,8 @@ export default function ScraperControl() {
   const showToast = useToast()
 
   // Pipeline tracking state
-  const [pipeline, setPipeline] = useState({ 
-    queues: { scrapers: 0, ai: 0 }, 
+  const [pipeline, setPipeline] = useState({
+    queues: { scrapers: 0, ai: 0 },
     scrapers_status: {},
     ai_metrics: { throughput_per_min: 0, avg_duration_sec: 0, total_recorded: 0 }
   })
@@ -163,7 +163,7 @@ export default function ScraperControl() {
 
   const aiOk = status?.ollama?.status === 'ok'
   const dbOk = status?.database?.status === 'ok'
-  
+
   const activeScrapers = Object.entries(pipeline.scrapers_status).filter(([_, s]) => s.status === 'running')
 
   return (
@@ -220,11 +220,11 @@ export default function ScraperControl() {
             >
               {scraping ? <><span className="spinner" /> Enqueuing…</> : '▶ Run Scraper'}
             </button>
-            
+
             {/* Live Pipeline Status */}
             <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-app)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Pipeline</div>
-              
+
               <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                 <div style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-card)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border-subtle)' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Scraper Queue</span>
@@ -249,7 +249,7 @@ export default function ScraperControl() {
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 12 }}>No active scrapers running.</div>
               )}
-              
+
               <div style={{ paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>⚡ AI Performance</div>
                 <div style={{ display: 'flex', gap: 16 }}>

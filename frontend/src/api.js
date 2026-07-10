@@ -64,7 +64,7 @@ export async function fetchProperty(id) {
 }
 
 export async function pauseWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/pause`, { 
+  const r = await fetch(`${BASE}/admin/workers/pause`, {
     method: 'POST',
     headers: { 'X-API-Key': ADMIN_KEY }
   })
@@ -82,7 +82,7 @@ export async function resumeWorkers() {
 export async function recalculateScores(weights) {
   const r = await fetch(`${BASE}/admin/scoring/recalculate`, {
     method: 'POST',
-    headers: { 
+    headers: {
       'Content-Type': 'application/json',
       'X-API-Key': ADMIN_KEY
     },
@@ -92,7 +92,7 @@ export async function recalculateScores(weights) {
 }
 
 export async function ensureOllama() {
-  const r = await fetch(`${BASE}/system/ollama/ensure`, { 
+  const r = await fetch(`${BASE}/system/ollama/ensure`, {
     method: 'POST',
     headers: { 'X-API-Key': ADMIN_KEY }
   })

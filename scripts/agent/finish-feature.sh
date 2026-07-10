@@ -72,11 +72,11 @@ echo "$BRANCH_TYPE" | grep -qE "^($VALID_BRANCH_TYPES)$" || die "branch '$BRANCH
 # --- Validate-only mode (sync with main + re-validate) ----------------------
 if [ "$VALIDATE_ONLY" = true ]; then
   log "Validate-only mode: syncing with main and re-validating"
-  
+
   cd "$PRIMARY_ROOT"
   log "Fetching latest from origin..."
   git fetch origin --quiet || warn "git fetch failed"
-  
+
   log "Syncing feature branch with main..."
   if ! git checkout "$BRANCH"; then
     die "could not checkout $BRANCH"
@@ -85,7 +85,7 @@ if [ "$VALIDATE_ONLY" = true ]; then
     warn "could not sync with main — may need manual merge"
     exit 2
   fi
-  
+
   cd "$WT"
   log "Running validation..."
   if bash "$HERE/validate.sh" all; then
