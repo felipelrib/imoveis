@@ -7,17 +7,24 @@
 > ```bash
 > git rev-parse --abbrev-ref HEAD
 > ```
-> If it says `main`, STOP immediately:
-> ```bash
-> bash scripts/agent/setup-branch.sh "<task-slug>"
-> ```
-> If you already made changes on `main`, stash them before branching.
-> Never edit files on `main` directly.
 
-1.5 **Update Dependencies**. After checking out the branch, ensure dependencies are installed:
+**Branch verification rules:**
+
+| Current branch | Action |
+|---|---|
+| `main` | **STOP immediately.** Run `bash scripts/agent/setup-branch.sh "<task-slug>"` before any file edits. If you already made changes on `main`, stash them first. Never edit files on `main` directly. |
+| Feature branch from a past session | **Verify it matches the current task.** Read `git log --oneline -3` and the PR title/description (if any) to confirm the branch scope matches what the user is asking now. If it does not, stop and ask the user before proceeding. |
+| Feature branch matching the task | **Proceed**, but first sync with origin (step 1.6 below). |
+
+1.5 **Update Dependencies**. After checking out the correct branch, ensure dependencies are installed:
    ```bash
    pip install -r requirements.txt
    (cd frontend && npm install)
+   ```
+
+1.6 **Sync with origin**. Before doing any work, pull the latest changes so the local branch is up to date:
+   ```bash
+   git pull origin "$(git rev-parse --abbrev-ref HEAD)"
    ```
 
 2. **Check context.** If there's an active Linear issue, read it via MCP.

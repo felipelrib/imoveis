@@ -24,7 +24,17 @@ models for AI enrichment.
    If `git rev-parse --abbrev-ref HEAD` says `main`, STOP and run
    `bash scripts/agent/setup-branch.sh <feature-slug>` first.
 
-2. Ensure your dependencies are up to date by running `pip install -r requirements.txt` and `npm install` inside `frontend/`.
+2. When resuming work from a past session, verify the branch matches the
+   current task. Read `git log --oneline -3` and the PR title/description
+   (if any) to confirm the scope. If it does not match, stop and ask the
+   user before proceeding.
+
+3. After verifying the correct branch, sync with origin:
+   ```bash
+   git pull origin "$(git rev-parse --abbrev-ref HEAD)"
+   ```
+
+4. Ensure your dependencies are up to date by running `pip install -r requirements.txt` and `npm install` inside `frontend/`.
    Always start services via `docker-compose up -d` in the root directory before running tests or migrations.
 
 ## Workflow
