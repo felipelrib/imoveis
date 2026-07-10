@@ -48,3 +48,9 @@ class APIError(AppException):
     def __init__(self, message: str | None = None, *, status_code: int = 400) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class CircuitBreakerOpenError(ScraperError):
+    """Raised when the circuit breaker is open and the request is blocked."""
+
+    default_message = "Circuit breaker is open — backing off."
