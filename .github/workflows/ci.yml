@@ -37,7 +37,7 @@ jobs:
       - name: eslint
         run: npm run lint --prefix frontend || echo "eslint not configured — skip"
 
-  # ---- Unit tests (fast, no Docker) ----
+  # ---- Unit tests (fast, no Docker) — runs in parallel with integration/contract ----
   unit:
     needs: lint
     runs-on: ubuntu-latest
@@ -75,9 +75,9 @@ jobs:
             -Dsonar.sources=src/
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-  # ---- Integration (needs PostGIS + Redis) ----
+  # ---- Integration (needs PostGIS + Redis) — runs in parallel with unit ----
   integration:
-    needs: unit
+    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -125,9 +125,9 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-integration-key
 
-  # ---- Contract tests (API schema + DB schema) ----
+  # ---- Contract tests (API schema + DB schema) — runs in parallel with unit ----
   contract:
-    needs: unit
+    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
