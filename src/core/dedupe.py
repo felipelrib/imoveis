@@ -80,6 +80,10 @@ def match_or_create_property(
     # --- Step 1: Exact platform match ---
     existing = session.query(Property).filter_by(platform=candidate.platform, platform_id=candidate.platform_id).one_or_none()
     if existing is not None:
+        # Check if anything materially changed — if not, skip DB writes and AI
+        if _is_unchanged(session, existing, candidate):
+            return DedupeMatchResult(property_id=str(existing.id), action="noop")
+
         # Update mutable fields
         existing.price = candidate.price
         existing.title = candidate.title
@@ -166,6 +170,68 @@ def match_or_create_property(
         _record_price_change(session, str(new_prop.id), candidate.price)
     session.flush()
     return DedupeMatchResult(property_id=str(new_prop.id), action="created")
+
+
+def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> bool:
+    """Return True if the candidate data is identical to the existing property.
+
+    Checks the fields that matter for AI enrichment and price history:
+    price, title, description, and image_urls.
+    """
+    from adapters.db.models import PropertyListing
+
+    # Price
+    if float(existing.price or 0) != float(candidate.price or 0):
+        return False
+
+    # Title
+    if (existing.title or "") != (candidate.title or ""):
+        return False
+
+    # Description
+    if (existing.description or "") != (candidate.description or ""):
+        return False
+
+    # Image URLs — compare as sorted lists
+    existing_images = sorted(existing.image_urls or [])
+    candidate_images = sorted(candidate.image_urls or [])
+    if existing_images != candidate_images:
+        return False
+
+    # Listings — compare prices for existing active listings
+    try:
+        existing_listings = (
+            session.query(PropertyListing)
+            .filter(
+                PropertyListing.property_id == existing.id,
+                PropertyListing.active == True,  # noqa: E712
+            )
+            .all()
+        )
+    except Exception:
+        # If property_listings table doesn't exist or query fails,
+        # fall back to property-level comparison only
+        return True
+
+    # If we have listings in DB but candidate has none, that's a change
+    candidate_listings = candidate.listings or []
+    if existing_listings and not candidate_listings:
+        return False
+
+    # Build a map of (platform, platform_listing_id, listing_type) → price
+    candidate_map = {}
+    for cl in candidate_listings:
+        key = (cl.get("platform"), cl.get("platform_listing_id"), cl.get("listing_type"))
+        candidate_map[key] = float(cl.get("price", 0))
+
+    for el in existing_listings:
+        key = (el.platform, el.platform_listing_id, el.listing_type)
+        if key in candidate_map:
+            if float(el.price or 0) != candidate_map[key]:
+                return False
+        # If existing listing not in candidate, it might be inactive — OK
+
+    return True
 
 
 def _record_price_change(
