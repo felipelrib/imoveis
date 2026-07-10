@@ -2,6 +2,9 @@
 from sqlalchemy.orm import Session
 
 from adapters.db.models import PlatformCheckpoint
+from infra.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class CheckpointStore:
@@ -29,6 +32,6 @@ class CheckpointStore:
             self.session.commit()
         except Exception as e:
             # Log error and re-raise to ensure we don't silently lose checkpoints
-            print(f"Error saving checkpoint for {platform_name}: {e}")
+            logger.warning("checkpoint_save_error", platform=platform_name, error=str(e))
             self.session.rollback()
             raise

@@ -1,3 +1,4 @@
+import os
 """
 Integration tests for the Real-Estate ingestion system.
 Tests cover API endpoints, deduplication, scraping, and async task processing.
@@ -107,13 +108,13 @@ class TestAPIEndpoints:
 
     def test_admin_health(self, test_client):
         """Verify admin health endpoint."""
-        response = test_client.get("/admin/health", headers={"X-API-Key": "dev-secret-key"})
+        response = test_client.get("/admin/health", headers={"X-API-Key": os.environ.get("API_KEY", "test-key")})
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
     def test_admin_workers_status(self, test_client, mock_redis):
         """Verify admin workers status endpoint."""
-        response = test_client.get("/admin/workers/status", headers={"X-API-Key": "dev-secret-key"})
+        response = test_client.get("/admin/workers/status", headers={"X-API-Key": os.environ.get("API_KEY", "test-key")})
         assert response.status_code == 200
         data = response.json()
         assert "ai_workers_paused" in data
@@ -121,13 +122,13 @@ class TestAPIEndpoints:
 
     def test_pause_workers(self, test_client, mock_redis):
         """Test pausing AI workers."""
-        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": "dev-secret-key"})
+        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": os.environ.get("API_KEY", "test-key")})
         assert response.status_code == 200
         assert response.json() == {"paused": True}
 
     def test_resume_workers(self, test_client, mock_redis):
         """Test resuming AI workers."""
-        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": "dev-secret-key"})
+        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": os.environ.get("API_KEY", "test-key")})
         assert response.status_code == 200
         assert response.json() == {"paused": False}
 
@@ -136,7 +137,7 @@ class TestAPIEndpoints:
         response = test_client.post(
             "/admin/gpu/scale",
             json={"limit": 2},
-            headers={"X-API-Key": "dev-secret-key"},
+            headers={"X-API-Key": os.environ.get("API_KEY", "test-key")},
         )
         assert response.status_code == 200
         assert response.json() == {"gpu_limit": 2}
