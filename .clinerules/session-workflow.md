@@ -2,11 +2,17 @@
 
 ## Start of every session
 
-1. **Verify branch.** Run `git rev-parse --abbrev-ref HEAD`. If it says `main`, STOP and:
-   ```bash
-   bash scripts/agent/setup-branch.sh "<task-slug>"
-   ```
-   Never edit files on `main` directly. If you already made changes on `main`, stash them before branching.
+> **FIRST ACTION (NON-NEGOTIABLE).** Before ANY `search_files`, `read_file`,
+> `use_mcp_tool`, or other exploration, your VERY FIRST tool call MUST be:
+> ```bash
+> git rev-parse --abbrev-ref HEAD
+> ```
+> If it says `main`, STOP immediately:
+> ```bash
+> bash scripts/agent/setup-branch.sh "<task-slug>"
+> ```
+> If you already made changes on `main`, stash them before branching.
+> Never edit files on `main` directly.
 
 1.5 **Update Dependencies**. After checking out the branch, ensure dependencies are installed:
    ```bash
@@ -36,22 +42,33 @@ git rev-parse --abbrev-ref HEAD
 ```bash
 git add -A
 git commit -m "feat|fix|docs|chore: <description>"
-git push origin <branch>
 ```
+Do NOT `git push` manually — `finish-feature.sh` handles pushing.
 
-### 3. Update Linear (if applicable)
-Set issue to appropriate state via `linear_bulk_update_issues`.
+### 3. Validate
+NEVER run raw `pytest` or `npm test` directly. ALWAYS use:
+```bash
+bash scripts/agent/validate.sh fast    # lint + unit (<60s, for bug fixes)
+bash scripts/agent/validate.sh backend # lint + unit + integration + contract
+bash scripts/agent/validate.sh all     # full CI gate (before PR)
+```
+`validate.sh` runs the SAME steps as CI (lint, tests, build) in the SAME order.
+For simple bug fixes, `validate.sh fast` is sufficient before pushing.
 
 ### 4. Push and Create PR
-Use `finish-feature` skill or:
+NEVER manually `git push` or `gh pr create`. ALWAYS use:
 ```bash
 bash scripts/agent/finish-feature.sh --pr
 ```
+This script: validates → pushes → opens PR → waits for CI → reports result.
 - Do NOT merge to main locally.
 - Wait for user feedback or CI checks on the PR.
 - STOP working.
 
-### 5. Report
+### 5. Update Linear (if applicable)
+Set issue to appropriate state via `linear_bulk_update_issues`.
+
+### 6. Report
 Produce a structured summary: branch pushed, features delivered, files changed, any issues or follow-ups.
 
 ## Pain points addressed by this file

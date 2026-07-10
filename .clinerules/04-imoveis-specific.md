@@ -37,9 +37,14 @@ models for AI enrichment.
 4. COMMIT FREQUENTLY to your feature branch with conventional messages
    (`feat:`, `fix:`, `test:`, `docs:`). Never leave the tree dirty for long.
 
-5. VALIDATE before declaring done: `bash scripts/agent/validate.sh` must pass.
+5. VALIDATE before declaring done. NEVER run raw `pytest` or `npm test`. ALWAYS use:
+   ```bash
+   bash scripts/agent/validate.sh fast    # lint + unit (<60s, for bug fixes)
+   bash scripts/agent/validate.sh backend # lint + unit + integration + contract
+   bash scripts/agent/validate.sh all     # full CI gate (before PR)
+   ```
    When the feature is complete, use `bash scripts/agent/finish-feature.sh --pr` to
-   push your branch and prepare for a Pull Request. Do not merge to main locally.
+   validate → push → open PR → wait for CI. Do NOT manually `git push` or `gh pr create`.
    Handle exit codes: 0 = done (ready for PR), 1 = fix + re-run.
 
 6. SCOPE DISCIPLINE — do not refactor code beyond what the feature requires.
