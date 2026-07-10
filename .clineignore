@@ -11,9 +11,6 @@ pgdata/
 redis_data/
 postgres_data/
 
-# Git worktrees (parallel agent workspaces)
-.worktrees/
-
 # Build artifacts
 dist/
 build/
