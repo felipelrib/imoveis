@@ -1,4 +1,5 @@
 import os
+
 """
 Integration tests for the Real-Estate ingestion system.
 Tests cover API endpoints, deduplication, scraping, and async task processing.
