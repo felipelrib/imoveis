@@ -14,23 +14,24 @@ redis_url: redis://localhost:6379/0
 # ---------------------------------------------------------------------------
 # Platform Scrapers
 # ---------------------------------------------------------------------------
-platforms:
-  quintoandar:
-    base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil
-    enabled: true
-    scrape_interval: 60      # minutes between scheduled scrapes (0 = manual only)
-    rate_limit: 30          # requests per minute
-    jitter_min: 2           # minimum delay between requests (seconds)
-    jitter_max: 7           # maximum delay between requests (seconds)
-  olx:
-    base_url: https://www.olx.com.br
-    enabled: true
-    scrape_interval: 60      # minutes between scheduled scrapes (0 = manual only)
-    rate_limit: 20
-    jitter_min: 2
-    jitter_max: 6
-    extra:
-      max_pages: 5
+scraping:
+  platforms:
+    quintoandar:
+      base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil
+      enabled: true
+      scrape_interval: 60      # minutes between scheduled scrapes (0 = manual only)
+      rate_limit: 30          # requests per minute
+      jitter_min: 2           # minimum delay between requests (seconds)
+      jitter_max: 7           # maximum delay between requests (seconds)
+    olx:
+      base_url: https://www.olx.com.br
+      enabled: true
+      scrape_interval: 60      # minutes between scheduled scrapes (0 = manual only)
+      rate_limit: 20
+      jitter_min: 2
+      jitter_max: 6
+      extra:
+        max_pages: 5
 
 # ---------------------------------------------------------------------------
 # Deduplication Engine

@@ -134,6 +134,10 @@ class PlatformConfig(BaseModel, frozen=True):
     listing_selector: str = ""
     pagination_strategy: str = ""
     scrape_interval: int = 60  # minutes between scheduled scrapes (0 = manual only)
+    rate_limit: int = 30  # requests per minute
+    jitter_min: float = 2.0  # minimum delay between requests (seconds)
+    jitter_max: float = 6.0  # maximum delay between requests (seconds)
+    extra: dict[str, Any] = Field(default_factory=dict)  # platform-specific extras
 
 
 class ScrapingConfig(BaseModel, frozen=True):
