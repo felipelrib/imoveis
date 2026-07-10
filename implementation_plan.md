@@ -1,42 +1,71 @@
-# Implementation Plan: BIN-14 — Interactive Map of Properties
+# Implementation Plan: Pipeline Resilience (BIN-17)
 
 ## Goal
-Add an interactive map view to the Properties page using MapLibre GL with
-score-coloured markers, clustering, popups, and a PostGIS bbox filter.
+
+Wire the existing but unused circuit breaker code into both scrapers and add "noop" detection to the deduplication engine so that re-scraping unchanged data skips AI enrichment entirely. This saves GPU time and makes the pipeline robust enough to run unattended.
 
 ## Affected Areas
-- src/api/properties.py — add bbox param + return lat/lon
-- frontend/package.json — add maplibre-gl dependency
-- frontend/src/api.js — add bbox param to fetchProperties
-- frontend/src/pages/Properties.jsx — list/map toggle
-- frontend/src/components/MapView.jsx (new) — map component
-- frontend/src/index.css — map styles
 
-No schema changes needed (location column already exists).
+| File | Change |
+|------|--------|
+| `src/core/dedupe.py` | Add noop detection in exact-platform-match path |
+| `src/core/exceptions.py` | Add `CircuitBreakerOpenError` |
+| `src/adapters/scrapers/quintoandar.py` | Wire `RedisCircuitBreaker` into `_throttled_request()` |
+| `src/adapters/scrapers/olx.py` | Wire `RedisCircuitBreaker` into `_throttled_request()` |
+| `src/adapters/queue/tasks.py` | Catch `CircuitBreakerOpenError` for graceful retry |
+| `src/tests/unit/test_dedupe.py` | Add noop tests |
+| `src/tests/unit/test_cb.py` | Add RedisCircuitBreaker tests |
 
-## Steps
+## Step-by-Step Implementation
 
-### Step 1 — Backend: return lat/lon in list_properties
-Add ST_X(p.location) AS lon, ST_Y(p.location) AS lat to SELECT.
+### Step 1: Add `CircuitBreakerOpenError` to `src/core/exceptions.py`
 
-### Step 2 — Backend: add bbox filter
-Add optional bbox param (minLon,minLat,maxLon,maxLat string).
-Use ST_Within(p.location, ST_MakeEnvelope(...)).
+Add a new exception class for clean try/except in scrapers and tasks.
 
-### Step 3 — Frontend: install maplibre-gl
-npm install maplibre-gl in frontend/.
+### Step 2: Add noop detection to `src/core/dedupe.py`
 
-### Step 4 — Frontend: add bbox to fetchProperties
-Append bbox param when provided.
+In `match_or_create_property()`, the exact-platform-match block (Step 1) currently always returns `"updated"`. Add a comparison of key fields (price, title, description, image_urls, listings) against the existing property. If nothing changed, return `DeduMatchResult(action="noop")`.
 
-### Step 5 — Frontend: create MapView component
-MapLibre GL map with GeoJSON clustering, score-coloured markers, popups.
+The fuzzy-match block (Step 2) always represents new data from a different platform and should remain "updated".
 
-### Step 6 — Frontend: integrate toggle into Properties page
-Add viewType state (grid/map), toggle buttons, fetch with bbox in map mode.
+### Step 3: Wire `RedisCircuitBreaker` into `quintoandar.py`
 
-### Step 7 — Frontend: add map styles
-Map container, toggle, popup styles in index.css.
+- Instantiate `RedisCircuitBreaker(platform="quintoandar")` in `start()`
+- In `_throttled_request()`: check `is_open()` before calling — if open, raise `CircuitBreakerOpenError`
+- On HTTP 2xx: `record_success()`
+- On HTTP 5xx / 429 / connection error: `record_failure()`
 
-### Step 8 — Validate
-validate.sh all
+### Step 4: Wire `RedisCircuitBreaker` into `olx.py`
+
+Same pattern as quintoandar. Instantiate in `start()`, guard `_throttled_request()`.
+
+### Step 5: Handle `CircuitBreakerOpenError` in `tasks.py`
+
+Catch `CircuitBreakerOpenError` in `scrape_listings()` — log warning and re-raise so Celery retries with backoff.
+
+### Step 6: Write tests
+
+- Noop tests in `test_dedupe.py`: unchanged property → noop, changed price → updated, changed images → updated
+- RedisCircuitBreaker tests in `test_cb.py`: threshold opens circuit, cooldown resets, mock Redis
+- Scraper CB tests: verify scrapers respect circuit breaker (mock Redis)
+
+### Step 7: Commit and validate
+
+Commit after each step with conventional messages, then run `validate.sh backend`.
+
+## Data / Schema Changes
+
+None. All changes are behavioral.
+
+## Validation Plan
+
+- `pytest src/tests/unit/test_dedupe.py -v` — noop logic
+- `pytest src/tests/unit/test_cb.py -v` — circuit breaker logic
+- `pytest src/tests/unit/ -v` — all unit tests
+- `validate.sh backend` — full gate
+
+## Risks
+
+- **Accidental noop suppression**: Mitigated by comparing exact values (price, images) not fuzzy thresholds.
+- **Redis dependency in tests**: Mock `get_redis()` for unit tests; Redis is available in CI.
+- **Existing test breakage**: Must verify all existing dedupe/scraper tests pass.
