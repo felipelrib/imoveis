@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
-import pytest
-
-from core.dedupe import DedupeMatchResult, _is_unchanged
+from core.dedupe import _is_unchanged
 
 
 class TestIsUnchanged:
