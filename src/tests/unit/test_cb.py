@@ -59,11 +59,20 @@ def test_failure_count_resets_on_success():
 
 
 def _make_redis_breaker(failure_threshold=3, cooldown_seconds=60):
-    """Build a RedisCircuitBreaker with a mocked Redis client."""
-    with patch("adapters.scrapers.redis_circuit_breaker.get_redis") as mock_get:
-        mock_redis = MagicMock()
-        mock_redis.get.return_value = None  # no existing state
-        mock_get.return_value = mock_redis
+    """Build a RedisCircuitBreaker with a dict-backed fake Redis client."""
+    store = {}
+
+    def fake_get(key):
+        return store.get(key)
+
+    def fake_setex(key, ttl, value):
+        store[key] = value
+
+    mock_redis = MagicMock()
+    mock_redis.get = fake_get
+    mock_redis.setex = fake_setex
+
+    with patch("infra.redis_client.get_redis", return_value=mock_redis):
         cb = RedisCircuitBreaker(
             platform="test_platform",
             failure_threshold=failure_threshold,
