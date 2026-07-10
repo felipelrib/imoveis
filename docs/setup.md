@@ -104,6 +104,26 @@ ollama pull llama-3-2-vision  # Vision model (~11GB)
 
 ## Development
 
+### Code Quality (pre-commit)
+
+This project uses [pre-commit](https://pre-commit.com/) for local linting and validation. Install the hooks once after cloning:
+
+```bash
+pip install pre-commit
+pre-commit install          # runs on commit (isort, flake8, secrets, etc.)
+pre-commit install --hook-type pre-push  # runs on push (unit tests, frontend build)
+```
+
+After installation, all checks run automatically on every `git commit` and `git push`.
+This is the **same** hook set used by pre-commit.ci and the CI `lint` job — running
+them locally avoids the bot creating fixup commits on your PR.
+
+To run all hooks manually:
+
+```bash
+pre-commit run --all-files
+```
+
 ### Testing
 
 ```bash

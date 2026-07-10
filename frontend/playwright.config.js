@@ -14,11 +14,9 @@ export default defineConfig({
       use: { browserName: "chromium" },
     },
   ],
-  webServer: process.env.CI
-    ? undefined
-    : {
-        command: "npm run dev -- --port 5173",
-        port: 5173,
-        reuseExistingServer: true,
-      },
+  webServer: {
+    command: "npm run dev -- --port 5173",
+    port: 5173,
+    reuseExistingServer: !process.env.CI,
+  },
 });
