@@ -14,7 +14,7 @@ models for AI enrichment.
 - `configs/app_config.yaml` — platforms, Redis, DB, `gpu.semaphore_limit`.
 - `alembic/` — DB migrations. `docker-compose.yml` — the stack.
 - `scripts/` — project management scripts (`start.sh`, `stop.sh`, `test.sh`, etc.).
-- `scripts/agent/*.sh` — agent-specific workflow tooling (worktree isolation, validation pipeline).
+- `scripts/agent/*.sh` — agent-specific workflow tooling (branch setup, validation pipeline).
 - `docs/` — published via MkDocs Material to GitHub Pages.
 - `docs/features/` — implementation notes per shipped feature (agentic validation).
 
@@ -23,28 +23,22 @@ models for AI enrichment.
 Features are tracked in **[Linear](https://linear.app/felipelrib/)** (team "Bino").
 Use `linear_search_issues` MCP tool to find the next issue to work on.
 
-Work through the shell scripts for each feature. The scripts handle port
-isolation and docker project names so parallel worktrees don't conflict.
+Work through the shell scripts for each feature.
 
 ### Lifecycle
 
 1. **Plan.** Read the Linear issue via MCP, then write `implementation_plan.md`
-   in the worktree (steps, files, tests, risks). No implementation code before
-   the plan exists.
-2. **Isolate workspace.** `bash scripts/agent/setup-worktree.sh <feature-slug>`
-   creates `.worktrees/<slug>` on branch `feat/<slug>` with unique ports in
-   `.env.local`. Then `cd` into that worktree. Never work on `main`.
-3. **Run services isolated.** `bash scripts/agent/run-services.sh` (whole stack) or
-   pass service names for part of it. Uses your private ports + compose project.
+   (steps, files, tests, risks). No implementation code before the plan exists.
+2. **Isolate workspace.** `bash scripts/agent/setup-branch.sh <feature-slug>`
+   creates branch `feat/<slug>` and updates dependencies. Never work on `main`.
+3. **Run services.** `docker-compose up -d` (whole stack).
 4. **Implement + commit often.** Small conventional commits on your branch.
 5. **Validate.** `bash scripts/agent/validate.sh [backend|frontend|all]` must pass.
 6. **Finish the feature.**
-   `bash scripts/agent/finish-feature.sh [<slug>]` — merges the feature branch
-   into main, runs post-merge validation, tears down the worktree/containers,
-   and deletes the feature branch. Handles exit codes:
-   - **Exit 0** → merged, validated, cleaned up — done.
-   - **Exit 2** → merge conflicts — resolve, commit, re-run.
-   - **Exit 1** → validation failed after merge — fix, commit, re-run.
+   `bash scripts/agent/finish-feature.sh --pr` — pushes the feature branch
+   and prepares it for a Pull Request.
+   - **Exit 0** → validated and pushed — ready for PR.
+   - **Exit 1** → validation failed — fix, commit, re-run.
 
    Flags: `--validate-only` (sync + validate without merging), `--skip-docs` (skip gen-docs), `--dry-run` (preview).
 
@@ -53,20 +47,21 @@ isolation and docker project names so parallel worktrees don't conflict.
 
 ### Pausing and switching features
 
-Because worktrees are isolated, you can pause work on one feature and switch
-to another without conflicts:
+Because branches are standard git branches, you can pause work on one feature and switch
+to another without conflicts (stash changes before switching):
 
 ```bash
-# Pause feature A (just leave the worktree as-is)
-cd ~/workfolder/imoveis
+# Pause feature A
+git stash
+git checkout main
 
 # Start feature B
-bash scripts/agent/setup-worktree.sh feature-b
-cd .worktrees/feature-b
+bash scripts/agent/setup-branch.sh feature-b
 # ... work on B ...
 
 # Return to feature A
-cd .worktrees/feature-a
+git checkout feat/feature-a
+git stash pop
 # ... resume ...
 ```
 

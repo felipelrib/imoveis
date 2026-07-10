@@ -2,12 +2,17 @@
 
 ## Start of every session
 
-1. **Verify worktree.** Run `git rev-parse --abbrev-ref HEAD`. If it says `main`, STOP and:
+1. **Verify branch.** Run `git rev-parse --abbrev-ref HEAD`. If it says `main`, STOP and:
    ```bash
-   bash scripts/agent/setup-worktree.sh "<task-slug>"
-   cd .worktrees/<task-slug>
+   bash scripts/agent/setup-branch.sh "<task-slug>"
    ```
-   Never edit files on `main` directly. If you already made changes on `main`, stash them before creating the worktree.
+   Never edit files on `main` directly. If you already made changes on `main`, stash them before branching.
+
+1.5 **Update Dependencies**. After checking out the branch, ensure dependencies are installed:
+   ```bash
+   pip install -r requirements.txt
+   (cd frontend && npm install)
+   ```
 
 2. **Check context.** If there's an active Linear issue, read it via MCP.
    If resuming, check `git log --oneline -5` for recent commits and read `implementation_plan.md` if it exists.
@@ -23,8 +28,8 @@ After every task, the agent MUST run through this checklist:
 git status --porcelain
 git rev-parse --abbrev-ref HEAD
 ```
-- If there are uncommitted changes, create a worktree and commit.
-- If on `main`, create a worktree and move changes there.
+- If there are uncommitted changes, commit them.
+- If on `main`, create a branch and move changes there.
 - NEVER leave uncommitted changes on `main`.
 
 ### 2. Commit remaining changes
@@ -37,27 +42,21 @@ git push origin <branch>
 ### 3. Update Linear (if applicable)
 Set issue to appropriate state via `linear_bulk_update_issues`.
 
-### 4. Merge to main
+### 4. Push and Create PR
 Use `finish-feature` skill or:
 ```bash
-git checkout main
-git merge <branch>
-git push origin main
+bash scripts/agent/finish-feature.sh --pr
 ```
+- Do NOT merge to main locally.
+- Wait for user feedback or CI checks on the PR.
+- STOP working.
 
-### 5. Clean up
-```bash
-git push origin --delete <branch>  # remote
-git branch -D <branch>             # local
-git worktree remove .worktrees/<slug>
-```
-
-### 6. Report
-Produce a structured summary: branch merged, features delivered, files changed, any issues or follow-ups.
+### 5. Report
+Produce a structured summary: branch pushed, features delivered, files changed, any issues or follow-ups.
 
 ## Pain points addressed by this file
 
-- **Forgetting to use a worktree** → §Start of every session, step 1.
+- **Forgetting to branch** → §Start of every session, step 1.
 - **Half-committed state on main** → §End of every task, step 1 (run before declaring done).
 - **Skills not committed** → `.cline/skills/` is now tracked (only `.cline/memory/` and `.cline/kanban/` are gitignored).
 - **validate.sh failing when tools aren't installed** → `validate.sh` now has `--soft` mode (warn but don't roll back). Use `--skip-docs` and `--skip-validate` flags on `finish-feature.sh` for rules/docs-only changes.

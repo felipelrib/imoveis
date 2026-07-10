@@ -18,20 +18,18 @@ models for AI enrichment.
 - `docs/` — published via MkDocs Material to GitHub Pages.
 - `docs/features/` — implementation notes per shipped feature (agentic validation).
 
-## Isolation (NON-NEGOTIABLE)
+## Isolation & Setup (NON-NEGOTIABLE)
 
-1. NEVER commit, edit files, or run `docker compose up` on the `main` branch or in
-   the primary checkout. You MUST be inside a git worktree under `.worktrees/`.
+1. NEVER commit or edit files on the `main` branch.
    If `git rev-parse --abbrev-ref HEAD` says `main`, STOP and run
-   `bash scripts/agent/setup-worktree.sh <feature-slug>` first.
+   `bash scripts/agent/setup-branch.sh <feature-slug>` first.
 
-2. NEVER use default ports (5432, 6379, 8000, 5173) or `docker compose` without
-   `--env-file .env.local -p "$COMPOSE_PROJECT_NAME"`. Always start services via
-   `bash scripts/agent/run-services.sh`, which uses your worktree's unique ports.
+2. Ensure your dependencies are up to date by running `pip install -r requirements.txt` and `npm install` inside `frontend/`.
+   Always start services via `docker-compose up -d` in the root directory before running tests or migrations.
 
 ## Workflow
 
-3. PLAN BEFORE CODE. An `implementation_plan.md` must exist in your worktree
+3. PLAN BEFORE CODE. An `implementation_plan.md` must exist
    before you write any implementation code. Follow the plan.
    The plan MUST include a **testing strategy** section specifying what test types
    (unit/integration/contract/snapshot) cover which modules.
@@ -40,16 +38,16 @@ models for AI enrichment.
    (`feat:`, `fix:`, `test:`, `docs:`). Never leave the tree dirty for long.
 
 5. VALIDATE before declaring done: `bash scripts/agent/validate.sh` must pass.
-   When the feature is complete, use `bash scripts/agent/finish-feature.sh` to
-   merge into main, validate post-merge, tear down the worktree, and clean up.
-   Handle exit codes: 0 = done, 1 = fix + re-run, 2 = resolve conflicts + re-run.
+   When the feature is complete, use `bash scripts/agent/finish-feature.sh --pr` to
+   push your branch and prepare for a Pull Request. Do not merge to main locally.
+   Handle exit codes: 0 = done (ready for PR), 1 = fix + re-run.
 
 6. SCOPE DISCIPLINE — do not refactor code beyond what the feature requires.
    The `implementation_plan.md` defines scope — stick to it.
 
 ## Safety
 
-7. NEVER `git push --force`, delete another branch/worktree, or `docker system prune`.
+7. NEVER `git push --force`, delete another user's branch, or `docker system prune`.
 
 8. Before every commit, verify:
    - Commit messages MUST use conventional format.
@@ -57,7 +55,7 @@ models for AI enrichment.
    - No API keys, passwords, tokens, or secrets in the diff.
    - The strings `imoveis_secret` and `dev-secret-key` are **forbidden** in any committed file.
    - No `.env.local` files being committed (should be in `.gitignore`).
-   - Never commit directly to `main`. Always be on a `feat/*` branch inside `.worktrees/`.
+   - Never commit directly to `main`. Always be on a feature branch.
 
 ## Docker validation
 
@@ -88,7 +86,7 @@ models for AI enrichment.
     next task from Linear", or any similar pipeline-like request, your FIRST
     action MUST be `use_skill(skill_name="feature-pipeline")`. Do NOT manually
     replicate the skill's steps. Do NOT search Linear and pick an issue yourself.
-    The skill handles milestone ordering, issue selection, worktree setup, and
+    The skill handles milestone ordering, issue selection, branch setup, and
     the full lifecycle. Only after the skill is activated should you proceed
     with implementation.
 
@@ -132,26 +130,21 @@ When selecting the next issue to work on, you MUST:
 ### Lifecycle
 
 1. **Plan.** Read the Linear issue via MCP, then write `implementation_plan.md`
-   in the worktree (steps, files, tests, risks). Commit it.
-2. **Isolate workspace.** `bash scripts/agent/setup-worktree.sh <feature-slug>`
-   creates `.worktrees/<slug>` on branch `feat/<slug>`.
-3. **Run services.** `bash scripts/agent/run-services.sh`
+   (steps, files, tests, risks).
+2. **Isolate workspace.** `bash scripts/agent/setup-branch.sh <feature-slug>`
+   creates branch `feat/<slug>` and updates dependencies.
+3. **Run services.** `docker-compose up -d`
 4. **Implement + commit.** Small conventional commits. Pre-commit and pre-push
    hooks run automatically on each commit/push.
 5. **Validate locally.** `bash scripts/agent/validate.sh all` — must pass
    before opening a PR. Runs lint, unit, integration, contract, frontend
    build, AND Playwright E2E.
-6. **Open PR and wait for CI gate.** Use `bash scripts/agent/finish-feature.sh
-   --pr <slug>` to push, open a PR, and block until all CI checks pass
-   (lint, unit, integration, contract, E2E). NEVER merge with failing CI.
-   If CI fails, fix and push — the PR automatically re-tests.
-7. **Merge.** After CI passes, `finish-feature.sh` proceeds to merge, validate
-   post-merge, tear down the worktree, and delete the feature branch.
-   - Exit 0 → merged, validated, cleaned up.
-   - Exit 2 → merge conflicts — resolve, commit, re-run.
+6. **Open PR and wait for CI gate.** Use `bash scripts/agent/finish-feature.sh --pr`
+   to push, open a PR, and block until all CI checks pass.
+   - Exit 0 → pushed, validated, ready for PR.
    - Exit 1 → validation failed — fix, commit, re-run.
-8. **Update Linear.** Set the issue status to Done via Linear MCP.
-9. **Document.** Generate feature docs via `gen-docs.sh`.
+7. **Update Linear.** Set the issue status to Done via Linear MCP.
+8. **Document.** Generate feature docs via `gen-docs.sh`.
 
 ### Dispatching from Cline CLI
 
