@@ -11,7 +11,9 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
+from core.exceptions import CircuitBreakerOpenError
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,14 +43,27 @@ class QuintoAndarScraper(BaseScraper):
                 "Cache-Control": "max-age=0",
             }
         )
+        self._cb = RedisCircuitBreaker(platform="quintoandar", failure_threshold=5, cooldown_seconds=120)
 
     def _throttled_request(self, method: str, url: str, **kwargs):
         import random
         import time
 
+        if self._cb.is_open():
+            raise CircuitBreakerOpenError(
+                f"QuintoAndar circuit breaker is open — skipping {url}"
+            )
+
         # Optional basic throttle
         time.sleep(random.uniform(1.0, 2.5))
-        return self.session.request(method, url, **kwargs)
+        response = self.session.request(method, url, **kwargs)
+
+        # Track success/failure for circuit breaker
+        if 200 <= response.status_code < 300:
+            self._cb.record_success()
+        elif response.status_code >= 500 or response.status_code == 429:
+            self._cb.record_failure()
+        return response
 
     def fetch_pages(self, checkpoint: Any = None) -> Iterator[Dict[str, Any]]:
         """Fetch properties using a dynamic sliding price window to bypass pagination."""

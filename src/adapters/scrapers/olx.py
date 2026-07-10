@@ -18,7 +18,9 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
+from core.exceptions import CircuitBreakerOpenError
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -64,14 +66,27 @@ class OLXScraper(BaseScraper):
                 "Cache-Control": "no-cache",
             }
         )
+        self._cb = RedisCircuitBreaker(platform="olx", failure_threshold=5, cooldown_seconds=120)
 
     def _throttled_request(self, url: str) -> Any:
         """Sleep for a random jitter then make the request."""
+        if self._cb.is_open():
+            raise CircuitBreakerOpenError(
+                f"OLX circuit breaker is open — skipping {url}"
+            )
+
         delay = random.uniform(
             self._jitter_min, max(self._jitter_min + 0.1, self._jitter_max)
         )
         time.sleep(delay)
-        return self.session.get(url, follow_redirects=True)
+        response = self.session.get(url, follow_redirects=True)
+
+        # Track success/failure for circuit breaker
+        if 200 <= response.status_code < 300:
+            self._cb.record_success()
+        elif response.status_code >= 500 or response.status_code == 429:
+            self._cb.record_failure()
+        return response
 
     # ------------------------------------------------------------------
     # fetch_pages — iterator over raw listing dicts
