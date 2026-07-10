@@ -9,9 +9,9 @@ to property_listings, but the add_property_listings_table migration (275bc5394bf
 already creates the table with the correct schema (platform_listing_id, first_seen,
 last_seen, etc.).  This migration is therefore a no-op.
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '97cc5c6e9880'

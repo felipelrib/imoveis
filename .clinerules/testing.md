@@ -95,7 +95,14 @@ Use markers consistently across all test files:
 
 ## CI integration
 
-- All test types run in CI via GitHub Actions
-- `validate.sh` runs the same tests as CI (single source of truth)
-- Pre-push hook runs unit tests locally before pushing
-- See `.clinerules/ci.md` for full CI pipeline documentation
+- All test types run in CI via GitHub Actions on every PR and push to main.
+- **E2E (Playwright) runs as a gate on PRs** AND as a post-merge smoke test on
+  push to main. PRs with failing E2E must NOT be merged.
+- `validate.sh all` runs the same steps as CI locally: lint → unit →
+  integration → contract → frontend build → E2E. Must pass before opening
+  a PR.
+- Pre-commit hooks: whitespace, YAML/JSON validation, secret detection,
+  isort, flake8, forbid-print, forbid-only.
+- Pre-push hook: pytest unit + frontend build. Must pass before pushing.
+- `finish-feature.sh --pr` automates push → PR → wait-for-CI-green → merge.
+- See `.clinerules/ci.md` for full CI pipeline documentation.

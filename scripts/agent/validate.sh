@@ -10,7 +10,7 @@
 #   fast      = lint + unit (pre-push equivalent, <60s)
 #   backend   = fast + integration + contract
 #   frontend  = install + build + lint
-#   all       = backend + frontend
+#   all       = backend + frontend + E2E
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,11 +156,19 @@ run_contract() {
 # ---- Frontend ----
 run_frontend() {
   [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping"; return; }
-  log "Frontend: install + build"
+  log "Frontend: install (npm ci) + build"
   ( cd "$REPO_ROOT/frontend" \
-      && { [ -d node_modules ] || npm install --ignore-scripts; } \
+      && npm ci \
       && npm run build ) \
     && ok "frontend build OK" || { warn "frontend build FAILED"; rc=1; }
+}
+
+run_e2e() {
+  [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping E2E"; return; }
+  log "E2E: Playwright"
+  ( cd "$REPO_ROOT/frontend" \
+      && npm run test:e2e ) \
+    && ok "E2E tests passed" || { warn "E2E tests FAILED"; rc=1; }
 }
 
 case "$SCOPE" in
@@ -185,6 +193,7 @@ case "$SCOPE" in
     run_integration
     run_contract
     run_frontend
+    run_e2e
     ;;
   *)
     die "usage: validate.sh [fast|backend|frontend|all]"

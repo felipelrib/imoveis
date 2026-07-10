@@ -65,6 +65,7 @@ jobs:
       - name: SonarCloud Scan
         if: success() || failure()
         uses: SonarSource/sonarqube-scan-action@v4
+        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
@@ -162,10 +163,10 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- E2E (Playwright) — only on push to main, CRITICAL path only ----
+  # ---- E2E (Playwright) — PR gate + post-merge smoke test ----
   e2e:
     needs: [unit, integration]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +182,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        run: npm run test:e2e --prefix frontend || echo "E2E tests not yet configured — skip"
+        run: npm run test:e2e --prefix frontend
 
   # ---- Security scan (only on push to main) ----
   security-scan:

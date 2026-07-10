@@ -1,14 +1,14 @@
 """initial
 
 Revision ID: b64c262168da
-Revises: 
+Revises:
 Create Date: 2026-07-06 04:38:10.457458
 
 """
-from alembic import op
-import sqlalchemy as sa
 import geoalchemy2
+import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = 'b64c262168da'

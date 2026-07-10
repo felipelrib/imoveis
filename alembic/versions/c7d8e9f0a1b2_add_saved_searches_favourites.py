@@ -4,9 +4,10 @@ Revision ID: c7d8e9f0a1b2
 Revises: b1c2d3e4f5a6
 Create Date: 2026-07-09
 """
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from alembic import op
 
 # revision identifiers
 revision = "c7d8e9f0a1b2"

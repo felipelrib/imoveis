@@ -65,22 +65,34 @@ bash scripts/agent/run-services.sh
 Implement each step from `implementation_plan.md`, committing after each
 meaningful step with conventional messages.
 
-### Step 7 — Validate
+### Step 7 — Validate locally
 
 ```bash
 bash scripts/agent/validate.sh all
 ```
 
-### Step 8 — Finish the feature
+This runs lint, unit, integration, contract, frontend build, and Playwright E2E
+— the same steps CI will run. Must pass before opening a PR.
+
+### Step 8 — Open PR and wait for CI gate
+
+Push the branch, open a Pull Request, and wait for all CI checks to pass
+before merging:
 
 ```bash
-bash scripts/agent/finish-feature.sh "<feature_slug>"
+bash scripts/agent/finish-feature.sh --pr "<feature_slug>"
 ```
+
+This will:
+- Push the branch to origin
+- Open a PR via `gh pr create`
+- Block until all CI checks (lint, unit, integration, contract, E2E) pass
+- Then merge into main, validate, tear down the worktree, and delete the branch
 
 Handle exit codes:
 - **Exit 0** → merged, validated, cleaned up — proceed to Step 9
 - **Exit 2** → merge conflicts — resolve, commit, re-run
-- **Exit 1** → validation failed after merge — fix, commit, re-run
+- **Exit 1** → CI checks or validation failed — fix issues, push fixes, re-run
 
 ### Step 9 — Update Linear status to Done
 
