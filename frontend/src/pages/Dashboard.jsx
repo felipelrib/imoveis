@@ -1,7 +1,11 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
-import { ensureOllama, recalculateScores } from '../api.js'
-import { useState } from 'react'
+import { ensureOllama, recalculateScores, fetchPipeline } from '../api.js'
+import { useState, useEffect, useRef } from 'react'
 import { useToast } from '../components/ToastProvider.jsx'
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, Legend
+} from 'recharts'
 
 const SERVICES = [
   { key: 'database', icon: '🗄️', label: 'PostgreSQL',  sub: (s) => s?.database?.status === 'ok' ? 'Connected' : s?.database?.detail || 'Offline' },
@@ -20,9 +24,35 @@ export default function Dashboard({ status, loading }) {
   const [recalculating, setRecalculating] = useState(false)
   const [recalcResult, setRecalcResult] = useState(null)
   const [ollamaLoading, setOllamaLoading] = useState(false)
+  const [pipeline, setPipeline] = useState(null)
+  const [throughputHistory, setThroughputHistory] = useState([])
   const showToast = useToast()
 
   const stats = status?.stats || {}
+
+  // Poll pipeline telemetry for chart data
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const data = await fetchPipeline()
+        if (cancelled) return
+        setPipeline(data)
+        const now = new Date()
+        const timeLabel = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        setThroughputHistory(prev => {
+          const next = [...prev, { time: timeLabel, throughput: data.ai_metrics?.throughput_per_min || 0, scraperQueue: data.queues?.scrapers || 0, aiQueue: data.queues?.ai || 0 }]
+          // Keep last 20 data points
+          return next.slice(-20)
+        })
+      } catch {
+        // silently ignore — pipeline data is non-critical
+      }
+    }
+    poll()
+    const id = setInterval(poll, 8000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
 
   const handleEnsureOllama = async () => {
     setOllamaLoading(true)
@@ -57,6 +87,52 @@ export default function Dashboard({ status, loading }) {
         <h1 className="page-title">Dashboard</h1>
         <p className="page-subtitle">Real-time overview of your data pipeline and system health</p>
       </div>
+
+      {/* Charts row */}
+      {throughputHistory.length >= 2 && (
+        <>
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+            📈 Pipeline Metrics
+          </h2>
+          <div className="chart-grid">
+            <div className="chart-panel">
+              <div className="chart-title">AI Throughput (tasks/min)</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={throughputHistory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="time" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
+                    labelStyle={{ color: 'var(--text-secondary)' }}
+                  />
+                  <Line type="monotone" dataKey="throughput" stroke="var(--accent-cyan)" strokeWidth={2} dot={false} name="Tasks/min" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="chart-panel">
+              <div className="chart-title">Queue Depth</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={throughputHistory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="time" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
+                    labelStyle={{ color: 'var(--text-secondary)' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
+                  <Bar dataKey="scraperQueue" fill="var(--accent-amber)" name="Scrapers" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="aiQueue" fill="var(--accent)" name="AI" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
+      )}
+      {throughputHistory.length > 0 && throughputHistory.length < 2 && (
+        <div className="chart-empty-state">Collecting pipeline data… charts appear after 2+ data points.</div>
+      )}
 
       {/* Stats row */}
       <div className="stats-grid">

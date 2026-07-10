@@ -240,3 +240,13 @@ export async function fetchNeighborhoods() {
   if (!r.ok) throw new Error('Neighborhoods fetch failed')
   return r.json()
 }
+
+// ---------------------------------------------------------------------------
+// Price History API
+// ---------------------------------------------------------------------------
+
+export async function fetchPriceHistory(propertyId) {
+  const r = await fetch(`${BASE}/properties/${propertyId}/price-history`)
+  if (!r.ok) throw new Error('Price history fetch failed')
+  return r.json()
+}

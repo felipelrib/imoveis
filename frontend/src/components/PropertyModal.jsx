@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
-import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, checkFavourite, addFavourite, removeFavourite } from '../api.js'
+import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, checkFavourite, addFavourite, removeFavourite, fetchPriceHistory } from '../api.js'
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
+} from 'recharts'
 
 export default function PropertyModal({ id, onClose }) {
   const [property, setProperty] = useState(null)
@@ -7,6 +10,7 @@ export default function PropertyModal({ id, onClose }) {
   const [imgIndex, setImgIndex] = useState(0)
   const [isWatched, setIsWatched] = useState(false)
   const [isFavourited, setIsFavourited] = useState(false)
+  const [priceHistory, setPriceHistory] = useState([])
 
   useEffect(() => {
     fetchProperty(id)
@@ -18,6 +22,9 @@ export default function PropertyModal({ id, onClose }) {
       .catch(() => {})
     checkFavourite(id)
       .then(data => setIsFavourited(data.favourited))
+      .catch(() => {})
+    fetchPriceHistory(id)
+      .then(setPriceHistory)
       .catch(() => {})
   }, [id])
 
@@ -340,6 +347,68 @@ export default function PropertyModal({ id, onClose }) {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Price history chart */}
+              {priceHistory.length >= 2 && (() => {
+                // Group by listing_type + platform for separate lines
+                const grouped = {}
+                for (const ph of priceHistory) {
+                  const lineKey = `${ph.listing_type || 'sale'}|${ph.platform || 'unknown'}`
+                  if (!grouped[lineKey]) grouped[lineKey] = []
+                  const date = ph.start_ts ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '?'
+                  grouped[lineKey].push({ date, price: ph.price, lineKey })
+                }
+                // Build unified date-based data
+                const allDates = [...new Set(priceHistory.map(ph => ph.start_ts ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '?'))]
+                const chartData = allDates.map(date => {
+                  const point = { date }
+                  for (const [key, entries] of Object.entries(grouped)) {
+                    const match = entries.find(e => e.date === date)
+                    if (match) point[key] = match.price
+                  }
+                  return point
+                })
+                const lineKeys = Object.keys(grouped)
+                const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
+                return (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+                      📈 Price History
+                    </div>
+                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '12px 8px 0' }}>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <LineChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                          <XAxis dataKey="date" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} />
+                          <YAxis
+                            tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
+                            tickLine={false} axisLine={false}
+                            tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
+                          />
+                          <Tooltip
+                            contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
+                            formatter={(value) => `R$ ${Number(value).toLocaleString('pt-BR')}`}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
+                          {lineKeys.map((key, i) => {
+                            const [type, platform] = key.split('|')
+                            const label = `${type === 'rent' ? 'Aluguel' : 'Venda'} (${platform})`
+                            return (
+                              <Line key={key} type="monotone" dataKey={key} stroke={colors[i % colors.length]}
+                                strokeWidth={2} dot={{ r: 3 }} name={label} connectNulls={false} />
+                            )
+                          })}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )
+              })()}
+              {priceHistory.length > 0 && priceHistory.length < 2 && (
+                <div style={{ marginBottom: 20, padding: '10px 14px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', fontSize: 12, color: 'var(--text-muted)' }}>
+                  Price history needs at least 2 data points to display a chart.
                 </div>
               )}
 
