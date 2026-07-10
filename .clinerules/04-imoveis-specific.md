@@ -132,18 +132,26 @@ When selecting the next issue to work on, you MUST:
 ### Lifecycle
 
 1. **Plan.** Read the Linear issue via MCP, then write `implementation_plan.md`
-   in the worktree (steps, files, tests, risks).
+   in the worktree (steps, files, tests, risks). Commit it.
 2. **Isolate workspace.** `bash scripts/agent/setup-worktree.sh <feature-slug>`
    creates `.worktrees/<slug>` on branch `feat/<slug>`.
 3. **Run services.** `bash scripts/agent/run-services.sh`
-4. **Implement + commit.** Small conventional commits.
-5. **Validate.** `bash scripts/agent/validate.sh [backend|frontend|all]`.
-6. **Finish.** `bash scripts/agent/finish-feature.sh [<slug>]`.
+4. **Implement + commit.** Small conventional commits. Pre-commit and pre-push
+   hooks run automatically on each commit/push.
+5. **Validate locally.** `bash scripts/agent/validate.sh all` — must pass
+   before opening a PR. Runs lint, unit, integration, contract, frontend
+   build, AND Playwright E2E.
+6. **Open PR and wait for CI gate.** Use `bash scripts/agent/finish-feature.sh
+   --pr <slug>` to push, open a PR, and block until all CI checks pass
+   (lint, unit, integration, contract, E2E). NEVER merge with failing CI.
+   If CI fails, fix and push — the PR automatically re-tests.
+7. **Merge.** After CI passes, `finish-feature.sh` proceeds to merge, validate
+   post-merge, tear down the worktree, and delete the feature branch.
    - Exit 0 → merged, validated, cleaned up.
    - Exit 2 → merge conflicts — resolve, commit, re-run.
    - Exit 1 → validation failed — fix, commit, re-run.
-7. **Update Linear.** Set the issue status to Done via Linear MCP.
-8. **Document.** Generate feature docs via `gen-docs.sh`.
+8. **Update Linear.** Set the issue status to Done via Linear MCP.
+9. **Document.** Generate feature docs via `gen-docs.sh`.
 
 ### Dispatching from Cline CLI
 

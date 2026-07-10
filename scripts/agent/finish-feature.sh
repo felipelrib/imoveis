@@ -27,6 +27,7 @@ DRY_RUN=false
 SKIP_DOCS=false
 VALIDATE_ONLY=false
 SKIP_VALIDATE=false
+PR_MODE=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -34,6 +35,7 @@ for arg in "$@"; do
     --skip-docs)      SKIP_DOCS=true ;;
     --skip-validate)  SKIP_VALIDATE=true ;;
     --validate-only)  VALIDATE_ONLY=true ;;
+    --pr)             PR_MODE=true ;;
   esac
 done
 
@@ -116,6 +118,32 @@ git fetch origin --quiet 2>/dev/null || true
 if [ -d "$WT" ]; then
   cd "$WT"
   git fetch origin --quiet 2>/dev/null || true
+fi
+
+# --- Open PR and wait for CI (--pr mode) -----------------------------------
+if [ "$PR_MODE" = true ]; then
+  log "Pushing branch $BRANCH..."
+  cd "$WT"
+  git push origin "$BRANCH" 2>/dev/null || die "git push failed"
+
+  log "Opening pull request..."
+  PR_TITLE="$(git log -1 --pretty=%s "$BRANCH" 2>/dev/null || echo "Feature: $SLUG")"
+  PR_URL=$(gh pr create \
+    --base main \
+    --head "$BRANCH" \
+    --title "$PR_TITLE" \
+    --body "$(printf '## Changes\n\n%s\n\n## Validation\n\n- [ ] CI must pass (lint, unit, integration, contract, E2E)\n- [ ] validate.sh all must pass locally' \
+      "$(git log main.."$BRANCH" --oneline --no-merges 2>/dev/null | sed 's/^/- /' || echo "- $PR_TITLE")")" \
+    2>&1) || die "gh pr create failed: $PR_URL"
+  ok "PR created: $PR_URL"
+
+  log "Waiting for CI checks to pass (this may take a few minutes)..."
+  gh pr checks --watch "$BRANCH" 2>/dev/null || {
+    warn "CI checks failed or timed out."
+    warn "Fix issues, push fixes, and re-run: bash scripts/agent/finish-feature.sh --pr"
+    exit 1
+  }
+  ok "All CI checks passed"
 fi
 
 # --- Merge feature into main ------------------------------------------------

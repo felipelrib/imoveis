@@ -50,3 +50,10 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+
+      - id: frontend-build
+        name: frontend build check
+        entry: bash -c 'cd frontend && npm ci && npm run build'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
