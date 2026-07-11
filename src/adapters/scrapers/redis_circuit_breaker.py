@@ -2,6 +2,10 @@ import json
 import time
 from dataclasses import dataclass
 
+from infra.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class RedisCircuitBreakerState:
@@ -47,7 +51,7 @@ class RedisCircuitBreaker:
                 return RedisCircuitBreakerState(**parsed)
         except Exception as e:
             # If we can't read from Redis, return default state
-            print(f"Error reading circuit breaker state for {self.platform}: {e}")
+            logger.warning("circuit_breaker_read_error", platform=self.platform, error=str(e))
 
         return RedisCircuitBreakerState()
 
@@ -62,7 +66,7 @@ class RedisCircuitBreaker:
             # Set with expiration to prevent indefinite storage
             self.redis_client.setex(key, self.cooldown_seconds * 2, data)
         except Exception as e:
-            print(f"Error writing circuit breaker state for {self.platform}: {e}")
+            logger.warning("circuit_breaker_write_error", platform=self.platform, error=str(e))
 
     def is_open(self) -> bool:
         """Check if the circuit breaker is currently open."""

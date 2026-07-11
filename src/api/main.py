@@ -119,12 +119,12 @@ def list_platforms():
     cfg = get_config()
     result = []
     for name in ScraperRegistry.available():
-        pcfg = cfg.platforms.get(name)
+        pcfg = cfg.scraping.platforms.get(name)
         result.append(
             {
                 "name": name,
                 "enabled": pcfg.enabled if pcfg else True,
-                "rate_limit": pcfg.rate_limit if pcfg else None,
+                "rate_limit": getattr(pcfg, "rate_limit", None) if pcfg else None,
             }
         )
     return result

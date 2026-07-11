@@ -22,22 +22,13 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Python lint tools
-        run: pip install isort flake8
-
-      - name: Install Frontend deps
+      - name: Install frontend deps
         run: npm ci --prefix frontend
 
-      - name: isort check
-        run: isort --check --diff src/
+      - name: Run pre-commit (matches local hooks exactly)
+        uses: pre-commit/action@v3.0.1
 
-      - name: flake8
-        run: flake8 src/ --max-line-length=127 --extend-ignore=E203,W503
-
-      - name: eslint
-        run: npm run lint --prefix frontend || echo "eslint not configured — skip"
-
-  # ---- Unit tests (fast, no Docker) ----
+  # ---- Unit tests (fast, no Docker) — runs in parallel with integration/contract ----
   unit:
     needs: lint
     runs-on: ubuntu-latest
@@ -75,9 +66,9 @@ jobs:
             -Dsonar.sources=src/
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-  # ---- Integration (needs PostGIS + Redis) ----
+  # ---- Integration (needs PostGIS + Redis) — runs in parallel with unit ----
   integration:
-    needs: unit
+    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -111,17 +102,23 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt alembic
+
+      - name: Run database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
 
       - name: Run integration tests
         run: pytest src/tests/integration/ -v
         env:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
+          API_KEY: test-integration-key
 
-  # ---- Contract tests (API schema + DB schema) ----
+  # ---- Contract tests (API schema + DB schema) — runs in parallel with unit ----
   contract:
-    needs: unit
+    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -175,7 +172,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Frontend deps
+      - name: Install frontend deps
         run: npm ci --prefix frontend
 
       - name: Install Playwright
@@ -184,10 +181,10 @@ jobs:
       - name: Run E2E tests
         run: npm run test:e2e --prefix frontend
 
-  # ---- Security scan (only on push to main) ----
+  # ---- Security scan (PR gate + post-merge) ----
   security-scan:
     needs: integration
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
