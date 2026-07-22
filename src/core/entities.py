@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class LocationData(BaseModel):
@@ -14,7 +14,8 @@ class LocationData(BaseModel):
     latitude: float
     longitude: float
 
-    @validator("address")
+    @field_validator("address")
+    @classmethod
     def validate_address(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError("Address cannot be empty")
@@ -33,7 +34,8 @@ class ListingInfo(BaseModel):
     parking_spaces: int
     area: float
 
-    @validator("title")
+    @field_validator("title")
+    @classmethod
     def validate_title(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError("Title cannot be empty")
@@ -59,13 +61,15 @@ class PropertyCandidate(BaseModel):
     listings: Optional[List[dict]] = None
     currency: Optional[str] = "BRL"
 
-    @validator("platform_id")
+    @field_validator("platform_id")
+    @classmethod
     def coerce_platform_id(cls, v):
         if not v:
             raise ValueError("Platform ID cannot be empty")
         return str(v)
 
-    @validator("price")
+    @field_validator("price")
+    @classmethod
     def validate_price(cls, v):
         if v <= 0:
             raise ValueError("Price must be positive")
@@ -85,13 +89,9 @@ class ScoringWeights(BaseModel):
     ai_weight: float = 0.5
     stat_weight: float = 0.5
 
-    @validator("ai_weight", "stat_weight")
-    def weights_must_sum_to_one(cls, v, values):
-        if "ai_weight" in values or "stat_weight" in values:
-            _ = values.get("stat_weight", 0.5) if "ai_weight" not in values else values.get("ai_weight", 0.5)
-            # We can't strictly validate during sequential field assignment easily in v1 without checking both
-            # so we just let it pass or check if both are present
-        return v
+    @model_validator(mode="after")
+    def weights_must_sum_to_one(self) -> 'ScoringWeights':
+        return self
 
 
 class VisualAnalysisResult(BaseModel):

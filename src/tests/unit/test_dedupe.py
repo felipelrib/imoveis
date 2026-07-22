@@ -154,7 +154,7 @@ class TestRecordPriceChange:
         select_call = session.execute.call_args_list[0]
         sql = str(select_call[0][0])
         assert "listing_type = :lt" in sql
-        assert "platform = :platform" in sql
+        assert "platform IS NOT DISTINCT FROM :platform" in sql
         params = select_call[0][1]
         assert params["lt"] == "rent"
         assert params["platform"] == "quintoandar"

@@ -49,13 +49,10 @@ Files touched:
 
 ### Bugs Found
 
-- **BUG (Moderate): `_is_unchanged` silently returns `True` on DB errors** (dedupe.py L211-214): If the `property_listings` table query fails (e.g., connection error), the function returns `True` — meaning the property is incorrectly marked as unchanged, skipping updates and AI re-enrichment. This should log a warning and return `False` to be safe.
-
-- **BUG (Minor): `text_similarity` catches ALL exceptions** (dedupe.py L49-51): The broad `except Exception` in `text_similarity` swallows import errors (e.g., if `jellyfish` is not installed) and returns 0.0, making fuzzy matching silently fail without clear feedback.
-
-- **BUG (Minor): `_record_price_change` uses raw SQL with `platform = :platform` but platform can be `None`** (dedupe.py L262): PostgreSQL `= NULL` is always false. When a property-level price history is recorded without a platform, the `SELECT` will never find the open interval, causing duplicate rows. Should use `IS NOT DISTINCT FROM` or `COALESCE`.
-
-- **BUG (Minor): Pydantic v1 `@validator` used in entities.py** — The `PropertyCandidate` and other entities use `@validator` (Pydantic v1 API) instead of `@field_validator` (Pydantic v2). This works via compatibility layer but may break in future Pydantic versions and triggers deprecation warnings.
+- ~~**BUG (Moderate): `_is_unchanged` safely defaults to True on DB errors**~~ — **FIXED**: Changed to return `False` on DB errors to ensure re-enrichment.
+- ~~**BUG (Minor): `text_similarity` catches ALL exceptions**~~ — **FIXED**: Imported jellyfish locally and only catch specific exceptions.
+- ~~**BUG (Minor): `_record_price_change` NULL comparison bug**~~ — **FIXED**: Used `IS NOT DISTINCT FROM` in SQL query for correct NULL handling.
+- ~~**BUG (Minor): Pydantic v1 API `@validator` used in `entities.py`**~~ — **FIXED**: Updated to Pydantic v2 API `@field_validator` and `@model_validator`.
 
 ### Tech Debt
 

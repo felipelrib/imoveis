@@ -1,4 +1,3 @@
-import logging
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,8 +7,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.entities import PropertyCandidate
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -26,28 +26,24 @@ def text_similarity(
     algorithm: str = "jaro_winkler",
 ) -> float:
     """Calculate similarity between two strings."""
+    import jellyfish  # Validate import fails loudly at call time if not installed
     try:
         if not a or not b:
             return 0.0
 
-        # Importação condicional para evitar dependências desnecessárias
         if algorithm == "jaro_winkler":
-            from jellyfish import jaro_winkler_similarity
-
-            return jaro_winkler_similarity(a, b)
+            return jellyfish.jaro_winkler_similarity(a, b)
         elif algorithm == "levenshtein":
-            from jellyfish import levenshtein_distance
-
             max_len = max(len(a), len(b))
             if max_len == 0:
                 return 1.0
-            distance = levenshtein_distance(a, b)
+            distance = jellyfish.levenshtein_distance(a, b)
             return 1.0 - (distance / max_len)
         else:
-            raise ValueError(f"Unknown similarity algorithm: {algorithm}")
+            raise ValueError(f"Unknown similarity algorithm: {algorithm!r}")
 
-    except Exception as e:
-        logger.error(f"Error calculating text similarity: {e}")
+    except (TypeError, ValueError) as exc:
+        logger.warning("text_similarity_error", algorithm=algorithm, error=str(exc))
         return 0.0
 
 
@@ -208,10 +204,9 @@ def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> b
             )
             .all()
         )
-    except Exception:
-        # If property_listings table doesn't exist or query fails,
-        # fall back to property-level comparison only
-        return True
+    except Exception as exc:
+        logger.warning("is_unchanged_db_error", property_id=str(existing.id), error=str(exc))
+        return False  # Safe default: treat as changed, allow re-enrichment
 
     # If we have listings in DB but candidate has none, that's a change
     candidate_listings = candidate.listings or []
@@ -256,7 +251,7 @@ def _record_price_change(
     open_row = session.execute(
         text(
             "SELECT id, price FROM price_history "
-            "WHERE property_id = :pid AND listing_type = :lt AND platform = :platform "
+            "WHERE property_id = :pid AND listing_type = :lt AND platform IS NOT DISTINCT FROM :platform "
             "AND end_ts IS NULL "
             "ORDER BY start_ts DESC LIMIT 1"
         ),

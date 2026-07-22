@@ -149,9 +149,9 @@ class TestIsUnchanged:
 
         assert _is_unchanged(session, self._make_existing(), candidate) is True
 
-    def test_fallback_on_exception_returns_true(self):
-        """If PropertyListing query fails, fall back to property-level comparison → noop."""
+    def test_fallback_on_exception_returns_false(self):
+        """If PropertyListing query fails, treat as changed to ensure re-enrichment."""
         session = MagicMock()
         session.query.side_effect = Exception("table not found")
 
-        assert _is_unchanged(session, self._make_existing(), self._make_candidate()) is True
+        assert _is_unchanged(session, self._make_existing(), self._make_candidate()) is False
