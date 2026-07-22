@@ -83,6 +83,7 @@ def trigger_scrape(req: ScrapeRequest):
     try:
         # Import scrapers so they self-register
         import adapters.scrapers.quintoandar  # noqa: F401
+        import adapters.scrapers.olx  # noqa: F401
         from adapters.queue.tasks import scrape_listings
         from adapters.scrapers.registry import ScraperRegistry
 
@@ -113,6 +114,7 @@ def trigger_scrape(req: ScrapeRequest):
 def list_platforms():
     """Return registered scraper platforms for the GUI dropdown."""
     import adapters.scrapers.quintoandar  # noqa: F401 — triggers registration
+    import adapters.scrapers.olx  # noqa: F401
     from adapters.scrapers.registry import ScraperRegistry
     from infra.config import get_config
 

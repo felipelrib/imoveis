@@ -200,6 +200,10 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         raise
     finally:
         session.close()
+        try:
+            get_redis().delete(f"pipeline:scraper:{platform_name}:status")
+        except Exception as redis_exc:
+            logger.error("redis_cleanup_failed", error=str(redis_exc))
 
 
 # ---------------------------------------------------------------------------
@@ -338,17 +342,19 @@ def ai_enrich(
         ai_score, visual_result, sentiment_result, local_paths = asyncio.run(_run_enrichment())
 
         duration = time.time() - start_time
-        r.lpush(
-            "pipeline:ai:telemetry",
-            json.dumps(
-                {
-                    "property_id": property_id,
-                    "duration": duration,
-                    "timestamp": time.time(),
-                }
-            ),
-        )
-        r.ltrim("pipeline:ai:telemetry", 0, 999)  # Keep last 1000
+        with r.pipeline() as pipe:
+            pipe.lpush(
+                "pipeline:ai:telemetry",
+                json.dumps(
+                    {
+                        "property_id": property_id,
+                        "duration": duration,
+                        "timestamp": time.time(),
+                    }
+                ),
+            )
+            pipe.ltrim("pipeline:ai:telemetry", 0, 999)  # Keep last 1000
+            pipe.execute()
 
         logger.info(
             "ai_enrich_completed",

@@ -460,7 +460,7 @@ export default function Properties() {
             </div>
           ) : (
             <MapView
-              properties={data?.properties || []}
+              properties={mapProperties.length > 0 ? mapProperties : (data?.properties || [])}
               onSelectProperty={(id) => setSelectedId(id)}
               onBboxChange={handleBboxChange}
             />
@@ -557,6 +557,11 @@ function scoreColor(v) {
   if (v >= 0.7) return 'var(--score-high)'
   if (v >= 0.4) return 'var(--score-mid)'
   return 'var(--score-low)'
+}
+
+function displayScore(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? '—' : (n * 100).toFixed(0);
 }
 
 function groupListings(listings) {
@@ -688,17 +693,17 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
             <div className="score-badge combined">
               <span className="score-badge-label">Score</span>
               <span className="score-badge-val" style={{ color: scoreColor(p.combined_score) }}>
-                {(p.combined_score * 100).toFixed(0)}
+                {displayScore(p.combined_score)}
               </span>
             </div>
           )}
           <div className="score-badge stat">
             <span className="score-badge-label">Stat</span>
-            <span className="score-badge-val">{p.stat_score != null ? (p.stat_score * 100).toFixed(0) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
+            <span className="score-badge-val">{p.stat_score != null ? displayScore(p.stat_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
           </div>
           <div className="score-badge ai">
             <span className="score-badge-label">AI</span>
-            <span className="score-badge-val">{p.ai_score != null ? (p.ai_score * 100).toFixed(0) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
+            <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
           </div>
         </div>
 

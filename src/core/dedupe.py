@@ -306,6 +306,15 @@ def _record_price_change(
         )
 
 
+def _prices_equal(a, b, tolerance=0.001) -> bool:
+    """Safely compare two prices that may have gone through float/Decimal conversion."""
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(float(a) - float(b)) < tolerance
+
+
 def _check_watchlist_alerts(
     session: Session,
     property_id: str,
@@ -323,8 +332,9 @@ def _check_watchlist_alerts(
             ),
             {"pid": property_id},
         ).fetchall()
-    except Exception:
+    except Exception as exc:
         # watchlist table may not exist in test SQLite databases
+        logger.warning("watchlist_query_error", property_id=str(property_id), error=str(exc))
         return
 
     if not rows:
@@ -332,14 +342,16 @@ def _check_watchlist_alerts(
 
     for row in rows:
         min_drop_pct = float(row.min_drop_pct or 5.0)
-        last_notified_price = float(row.last_notified_price) if row.last_notified_price is not None else None
+        reference_price = row.last_notified_price or old_price
 
         # Calculate percentage drop
-        if old_price <= 0:
+        if reference_price is None or float(reference_price) <= 0:
             continue
-        drop_pct = ((old_price - new_price) / old_price) * 100.0
+            
+        reference_price_float = float(reference_price)
+        drop_pct = ((reference_price_float - float(new_price)) / reference_price_float) * 100.0
 
-        if drop_pct >= min_drop_pct and last_notified_price != new_price:
+        if drop_pct >= min_drop_pct and not _prices_equal(row.last_notified_price, new_price):
             # Fire alert
             try:
                 from adapters.notify import get_notifiers

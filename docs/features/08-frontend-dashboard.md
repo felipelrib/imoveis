@@ -70,13 +70,13 @@ Files touched:
 
 ### Bugs Found
 
-- **BUG (Critical): Properties page displays wrong data due to API column index mismatch** — As documented in `07-rest-api.md`, the backend `list_properties` endpoint returns columns in wrong indices, causing the frontend to display `address` where `stat_score` should be, etc. All scoring data on property cards is incorrect.
+- **[FIXED] BUG (Critical): Properties page displays wrong data due to API column index mismatch** — As documented in `07-rest-api.md`, the backend `list_properties` endpoint returns columns in wrong indices, causing the frontend to display `address` where `stat_score` should be, etc. All scoring data on property cards is incorrect.
 
-- **BUG (Moderate): `apiOk` computed but never used** (App.jsx L17): `const apiOk = !loading && status?.database?.status === 'ok'` is declared but never referenced. Presumably should gate UI rendering.
+- **[FIXED] BUG (Moderate): `apiOk` computed but never used** (App.jsx L17): `const apiOk = !loading && status?.database?.status === 'ok'` is declared but never referenced. Presumably should gate UI rendering.
 
-- **BUG (Minor): `load()` uses stale closures** (Properties.jsx L115-160): The `load` function captures `sortBy`, `listingType`, etc. from closure but is called from `useEffect` which has these as dependencies. However, `page` is also captured, and the `load(1)` call in the filter-change effect should reset pagination correctly but the function re-reads `page` from closure, not the argument.
+- **[FIXED] BUG (Minor): `load()` uses stale closures** (Properties.jsx L115-160): The `load` function captures `sortBy`, `listingType`, etc. from closure but is called from `useEffect` which has these as dependencies. However, `page` is also captured, and the `load(1)` call in the filter-change effect should reset pagination correctly but the function re-reads `page` from closure, not the argument.
 
-- **BUG (Minor): Map view passes `data?.properties` instead of `mapProperties`** (Properties.jsx L463): The `MapView` component receives `properties={data?.properties || []}` but `mapProperties` state from `handleBboxChange` is never passed. Map always shows the current grid page's properties rather than spatial results.
+- **[FIXED] BUG (Minor): Map view passes `data?.properties` instead of `mapProperties`** (Properties.jsx L463): The `MapView` component receives `properties={data?.properties || []}` but `mapProperties` state from `handleBboxChange` is never passed. Map always shows the current grid page's properties rather than spatial results.
 
 ### Tech Debt
 

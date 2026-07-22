@@ -31,8 +31,7 @@ class WatchlistItem(BaseModel):
 @router.get("")
 def list_watchlist() -> List[WatchlistItem]:
     """Return all watched properties."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         rows = session.execute(
             text(
                 "SELECT id, property_id, min_drop_pct, last_notified_price, created_at "
@@ -49,89 +48,82 @@ def list_watchlist() -> List[WatchlistItem]:
             )
             for r in rows
         ]
-    finally:
-        session.close()
 
 
 @router.post("", status_code=201)
 def add_to_watchlist(req: WatchlistCreate) -> WatchlistItem:
     """Add a property to the watchlist."""
-    session = SessionLocal()
-    try:
-        # Verify property exists
-        prop = session.execute(
-            text("SELECT id FROM properties WHERE id = :pid"),
-            {"pid": req.property_id},
-        ).fetchone()
-        if prop is None:
-            raise HTTPException(status_code=404, detail="Property not found")
+    with SessionLocal() as session:
+        try:
+            # Verify property exists
+            prop = session.execute(
+                text("SELECT id FROM properties WHERE id = :pid"),
+                {"pid": req.property_id},
+            ).fetchone()
+            if prop is None:
+                raise HTTPException(status_code=404, detail="Property not found")
 
-        # Check if already in watchlist
-        existing = session.execute(
-            text("SELECT id FROM watchlist WHERE property_id = :pid"),
-            {"pid": req.property_id},
-        ).fetchone()
-        if existing is not None:
-            raise HTTPException(status_code=409, detail="Property already in watchlist")
+            # Check if already in watchlist
+            existing = session.execute(
+                text("SELECT id FROM watchlist WHERE property_id = :pid"),
+                {"pid": req.property_id},
+            ).fetchone()
+            if existing is not None:
+                raise HTTPException(status_code=409, detail="Property already in watchlist")
 
-        import uuid
-        from datetime import datetime, timezone
+            import uuid
+            from datetime import datetime, timezone
 
-        now = datetime.now(timezone.utc)
-        watchlist_id = str(uuid.uuid4())
-        session.execute(
-            text(
-                "INSERT INTO watchlist (id, property_id, min_drop_pct, created_at) "
-                "VALUES (:id, :pid, :min_drop, :now)"
-            ),
-            {"id": watchlist_id, "pid": req.property_id, "min_drop": req.min_drop_pct, "now": now},
-        )
-        session.commit()
+            now = datetime.now(timezone.utc)
+            watchlist_id = str(uuid.uuid4())
+            session.execute(
+                text(
+                    "INSERT INTO watchlist (id, property_id, min_drop_pct, created_at) "
+                    "VALUES (:id, :pid, :min_drop, :now)"
+                ),
+                {"id": watchlist_id, "pid": req.property_id, "min_drop": req.min_drop_pct, "now": now},
+            )
+            session.commit()
 
-        logger.info("watchlist_add", property_id=req.property_id, min_drop_pct=req.min_drop_pct)
-        return WatchlistItem(
-            id=watchlist_id,
-            property_id=req.property_id,
-            min_drop_pct=req.min_drop_pct,
-            created_at=now.isoformat(),
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        session.close()
+            logger.info("watchlist_add", property_id=req.property_id, min_drop_pct=req.min_drop_pct)
+            return WatchlistItem(
+                id=watchlist_id,
+                property_id=req.property_id,
+                min_drop_pct=req.min_drop_pct,
+                created_at=now.isoformat(),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.delete("/{property_id}")
 def remove_from_watchlist(property_id: str) -> Dict[str, str]:
     """Remove a property from the watchlist."""
-    session = SessionLocal()
-    try:
-        result = session.execute(
-            text("DELETE FROM watchlist WHERE property_id = :pid"),
-            {"pid": property_id},
-        )
-        session.commit()
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Property not in watchlist")
-        logger.info("watchlist_remove", property_id=property_id)
-        return {"status": "removed", "property_id": property_id}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        session.close()
+    with SessionLocal() as session:
+        try:
+            result = session.execute(
+                text("DELETE FROM watchlist WHERE property_id = :pid"),
+                {"pid": property_id},
+            )
+            session.commit()
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Property not in watchlist")
+            logger.info("watchlist_remove", property_id=property_id)
+            return {"status": "removed", "property_id": property_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/check/{property_id}")
 def check_watchlist(property_id: str) -> Dict[str, Any]:
     """Check if a specific property is in the watchlist."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         row = session.execute(
             text("SELECT id, min_drop_pct, last_notified_price FROM watchlist WHERE property_id = :pid"),
             {"pid": property_id},
@@ -144,5 +136,3 @@ def check_watchlist(property_id: str) -> Dict[str, Any]:
             "min_drop_pct": float(row[1]),
             "last_notified_price": float(row[2]) if row[2] is not None else None,
         }
-    finally:
-        session.close()

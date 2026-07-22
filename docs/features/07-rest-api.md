@@ -60,19 +60,19 @@ None beyond FastAPI core.
 
 ### Bugs Found
 
-- **BUG (Critical): Column index mismatch in `list_properties`** (properties.py L176-224): The SQL SELECT has 27 columns but the Python indexing is wrong:
+- **[FIXED] BUG (Critical): Column index mismatch in `list_properties`** (properties.py L176-224): The SQL SELECT has 27 columns but the Python indexing is wrong:
   - `row[11]` mapped to `address` but column 11 is `first_seen`
   - `row[12]` mapped to `image_urls` but column 12 is `stat_score`
   - `row[13]` mapped to `created_at` but column 13 is `ai_score`
   - All subsequent row indices are off by 3, causing **all scoring fields to display wrong values** on the property cards. `stat_score`, `ai_score`, `combined_score` will show `address`, `image_urls`, `first_seen` values respectively.
 
-- **BUG (Moderate): f-string SQL injection surface** (properties.py L68, L75): Lines like `f"(p.props_json->>'available_for_{listing_type}')::boolean"` and `f"...'{is_furnished}'"` directly interpolate user input into SQL. While FastAPI validates `listing_type` via regex `^(rent|sale|both)$`, `is_furnished` is a boolean and doesn't go through f-string. However, the pattern is dangerous and should use parameterized queries for all values.
+- **[FIXED] BUG (Moderate): f-string SQL injection surface** (properties.py L68, L75): Lines like `f"(p.props_json->>'available_for_{listing_type}')::boolean"` and `f"...'{is_furnished}'"` directly interpolate user input into SQL. While FastAPI validates `listing_type` via regex `^(rent|sale|both)$`, `is_furnished` is a boolean and doesn't go through f-string. However, the pattern is dangerous and should use parameterized queries for all values.
 
-- **BUG (Moderate): Session leak on exceptions** (properties.py L36-235): `list_properties` creates `session = SessionLocal()` and relies on `finally: session.close()`, but if an exception occurs before the `try` block (e.g., in parameter processing), the session is never closed. Should use `with SessionLocal() as session:` or a dependency injection pattern.
+- **[FIXED] BUG (Moderate): Session leak on exceptions** (properties.py L36-235): `list_properties` creates `session = SessionLocal()` and relies on `finally: session.close()`, but if an exception occurs before the `try` block (e.g., in parameter processing), the session is never closed. Should use `with SessionLocal() as session:` or a dependency injection pattern.
 
-- **BUG (Minor): `saved_searches.filters` stored as Python dict, not JSON** (saved_searches.py L99): The raw SQL `INSERT` passes `req.filters` (a Python dict) as `:filters`. Whether this works depends on the PostgreSQL driver and column type (`JSONB`). It should explicitly serialize with `json.dumps()`.
+- **[FIXED] BUG (Minor): `saved_searches.filters` stored as Python dict, not JSON** (saved_searches.py L99): The raw SQL `INSERT` passes `req.filters` (a Python dict) as `:filters`. Whether this works depends on the PostgreSQL driver and column type (`JSONB`). It should explicitly serialize with `json.dumps()`.
 
-- **BUG (Minor): `/scrape` only imports `quintoandar`** (main.py L85): The comment says "Import scrapers so they self-register" but only imports `quintoandar`, not `olx`. OLX scraper will never be available.
+- **[FIXED] BUG (Minor): `/scrape` only imports `quintoandar`** (main.py L85): The comment says "Import scrapers so they self-register" but only imports `quintoandar`, not `olx`. OLX scraper will never be available.
 
 ### Tech Debt
 

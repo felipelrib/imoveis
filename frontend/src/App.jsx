@@ -14,7 +14,6 @@ const NAV = [
 
 export default function App() {
   const { status, loading } = useSystemStatus(6000)
-  const apiOk = !loading && status?.database?.status === 'ok'
 
   return (
     <ToastProvider>

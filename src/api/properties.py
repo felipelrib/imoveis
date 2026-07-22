@@ -33,8 +33,7 @@ def list_properties(
     bbox: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return paginated, filtered, scored properties for the GUI grid."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         filters = ["p.active = true"]
         params: Dict[str, Any] = {
             "limit": page_size,
@@ -65,14 +64,21 @@ def list_properties(
             params["min_score"] = min_score
 
         if listing_type and listing_type != "both":
-            filters.append(f"(p.props_json->>'available_for_{listing_type}')::boolean = true")
+            LISTING_TYPE_COL = {
+                "rent": "available_for_rent",
+                "sale": "available_for_sale"
+            }
+            if listing_type in LISTING_TYPE_COL:
+                col = LISTING_TYPE_COL[listing_type]
+                filters.append(f"(p.props_json->>{col!r})::boolean = true")
 
         if property_type:
             filters.append("p.props_json->>'type' ILIKE :property_type")
             params["property_type"] = f"%{property_type}%"
 
         if is_furnished is not None:
-            filters.append(f"(p.props_json->>'isFurnished')::boolean = {'true' if is_furnished else 'false'}")
+            filters.append("(p.props_json->>'isFurnished')::boolean = :is_furnished")
+            params["is_furnished"] = is_furnished
 
         if accepts_pets is not None:
             if accepts_pets:
@@ -131,6 +137,8 @@ def list_properties(
                 p.parking,
                 p.description,
                 p.props_json,
+                ST_X(p.location::geometry) AS lon,
+                ST_Y(p.location::geometry) AS lat,
                 (
                     SELECT json_agg(
                         json_build_object(
@@ -169,42 +177,42 @@ def list_properties(
         count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
 
         total = session.execute(count_sql, count_params).scalar() or 0
-        rows = session.execute(sql, params).fetchall()
+        rows = session.execute(sql, params).mappings().fetchall()
 
         properties = []
         for row in rows:
-            meta = row[21] or {}
+            meta = row["meta"] or {}
             visual = meta.get("visual", {})
             sentiment = meta.get("sentiment", {})
-            props_json = row[25] or {}
+            props_json = row["props_json"] or {}
 
-            neighborhood_name_val = row[22] or props_json.get("neighborhood")
+            neighborhood_name_val = row["neighborhood_name"] or props_json.get("neighborhood")
 
             properties.append(
                 {
-                    "id": str(row[0]),
-                    "platform": row[1],
-                    "platform_id": row[2],
-                    "title": row[3],
-                    "price": row[4],
-                    "area_m2": row[5],
-                    "bedrooms": row[6],
-                    "bathrooms": row[7],
-                    "address": row[11],
-                    "image_urls": row[12] or [],
-                    "created_at": row[13].isoformat() if row[13] else None,
-                    "lat": float(row[10]) if row[10] is not None else None,
-                    "lon": float(row[9]) if row[9] is not None else None,
-                    "stat_score": (round(float(row[14]), 3) if row[14] is not None else None),
-                    "ai_score": (round(float(row[15]), 3) if row[15] is not None else None),
-                    "combined_score": (round(float(row[16]), 3) if row[16] is not None else None),
-                    "percentile_rank": (round(float(row[17]), 3) if row[17] is not None else None),
-                    "z_score": (round(float(row[18]), 3) if row[18] is not None else None),
-                    "price_per_m2": (round(float(row[19]), 2) if row[19] is not None else None),
-                    "neighborhood_mean": (round(float(row[20]), 2) if row[20] is not None else None),
+                    "id": str(row["id"]),
+                    "platform": row["platform"],
+                    "platform_id": row["platform_id"],
+                    "title": row["title"],
+                    "price": row["price"],
+                    "area_m2": row["area_m2"],
+                    "bedrooms": row["bedrooms"],
+                    "bathrooms": row["bathrooms"],
+                    "address": row["address"],
+                    "image_urls": row["image_urls"] or [],
+                    "created_at": row["first_seen"].isoformat() if row["first_seen"] else None,
+                    "lat": float(row["lat"]) if row["lat"] is not None else None,
+                    "lon": float(row["lon"]) if row["lon"] is not None else None,
+                    "stat_score": (round(float(row["stat_score"]), 3) if row["stat_score"] is not None else None),
+                    "ai_score": (round(float(row["ai_score"]), 3) if row["ai_score"] is not None else None),
+                    "combined_score": (round(float(row["combined_score"]), 3) if row["combined_score"] is not None else None),
+                    "percentile_rank": (round(float(row["percentile_rank"]), 3) if row["percentile_rank"] is not None else None),
+                    "z_score": (round(float(row["z_score"]), 3) if row["z_score"] is not None else None),
+                    "price_per_m2": (round(float(row["price_per_m2"]), 2) if row["price_per_m2"] is not None else None),
+                    "neighborhood_mean": (round(float(row["neighborhood_mean"]), 2) if row["neighborhood_mean"] is not None else None),
                     "neighborhood_name": neighborhood_name_val,
-                    "parking": row[23],
-                    "description": row[24],
+                    "parking": row["parking"],
+                    "description": row["description"],
                     "available_for_rent": props_json.get("available_for_rent", False),
                     "available_for_sale": props_json.get("available_for_sale", False),
                     "ai_features": visual.get("features_detected", []),
@@ -220,7 +228,7 @@ def list_properties(
                     "visual_reasoning": visual.get("reasoning"),
                     "sentiment_category": sentiment.get("category"),
                     "sentiment_reasoning": sentiment.get("reasoning"),
-                    "listings": row[26] or [],
+                    "listings": row["listings"] or [],
                 }
             )
 
@@ -231,15 +239,12 @@ def list_properties(
             "pages": (total + page_size - 1) // page_size,
             "properties": properties,
         }
-    finally:
-        session.close()
 
 
 @router.get("/neighborhoods")
 def list_neighborhoods() -> List[Dict[str, Any]]:
     """Return distinct neighborhoods with property counts for dynamic filter options."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         rows = session.execute(text("""
             SELECT COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') AS name,
                    COUNT(p.id) AS property_count
@@ -250,15 +255,12 @@ def list_neighborhoods() -> List[Dict[str, Any]]:
             ORDER BY name
         """)).fetchall()
         return [{"name": r[0], "count": r[1]} for r in rows if r[0]]
-    finally:
-        session.close()
 
 
 @router.get("/{property_id}")
 def get_property(property_id: str) -> Dict[str, Any]:
     """Return a single property with full scoring details."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         sql = text("""
             SELECT
                 p.id, p.platform, p.platform_id, p.title, p.description,
@@ -268,7 +270,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
                 ms.percentile_rank, ms.z_score, ms.price_per_m2,
                 ms.neighborhood_mean, ms.neighborhood_median, ms.meta,
                 n.name AS neighborhood_name,
-                ST_X(p.location) AS lon, ST_Y(p.location) AS lat,
+                ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat,
                 (
                     SELECT json_agg(
                         json_build_object(
@@ -292,39 +294,39 @@ def get_property(property_id: str) -> Dict[str, Any]:
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.id = :id
         """)
-        row = session.execute(sql, {"id": property_id}).fetchone()
+        row = session.execute(sql, {"id": property_id}).mappings().fetchone()
         if row is None:
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="Property not found")
 
-        meta = row[22] or {}
+        meta = row["meta"] or {}
         return {
-            "id": str(row[0]),
-            "platform": row[1],
-            "platform_id": row[2],
-            "title": row[3],
-            "description": row[4],
-            "price": row[5],
-            "area_m2": row[6],
-            "bedrooms": row[7],
-            "bathrooms": row[8],
-            "parking": row[9],
-            "address": row[10],
-            "image_urls": row[11] or [],
-            "created_at": row[12].isoformat() if row[12] else None,
-            "props_json": row[13] or {},
-            "stat_score": float(row[14]) if row[14] is not None else None,
-            "ai_score": float(row[15]) if row[15] is not None else None,
-            "combined_score": float(row[16]) if row[16] is not None else None,
-            "percentile_rank": float(row[17]) if row[17] is not None else None,
-            "z_score": float(row[18]) if row[18] is not None else None,
-            "price_per_m2": float(row[19]) if row[19] is not None else None,
-            "neighborhood_mean": float(row[20]) if row[20] is not None else None,
-            "neighborhood_median": float(row[21]) if row[21] is not None else None,
-            "neighborhood_name": row[23] or (row[13] or {}).get("neighborhood"),
-            "location": {"lon": row[24], "lat": row[25]},
-            "listings": row[26] or [],
+            "id": str(row["id"]),
+            "platform": row["platform"],
+            "platform_id": row["platform_id"],
+            "title": row["title"],
+            "description": row["description"],
+            "price": row["price"],
+            "area_m2": row["area_m2"],
+            "bedrooms": row["bedrooms"],
+            "bathrooms": row["bathrooms"],
+            "parking": row["parking"],
+            "address": row["address"],
+            "image_urls": row["image_urls"] or [],
+            "created_at": row["first_seen"].isoformat() if row["first_seen"] else None,
+            "props_json": row["props_json"] or {},
+            "stat_score": float(row["stat_score"]) if row["stat_score"] is not None else None,
+            "ai_score": float(row["ai_score"]) if row["ai_score"] is not None else None,
+            "combined_score": float(row["combined_score"]) if row["combined_score"] is not None else None,
+            "percentile_rank": float(row["percentile_rank"]) if row["percentile_rank"] is not None else None,
+            "z_score": float(row["z_score"]) if row["z_score"] is not None else None,
+            "price_per_m2": float(row["price_per_m2"]) if row["price_per_m2"] is not None else None,
+            "neighborhood_mean": float(row["neighborhood_mean"]) if row["neighborhood_mean"] is not None else None,
+            "neighborhood_median": float(row["neighborhood_median"]) if row["neighborhood_median"] is not None else None,
+            "neighborhood_name": row["neighborhood_name"] or (row["props_json"] or {}).get("neighborhood"),
+            "location": {"lon": row["lon"], "lat": row["lat"]},
+            "listings": row["listings"] or [],
             "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
             "stat_analysis": meta.get("stat_analysis", {}),
             "ai_analysis": {
@@ -332,8 +334,6 @@ def get_property(property_id: str) -> Dict[str, Any]:
                 "sentiment": meta.get("sentiment", {}),
             },
         }
-    finally:
-        session.close()
 
 
 @router.get("/{property_id}/price-history")
@@ -346,8 +346,7 @@ def get_price_history(
 
     Optionally filter by listing_type (rent/sale) and/or platform.
     """
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         # Verify property exists
         check = session.execute(
             text("SELECT id FROM properties WHERE id = :id"),
@@ -392,5 +391,3 @@ def get_price_history(
             }
             for r in rows
         ]
-    finally:
-        session.close()

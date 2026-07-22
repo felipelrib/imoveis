@@ -47,7 +47,7 @@ def scraper():
         "jitter_max": 0.1,
         "extra": {"max_pages": 2},
     }
-    return OLXScraper(config)
+    return OLXScraper("olx", config)
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def scraper_no_extra():
     config = {
         "rate_limit": 20,
     }
-    return OLXScraper(config)
+    return OLXScraper("olx", config)
 
 
 # ---------------------------------------------------------------------------

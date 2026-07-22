@@ -43,8 +43,7 @@ class FavouriteWithProperty(BaseModel):
 @router.get("", response_model=List[FavouriteWithProperty])
 def list_favourites() -> List[FavouriteWithProperty]:
     """Return all favourites with property details."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         rows = session.execute(
             text(
                 "SELECT f.id, f.property_id, f.created_at, "
@@ -72,84 +71,77 @@ def list_favourites() -> List[FavouriteWithProperty]:
             )
             for r in rows
         ]
-    finally:
-        session.close()
 
 
 @router.post("", status_code=201, response_model=FavouriteItem)
 def add_favourite(req: FavouriteCreate) -> FavouriteItem:
     """Add a property to favourites."""
-    session = SessionLocal()
-    try:
-        # Verify property exists
-        prop = session.execute(
-            text("SELECT id FROM properties WHERE id = :pid"),
-            {"pid": req.property_id},
-        ).fetchone()
-        if prop is None:
-            raise HTTPException(status_code=404, detail="Property not found")
+    with SessionLocal() as session:
+        try:
+            # Verify property exists
+            prop = session.execute(
+                text("SELECT id FROM properties WHERE id = :pid"),
+                {"pid": req.property_id},
+            ).fetchone()
+            if prop is None:
+                raise HTTPException(status_code=404, detail="Property not found")
 
-        # Check if already favourited
-        existing = session.execute(
-            text("SELECT id FROM favourites WHERE property_id = :pid"),
-            {"pid": req.property_id},
-        ).fetchone()
-        if existing is not None:
-            raise HTTPException(status_code=409, detail="Property already favourited")
+            # Check if already favourited
+            existing = session.execute(
+                text("SELECT id FROM favourites WHERE property_id = :pid"),
+                {"pid": req.property_id},
+            ).fetchone()
+            if existing is not None:
+                raise HTTPException(status_code=409, detail="Property already favourited")
 
-        now = datetime.now(timezone.utc)
-        fav_id = str(uuid.uuid4())
-        session.execute(
-            text(
-                "INSERT INTO favourites (id, property_id, created_at) "
-                "VALUES (:id, :pid, :now)"
-            ),
-            {"id": fav_id, "pid": req.property_id, "now": now},
-        )
-        session.commit()
-        logger.info("favourite_add", property_id=req.property_id)
-        return FavouriteItem(
-            id=fav_id,
-            property_id=req.property_id,
-            created_at=now.isoformat(),
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        session.close()
+            now = datetime.now(timezone.utc)
+            fav_id = str(uuid.uuid4())
+            session.execute(
+                text(
+                    "INSERT INTO favourites (id, property_id, created_at) "
+                    "VALUES (:id, :pid, :now)"
+                ),
+                {"id": fav_id, "pid": req.property_id, "now": now},
+            )
+            session.commit()
+            logger.info("favourite_add", property_id=req.property_id)
+            return FavouriteItem(
+                id=fav_id,
+                property_id=req.property_id,
+                created_at=now.isoformat(),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.delete("/{property_id}")
 def remove_favourite(property_id: str) -> Dict[str, str]:
     """Remove a property from favourites."""
-    session = SessionLocal()
-    try:
-        result = session.execute(
-            text("DELETE FROM favourites WHERE property_id = :pid"),
-            {"pid": property_id},
-        )
-        session.commit()
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Property not in favourites")
-        logger.info("favourite_remove", property_id=property_id)
-        return {"status": "removed", "property_id": property_id}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        session.close()
+    with SessionLocal() as session:
+        try:
+            result = session.execute(
+                text("DELETE FROM favourites WHERE property_id = :pid"),
+                {"pid": property_id},
+            )
+            session.commit()
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Property not in favourites")
+            logger.info("favourite_remove", property_id=property_id)
+            return {"status": "removed", "property_id": property_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/check/{property_id}")
 def check_favourite(property_id: str) -> Dict[str, Any]:
     """Check if a specific property is favourited."""
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         row = session.execute(
             text("SELECT id, created_at FROM favourites WHERE property_id = :pid"),
             {"pid": property_id},
@@ -161,5 +153,3 @@ def check_favourite(property_id: str) -> Dict[str, Any]:
             "id": str(row[0]),
             "created_at": row[1].isoformat() if row[1] else None,
         }
-    finally:
-        session.close()
