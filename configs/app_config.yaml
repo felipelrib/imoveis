@@ -23,6 +23,9 @@ scraping:
       rate_limit: 30          # requests per minute
       jitter_min: 2           # minimum delay between requests (seconds)
       jitter_max: 7           # maximum delay between requests (seconds)
+      extra:
+        city_slug: belo-horizonte-mg-brasil
+        proxy: null
     olx:
       base_url: https://www.olx.com.br
       enabled: true
@@ -32,6 +35,9 @@ scraping:
       jitter_max: 6
       extra:
         max_pages: 5
+        region: mg
+        city_slug: belo-horizonte
+        proxy: null
 
 # ---------------------------------------------------------------------------
 # Deduplication Engine

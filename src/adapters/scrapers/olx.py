@@ -30,17 +30,6 @@ logger = get_logger(__name__)
 class OLXScraper(BaseScraper):
     """Scrapes properties from OLX Brazil using page iteration."""
 
-    # OLX Brazil search URLs — region-based (MG / Belo Horizonte)
-    _RENT_PATHS = [
-        "aluguel/apartamentos/mg/belo-horizonte",
-        "aluguel/apartamentos/mg/belo-horizonte-e-regiao",
-        "aluguel/casas/mg/belo-horizonte",
-    ]
-    _SALE_PATHS = [
-        "venda/apartamentos/mg/belo-horizonte",
-        "venda/apartamentos/mg/belo-horizonte-e-regiao",
-        "venda/casas/mg/belo-horizonte",
-    ]
     _BASE_URL = "https://www.olx.com.br/imoveis"
 
     def __init__(self, platform_name: str, config: Dict[str, Any]):
@@ -48,12 +37,28 @@ class OLXScraper(BaseScraper):
         self._rate_limit = config.get("rate_limit", 20)
         self._jitter_min = config.get("jitter_min", 2)
         self._jitter_max = config.get("jitter_max", 6)
-        self._max_pages = config.get("extra", {}).get("max_pages", 5) if isinstance(config.get("extra"), dict) else 5
+        extra = config.get("extra") or {}
+        self._max_pages = extra.get("max_pages", 5)
+        region = extra.get("region", "mg")
+        city_slug = extra.get("city_slug", "belo-horizonte")
+        self._RENT_PATHS = [
+            f"aluguel/apartamentos/{region}/{city_slug}",
+            f"aluguel/apartamentos/{region}/{city_slug}-e-regiao",
+            f"aluguel/casas/{region}/{city_slug}",
+        ]
+        self._SALE_PATHS = [
+            f"venda/apartamentos/{region}/{city_slug}",
+            f"venda/apartamentos/{region}/{city_slug}-e-regiao",
+            f"venda/casas/{region}/{city_slug}",
+        ]
 
     def start(self) -> None:
         import httpx
 
-        self.session = httpx.Client()
+        proxy = self.config.get("extra", {}).get("proxy")
+        proxies = {"http://": proxy, "https://": proxy} if proxy else None
+
+        self.session = httpx.Client(proxies=proxies)
         self.session.headers.update(
             {
                 "User-Agent": (
@@ -67,6 +72,10 @@ class OLXScraper(BaseScraper):
             }
         )
         self._cb = RedisCircuitBreaker(platform="olx", failure_threshold=5, cooldown_seconds=120)
+
+    def close(self) -> None:
+        if hasattr(self, "session") and self.session is not None:
+            self.session.close()
 
     def _throttled_request(self, url: str) -> Any:
         """Sleep for a random jitter then make the request."""

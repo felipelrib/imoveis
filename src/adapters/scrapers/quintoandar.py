@@ -25,12 +25,15 @@ class QuintoAndarScraper(BaseScraper):
 
     def __init__(self, platform_name: str, config: Dict[str, Any]):
         super().__init__(platform_name, config)
-        self.city_slug = config.get("city_slug", "belo-horizonte-mg-brasil")
+        self.city_slug = config.get("extra", {}).get("city_slug", "belo-horizonte-mg-brasil")
 
     def start(self) -> None:
         import httpx
 
-        self.session = httpx.Client()
+        proxy = self.config.get("extra", {}).get("proxy")
+        proxies = {"http://": proxy, "https://": proxy} if proxy else None
+
+        self.session = httpx.Client(proxies=proxies)
         self.session.headers.update(
             {
                 "User-Agent": (
@@ -44,6 +47,10 @@ class QuintoAndarScraper(BaseScraper):
             }
         )
         self._cb = RedisCircuitBreaker(platform="quintoandar", failure_threshold=5, cooldown_seconds=120)
+
+    def close(self) -> None:
+        if hasattr(self, "session") and self.session is not None:
+            self.session.close()
 
     def _throttled_request(self, method: str, url: str, **kwargs):
         import random
@@ -94,7 +101,7 @@ class QuintoAndarScraper(BaseScraper):
             action, min_p, max_p = queue.popleft()
 
             # e.g., https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil/de-1000-a-1200-reais
-            url = f"https://www.quintoandar.com.br/{action}/imovel/belo-horizonte-mg-brasil/de-{min_p}-a-{max_p}-reais"
+            url = f"https://www.quintoandar.com.br/{action}/imovel/{self.city_slug}/de-{min_p}-a-{max_p}-reais"
 
             if url in visited_urls:
                 continue
