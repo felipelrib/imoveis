@@ -131,33 +131,41 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
           ? (props.combined_score * 100).toFixed(0)
           : '—'
 
-        const popupHtml = `
-          <div style="padding: 4px 0; font-size: 13px;">
-            <div style="font-weight: 600; margin-bottom: 4px; line-height: 1.3;">${props.title}</div>
-            <div style="font-size: 15px; font-weight: 700; color: var(--accent, #6366f1); margin-bottom: 4px;">${formatPrice(props.price)}</div>
-            <div style="color: var(--text-muted, #9ca3af); font-size: 11px; margin-bottom: 6px;">
-              ${props.neighborhood_name || ''} ${props.bedrooms ? '· ' + props.bedrooms + ' beds' : ''} ${props.area_m2 ? '· ' + props.area_m2 + 'm²' : ''}
-            </div>
-            <div style="font-size: 12px; margin-bottom: 6px;">Score: <strong style="color: ${scoreColor(props.combined_score)}">${score}</strong></div>
-            <button class="map-view-btn" data-id="${props.id}" style="
-              background: var(--accent, #6366f1); color: white; border: none;
-              padding: 5px 12px; border-radius: 6px; cursor: pointer;
-              font-size: 12px; font-weight: 600; width: 100%;
-            ">View Details</button>
-          </div>
-        `
-        popup.setLngLat(coords).setHTML(popupHtml).addTo(map)
+        const container = document.createElement('div')
+        container.style = "padding: 4px 0; font-size: 13px;"
 
-        // Attach click handler to View Details button
-        setTimeout(() => {
-          const btn = map.getContainer().querySelector('.map-view-btn')
-          if (btn) {
-            btn.addEventListener('click', () => {
-              onSelectProperty(btn.dataset.id)
-              popup.remove()
-            })
-          }
-        }, 0)
+        const titleDiv = document.createElement('div')
+        titleDiv.style = "font-weight: 600; margin-bottom: 4px; line-height: 1.3;"
+        titleDiv.textContent = props.title
+        container.appendChild(titleDiv)
+
+        const priceDiv = document.createElement('div')
+        priceDiv.style = "font-size: 15px; font-weight: 700; color: var(--accent, #6366f1); margin-bottom: 4px;"
+        priceDiv.textContent = formatPrice(props.price)
+        container.appendChild(priceDiv)
+
+        const detailsDiv = document.createElement('div')
+        detailsDiv.style = "color: var(--text-muted, #9ca3af); font-size: 11px; margin-bottom: 6px;"
+        detailsDiv.textContent = `${props.neighborhood_name || ''} ${props.bedrooms ? '· ' + props.bedrooms + ' beds' : ''} ${props.area_m2 ? '· ' + props.area_m2 + 'm²' : ''}`
+        container.appendChild(detailsDiv)
+
+        const scoreDiv = document.createElement('div')
+        scoreDiv.style = "font-size: 12px; margin-bottom: 6px;"
+        scoreDiv.innerHTML = `Score: <strong style="color: ${scoreColor(props.combined_score)}">${score}</strong>`
+        container.appendChild(scoreDiv)
+
+        const btn = document.createElement('button')
+        btn.className = 'map-view-btn'
+        btn.dataset.id = props.id
+        btn.style = "background: var(--accent, #6366f1); color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%;"
+        btn.textContent = 'View Details'
+        btn.addEventListener('click', () => {
+          onSelectProperty(props.id)
+          popup.remove()
+        })
+        container.appendChild(btn)
+
+        popup.setLngLat(coords).setDOMContent(container).addTo(map)
       })
 
       // Hover cursor
@@ -172,13 +180,16 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
       map.on('click', 'clusters', (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] })
         const clusterId = features[0].properties.cluster_id
-        map.getSource(sourceId).getClusterExpansionZoom(clusterId, (err, zoom) => {
-          if (err) return
-          map.easeTo({ zoom, center: e.lngLat })
-        })
+        map.getSource(sourceId).getClusterExpansionZoom(clusterId)
+          .then((zoom) => {
+            map.easeTo({ zoom, center: e.lngLat })
+          })
+          .catch((err) => {
+            console.error('cluster_expand_error', err)
+          })
       })
     }
-  }, [onSelectProperty])
+  }, [onSelectProperty, onBboxChange])
 
   // Initialize map
   useEffect(() => {

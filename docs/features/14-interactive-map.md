@@ -22,7 +22,9 @@ spatial deal-hunting intuitive and reveals neighbourhood clusters at a glance.
   - Red (`#ef4444`) < 0.4
   - Grey (`#6b7280`) — no score yet
 - **Popup on click**: `maplibregl.Popup` renders property title, price, bedrooms, area, score,
-  and a "View Details" button. The button's click handler calls `onSelectProperty` to open
+  and a "View Details" button. To prevent XSS vulnerabilities from unsanitized property data,
+  the popup DOM is built manually using `document.createElement()` and `textContent` rather
+  than interpolating HTML strings. The button's click handler calls `onSelectProperty` to open
   the existing `PropertyModal`.
 - **Backend bbox filter**: `GET /properties?bbox=minLon,minLat,maxLon,maxLat` uses PostGIS
   `ST_Within(location, ST_MakeEnvelope(..., 4326))` for server-side viewport clipping.
@@ -63,22 +65,5 @@ Files touched:
 
 ## Notes / Follow-ups
 
-- **BUG (XSS in map popup)**: `popup.setHTML(popupHtml)` where `popupHtml` interpolates
-  `props.title` from the GeoJSON feature — which originates from the database. If a
-  property title contains `<script>` or event attributes, it executes in the popup context.
-  Use `setDOMContent()` with a manually constructed DOM tree, or sanitize with DOMPurify
-  before calling `setHTML()`.
-- **BUG (`map-view-btn` selector picks first button only)**: The "View Details" click handler
-  uses `map.getContainer().querySelector('.map-view-btn')`, which always selects the first
-  matching element. If two popups are open simultaneously (unlikely but possible), it could
-  call `onSelectProperty` with the wrong `id`. Use `e.target` inside the event listener
-  instead.
-- **BUG (Cluster click callback API deprecated)**: `getClusterExpansionZoom(clusterId, callback)`
-  is the legacy callback form; newer MapLibre versions prefer the Promise-based
-  `getClusterExpansionZoom(clusterId)`. The callback will silently fail on future versions.
-- **`updateMarkers` as `useCallback` dependency array**: `onSelectProperty` is listed as a
-  dependency but not `onBboxChange`. If `onBboxChange` changes identity between renders the
-  map's `moveend` handler captures a stale closure. Include `onBboxChange` in the
-  `useCallback` deps.
 - Map tiles require internet access on first load. Consider bundling a local tile server
   (e.g. `maptiler/tileserver-gl`) for fully offline operation.
