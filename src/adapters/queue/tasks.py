@@ -189,13 +189,14 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             skipped=skipped,
             errors=errors,
         )
-    except Exception:
+    except Exception as exc:
+        logger.error("scrape_task_error", error=str(exc))
         # Persist checkpoint before retry so we resume from last page
         try:
             store.set(platform_name, cp)
             session.commit()
-        except Exception:
-            pass
+        except Exception as cp_exc:
+            logger.error("checkpoint_save_failed_in_error_handler", error=str(cp_exc))
         raise
     finally:
         session.close()

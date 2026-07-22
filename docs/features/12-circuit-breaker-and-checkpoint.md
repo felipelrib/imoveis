@@ -71,19 +71,7 @@ None.
 
 ## Notes / Follow-ups
 
-- **BUG (Race Condition — `RedisCircuitBreaker`)**: `record_failure()` calls `is_open()`
-  then `_get_state()` — two separate Redis reads that are not atomic. Under concurrent
-  worker pressure, the failure count can be incremented by two workers simultaneously
-  on an already-open circuit, wasting a write. Use a Lua script or a single
-  `WATCH`/`MULTI`/`EXEC` pipeline for the read-modify-write.
-- **`CircuitBreaker` (in-memory) is not useful for Celery**: Each worker process has its
-  own instance, so the in-memory version provides zero cross-worker protection. The
-  `RedisCircuitBreaker` should be the default; the in-process one should be removed or
-  clearly marked as test-only.
-- **Checkpoint `data` column has no schema validation**: Any `dict` is accepted. A corrupt
-  checkpoint (e.g. wrong type for `page`) will silently cause the scraper to restart
-  from page 1. A Pydantic model for checkpoint data would catch this.
-- **`CheckpointStore.set()` rolls back on error but re-raises**: The outer `scrape_listings`
-  task's `except` block also calls `store.set(platform_name, cp)` on failure, meaning a
-  failing checkpoint save is retried once more before the task re-raises. This is
-  acceptable but could mask the root cause of checkpoint failures in logs.
+- ~~**BUG (Race Condition — `RedisCircuitBreaker`)**~~ — **FIXED**: Replaced `record_failure` with an atomic Lua script.
+- ~~**`CircuitBreaker` (in-memory) is not useful for Celery**~~ — **FIXED**: Added prominent `IN-MEMORY CIRCUIT BREAKER — FOR TESTING ONLY` docstring.
+- ~~**Checkpoint `data` column has no schema validation**~~ — **FIXED**: Implemented `OLXCheckpoint` and `QuintoAndarCheckpoint` Pydantic models in `checkpoint_store.py` for schema validation.
+- ~~**`CheckpointStore.set()` rolls back on error but re-raises**~~ — **FIXED**: Added a `try/except` block to cleanly log checkpoint save failures in the error handler in `tasks.py`.

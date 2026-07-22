@@ -1,20 +1,28 @@
-import json
 import time
-from dataclasses import dataclass
 
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+RECORD_FAILURE_SCRIPT = """
+local key = KEYS[1]
+local threshold = tonumber(ARGV[1])
+local cooldown = tonumber(ARGV[2])
 
-@dataclass
-class RedisCircuitBreakerState:
-    """Represents the state of a Redis circuit breaker."""
+-- If already open, no-op
+if redis.call('EXISTS', key .. ':open') == 1 then
+    return 0
+end
 
-    is_open: bool = False
-    failure_count: int = 0
-    last_failure_time: float = 0.0
-    cooldown_end_time: float = 0.0
+local count = redis.call('INCR', key .. ':failures')
+redis.call('EXPIRE', key .. ':failures', cooldown * 2)
+
+if count >= threshold then
+    redis.call('SET', key .. ':open', '1', 'EX', tonumber(cooldown))
+    return 1  -- circuit just opened
+end
+return 0
+"""
 
 
 class RedisCircuitBreaker:
@@ -37,70 +45,38 @@ class RedisCircuitBreaker:
         from infra.redis_client import get_redis
 
         self.redis_client = get_redis()
-
-    def _get_state(self) -> RedisCircuitBreakerState:
-        """Get the current state from Redis."""
-        if not self.redis_client:
-            return RedisCircuitBreakerState()
-
-        try:
-            key = f"circuit_breaker:{self.platform}"
-            data = self.redis_client.get(key)
-            if data:
-                parsed = json.loads(data)
-                return RedisCircuitBreakerState(**parsed)
-        except Exception as e:
-            # If we can't read from Redis, return default state
-            logger.warning("circuit_breaker_read_error", platform=self.platform, error=str(e))
-
-        return RedisCircuitBreakerState()
-
-    def _set_state(self, state: RedisCircuitBreakerState) -> None:
-        """Set the current state in Redis."""
-        if not self.redis_client:
-            return
-
-        try:
-            key = f"circuit_breaker:{self.platform}"
-            data = json.dumps(state.__dict__)
-            # Set with expiration to prevent indefinite storage
-            self.redis_client.setex(key, self.cooldown_seconds * 2, data)
-        except Exception as e:
-            logger.warning("circuit_breaker_write_error", platform=self.platform, error=str(e))
+        
+        if self.redis_client:
+            self._record_failure_script = self.redis_client.register_script(RECORD_FAILURE_SCRIPT)
+        else:
+            self._record_failure_script = None
 
     def is_open(self) -> bool:
         """Check if the circuit breaker is currently open."""
-        state = self._get_state()
-
-        if not state.is_open:
+        if not self.redis_client:
             return False
+        return self.redis_client.exists(f"circuit_breaker:{self.platform}:open") == 1
 
-        # If we're in cooldown, check if it's time to retry
-        if state.cooldown_end_time and time.time() < state.cooldown_end_time:
-            return True
-
-        # Cooldown expired, reset state
-        new_state = RedisCircuitBreakerState()
-        self._set_state(new_state)
-        return False
-
-    def record_failure(self) -> None:
-        """Record a failure in the circuit breaker."""
-        if self.is_open():
-            return
-
-        state = self._get_state()
-        state.failure_count += 1
-        state.last_failure_time = time.time()
-
-        if state.failure_count >= self.failure_threshold:
-            state.is_open = True
-            state.cooldown_end_time = time.time() + self.cooldown_seconds
-
-        self._set_state(state)
+    def record_failure(self) -> bool:
+        """Record a failure in the circuit breaker. Returns True if this failure opened the circuit."""
+        if not self._record_failure_script:
+            return False
+            
+        opened = self._record_failure_script(
+            keys=[f"circuit_breaker:{self.platform}"],
+            args=[self.failure_threshold, self.cooldown_seconds]
+        )
+        if opened:
+            logger.warning("circuit_breaker_opened", platform=self.platform)
+        return bool(opened)
 
     def record_success(self) -> None:
         """Record a success in the circuit breaker."""
+        if not self.redis_client:
+            return
+        
         # Reset state on success
-        new_state = RedisCircuitBreakerState()
-        self._set_state(new_state)
+        self.redis_client.delete(
+            f"circuit_breaker:{self.platform}:open",
+            f"circuit_breaker:{self.platform}:failures"
+        )

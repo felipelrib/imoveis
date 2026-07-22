@@ -2,6 +2,14 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+"""
+IN-MEMORY CIRCUIT BREAKER — FOR TESTING ONLY.
+
+Each process gets its own independent instance. In a multi-worker Celery deployment,
+failures in one worker do NOT affect other workers. Use RedisCircuitBreaker for
+production cross-worker circuit state.
+"""
+
 
 @dataclass
 class CircuitBreakerState:

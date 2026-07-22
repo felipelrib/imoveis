@@ -1,10 +1,27 @@
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from adapters.db.models import PlatformCheckpoint
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class OLXCheckpoint(BaseModel):
+    page: int = 1
+    url_index: int = 0
+    processed_ids: list[str] = []
+
+class QuintoAndarCheckpoint(BaseModel):
+    min_price: float = 0.0
+    max_price: float = 999999.0
+    processed_ids: list[str] = []
+
+CHECKPOINT_MODELS = {
+    "olx": OLXCheckpoint,
+    "quintoandar": QuintoAndarCheckpoint,
+}
 
 
 class CheckpointStore:
@@ -15,10 +32,19 @@ class CheckpointStore:
 
     def get(self, platform_name: str) -> dict:
         """Get checkpoint for a platform."""
-        checkpoint = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
-        if checkpoint:
-            return checkpoint.data
-        return {}
+        row = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
+        if not row:
+            return {}
+            
+        raw = row.data or {}
+        try:
+            model_cls = CHECKPOINT_MODELS.get(platform_name)
+            if model_cls:
+                return model_cls.model_validate(raw).model_dump()
+        except ValidationError as exc:
+            logger.warning("checkpoint_validation_failed", platform=platform_name, error=str(exc))
+            return {}  # Fall back to fresh start rather than corrupt state
+        return raw
 
     def set(self, platform_name: str, data: dict) -> None:
         """Set checkpoint for a platform."""
