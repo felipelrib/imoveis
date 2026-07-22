@@ -4,6 +4,23 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from 'recharts'
 
+/**
+ * Returns the URL only if it starts with https:// and matches a known platform host.
+ * Returns null if the URL is unsafe or invalid.
+ */
+function sanitizeListingUrl(url) {
+    if (!url) return null;
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:') return null;
+        const trusted = ['olx.com.br', 'quintoandar.com.br', 'zapimoveis.com.br'];
+        if (!trusted.some(host => parsed.hostname.endsWith(host))) return null;
+        return parsed.href;
+    } catch {
+        return null;
+    }
+}
+
 export default function PropertyModal({ id, onClose }) {
   const [property, setProperty] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -101,23 +118,27 @@ export default function PropertyModal({ id, onClose }) {
                 </button>
               </>
             )}
-            {!loading && p?.listings && p.listings.map((l, i) => (
-              <a
-                key={`${l.platform}-${l.platform_id}-${l.listing_type}`}
-                href={l.url}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-ghost btn-sm"
-                style={{ fontSize: 13 }}
-              >
-                🔗 {l.platform} ({l.listing_type === 'rent' ? 'Aluguel' : 'Venda'}) - R$ {l.price?.toLocaleString('pt-BR')}
-              </a>
-            ))}
+            {!loading && p?.listings && p.listings.map((l, i) => {
+              const safeUrl = sanitizeListingUrl(l.url);
+              if (!safeUrl) return null;
+              return (
+                <a
+                  key={`${l.platform}-${l.platform_id}-${l.listing_type}`}
+                  href={safeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 13 }}
+                >
+                  🔗 {l.platform} ({l.listing_type === 'rent' ? 'Aluguel' : 'Venda'}) - R$ {l.price?.toLocaleString('pt-BR')}
+                </a>
+              )
+            })}
             {!loading && (!p?.listings || p.listings.length === 0) && p?.platform_id && (
               <a
                 href={`https://www.quintoandar.com.br/imovel/${p.platform_id}`}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="btn btn-ghost btn-sm"
                 style={{ fontSize: 13 }}
               >
@@ -200,7 +221,7 @@ export default function PropertyModal({ id, onClose }) {
                     </div>
                     {Object.entries(groups).map(([type, listings]) => {
                       const colors = typeColor(type)
-                      const minPrice = Math.min(...listings.map(l => l.price || Infinity))
+                      const minPrice = Math.min(...listings.map(l => l.price ?? Infinity))
                       return (
                         <div key={type} style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: colors.header, marginBottom: 6, padding: '4px 8px', background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '6px 6px 0 0' }}>
@@ -221,7 +242,7 @@ export default function PropertyModal({ id, onClose }) {
                               </thead>
                               <tbody>
                                 {listings.sort((a, b) => (a.price || Infinity) - (b.price || Infinity)).map((l, i) => {
-                                  const isBest = l.price === minPrice
+                                  const isBest = l.price !== null && l.price !== undefined && l.price === minPrice
                                   return (
                                     <tr key={`${l.platform}-${l.platform_id}`} className={isBest ? 'best-price' : ''}>
                                       <td style={{ fontWeight: 600 }}>{l.platform}</td>
@@ -233,10 +254,12 @@ export default function PropertyModal({ id, onClose }) {
                                       <td>{l.furnished ? '✔' : '—'}</td>
                                       <td>{l.pets_allowed ? '✔' : '—'}</td>
                                       <td>
-                                        {l.url && (
-                                          <a href={l.url} target="_blank" rel="noreferrer" className="listing-link" title="Open on platform">
+                                        {sanitizeListingUrl(l.url) ? (
+                                          <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title="Open on platform">
                                             →
                                           </a>
+                                        ) : (
+                                          <span className="listing-link-unavailable" title="Link indisponível">✕</span>
                                         )}
                                       </td>
                                     </tr>

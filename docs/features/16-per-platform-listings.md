@@ -15,6 +15,14 @@ price, making it impossible for users to:
 
 - **Frontend-only change**: The API already returns a `listings` array with per-platform
   data (via `property_listings` table JOIN). No backend changes were required.
+- **Presentation**: `PropertyModal` groups listings by `listing_type` (Rent vs Sale),
+  sorts by price within each group, and highlights the best price(s) across platforms
+  using a `.best-price` styling. If multiple platforms share the best price, all tied rows
+  are highlighted.
+- **Link Sanitization**: Listing URLs are validated using a `sanitizeListingUrl()` helper
+  to ensure they use `https:` and belong to trusted domains (`olx.com.br`, `quintoandar.com.br`, `zapimoveis.com.br`).
+  Valid links include `rel="noopener noreferrer"` to prevent tabnapping, while invalid
+  or missing URLs render a placeholder.
 - **Property card redesign**: Cards group listings by `listing_type` (rent/sale). For each
   type the **lowest price** across all platforms is displayed with the platform name badge.
   When both rent and sale listings exist both rows are shown. A `"2 plataformas"` badge
@@ -56,17 +64,9 @@ bash scripts/test.sh all  # validates build + lint + unit + integration
 
 ## Notes / Follow-ups
 
-- **BUG (XSS — listing URL)**: Each listing renders an `<a href={l.url}>` where `l.url`
-  comes from the database. If a scraper persists a `javascript:` URL, clicking the link
-  executes arbitrary JS. Validate/sanitise the URL before rendering: check that it starts
-  with `https://` and matches the known platform hostname.
-- **Best-price highlight uses array index comparison**: The "best price" detection iterates
-  over `listings` to find the minimum price and marks the matching row. If two listings have
-  the same minimum price, only the first is highlighted — this is visually inconsistent.
-- **No server-side price sorting**: The listings array order depends on DB insertion order.
-  Sort by `price ASC` on the API side or in the frontend before rendering the table.
-- **Condo fee and IPTU are shown as raw floats**: The values are `null` for platforms that
-  don't report them. The table should display `"—"` instead of empty cells for better
-  readability.
-- **Listing URL opens external site**: No `rel="noopener noreferrer"` on the `<a>` tag —
-  add it to prevent reverse tabnapping.
+- **Scraper alignment**: Some platforms report "condo fee" (condomínio) and "property tax"
+  (IPTU) as a single bundled value, while others report them separately. The UI currently
+  displays whatever the scraper provided, which can make cross-platform comparison
+  difficult if the values aren't normalized.
+- **Historical listings**: If a platform delists a property, the row remains in the UI
+  but the link will 404. A daily health-check scraper could verify and prune dead URLs.
