@@ -27,6 +27,18 @@ def get_redis() -> redis.Redis:
     return _cached_client
 
 
+def verify_redis_connection() -> None:
+    """Verify Redis connection and log startup error if it fails."""
+    try:
+        r = get_redis()
+        r.ping()
+    except Exception as exc:
+        from infra.logging import get_logger
+        logger = get_logger(__name__)
+        logger.error("redis_startup_health_check_failed", error=str(exc))
+        raise
+
+
 def reset_redis() -> None:
     """Close and discard the cached Redis client (useful for testing)."""
     global _cached_client

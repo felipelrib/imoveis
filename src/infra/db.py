@@ -7,10 +7,11 @@ from infra.config import get_config
 _config = get_config()
 engine = create_engine(
     _config.database.url,
-    pool_pre_ping=True,
+    pool_pre_ping=_config.database.pool_pre_ping,
     pool_recycle=3600,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=_config.database.pool_size,
+    max_overflow=_config.database.max_overflow,
+    pool_timeout=_config.database.pool_timeout,
     echo=False,
 )
 

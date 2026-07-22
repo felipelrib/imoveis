@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
 from api.admin import router as admin_router
 from api.favourites import router as favourites_router
@@ -16,10 +17,17 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from infra.redis_client import verify_redis_connection
+    verify_redis_connection()
+    yield
+
 app = FastAPI(
     title="Local Real-Estate Ingestor",
     description="Scrape, deduplicate, and score real-estate listings with local VLM enrichment.",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow the Vite dev server and any local origin

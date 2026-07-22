@@ -63,9 +63,11 @@ class DatabaseConfig(BaseModel, frozen=True):
     port: int = 5432
     name: str = "imoveis"
     user: str = "imoveis"
-    password: str = ""
+    password: str
     pool_size: int = 10
     max_overflow: int = 5
+    pool_timeout: int = 30
+    pool_pre_ping: bool = True
 
     @property
     def url(self) -> str:

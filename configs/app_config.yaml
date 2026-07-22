@@ -6,8 +6,7 @@
 #   REDIS_URL     — Redis connection string
 #   AI_MODEL      — Override the default VLM model name
 
-database:
-  url: postgresql://user:password@localhost:5432/realestate
+database: {}
 
 redis_url: redis://localhost:6379/0
 
