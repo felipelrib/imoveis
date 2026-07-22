@@ -86,23 +86,17 @@ def add_favourite(req: FavouriteCreate) -> FavouriteItem:
             if prop is None:
                 raise HTTPException(status_code=404, detail="Property not found")
 
-            # Check if already favourited
-            existing = session.execute(
-                text("SELECT id FROM favourites WHERE property_id = :pid"),
-                {"pid": req.property_id},
-            ).fetchone()
-            if existing is not None:
-                raise HTTPException(status_code=409, detail="Property already favourited")
-
-            now = datetime.now(timezone.utc)
-            fav_id = str(uuid.uuid4())
-            session.execute(
+            result = session.execute(
                 text(
                     "INSERT INTO favourites (id, property_id, created_at) "
-                    "VALUES (:id, :pid, :now)"
+                    "VALUES (:id, :pid, :now) "
+                    "ON CONFLICT (property_id) DO NOTHING "
+                    "RETURNING id"
                 ),
                 {"id": fav_id, "pid": req.property_id, "now": now},
             )
+            if result.rowcount == 0:
+                raise HTTPException(status_code=409, detail="Property already favourited")
             session.commit()
             logger.info("favourite_add", property_id=req.property_id)
             return FavouriteItem(

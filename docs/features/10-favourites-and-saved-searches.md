@@ -9,8 +9,8 @@ Users need to bookmark interesting properties for quick access and save complex 
 ## Approach
 
 - **Favourites**:
-  - Simple `favourites` table with `(id, property_id, created_at)`
-  - Full CRUD via `/favourites` API
+  - Simple `favourites` table with `(id, property_id, created_at)` and a unique constraint on `property_id`
+  - Full CRUD via `/favourites` API using atomic `INSERT ... ON CONFLICT DO NOTHING` to prevent TOCTOU duplicates
   - List endpoint JOINs with `properties`, `metrics_scoring`, and `neighborhoods` to return enriched data (title, price, score, image)
   - Frontend toggle button (★/☆) on each property card with optimistic state management
   - Dedicated "Favourites" view mode in Properties page showing only favourited properties
@@ -18,6 +18,7 @@ Users need to bookmark interesting properties for quick access and save complex 
 - **Saved Searches**:
   - `saved_searches` table with `(id, name, filters: JSONB, created_at)`
   - Full CRUD via `/saved-searches` API
+  - Strict validation of stored filters using a `SavedSearchFilters` Pydantic model (`extra="ignore"`) to ensure data schema integrity
   - Frontend sidebar panel showing named searches with click-to-apply and delete
   - Save dialog captures current filter state as a named preset
   - Applies by setting all filter state variables in the Properties component

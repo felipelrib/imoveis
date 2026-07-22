@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from infra.db import SessionLocal
@@ -18,14 +18,30 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/saved-searches", tags=["saved-searches"])
 
 
+class SavedSearchFilters(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sort_by: Optional[str] = None
+    sort_dir: Optional[str] = None
+    listing_type: Optional[str] = None
+    property_type: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    min_bedrooms: Optional[int] = None
+    max_bedrooms: Optional[int] = None
+    neighbourhood: List[str] = Field(default_factory=list)
+    furnished: Optional[bool] = None
+    pets: Optional[bool] = None
+    min_score: Optional[float] = None
+
+
 class SavedSearchCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    filters: Dict[str, Any]
+    filters: SavedSearchFilters
 
 
 class SavedSearchUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
-    filters: Optional[Dict[str, Any]] = None
+    filters: Optional[SavedSearchFilters] = None
 
 
 class SavedSearchItem(BaseModel):
@@ -92,14 +108,14 @@ def create_saved_search(req: SavedSearchCreate) -> SavedSearchItem:
                     "INSERT INTO saved_searches (id, name, filters, created_at) "
                     "VALUES (:id, :name, :filters, :now)"
                 ),
-                {"id": search_id, "name": req.name, "filters": json.dumps(req.filters), "now": now},
+                {"id": search_id, "name": req.name, "filters": json.dumps(req.filters.model_dump(exclude_none=True)), "now": now},
             )
             session.commit()
             logger.info("saved_search_create", search_id=search_id, name=req.name)
             return SavedSearchItem(
                 id=search_id,
                 name=req.name,
-                filters=req.filters,
+                filters=req.filters.model_dump(exclude_none=True),
                 created_at=now.isoformat(),
             )
         except Exception as exc:
