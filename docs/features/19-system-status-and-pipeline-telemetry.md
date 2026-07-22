@@ -84,30 +84,6 @@ Files touched:
    ```
 5. In the frontend — **Scraper Control** page should show live queue counts updating every 3 seconds.
 
-## Notes / Follow-ups
-
-- **BUG (`_check_ollama` uses a synchronous `httpx.get`)**: `httpx.get` with a 3-second
-  timeout blocks the FastAPI event loop (which is async). Replace with `httpx.AsyncClient`
-  and `await` in an async route handler, or push the check to a thread pool via
-  `asyncio.to_thread()`.
-- **BUG (N+1 DB connections in `system_status`)**: `_check_db()`, `_count_properties()`,
-  and `_count_enriched()` each call `SessionLocal()` independently — three separate
-  connection pool checkouts per `/system/status` request. Combine into a single session
-  with multiple queries.
-- **BUG (`pipeline:ai:telemetry` list grows without bound between trim calls)**:
-  `ai_enrich` calls `r.lpush(...)` then `r.ltrim(0, 999)` — these are two separate
-  commands, not atomic. Under concurrent workers, the list can momentarily exceed 1000
-  entries. Use a `MULTI`/`EXEC` pipeline or Lua script for atomicity.
-- **`GET /system/pipeline` scans Redis with `scan_iter`**: `scan_iter("pipeline:scraper:*:status")`
-  is a full keyspace scan. On large Redis instances with many keys this is slow. Use a
-  fixed platform list from the config to construct explicit key names instead.
-- **Schedule `next_run` assumes `last_run` + interval**: If the Celery beat process drifts
-  or was restarted with a different schedule, `next_run` may be inaccurate. Mark it as
-  an estimate in the API response.
-- **`subprocess.Popen` for Ollama startup is a security risk**: The `ensure_ollama`
-  endpoint launches a child process from the FastAPI server process. In containerised
-  deployments, the API container typically does not have `ollama` on PATH, and the
-  `Popen` leaks a handle if the process fails to start. Consider removing this endpoint
   and handling Ollama startup in Docker Compose or a separate init container.
 - **Logs persist in `localStorage` across sessions**: `ScraperControl.jsx` saves up to
   200 log entries to `localStorage`. The log content can include task IDs and error

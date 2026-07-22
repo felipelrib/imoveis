@@ -21,17 +21,22 @@ router = APIRouter(prefix="/system", tags=["system"])
 # ---------------------------------------------------------------------------
 
 
-def _check_db() -> dict:
+def _check_db_and_counts() -> tuple[dict, int, int]:
     try:
         import sqlalchemy
+        from infra.db import SessionLocal
 
-        from infra.db import engine
-
-        with engine.connect() as conn:
-            conn.execute(sqlalchemy.text("SELECT 1"))
-        return {"status": "ok"}
+        with SessionLocal() as session:
+            session.execute(sqlalchemy.text("SELECT 1"))
+            total = session.execute(
+                sqlalchemy.text("SELECT COUNT(*) FROM properties")
+            ).scalar()
+            enriched = session.execute(
+                sqlalchemy.text("SELECT COUNT(*) FROM metrics_scoring WHERE ai_score > 0")
+            ).scalar()
+        return {"status": "ok"}, (total or 0), (enriched or 0)
     except Exception as exc:
-        return {"status": "error", "detail": str(exc)}
+        return {"status": "error", "detail": str(exc)}, 0, 0
 
 
 def _check_redis() -> dict:
@@ -42,65 +47,33 @@ def _check_redis() -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
-def _check_ollama() -> dict:
+async def _check_ollama() -> dict:
     try:
         import httpx
 
-        r = httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=3)
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{get_config().ai.ollama_url}/api/tags")
         models = [m["name"] for m in (r.json().get("models") or [])]
         return {"status": "ok", "models": models}
     except Exception as exc:
         return {"status": "error", "detail": str(exc)}
 
 
-def _count_properties() -> int:
-    try:
-        import sqlalchemy
-
-        from infra.db import SessionLocal
-
-        s = SessionLocal()
-        try:
-            result = s.execute(sqlalchemy.text("SELECT COUNT(*) FROM properties")).scalar()
-            return int(result or 0)
-        finally:
-            s.close()
-    except Exception:
-        return 0
-
-
-def _count_enriched() -> int:
-    try:
-        import sqlalchemy
-
-        from infra.db import SessionLocal
-
-        s = SessionLocal()
-        try:
-            result = s.execute(
-                sqlalchemy.text("SELECT COUNT(*) FROM metrics_scoring WHERE ai_score IS NOT NULL AND ai_score > 0")
-            ).scalar()
-            return int(result or 0)
-        finally:
-            s.close()
-    except Exception:
-        return 0
-
-
 @router.get("/status")
-def system_status() -> Dict[str, Any]:
+async def system_status() -> Dict[str, Any]:
     """Return health of all system components — polled by the GUI dashboard."""
     r = get_redis()
     ai_paused = r.exists("workers:ai:paused") > 0
+    db_status, total_props, enriched = _check_db_and_counts()
 
     return {
-        "database": _check_db(),
+        "database": db_status,
         "redis": _check_redis(),
-        "ollama": _check_ollama(),
+        "ollama": await _check_ollama(),
         "ai_workers_paused": ai_paused,
         "stats": {
-            "total_properties": _count_properties(),
-            "enriched_properties": _count_enriched(),
+            "total_properties": total_props,
+            "enriched_properties": enriched,
         },
     }
 
@@ -149,16 +122,18 @@ def system_pipeline() -> Dict[str, Any]:
     scrapers_queued = r.llen("scrapers")
     ai_queued = r.llen("ai")
 
-    # Get active scraper statuses
-    # We look for all keys matching pipeline:scraper:*:status
+    cfg = get_config()
     scrapers_status = {}
-    for key in r.scan_iter("pipeline:scraper:*:status"):
-        platform_name = key.decode("utf-8").split(":")[2]
-        try:
-            status_data = json.loads(r.get(key))
-            scrapers_status[platform_name] = status_data
-        except Exception:
-            pass
+    for platform in cfg.scraping.platforms:
+        key = f"pipeline:scraper:{platform}:status"
+        raw = r.get(key)
+        if raw:
+            try:
+                scrapers_status[platform] = json.loads(raw)
+            except Exception:
+                scrapers_status[platform] = {"status": "idle"}
+        else:
+            scrapers_status[platform] = {"status": "idle"}
 
     # AI Telemetry
     ai_telemetry = r.lrange("pipeline:ai:telemetry", 0, -1)
