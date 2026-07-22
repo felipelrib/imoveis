@@ -57,15 +57,11 @@ Files touched:
 
 ### Bugs Found
 
-- **BUG (Critical): `await` in sync context — `BaseScraper.__exit__`** (base.py L26-42): The sync `__exit__` tries to schedule an async `close()` but uses `get_event_loop()` which is deprecated and may not find a running loop in Celery workers. This can silently leak HTTP connections (httpx sessions not closed). **Fix**: Either make the scraper an async context manager or call `self.session.close()` synchronously in `__exit__`.
-
-- **BUG (Moderate): OLX `__init__` signature mismatch** (olx.py L46): `OLXScraper.__init__(self, config)` only accepts `config` but `BaseScraper.__init__` expects `(platform_name, config)`. The `super().__init__("olx", config)` call is correct, but `ScraperRegistry.get()` calls `scraper_cls(platform_name, platform_config)` with TWO args, so instantiation will fail with `TypeError: __init__() takes 2 positional arguments but 3 were given`.
-
-- **BUG (Moderate): `scrape_listings` task references `cfg.platforms`** (tasks.py L67): The task does `cfg.platforms.get(platform_name)` but `AppConfig` has no `.platforms` attribute — platforms are under `cfg.scraping.platforms`. This will raise `AttributeError` at runtime. Furthermore, `PlatformConfig` is a frozen Pydantic model, not a dataclass, so `dataclasses.asdict()` (L70) will fail.
-
-- **BUG (Minor): `start()` is sync but declared `async` in QuintoAndar** — `quintoandar.py` has `def start(self)` (sync), while `BaseScraper` also has `async def start()`. The `tasks.py` calls `scraper.start()` without `await`, so the async version would silently return a coroutine object. Currently works only because both scrapers define sync `start()`.
-
-- **BUG (Minor): `fetch_pages` is sync but declared `async` in BaseScraper** — Both OLX and QuintoAndar implement `fetch_pages` as sync generators, but the ABC declares it as `async def`. The `tasks.py` iterates synchronously (`for raw in scraper.fetch_pages(cp)`), which works only because the concrete implementations are sync.
+- ~~**BUG (Critical): `await` in sync context in `BaseScraper.__exit__`**~~ — **FIXED**: Made `close()` synchronous and called it synchronously.
+- ~~**BUG (Moderate): OLX `__init__` signature mismatch**~~ — **FIXED**: Added `platform_name` to `__init__` signatures in `olx.py` and `quintoandar.py`.
+- ~~**BUG (Moderate): `cfg.platforms` AttributeError + `dataclasses.asdict()` TypeError**~~ — **FIXED**: Changed to `cfg.scraping.platforms` and `model_dump()`.
+- ~~**BUG (Minor): `start()` sync/async inconsistency**~~ — **FIXED**: Changed to synchronous `start()`.
+- ~~**BUG (Minor): `fetch_pages` sync/async inconsistency**~~ — **FIXED**: Changed to synchronous `Generator`.
 
 ### Tech Debt
 

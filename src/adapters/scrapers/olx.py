@@ -43,8 +43,8 @@ class OLXScraper(BaseScraper):
     ]
     _BASE_URL = "https://www.olx.com.br/imoveis"
 
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__("olx", config)
+    def __init__(self, platform_name: str, config: Dict[str, Any]):
+        super().__init__(platform_name, config)
         self._rate_limit = config.get("rate_limit", 20)
         self._jitter_min = config.get("jitter_min", 2)
         self._jitter_max = config.get("jitter_max", 6)

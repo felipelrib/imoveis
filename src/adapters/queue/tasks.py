@@ -64,10 +64,10 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
     cfg = get_config()
 
     # Resolve platform config — dataclass → dict for scraper constructor
-    platform_cfg_obj = cfg.platforms.get(platform_name)
-    if platform_cfg_obj is None:
-        raise ValueError(f"Platform '{platform_name}' not found in config.")
-    platform_cfg = dataclasses.asdict(platform_cfg_obj)
+    platform_cfg = cfg.scraping.platforms.get(platform_name)
+    if platform_cfg is None:
+        raise ValueError(f"Unknown platform: {platform_name!r}")
+    scraper_config = platform_cfg.model_dump()
 
     session = SessionLocal()
     try:
@@ -76,7 +76,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         if checkpoint is not None:
             cp.update(checkpoint)
 
-        scraper = ScraperRegistry.get(platform_name, platform_cfg)
+        scraper = ScraperRegistry.get(platform_name, scraper_config)
         scraper.start()
 
         processed = skipped = errors = 0

@@ -23,8 +23,8 @@ logger = get_logger(__name__)
 class QuintoAndarScraper(BaseScraper):
     """Scrapes properties from QuintoAndar using page iteration."""
 
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__("quintoandar", config)
+    def __init__(self, platform_name: str, config: Dict[str, Any]):
+        super().__init__(platform_name, config)
         self.city_slug = config.get("city_slug", "belo-horizonte-mg-brasil")
 
     def start(self) -> None:
