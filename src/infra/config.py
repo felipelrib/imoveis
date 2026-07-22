@@ -155,12 +155,23 @@ class FeaturesConfig(BaseModel, frozen=True):
     price_alerts: bool = False
 
 
+class ScoringConfig(BaseModel, frozen=True):
+    """Scoring defaults and weights."""
+
+    stat_weight: float = 0.5
+    ai_weight: float = 0.5
+    recalculate_on_enrichment: bool = True
+
+
 class AlertsConfig(BaseModel, frozen=True):
     """Price-drop alert settings."""
 
     enabled: bool = True
-    min_drop_pct: float = 5.0
-    channels: list[dict[str, Any]] = Field(default_factory=lambda: [{"type": "log"}])
+    channels: list[str] = Field(default_factory=lambda: ["log"])
+    redis_key: str = "alerts:price_drops"
+    redis_ttl_seconds: int = 604800   # 7 days
+    redis_max_items: int = 200
+    min_drop_pct_default: float = 5.0
 
 
 class AppConfig(BaseModel, frozen=True):
@@ -182,6 +193,8 @@ class AppConfig(BaseModel, frozen=True):
     scraping: ScrapingConfig = Field(default_factory=ScrapingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    image_storage_path: str = "data/images"
 
 
 # ---------------------------------------------------------------------------

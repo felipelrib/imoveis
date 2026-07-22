@@ -85,10 +85,10 @@ proxy:
 # ---------------------------------------------------------------------------
 alerts:
   enabled: true
-  min_drop_pct: 5.0           # alert when price drops ≥ 5%
+  min_drop_pct_default: 5.0   # alert when price drops ≥ 5%
   channels:
-    - type: log               # always log alerts
-    - type: redis             # push to Redis for frontend polling
+    - log                     # always log alerts
+    - redis                   # push to Redis for frontend polling
 
 # ---------------------------------------------------------------------------
 # Image Storage

@@ -56,11 +56,11 @@ Files touched:
 
 ### Bugs Found
 
-- **BUG (Moderate): `AppConfig` schema incomplete** — The YAML has sections (`scoring`, `alerts`, `image_storage_path`) that are not defined in the Pydantic model. Access via `cfg.scoring.stat_weight` will raise `AttributeError` at runtime. The model either needs to be updated or `model_config = {"extra": "allow"}` must be set.
+- ~~**BUG (Moderate): `AppConfig` schema incomplete**~~ — **FIXED**: Added `ScoringConfig` and missing fields to `AppConfig` and updated `configs/app_config.yaml`.
 
-- **BUG (Minor): `api/auth.py` uses `logging.getLogger` instead of `structlog`** (auth.py L1,7): The project rules mandate `structlog` via `infra.logging.get_logger()`, but `auth.py` uses the standard library logger. This breaks structured log aggregation.
+- ~~**BUG (Minor): `api/auth.py` uses `logging.getLogger` instead of `structlog`**~~ — **FIXED**: Replaced `logging` with `infra.logging.get_logger()`.
 
-- **BUG (Minor): `_api_key` is evaluated at import time** (auth.py L9-12): If `API_KEY` is set after the module is imported (e.g., by a test fixture), the key will be empty and all admin requests will fail.
+- ~~**BUG (Minor): `_api_key` is evaluated at import time**~~ — **FIXED**: Deferred evaluation to `verify_api_key` dependency.
 
 ### Tech Debt
 
