@@ -54,14 +54,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- ~~**BUG (Moderate): `AppConfig` schema incomplete**~~ — **FIXED**: Added `ScoringConfig` and missing fields to `AppConfig` and updated `configs/app_config.yaml`.
-
-- ~~**BUG (Minor): `api/auth.py` uses `logging.getLogger` instead of `structlog`**~~ — **FIXED**: Replaced `logging` with `infra.logging.get_logger()`.
-
-- ~~**BUG (Minor): `_api_key` is evaluated at import time**~~ — **FIXED**: Deferred evaluation to `verify_api_key` dependency.
-
 ### Tech Debt
 
 - **No connection pool tuning** — SQLAlchemy engine uses default pool settings. Should configure `pool_size`, `max_overflow`, `pool_timeout` for production.

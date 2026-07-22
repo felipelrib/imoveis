@@ -46,11 +46,6 @@ None — uses PostgreSQL window functions and built-in Python `math`.
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- ~~**BUG (Minor): `ScoringWeights` validator never validates**~~ — **FIXED**: Replaced dummy validation with a Pydantic v2 `@model_validator` that ensures weights sum to exactly 1.0 (with float tolerance).
-- ~~**BUG (Minor): Neighbourhood key inconsistency splits statistical group**~~ — **FIXED**: Added `LEFT JOIN neighborhoods` to `compute_neighborhood_stats` and fallback lookups so all properties in the same neighborhood map to the exact same canonical `n_key`.
-
 ### Tech Debt
 
 - **`score_single_property` recomputes the ENTIRE neighbourhood** — For a neighbourhood with 10,000 properties, this is a heavy operation triggered after every AI enrichment. Should cache or batch.

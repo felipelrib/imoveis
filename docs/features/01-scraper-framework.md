@@ -55,14 +55,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- ~~**BUG (Critical): `await` in sync context in `BaseScraper.__exit__`**~~ — **FIXED**: Made `close()` synchronous and called it synchronously.
-- ~~**BUG (Moderate): OLX `__init__` signature mismatch**~~ — **FIXED**: Added `platform_name` to `__init__` signatures in `olx.py` and `quintoandar.py`.
-- ~~**BUG (Moderate): `cfg.platforms` AttributeError + `dataclasses.asdict()` TypeError**~~ — **FIXED**: Changed to `cfg.scraping.platforms` and `model_dump()`.
-- ~~**BUG (Minor): `start()` sync/async inconsistency**~~ — **FIXED**: Changed to synchronous `start()`.
-- ~~**BUG (Minor): `fetch_pages` sync/async inconsistency**~~ — **FIXED**: Changed to synchronous `Generator`.
-
 ### Tech Debt
 
 - **In-process `CircuitBreaker` is dead code** — `circuit_breaker.py` exists but is never used; both scrapers use `RedisCircuitBreaker`. Should be removed.

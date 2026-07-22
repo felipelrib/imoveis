@@ -47,14 +47,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- ~~**BUG (Critical): `await` in sync Celery task**~~ — **FIXED**: Refactored `ai_enrich` to run a single inner async function `_run_enrichment()` via `asyncio.run()`, fixing `SyntaxError` and `RuntimeError`.
-- ~~**BUG (Moderate): Double `asyncio.run()` calls**~~ — **FIXED**: Consolidated all async operations into the single `_run_enrichment()` event loop.
-- ~~**BUG (Moderate): `cfg.scoring.ai_weight` / `cfg.scoring.stat_weight` AttributeError**~~ — **FIXED**: Included in `AppConfig` and `ScoringConfig` schemas.
-- ~~**BUG (Minor): Unclosed `aiohttp.ClientSession`**~~ — **FIXED**: Migrated `_ensure_session` to an `asynccontextmanager` called `session_context()`.
-- ~~**BUG (Minor): Unbound `text` variable in `LMStudioClient`**~~ — **FIXED**: Pre-assigned `text = "<unread>"` before the `try` block.
-
 ### Tech Debt
 
 - **No retry on AI inference failures** — If Ollama returns garbage JSON, the task fails and retries the entire enrichment (including re-downloading images).

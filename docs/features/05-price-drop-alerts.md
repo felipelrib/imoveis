@@ -50,14 +50,6 @@ None.
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- **[FIXED] BUG (Moderate): Alert detection only triggers on price decreases in same-platform history** — `_check_watchlist_alerts` compares `old_price` and `new_price` from `_record_price_change`, which tracks per-`(property_id, listing_type, platform)`. If a property is listed on both OLX and QuintoAndar at different prices, a drop on one platform won't consider the other platform's price.
-
-- **[FIXED] BUG (Minor): `last_notified_price` comparison uses exact float equality** (dedupe.py L347): `last_notified_price != new_price` uses float equality which may fail for prices that went through serialization/deserialization.
-
-- **[FIXED] BUG (Minor): Watchlist table error silently ignored** (dedupe.py L331-333): If the watchlist table doesn't exist, the entire alert check is silently skipped with no logging.
-
 ### Tech Debt
 
 - **No frontend UI for viewing alerts** — Redis alerts are pushed but the frontend doesn't poll or display them.

@@ -47,13 +47,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- ~~**BUG (Moderate): `_is_unchanged` safely defaults to True on DB errors**~~ — **FIXED**: Changed to return `False` on DB errors to ensure re-enrichment.
-- ~~**BUG (Minor): `text_similarity` catches ALL exceptions**~~ — **FIXED**: Imported jellyfish locally and only catch specific exceptions.
-- ~~**BUG (Minor): `_record_price_change` NULL comparison bug**~~ — **FIXED**: Used `IS NOT DISTINCT FROM` in SQL query for correct NULL handling.
-- ~~**BUG (Minor): Pydantic v1 API `@validator` used in `entities.py`**~~ — **FIXED**: Updated to Pydantic v2 API `@field_validator` and `@model_validator`.
-
 ### Tech Debt
 
 - **`raw_json` is stored as `str(dict)` not proper JSON** (dedupe.py L430, L471): `_upsert_listings` does `str(listing.get("raw_json"))` which produces Python repr, not valid JSON. Should use `json.dumps()`.

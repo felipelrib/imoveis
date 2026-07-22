@@ -60,12 +60,6 @@ None.
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- **BUG (Minor): No duplicate prevention on concurrent requests** — The favourites and saved searches APIs check for duplicates via `SELECT` then `INSERT`, which has a TOCTOU race. Concurrent requests could create duplicates. Should use `INSERT ... ON CONFLICT DO NOTHING`.
-
-- **BUG (Minor): Saved search filters stored without validation** — Any arbitrary JSON can be stored as filters. If the frontend schema changes, old saved searches may apply invalid filter values.
-
 ### Tech Debt
 
 - **No update endpoint for saved searches** — `SavedSearchUpdate` model exists but no `PATCH`/`PUT` endpoint is defined.

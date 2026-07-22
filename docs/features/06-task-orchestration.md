@@ -52,16 +52,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Bugs Found
-
-- **[FIXED] BUG (Critical): `cfg.platforms` does not exist** (tasks.py L67-70): The task accesses `cfg.platforms.get(platform_name)` but `AppConfig` has `cfg.scraping.platforms`. Additionally, `dataclasses.asdict(platform_cfg)` will fail because `PlatformConfig` is a Pydantic model, not a dataclass. Use `platform_cfg.model_dump()`.
-
-- **[FIXED] BUG (Critical): `await` in sync function** (tasks.py L317): `verdict_result = await client.summarize_deal(...)` — `ai_enrich` is a sync Celery task. `await` outside an async function is a `SyntaxError`.
-
-- **[FIXED] BUG (Moderate): Scraper status published but never cleaned up** (tasks.py L86): The task sets `pipeline:scraper:{name}:status` in Redis but never deletes it on completion. Stale status data will persist indefinitely.
-
-- **[FIXED] BUG (Moderate): `telemetry_data` JSON stored as bytes** (tasks.py L300): Redis `LPUSH` receives JSON string, but `LTRIM` index is 999 (cap at 1000). The telemetry list grows unbounded if LTRIM fails.
-
 ### Tech Debt
 
 - **No task result storage** — Tasks use `ignore_result=True` equivalent, making it impossible to query task outcomes programmatically.
