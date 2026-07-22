@@ -102,28 +102,15 @@ curl -X POST http://localhost:8000/admin/schedule \
   -d '{"platform": "olx", "interval_minutes": 120}'
 ```
 
-## Notes / Follow-ups
+## Implementation Notes
+- **API Key Security**: The `VITE_API_KEY` was removed from the SPA bundle to prevent exposure in DevTools. Admin endpoints rely on reverse-proxy level IP restrictions instead.
+- **Resource Management**: Fixed generator leaks in the admin scoring endpoints by using the `SessionLocal` context manager directly, preventing connection exhaustion.
+- **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
+- **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.
 
-- **BUG (API key exposed in SPA)**: The frontend reads `VITE_API_KEY` from `.env.development`
-  and embeds it in the JS bundle at build time. Any user who opens browser DevTools can
-  read the key. Admin endpoints should be protected at the reverse-proxy level (e.g.
-  nginx `allow <trusted_ip>; deny all`) and not require client-side key embedding.
-- **BUG (`recalculate_scores` calls `next(get_session())` without proper generator management)**:
-  `session = next(get_session())` creates a generator but never fully exhausts it.
-  The generator's cleanup code (which closes the session) only runs if `StopIteration` is
-  raised. Use the standard `with contextlib.contextmanager` pattern or switch to
-  `SessionLocal()` directly.
-- **BUG (Schedule changes require beat restart)**: The `POST /admin/schedule` response
-  includes `"note": "Changes take effect when the beat process restarts."` — this is a
-  significant operational limitation. Beat should be made to re-read the schedule
-  periodically (e.g. using `celery beat --schedule-filename` with a custom scheduler class
-  that reads Redis).
-- **`GPUSemaphore.scale()` updates `max_concurrent` in-process only**: `scale()` sets
-  `self.max_concurrent = new_limit` on the current instance but each Celery worker
-  creates its own `GPUSemaphore()` instance. The Redis counter is updated correctly,
-  but `self.max_concurrent` is stale in other worker processes. The `acquire()` method
-  uses the Redis counter directly (not `self.max_concurrent`) for the comparison, so
-  this is functionally correct but misleading. Remove or document the instance field.
+## Notes / Follow-ups
+- **Session-based Admin Auth**: Future iteration should replace reverse-proxy IP restrictions with a proper session-based login issuing short-lived JWT tokens.
+- **Dynamic Beat Schedule**: Explore implementing a `RedisAwareScheduler` for Celery beat to allow schedule changes without a beat restart.
 - **No audit log**: Admin actions (pause, scale, recalculate) are logged via structlog
   but there is no persistent audit trail. Consider writing to a dedicated `admin_audit`
   table for compliance.

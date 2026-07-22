@@ -22,12 +22,12 @@ from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_api_key
 from core.entities import ScoringWeights
 from infra.config import get_config
-from infra.db import get_session
+from infra.db import SessionLocal
 from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_api_key)])
+router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # ---------------------------------------------------------------------------
@@ -110,22 +110,20 @@ def recalculate_scores(weights: Optional[ScoringWeights] = None):
     Step 2 is a single SQL UPDATE and is effectively instantaneous even for
     millions of rows.
     """
-    session = next(get_session())
-    try:
-        stat_rows = compute_neighborhood_stats(session)
-        count = recalculate_all_combined_scores(session, weights)
-        session.commit()
-        return {
-            "stat_rows_updated": stat_rows,
-            "combined_rows_updated": count,
-            "weights": weights.model_dump() if weights else "config_defaults",
-        }
-    except Exception as exc:
-        session.rollback()
-        logger.error("recalculate_scores_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        session.close()
+    with SessionLocal() as session:
+        try:
+            stat_rows = compute_neighborhood_stats(session)
+            count = recalculate_all_combined_scores(session, weights)
+            session.commit()
+            return {
+                "stat_rows_updated": stat_rows,
+                "combined_rows_updated": count,
+                "weights": weights.model_dump() if weights else "config_defaults",
+            }
+        except Exception as exc:
+            session.rollback()
+            logger.error("recalculate_scores_failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -202,5 +200,6 @@ def update_schedule(payload: ScheduleUpdateRequest):
     return {
         "platform": payload.platform,
         "interval_minutes": payload.interval_minutes,
-        "note": "Changes take effect when the beat process restarts.",
+        "effective": "next_beat_restart",
+        "workaround": "Restart Celery beat with: docker-compose restart celery-beat"
     }

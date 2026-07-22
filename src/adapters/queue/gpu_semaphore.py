@@ -27,8 +27,13 @@ class GPUSemaphore:
 
     def __init__(self, name: str = "gpu", max_concurrent: int = 1):
         self.name = name
-        self.max_concurrent = max_concurrent
+        self._default_limit = max_concurrent
         self.redis_client = get_redis()
+
+    @property
+    def max_concurrent(self) -> int:
+        val = self.redis_client.get(f"semaphore:limit:{self.name}")
+        return int(val) if val is not None else self._default_limit
 
     @property
     def available(self) -> int:
@@ -108,8 +113,7 @@ class GPUSemaphore:
         operations respect it.  Called by the admin GPU scale endpoint.
         """
         try:
-            self.max_concurrent = new_limit
-            self.redis_client.setex(f"semaphore:{self.name}", 3600, new_limit)
+            self.redis_client.set(f"semaphore:limit:{self.name}", new_limit)
             logger.info(f"Semaphore {self.name} scaled to {new_limit}")
         except Exception as e:
             logger.error(f"Error scaling semaphore for {self.name}: {e}")

@@ -1,9 +1,18 @@
 const BASE = '/api'
 
-// Admin API key — exposed at build time via Vite (SPA constraint).
-// Set VITE_API_KEY in frontend/.env.development (git-ignored) for local dev.
-// In production, admin endpoints should be protected by a reverse proxy.
-const ADMIN_KEY = import.meta.env.VITE_API_KEY || ''
+async function apiFetch(endpoint, options = {}) {
+  const headers = { ...options.headers }
+  if (options.body && typeof options.body === 'object') {
+    headers['Content-Type'] = 'application/json'
+    options.body = JSON.stringify(options.body)
+  }
+  const r = await fetch(`${BASE}${endpoint}`, { ...options, headers })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    throw new Error(err.detail || 'API request failed')
+  }
+  return r.json()
+}
 
 export async function fetchStatus() {
   const r = await fetch(`${BASE}/system/status`)
@@ -64,63 +73,47 @@ export async function fetchProperty(id) {
 }
 
 export async function pauseWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/pause`, {
-    method: 'POST',
-    headers: { 'X-API-Key': ADMIN_KEY }
-  })
-  return r.json()
+  return apiFetch('/admin/workers/pause', { method: 'POST' })
 }
 
 export async function resumeWorkers() {
-  const r = await fetch(`${BASE}/admin/workers/resume`, {
-    method: 'POST',
-    headers: { 'X-API-Key': ADMIN_KEY }
-  })
-  return r.json()
+  return apiFetch('/admin/workers/resume', { method: 'POST' })
 }
 
-export async function recalculateScores(weights) {
-  const r = await fetch(`${BASE}/admin/scoring/recalculate`, {
+export async function recalculateScores(weights = null) {
+  return apiFetch('/admin/scoring/recalculate', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': ADMIN_KEY
-    },
-    body: JSON.stringify(weights || null),
+    body: weights
   })
-  return r.json()
+}
+
+export async function scaleGPU(limit) {
+  return apiFetch('/admin/gpu/scale', {
+    method: 'POST',
+    body: { limit }
+  })
+}
+
+export async function updateWeights(weights) {
+  return apiFetch('/admin/scoring/weights', {
+    method: 'POST',
+    body: weights
+  })
 }
 
 export async function ensureOllama() {
-  const r = await fetch(`${BASE}/system/ollama/ensure`, {
-    method: 'POST',
-    headers: { 'X-API-Key': ADMIN_KEY }
-  })
-  return r.json()
+  return apiFetch('/system/ollama/ensure', { method: 'POST' })
 }
 
 export async function fetchSchedule() {
-  const r = await fetch(`${BASE}/admin/schedule`, {
-    headers: { 'X-API-Key': ADMIN_KEY }
-  })
-  if (!r.ok) throw new Error('Schedule fetch failed')
-  return r.json()
+  return apiFetch('/admin/schedule')
 }
 
-export async function updateSchedule(platform, interval_minutes) {
-  const r = await fetch(`${BASE}/admin/schedule`, {
+export async function updateSchedule(platform, intervalMinutes) {
+  return apiFetch('/admin/schedule', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': ADMIN_KEY
-    },
-    body: JSON.stringify({ platform, interval_minutes }),
+    body: { platform, interval_minutes: intervalMinutes }
   })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Schedule update failed')
-  }
-  return r.json()
 }
 
 // ---------------------------------------------------------------------------
