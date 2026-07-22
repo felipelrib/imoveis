@@ -49,6 +49,11 @@ def build_beat_schedule() -> dict:
     except Exception:
         logger.warning("beat_schedule_build_failed", exc_info=True)
 
+    schedule["evaluate-watchlist-alerts"] = {
+        "task": "tasks.evaluate_watchlist_alerts",
+        "schedule": 300.0,
+    }
+
     return schedule
 
 

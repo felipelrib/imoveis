@@ -18,12 +18,14 @@ router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 class WatchlistCreate(BaseModel):
     property_id: str
     min_drop_pct: float = Field(5.0, ge=0.1, le=100.0)
+    user_id: Optional[str] = None
 
 
 class WatchlistItem(BaseModel):
     id: str
     property_id: str
     min_drop_pct: float
+    user_id: Optional[str] = None
     last_notified_price: Optional[float] = None
     created_at: Optional[str] = None
 
@@ -34,7 +36,7 @@ def list_watchlist() -> List[WatchlistItem]:
     with SessionLocal() as session:
         rows = session.execute(
             text(
-                "SELECT id, property_id, min_drop_pct, last_notified_price, created_at "
+                "SELECT id, property_id, min_drop_pct, user_id, last_notified_price, created_at "
                 "FROM watchlist ORDER BY created_at DESC"
             )
         ).fetchall()
@@ -43,8 +45,9 @@ def list_watchlist() -> List[WatchlistItem]:
                 id=str(r[0]),
                 property_id=str(r[1]),
                 min_drop_pct=float(r[2]),
-                last_notified_price=float(r[3]) if r[3] is not None else None,
-                created_at=r[4].isoformat() if r[4] else None,
+                user_id=str(r[3]) if r[3] else None,
+                last_notified_price=float(r[4]) if r[4] is not None else None,
+                created_at=r[5].isoformat() if r[5] else None,
             )
             for r in rows
         ]
@@ -63,26 +66,23 @@ def add_to_watchlist(req: WatchlistCreate) -> WatchlistItem:
             if prop is None:
                 raise HTTPException(status_code=404, detail="Property not found")
 
-            # Check if already in watchlist
-            existing = session.execute(
-                text("SELECT id FROM watchlist WHERE property_id = :pid"),
-                {"pid": req.property_id},
-            ).fetchone()
-            if existing is not None:
-                raise HTTPException(status_code=409, detail="Property already in watchlist")
-
+            # Try to insert (ON CONFLICT DO NOTHING relies on unique property_id)
             import uuid
             from datetime import datetime, timezone
 
             now = datetime.now(timezone.utc)
             watchlist_id = str(uuid.uuid4())
-            session.execute(
+            result = session.execute(
                 text(
-                    "INSERT INTO watchlist (id, property_id, min_drop_pct, created_at) "
-                    "VALUES (:id, :pid, :min_drop, :now)"
+                    "INSERT INTO watchlist (id, property_id, min_drop_pct, user_id, created_at) "
+                    "VALUES (:id, :pid, :min_drop, :uid, :now) "
+                    "ON CONFLICT (property_id) DO NOTHING "
+                    "RETURNING id"
                 ),
-                {"id": watchlist_id, "pid": req.property_id, "min_drop": req.min_drop_pct, "now": now},
+                {"id": watchlist_id, "pid": req.property_id, "min_drop": req.min_drop_pct, "uid": req.user_id, "now": now},
             )
+            if result.rowcount == 0:
+                raise HTTPException(status_code=409, detail="Property already in watchlist")
             session.commit()
 
             logger.info("watchlist_add", property_id=req.property_id, min_drop_pct=req.min_drop_pct)
@@ -90,6 +90,7 @@ def add_to_watchlist(req: WatchlistCreate) -> WatchlistItem:
                 id=watchlist_id,
                 property_id=req.property_id,
                 min_drop_pct=req.min_drop_pct,
+                user_id=req.user_id,
                 created_at=now.isoformat(),
             )
         except HTTPException:
@@ -125,7 +126,7 @@ def check_watchlist(property_id: str) -> Dict[str, Any]:
     """Check if a specific property is in the watchlist."""
     with SessionLocal() as session:
         row = session.execute(
-            text("SELECT id, min_drop_pct, last_notified_price FROM watchlist WHERE property_id = :pid"),
+            text("SELECT id, min_drop_pct, user_id, last_notified_price FROM watchlist WHERE property_id = :pid"),
             {"pid": property_id},
         ).fetchone()
         if row is None:
@@ -134,5 +135,6 @@ def check_watchlist(property_id: str) -> Dict[str, Any]:
             "watched": True,
             "id": str(row[0]),
             "min_drop_pct": float(row[1]),
-            "last_notified_price": float(row[2]) if row[2] is not None else None,
+            "user_id": str(row[2]) if row[2] else None,
+            "last_notified_price": float(row[3]) if row[3] is not None else None,
         }

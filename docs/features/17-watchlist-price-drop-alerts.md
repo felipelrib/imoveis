@@ -29,6 +29,14 @@ act on those changes.
     (capped at 200 entries, 7-day TTL) for frontend polling.
   - `get_notifiers()` reads `cfg.alerts.channels` and constructs the list once,
     cached in a module-level variable. `reset_notifiers()` clears the cache for tests.
+  - **Evaluation Loop (`adapters/queue/tasks.py`)**: A periodic Celery beat task (`evaluate_watchlist_alerts`) 
+    runs every 5 minutes. It compares the current `property_listings.price` against `watchlist.last_notified_price`
+    (or the original price if never notified). If the drop exceeds the configured `min_drop_pct`,
+    it generates an alert and updates the `last_notified_price`.
+- **TOCTOU Protection**: Concurrent additions to the watchlist use an atomic `INSERT ... ON CONFLICT DO NOTHING`
+  with a unique constraint on `property_id`.
+- **API and UI Improvements**: Watchlist endpoints accept and return a `user_id` (in preparation for
+  auth), and the frontend `PropertyModal` provides an input field to configure the `min_drop_pct`.
 
 - **`PriceDropAlert` dataclass** is frozen and immutable — safe to pass between threads.
 
@@ -80,23 +88,10 @@ None.
 
 ## Notes / Follow-ups
 
-- **BUG (Alert evaluation not yet wired)**: The `Notifier` infrastructure is complete and
-  pluggable, but **no background task or beat job actually evaluates the watchlist against
-  new price data**. The alert loop that reads `watchlist` rows, compares `last_notified_price`
-  to current price, and calls `get_notifiers()[i].send()` is missing. This means no alerts
-  are ever fired despite the infrastructure being in place.
-- **BUG (TOCTOU on duplicate check)**: `add_to_watchlist` does `SELECT` then `INSERT` to
-  prevent duplicates. Concurrent requests can race past the check. Use
-  `INSERT ... ON CONFLICT (property_id) DO NOTHING` instead.
-- **BUG (No authentication on watchlist)**: All watchlist endpoints are unauthenticated.
-  Any client can read, add, or delete any user's watchlist items. The `Watchlist` model
-  has no `owner` field (unlike `Favourite` and `SavedSearch`), so multi-user support would
-  require a schema migration.
+- **Authentication needed**: Currently, `user_id` is an optional string parameter, but endpoints are public. Full JWT authentication should be implemented so users only see and manage their own watchlist.
+- **Batched emails**: If a user is watching 50 properties and prices drop overnight,
+  sending 50 emails is spammy. The `LogNotifier` processes individually, but `EmailNotifier`
+  would benefit from a daily digest mode.
 - **`DELETE /watchlist/{property_id}` — parameter semantics**: The path parameter is
   `property_id`, not the watchlist row's own `id`. This is consistent but non-RESTful.
   Document clearly in the OpenAPI schema.
-- **`last_notified_price` never updated**: Even once the alert loop is implemented,
-  `last_notified_price` in the DB must be updated after each notification to prevent
-  duplicate alerts. The schema supports it but the update logic is unimplemented.
-- **Frontend uses hardcoded `min_drop_pct: 5.0`**: `addToWatchlist(id)` always passes 5%
-  with no UI to configure it. Expose a threshold input in the modal.

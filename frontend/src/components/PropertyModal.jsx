@@ -45,13 +45,15 @@ export default function PropertyModal({ id, onClose }) {
       .catch(() => {})
   }, [id])
 
+  const [dropPct, setDropPct] = useState(5)
+
   const toggleWatchlist = async () => {
     try {
       if (isWatched) {
         await removeFromWatchlist(id)
         setIsWatched(false)
       } else {
-        await addToWatchlist(id)
+        await addToWatchlist(id, dropPct)
         setIsWatched(true)
       }
     } catch (err) {
@@ -108,14 +110,29 @@ export default function PropertyModal({ id, onClose }) {
                 >
                   {isFavourited ? '★' : '☆'}
                 </button>
-                <button
-                  className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
-                  onClick={toggleWatchlist}
-                  title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
-                  style={{ fontSize: 18, padding: '6px 10px' }}
-                >
-                  {isWatched ? '🔔' : '☆'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', padding: '4px 12px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+                  {!isWatched && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Alert at</span>
+                      <input
+                        type="number"
+                        min="1" max="50"
+                        value={dropPct}
+                        onChange={e => setDropPct(Number(e.target.value))}
+                        style={{ width: 44, padding: '2px 4px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 4, color: 'var(--text-primary)', textAlign: 'center' }}
+                      />
+                      <span style={{ color: 'var(--text-secondary)' }}>% drop</span>
+                    </div>
+                  )}
+                  <button
+                    className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+                    onClick={toggleWatchlist}
+                    title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                    style={{ fontSize: 18, padding: '6px 10px', background: 'none', border: 'none' }}
+                  >
+                    {isWatched ? '🔔' : '☆'}
+                  </button>
+                </div>
               </>
             )}
             {!loading && p?.listings && p.listings.map((l, i) => {

@@ -377,3 +377,78 @@ def ai_enrich(
         raise self.retry(exc=exc, countdown=60)
     finally:
         sem.release()
+
+
+# ---------------------------------------------------------------------------
+# Watchlist Evaluation task
+# ---------------------------------------------------------------------------
+
+
+@celery.task(name="tasks.evaluate_watchlist_alerts", bind=True)
+def evaluate_watchlist_alerts(self):
+    """
+    Periodic task: compare current prices against watchlist thresholds.
+    Should run every N minutes via Celery beat.
+    """
+    from adapters.notify import get_notifiers
+    from adapters.notify.base import PriceDropAlert
+    from sqlalchemy import text
+    
+    logger = get_logger("evaluate_watchlist_alerts")
+    
+    with SessionLocal() as session:
+        # Get all watchlist entries with current price
+        rows = session.execute(text("""
+            SELECT 
+                w.id,
+                w.property_id,
+                w.min_drop_pct,
+                w.last_notified_price,
+                pl.price AS current_price,
+                pl.listing_type,
+                pl.platform,
+                p.props_json->>'title' AS title
+            FROM watchlist w
+            JOIN properties p ON p.id = w.property_id
+            JOIN LATERAL (
+                SELECT price, listing_type, platform
+                FROM property_listings
+                WHERE property_id = w.property_id
+                ORDER BY price ASC
+                LIMIT 1
+            ) pl ON true
+        """)).fetchall()
+        
+        notifiers = get_notifiers()
+        
+        for row in rows:
+            reference = row.last_notified_price or row.current_price
+            if reference is None or reference <= 0:
+                continue
+            
+            drop_pct = (float(reference) - float(row.current_price)) / float(reference) * 100
+            
+            if drop_pct >= row.min_drop_pct:
+                alert = PriceDropAlert(
+                    property_id=str(row.property_id),
+                    title=row.title or "Property",
+                    listing_type=row.listing_type,
+                    platform=row.platform,
+                    old_price=float(reference),
+                    new_price=float(row.current_price),
+                    drop_pct=drop_pct,
+                )
+                for notifier in notifiers:
+                    try:
+                        notifier.send(alert)
+                    except Exception as exc:
+                        logger.error("notifier_error", notifier=type(notifier).__name__, error=str(exc))
+                
+                # Update last_notified_price
+                session.execute(
+                    text("UPDATE watchlist SET last_notified_price = :price WHERE id = :id"),
+                    {"price": row.current_price, "id": row.id}
+                )
+        
+        session.commit()
+        logger.info("watchlist_evaluation_complete", evaluated=len(rows))

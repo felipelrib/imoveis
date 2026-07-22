@@ -181,6 +181,7 @@ class Watchlist(Base):
         nullable=False,
         index=True,
     )
+    user_id = Column(String, nullable=True)
     min_drop_pct = Column(Float, default=5.0, nullable=False)
     last_notified_price = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=sa.text("now()"))
