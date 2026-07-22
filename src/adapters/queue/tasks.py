@@ -117,7 +117,14 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     continue
 
                 try:
-                    result = match_or_create_property(session, candidate)
+                    result = match_or_create_property(
+                        session,
+                        candidate,
+                        text_threshold=cfg.dedup.text_similarity_threshold,
+                        algorithm=cfg.dedup.text_similarity_algorithm,
+                        radius_m=cfg.dedup.radius_m,
+                        area_tol=cfg.dedup.area_tolerance_m2,
+                    )
                     session.commit()
 
                     # Enqueue AI enrichment if images are present and property

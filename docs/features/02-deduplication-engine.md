@@ -49,7 +49,7 @@ Files touched:
 
 ### Tech Debt
 
-- **`raw_json` is stored as `str(dict)` not proper JSON** (dedupe.py L430, L471): `_upsert_listings` does `str(listing.get("raw_json"))` which produces Python repr, not valid JSON. Should use `json.dumps()`.
-- **No unique constraint on `(platform, platform_id)` in `Property` model** — The dedup relies on a query, but concurrent scrapes could create duplicates.
-- **`config.yaml` defaults don't match code defaults** — Config has `text_similarity_threshold: 0.65` but `match_or_create_property` defaults to `text_threshold=0.85`. The config values are never passed to the function.
-- **`token_sort` algorithm declared in config but not implemented** — Only `jaro_winkler` and `levenshtein` are handled in `text_similarity()`.
+- ~~**`raw_json` is stored as `str(dict)` not proper JSON** (dedupe.py L430, L471): `_upsert_listings` does `str(listing.get("raw_json"))` which produces Python repr, not valid JSON. Should use `json.dumps()`.~~ — FIXED
+- ~~**No unique constraint on `(platform, platform_id)` in `Property` model** — The dedup relies on a query, but concurrent scrapes could create duplicates.~~ — FIXED
+- ~~**`config.yaml` defaults don't match code defaults** — Config has `text_similarity_threshold: 0.65` but `match_or_create_property` defaults to `text_threshold=0.85`. The config values are never passed to the function.~~ — FIXED
+- ~~**`token_sort` algorithm declared in config but not implemented** — Only `jaro_winkler` and `levenshtein` are handled in `text_similarity()`.~~ — FIXED

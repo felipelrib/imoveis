@@ -1,6 +1,7 @@
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from typing import List, Optional, Tuple
 
 from sqlalchemy import text
@@ -39,6 +40,10 @@ def text_similarity(
                 return 1.0
             distance = jellyfish.levenshtein_distance(a, b)
             return 1.0 - (distance / max_len)
+        elif algorithm == "token_sort":
+            tokens_a = sorted(a.split())
+            tokens_b = sorted(b.split())
+            return jellyfish.jaro_winkler_similarity(" ".join(tokens_a), " ".join(tokens_b))
         else:
             raise ValueError(f"Unknown similarity algorithm: {algorithm!r}")
 
@@ -51,8 +56,9 @@ def match_or_create_property(
     session: Session,
     candidate: PropertyCandidate,
     radius_m: float = 50.0,
-    text_threshold: float = 0.85,
+    text_threshold: float = 0.65,
     area_tol: float = 5.0,
+    algorithm: str = "jaro_winkler",
 ) -> DedupeMatchResult:
     """Match a scraper candidate against existing properties, or create a new one.
 
@@ -112,7 +118,7 @@ def match_or_create_property(
         nearby = session.execute(nearby_query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
 
         for row in nearby:
-            title_sim = text_similarity(candidate.title, row.title)
+            title_sim = text_similarity(candidate.title, row.title, algorithm=algorithm)
             area_close = (
                 abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol if candidate.area_m2 and row.area_m2 else True
             )
@@ -434,7 +440,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
+                    "raw_json": json.dumps(listing.get("raw_json") or {}),
                     "now": now,
                     "id": str(check.id),
                 },
@@ -475,7 +481,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
-                    "raw_json": (str(listing.get("raw_json")) if listing.get("raw_json") is not None else None),
+                    "raw_json": json.dumps(listing.get("raw_json") or {}),
                     "now": now,
                 },
             )

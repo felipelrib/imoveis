@@ -63,6 +63,7 @@ class PlatformConfig(Base):
 
 class Property(Base):
     __tablename__ = "properties"
+    __table_args__ = (sa.UniqueConstraint("platform", "platform_id", name="uq_property_platform_id"),)
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
