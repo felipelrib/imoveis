@@ -48,9 +48,8 @@ None — uses PostgreSQL window functions and built-in Python `math`.
 
 ### Bugs Found
 
-- **BUG (Minor): `ScoringWeights` validator doesn't enforce sum-to-one** (entities.py L88-94): The `weights_must_sum_to_one` validator has complex logic that never actually validates anything — it assigns to `_` and returns `v` unchanged. Weights of `stat_weight=0.9, ai_weight=0.9` would be accepted.
-
-- **BUG (Minor): Neighbourhood key inconsistency**: Stats use `COALESCE(neighborhood_id::text, props_json->>'neighborhood', 'Unknown')` as the grouping key. If `neighborhood_id` is a UUID and `props_json->>'neighborhood'` is a name like "Savassi", the same neighbourhood could appear under two different keys.
+- ~~**BUG (Minor): `ScoringWeights` validator never validates**~~ — **FIXED**: Replaced dummy validation with a Pydantic v2 `@model_validator` that ensures weights sum to exactly 1.0 (with float tolerance).
+- ~~**BUG (Minor): Neighbourhood key inconsistency splits statistical group**~~ — **FIXED**: Added `LEFT JOIN neighborhoods` to `compute_neighborhood_stats` and fallback lookups so all properties in the same neighborhood map to the exact same canonical `n_key`.
 
 ### Tech Debt
 

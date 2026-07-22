@@ -55,7 +55,7 @@ def compute_neighborhood_stats(
     )
 
     where_clause = (
-        "AND COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = :nkey"
+        "AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey"
         if neighborhood_key is not None
         else ""
     )
@@ -63,33 +63,35 @@ def compute_neighborhood_stats(
     sql = text(f"""
         WITH medians AS (
             SELECT
-                COALESCE(neighborhood_id::text, props_json->>'neighborhood', 'Unknown') as n_key,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price / NULLIF(area_m2, 0)) AS neighborhood_median
-            FROM properties
-            WHERE area_m2 IS NOT NULL AND area_m2 > 0 AND active = true
+                COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') as n_key,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.price / NULLIF(p.area_m2, 0)) AS neighborhood_median
+            FROM properties p
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE p.area_m2 IS NOT NULL AND p.area_m2 > 0 AND p.active = true
             GROUP BY 1
         ),
         stats AS (
             SELECT
                 p.id                                                  AS property_id,
-                COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') as n_key,
+                COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') as n_key,
                 p.price / NULLIF(p.area_m2, 0)                       AS price_per_m2,
                 AVG(p.price / NULLIF(p.area_m2, 0))
                     OVER (PARTITION BY
-                        COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
+                        COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
                     ) AS neighborhood_mean,
                 m.neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
                     OVER (PARTITION BY
-                        COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
+                        COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
                     ) AS neighborhood_stddev,
                 PERCENT_RANK()
                     OVER (
-                        PARTITION BY COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown')
+                        PARTITION BY COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
                         ORDER BY p.price / NULLIF(p.area_m2, 0)
                     )                                                 AS percentile_rank
             FROM properties p
-            LEFT JOIN medians m ON COALESCE(p.neighborhood_id::text, p.props_json->>'neighborhood', 'Unknown') = m.n_key
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            LEFT JOIN medians m ON COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = m.n_key
             WHERE p.area_m2 IS NOT NULL
               AND p.area_m2 > 0
               AND p.active = true
@@ -240,11 +242,12 @@ def score_single_property(session: Session, property_id: str) -> None:
         logger.warning("score_single_property_not_found", property_id=property_id)
         return
 
-    n_key = (
-        (str(prop.neighborhood_id) if prop.neighborhood_id else None)
-        or (prop.props_json or {}).get("neighborhood")
-        or "Unknown"
-    )
+    if prop.neighborhood_id:
+        from adapters.db.models import Neighborhood
+        n = session.get(Neighborhood, prop.neighborhood_id)
+        n_key = n.name if n else "Unknown"
+    else:
+        n_key = (prop.props_json or {}).get("neighborhood", "Unknown")
     compute_neighborhood_stats(session, neighborhood_key=n_key)
 
     # Note: the single row's fallback code was removed because we now
