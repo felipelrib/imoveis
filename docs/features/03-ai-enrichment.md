@@ -49,15 +49,11 @@ Files touched:
 
 ### Bugs Found
 
-- **BUG (Critical): `await` in sync Celery task** (tasks.py L317): Line `verdict_result = await client.summarize_deal(...)` uses `await` inside a synchronous function (`ai_enrich`). This will raise `SyntaxError` or, if the function were somehow made async, would conflict with Celery's sync task execution. The call should be wrapped in `asyncio.run()` like the other async calls in the same function.
-
-- **BUG (Moderate): Double `asyncio.run()` calls** (tasks.py L248, L262): `asyncio.run()` is called twice in the same task — once for image downloading and once for AI inference. Each `asyncio.run()` creates and destroys an event loop. While technically functional, it's wasteful and could cause issues with `aiohttp` sessions created inside the first loop.
-
-- **BUG (Moderate): `scoring.ai_weight` / `scoring.stat_weight` not in AppConfig** (tasks.py L285-294): The code accesses `cfg.scoring.ai_weight` and `cfg.scoring.stat_weight`, but `AppConfig` has no `scoring` section. The YAML has it, but the Pydantic model doesn't define a `ScoringConfig`. This will raise `AttributeError`.
-
-- **BUG (Minor): Unclosed `aiohttp.ClientSession`** (client.py L130-131): The `LocalAIClient` creates an `aiohttp.ClientSession` in `_ensure_session()`, but `ai_enrich` only closes it via `asyncio.run(client.close())` in a `finally` block. If the task is killed mid-execution, the session leaks.
-
-- **BUG (Minor): `LMStudioClient.analyze_visuals` references unbound `text` variable** (client.py L416): In the `json.JSONDecodeError` handler, `text` is referenced as a local variable that may not be assigned if the error occurs before the response is parsed.
+- ~~**BUG (Critical): `await` in sync Celery task**~~ — **FIXED**: Refactored `ai_enrich` to run a single inner async function `_run_enrichment()` via `asyncio.run()`, fixing `SyntaxError` and `RuntimeError`.
+- ~~**BUG (Moderate): Double `asyncio.run()` calls**~~ — **FIXED**: Consolidated all async operations into the single `_run_enrichment()` event loop.
+- ~~**BUG (Moderate): `cfg.scoring.ai_weight` / `cfg.scoring.stat_weight` AttributeError**~~ — **FIXED**: Included in `AppConfig` and `ScoringConfig` schemas.
+- ~~**BUG (Minor): Unclosed `aiohttp.ClientSession`**~~ — **FIXED**: Migrated `_ensure_session` to an `asynccontextmanager` called `session_context()`.
+- ~~**BUG (Minor): Unbound `text` variable in `LMStudioClient`**~~ — **FIXED**: Pre-assigned `text = "<unread>"` before the `try` block.
 
 ### Tech Debt
 

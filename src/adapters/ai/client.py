@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import aiohttp
@@ -179,6 +180,16 @@ class LocalAIClient(ABC):
         """Ensure HTTP session is initialized."""
         if self.session is None:
             self.session = aiohttp.ClientSession(timeout=self.timeout)
+
+    @asynccontextmanager
+    async def session_context(self):
+        """Use client session as an async context manager."""
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            self.session = session
+            try:
+                yield session
+            finally:
+                self.session = None
 
 
 class OllamaClient(LocalAIClient):
@@ -374,6 +385,7 @@ class LMStudioClient(LocalAIClient):
 
     async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
         """Analyze property images using LM Studio VLM via chat completions."""
+        text = "<unread>"
         try:
             # Build message content with text prompt + base64 images
             content: list = [{"type": "text", "text": prompt}]
@@ -413,13 +425,14 @@ class LMStudioClient(LocalAIClient):
             )
         except json.JSONDecodeError:
             logger.warning("LM Studio visual analysis returned non-JSON, using raw text")
-            return VisualResult(condition_score=0.5, analysis=text if "text" in dir() else "")
+            return VisualResult(condition_score=0.5, analysis=text)
         except Exception as e:
             logger.error(f"Error in LMStudioClient.analyze_visuals: {e}")
             return VisualResult(condition_score=0.5, analysis="Error")
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         """Analyze property description text using LM Studio via chat completions."""
+        text = "<unread>"
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
             messages = [{"role": "user", "content": full_prompt}]
@@ -440,7 +453,7 @@ class LMStudioClient(LocalAIClient):
             )
         except json.JSONDecodeError:
             logger.warning("LM Studio text analysis returned non-JSON, using raw text")
-            return SentimentResult(sentiment_score=0.5, analysis=text if "text" in dir() else "")
+            return SentimentResult(sentiment_score=0.5, analysis=text)
         except Exception as e:
             logger.error(f"Error in LMStudioClient.analyze_text: {e}")
             return SentimentResult(sentiment_score=0.5, analysis="Error")

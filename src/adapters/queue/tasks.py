@@ -244,95 +244,98 @@ def ai_enrich(
     start_time = time.time()
     client = None
     try:
-        # --- Image pipeline ------------------------------------------------
         image_store = ImageStore()
-        local_paths: List[str] = asyncio.run(image_store.download_images(property_id, image_urls, max_images=5))
-
-        # --- Build prompts -------------------------------------------------
-        visual_prompt = build_visual_condition_prompt(len(local_paths))
-        sentiment_prompt = build_sentiment_prompt(description)
-
-        # --- AI inference --------------------------------------------------
         client = create_ai_client()
 
-        async def run_ai():
-            v = await client.analyze_visuals(local_paths, visual_prompt)
-            t = await client.analyze_text(description, sentiment_prompt)
-            return v, t
+        async def _run_enrichment():
+            async with client.session_context():
+                # --- Image pipeline ------------------------------------------------
+                paths: List[str] = await image_store.download_images(property_id, image_urls, max_images=5)
 
-        visual_result, sentiment_result = asyncio.run(run_ai())
+                # --- Build prompts -------------------------------------------------
+                visual_prompt = build_visual_condition_prompt(len(paths))
+                sentiment_prompt = build_sentiment_prompt(description)
 
-        # Weighted blend: visual condition 60%, location sentiment 40%
-        ai_score = visual_result.condition_score * 0.6 + sentiment_result.sentiment_score * 0.4
+                # --- AI inference --------------------------------------------------
+                v_res = await client.analyze_visuals(paths, visual_prompt)
+                s_res = await client.analyze_text(description, sentiment_prompt)
 
-        # --- Persist -------------------------------------------------------
-        from adapters.db.models import MetricsScoring  # local import avoids circular
+                # Weighted blend: visual condition 60%, location sentiment 40%
+                a_score = v_res.condition_score * 0.6 + s_res.sentiment_score * 0.4
 
-        session = SessionLocal()
-        try:
-            ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
-            meta = dict(ms.meta or {}) if ms is not None else {}
-            meta.update(
-                {
-                    "visual": visual_result.model_dump(),
-                    "sentiment": sentiment_result.model_dump(),
-                }
-            )
-            if ms is None:
-                ms = MetricsScoring(
-                    property_id=property_id,
-                    stat_score=0.0,
-                    ai_score=ai_score,
-                    combined_score=ai_score * cfg.scoring.ai_weight,
-                    meta=meta,
-                )
-                session.add(ms)
-            else:
-                ms.ai_score = ai_score
-                ms.meta = meta
-                # Recompute combined using existing stat_score
-                stat = float(ms.stat_score or 0.0)
-                ms.combined_score = stat * cfg.scoring.stat_weight + ai_score * cfg.scoring.ai_weight
-            session.flush()
+                # --- Persist -------------------------------------------------------
+                from adapters.db.models import MetricsScoring  # local import avoids circular
+                session = SessionLocal()
+                try:
+                    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+                    meta = dict(ms.meta or {}) if ms is not None else {}
+                    meta.update(
+                        {
+                            "visual": v_res.model_dump(),
+                            "sentiment": s_res.model_dump(),
+                        }
+                    )
+                    
+                    stat_weight = getattr(getattr(cfg, "scoring", None), "stat_weight", 0.5)
+                    ai_weight = getattr(getattr(cfg, "scoring", None), "ai_weight", 0.5)
+                    
+                    if ms is None:
+                        ms = MetricsScoring(
+                            property_id=property_id,
+                            stat_score=0.0,
+                            ai_score=a_score,
+                            combined_score=a_score * ai_weight,
+                            meta=meta,
+                        )
+                        session.add(ms)
+                    else:
+                        ms.ai_score = a_score
+                        ms.meta = meta
+                        # Recompute combined using existing stat_score
+                        stat = float(ms.stat_score or 0.0)
+                        ms.combined_score = stat * stat_weight + a_score * ai_weight
+                    session.flush()
 
-            # Recompute neighbourhood-relative stat_score for this property
-            score_single_property(session, property_id)
+                    # Recompute neighbourhood-relative stat_score for this property
+                    score_single_property(session, property_id)
 
-            # --- Deal verdict synthesis ---
+                    # --- Deal verdict synthesis ---
+                    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+                    updated_meta = dict(ms.meta or {}) if ms is not None else {}
+                    stat_analysis = updated_meta.get("stat_analysis", {})
+                    neighborhood_name = (meta.get("sentiment", {}).get("reasoning") or "")[:0]  # placeholder
+                    # Try to get neighbourhood name from property
+                    from adapters.db.models import Property as _Prop
+                    _prop = session.get(_Prop, property_id)
+                    if _prop is not None:
+                        neighborhood_name = (
+                            (str(_prop.neighborhood_id) if _prop.neighborhood_id else None)
+                            or (_prop.props_json or {}).get("neighborhood")
+                            or ""
+                        )
 
-            # Read back the updated meta (stat_analysis was just set by score_single_property)
-            ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
-            updated_meta = dict(ms.meta or {}) if ms is not None else {}
-            stat_analysis = updated_meta.get("stat_analysis", {})
-            neighborhood_name = (meta.get("sentiment", {}).get("reasoning") or "")[:0]  # placeholder
-            # Try to get neighbourhood name from property
-            from adapters.db.models import Property as _Prop
-            _prop = session.get(_Prop, property_id)
-            if _prop is not None:
-                neighborhood_name = (
-                    (str(_prop.neighborhood_id) if _prop.neighborhood_id else None)
-                    or (_prop.props_json or {}).get("neighborhood")
-                    or ""
-                )
+                    verdict_res = await client.summarize_deal(
+                        stat_analysis=stat_analysis,
+                        visual=meta.get("visual", {}),
+                        sentiment=meta.get("sentiment", {}),
+                        neighborhood_name=neighborhood_name,
+                    )
+                    if ms is not None:
+                        updated_meta = dict(ms.meta or {})
+                        updated_meta["deal_verdict"] = {
+                            "verdict": verdict_res.verdict,
+                            "confidence": verdict_res.confidence,
+                        }
+                        ms.meta = updated_meta
+                        session.flush()
 
-            verdict_result = await client.summarize_deal(
-                stat_analysis=stat_analysis,
-                visual=meta.get("visual", {}),
-                sentiment=meta.get("sentiment", {}),
-                neighborhood_name=neighborhood_name,
-            )
-            if ms is not None:
-                updated_meta = dict(ms.meta or {})
-                updated_meta["deal_verdict"] = {
-                    "verdict": verdict_result.verdict,
-                    "confidence": verdict_result.confidence,
-                }
-                ms.meta = updated_meta
-                session.flush()
+                    session.commit()
+                finally:
+                    session.close()
 
-            session.commit()
-        finally:
-            session.close()
+                return a_score, v_res, s_res, paths
+
+        ai_score, visual_result, sentiment_result, local_paths = asyncio.run(_run_enrichment())
 
         duration = time.time() - start_time
         r.lpush(
@@ -362,6 +365,4 @@ def ai_enrich(
         logger.error("ai_enrich_error", property_id=property_id, error=str(exc))
         raise self.retry(exc=exc, countdown=60)
     finally:
-        if client is not None:
-            asyncio.run(client.close())
         sem.release()
