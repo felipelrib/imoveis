@@ -16,13 +16,17 @@ The AI enrichment pipeline needed property photos to run visual-condition analys
 ## Approach
 
 - **`ImageStore`** (`adapters/ai/image_store.py`) manages a local filesystem cache at
-  `{config.image_storage_path}/{property_id}/{content_hash}.jpg`.
+  `{config.image_storage_path}/{property_id}/{content_hash}.ext`.
   - Images are de-duplicated by **MD5 content hash** encoded in the filename.
     Identical images (same bytes) from different scrape runs are stored exactly once.
   - `download_images()` is async (uses `httpx.AsyncClient`) and skips already-cached files.
+    Redirect following is disabled (`follow_redirects=False`) to prevent SSRF vulnerabilities.
+    File extensions are inferred from the `Content-Type` header (e.g. `.jpg`, `.png`).
     `max_images` (default: 5) caps disk usage per property.
   - `encode_base64(file_path)` reads a cached file and returns its base64 string for VLM
     submission.
+  - An ORM hook is registered in `adapters/db/models.py` (`delete_property_images`) to automatically 
+    delete image directories when a property is deleted, preventing disk leaks.
 
 - **VLM prompt** (`adapters/ai/prompts.py` → `build_visual_condition_prompt()`) is a
   few-shot JSON-output prompt that asks the model to classify property condition into
@@ -74,17 +78,6 @@ Files touched:
 
 ## Notes / Follow-ups
 
-- **BUG (Security)**: `ImageStore` saves any file at the URL returned by the scraper to
-  `{base_path}/{property_id}/{hash}.jpg` — if a malicious scraper returns an image URL
-  that redirects to a local file or internal service (SSRF), the bytes are saved to disk.
-  `httpx.AsyncClient(follow_redirects=True)` is enabled. Add an allowlist of trusted
-  image hostnames or disable redirect following.
-- **BUG (Disk leak)**: `download_images()` saves images but there is no garbage collection
-  path. If a property is deleted from the DB, its image directory on disk remains. Add a
-  cleanup task or hook the ORM `ondelete` cascade to a file deletion callback.
-- **BUG (Content type assumption)**: All saved files use a `.jpg` extension regardless of
-  actual content type. The URL might return a PNG, WebP, or GIF. While most VLMs handle
-  this gracefully, the stored filename extension is misleading.
 - **MD5 as identity hash**: MD5 is used purely for de-duplication (not security). A
   collision would cause two distinct images to overwrite each other. SHA-256 would be
   marginally safer with negligible performance cost.

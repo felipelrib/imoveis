@@ -226,3 +226,26 @@ class Favourite(Base):
     __table_args__ = (
         sa.UniqueConstraint("property_id", name="uq_favourite_property"),
     )
+
+
+# --- ORM Event Hooks ---
+
+import shutil
+from pathlib import Path
+from sqlalchemy import event
+
+@event.listens_for(Property, "after_delete")
+def delete_property_images(mapper, connection, target):
+    from infra.config import get_config
+    import structlog
+    logger = structlog.get_logger()
+    base = get_config().image_storage_path
+    if not base:
+        return
+    image_dir = Path(base) / str(target.id)
+    if image_dir.exists():
+        try:
+            shutil.rmtree(image_dir, ignore_errors=True)
+            logger.info("property_images_deleted", property_id=str(target.id))
+        except Exception as exc:
+            logger.warning("property_images_delete_failed", property_id=str(target.id), error=str(exc))

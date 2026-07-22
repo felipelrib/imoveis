@@ -19,6 +19,12 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+CONTENT_TYPE_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 class ImageStore:
     """Manage local image cache for property photos."""
@@ -59,7 +65,7 @@ class ImageStore:
             )
             return saved_paths[:max_images]
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             for url in urls:
                 if remaining <= 0:
                     break
@@ -77,7 +83,10 @@ class ImageStore:
                         )
                         continue
 
-                    dest = prop_dir / f"{content_hash}.jpg"
+                    content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+                    ext = CONTENT_TYPE_EXT.get(content_type, ".jpg")
+                    dest = prop_dir / f"{content_hash}{ext}"
+                    
                     dest.write_bytes(content)
                     existing_hashes.add(content_hash)
                     saved_paths.append(str(dest))
