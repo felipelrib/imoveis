@@ -307,16 +307,21 @@ def ai_enrich(
                     ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
                     updated_meta = dict(ms.meta or {}) if ms is not None else {}
                     stat_analysis = updated_meta.get("stat_analysis", {})
-                    neighborhood_name = (meta.get("sentiment", {}).get("reasoning") or "")[:0]  # placeholder
-                    # Try to get neighbourhood name from property
+                    neighborhood_name = "Unknown"
                     from adapters.db.models import Property as _Prop
                     _prop = session.get(_Prop, property_id)
                     if _prop is not None:
-                        neighborhood_name = (
-                            (str(_prop.neighborhood_id) if _prop.neighborhood_id else None)
-                            or (_prop.props_json or {}).get("neighborhood")
-                            or ""
-                        )
+                        if _prop.neighborhood_id:
+                            from sqlalchemy import text
+                            nb = session.execute(
+                                text("SELECT name FROM neighborhoods WHERE id = :nid"),
+                                {"nid": _prop.neighborhood_id}
+                            ).fetchone()
+                            if nb:
+                                neighborhood_name = nb.name
+                        
+                        if neighborhood_name == "Unknown" and _prop.props_json:
+                            neighborhood_name = _prop.props_json.get("neighborhood", "Unknown")
 
                     verdict_res = await client.summarize_deal(
                         stat_analysis=stat_analysis,

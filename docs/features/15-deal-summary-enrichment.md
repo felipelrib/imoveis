@@ -26,9 +26,14 @@ when GPU/AI workers are paused:
    - Expects a strict JSON `{"verdict": "<PT-BR sentence>", "confidence": <float>}` response
    - Falls back to the template on any exception (timeout, parse error, model unavailable)
 
-The verdict is generated at the **end of the `ai_enrich` Celery task** after all three
-signals are computed. The `DealVerdictResult` is stored in `metrics_scoring.meta["deal_verdict"]`
-and surfaced via the existing properties API (`deal_summary` field).
+The verdict is generated at the **`ai_enrich` task integration** (`adapters/queue/tasks.py`):
+  - Added a third VLM call `client.summarize_deal(...)` passing the `stat_analysis`,
+    `visual` result, `sentiment` result, and `neighborhood_name`.
+  - The human-readable neighbourhood name is resolved via a JOIN query on the `neighborhoods`
+    table using the property's `neighborhood_id` FK.
+  - The verdict string and confidence score are saved to `metrics_scoring.meta["deal_verdict"]`.
+  - It handles empty/missing inputs gracefully (e.g. if the property has no photos, the
+    visual payload is empty).
 
 ## Changes
 
@@ -65,17 +70,14 @@ None.
 
 ## Notes / Follow-ups
 
-- **BUG (Async in sync context)**: `ai_enrich` calls `await client.summarize_deal(...)` but
-  `ai_enrich` is a synchronous Celery task wrapped in `asyncio.run()`. The verdict call
-  happens *outside* the `asyncio.run(run_ai())` block — it is called directly as `await`
-  in a sync context (line ~317 of `tasks.py`). This will raise `RuntimeError: no running
-  event loop`. It must be moved inside an async function that is passed to `asyncio.run()`.
-- **Neighbourhood name extraction is fragile**: The task retrieves `neighborhood_name` using
-  `_prop.neighborhood_id` cast to string (a UUID) rather than the human-readable name.
-  The verdict prompt receives a UUID like `"a3f2..."` instead of `"Savassi"`. Fix: JOIN
-  to the `neighborhoods` table and use `Neighborhood.name`.
-- Verdicts are only generated for properties that pass through AI enrichment.
-  Properties with stat scores only receive a shorter template verdict without visual/sentiment
-  components.
+- **Token usage limits**: The consolidated context length for the deal verdict can be
+  large if `description` is verbose. Prompt truncation might be needed if switching to
+  a model with a strict 4k context window (currently assumed 8k+ for Llama 3).
+- **Latency impact**: Adding a third sequential VLM call inside `ai_enrich` adds ~2-5s
+  to the task duration. Since they don't depend on each other, `analyze_visuals` and
+  `analyze_text` could be gathered concurrently using `asyncio.gather()`, with
+  `summarize_deal` waiting on their results.
+- **Language configuration**: The prompt forces a Portuguese (`pt-br`) output. This
+  should be moved to `app_config.yaml` to support multi-region scaling.
 - Future: `POST /admin/verdict/recompute` to regenerate all verdicts after prompt tuning
   without re-running the full enrichment pipeline.
