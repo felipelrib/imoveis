@@ -44,10 +44,12 @@ nav:
   - API Reference: api.md
   - Features:
       - Config YAML Loader: features/config-yaml-loader.md
-      - deal-summary-enrichment: features/deal-summary-enrichment.md
-      - saved-searches-favourites: features/saved-searches-favourites.md
-      - per-platform-listings: features/per-platform-listings.md
-      - interactive-map: features/interactive-map.md
+      - Deal Summary Enrichment: features/deal-summary-enrichment.md
+      - Saved Searches & Favourites: features/saved-searches-favourites.md
+      - Per-Platform Listings: features/per-platform-listings.md
+      - Interactive Map: features/interactive-map.md
+  - ADR:
+      - Dual-Model Development: adr/0001-dual-model-development.md
 
 plugins:
   - search

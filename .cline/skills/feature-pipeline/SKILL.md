@@ -1,130 +1,174 @@
 ---
 name: feature-pipeline
-description: Run the full feature pipeline (plan, implement, validate, merge, docs) for a feature from Linear. Use when the user says "run feature X" or "do the full pipeline".
+description: Run the full feature pipeline (plan, implement, validate, PR, docs) for a Linear issue. Use when the user says "work on the next ticket", "run feature X", or "do the full pipeline".
 ---
 
 # Full Feature Pipeline
 
-This skill bundles the entire feature lifecycle into a single dispatch.
+End-to-end lifecycle for delivering a feature from Linear.
 
 ## Input
 
-- `feature_slug`: kebab-case identifier matching the feature branch name
-- `feature_title`: human-readable title (for docs)
+- `feature_slug`: kebab-case identifier for the branch name
 - `linear_issue_id`: the Linear issue identifier (e.g., `BIN-7`)
 
-## Pipeline steps
+If not provided, detect from milestone ordering (see rules.md).
 
-### Step 1 — Setup worktree
+## Phase 1 — Issue Selection (Planner)
 
-```bash
-bash scripts/agent/setup-worktree.sh "<feature_slug>"
-cd .worktrees/<feature_slug>
+### Step 1 — Select the next issue
+
+Follow milestone ordering from `.clinerules/rules.md`:
+
+1. `linear_get_project_milestones` for project `2b293958-ee46-48f1-98aa-6d54abba468d`.
+2. Find earliest uncompleted milestone (lowest `sortOrder`, `status != done`).
+3. `linear_search_issues` scoped to that milestone — pick highest priority (lowest number).
+
+### Step 2 — Update Linear to In Progress
+
 ```
-
-### Step 2 — Update Linear status
-
-Set the Linear issue to "In Progress":
-
-```bash
 linear_bulk_update_issues --issueIds "<linear_issue_id>" --update '{"stateId": "7de50ed1-0de6-4f06-89f6-6816991f106f"}'
 ```
 
-In Progress stateId: `7de50ed1-0de6-4f06-89f6-6816991f106f`
+### Step 3 — Setup branch
 
-### Step 3 — Verify Linear project and milestone
-
-1. Check the issue has `projectId: "2b293958-ee46-48f1-98aa-6d54abba468d"` (Imoveis — Deal Tracker).
-2. Check the issue is assigned to the correct milestone. If not, assign it.
-3. Reference `.clinerules/04-imoveis-specific.md` for the current milestone mapping and ticket hygiene rules.
+```bash
+bash scripts/agent/setup-branch.sh "<feature_slug>"
+```
 
 ### Step 4 — Plan the feature
 
-Read the feature spec from the Linear issue via MCP, analyze affected code areas, then write
-`implementation_plan.md` with these sections:
-1. Goal (one paragraph)
-2. Affected areas (files/modules)
-3. Step-by-step implementation (ordered, committable)
-4. Data / schema changes
-5. Validation plan
-6. Risks and conflict surface
+Read the Linear issue spec via MCP. Analyse affected code. Write `implementation_plan.md`
+with ALL mandatory sections (see `.clinerules/rules.md` § `implementation_plan.md` Format).
 
-Commit the plan:
+Commit:
 ```bash
 git add implementation_plan.md && git commit -m "docs: plan <feature_slug>"
 ```
 
+**STOP HERE if using Planner + Implementer mode.** Hand off to Implementer.
+
+---
+
+## Phase 2 — Implementation (Implementer)
+
 ### Step 5 — Start services
 
 ```bash
-bash scripts/agent/run-services.sh
+docker-compose up -d
 ```
 
 ### Step 6 — Implement
 
-Implement each step from `implementation_plan.md`, committing after each
-meaningful step with conventional messages.
+Read `implementation_plan.md` and execute each step in order.
 
-### Step 7 — Validate locally
+Rules for Implementer:
+- Follow the plan EXACTLY. Do not refactor beyond scope.
+- Commit after each meaningful step with conventional messages.
+- If something is unclear, STOP and ask — do not guess.
+- If you need to touch >3 files not in the plan, STOP.
+
+### Step 7 — Validate
 
 ```bash
 bash scripts/agent/validate.sh all
 ```
 
-This runs lint, unit, integration, contract, frontend build, and Playwright E2E
-— the same steps CI will run. Must pass before opening a PR.
+Must pass before proceeding. Fix any failures, commit fixes, re-validate.
 
-### Step 8 — Open PR and wait for CI gate
-
-Push the branch, open a Pull Request, and wait for all CI checks to pass
-before merging:
+### Step 8 — Push & PR
 
 ```bash
-bash scripts/agent/finish-feature.sh --pr "<feature_slug>"
+bash scripts/agent/finish-feature.sh --pr
 ```
 
-This will:
-- Push the branch to origin
-- Open a PR via `gh pr create`
-- Block until all CI checks (lint, unit, integration, contract, E2E) pass
-- Then merge into main, validate, tear down the worktree, and delete the branch
-
 Handle exit codes:
-- **Exit 0** → merged, validated, cleaned up — proceed to Step 9
-- **Exit 2** → merge conflicts — resolve, commit, re-run
-- **Exit 1** → CI checks or validation failed — fix issues, push fixes, re-run
+- **Exit 0** → pushed, ready for PR. Proceed to Step 9.
+- **Exit 1** → validation/CI failed. Fix, commit, re-run.
 
-### Step 9 — Update Linear status to Done
+### Step 9 — Update Linear to Done
 
-After `finish-feature.sh` succeeds (exit 0), mark the Linear issue as Done:
-
-```bash
+```
 linear_bulk_update_issues --issueIds "<linear_issue_id>" --update '{"stateId": "fa058318-6dde-441e-91cb-5939c33e4fb1"}'
 ```
 
-Done stateId: `fa058318-6dde-441e-91cb-5939c33e4fb1`
+### Step 10 — Write feature documentation (MANDATORY)
 
-### Step 10 — Push to remote
+Every completed feature **must** have a numbered markdown file in `docs/features/`.
+
+#### 10a — Determine the next sequential number
 
 ```bash
-git push origin main
+ls docs/features/ | grep -E '^[0-9]' | sort | tail -1
+# e.g. "19-system-status-and-pipeline-telemetry.md" → next number is 20
 ```
 
-### Step 11 — Generate feature docs
+#### 10b — Create the file
 
-```bash
-bash scripts/agent/gen-docs.sh
+Name: `docs/features/<NN>-<feature-slug>.md`
+where `<NN>` is zero-padded to 2 digits (e.g. `20`, `21`).
+
+**Follow `docs/features/_template.md` EXACTLY.** All six sections are mandatory:
+
+```markdown
+# <feature-name> — <one-line description>
+
+> Feature branch: `feat/<slug>` · Linear: `BIN-XX` · Status: implemented
+
+## Problem
+
+What user pain or technical gap does this feature address?
+
+## Approach
+
+- Bullet points describing the high-level design decisions.
+- Why this approach was chosen over alternatives.
+
+## Changes
+
+Files touched:
+
+```
+ path/to/file.py       | WHAT CHANGED — short description
+ path/to/other/file.py | NEW — new file description
 ```
 
-### Step 12 — Return to main and clean up
+## New Dependencies
 
-After the feature is merged, return to the primary checkout and tear down the worktree:
+Any new packages added to `requirements.txt` or `package.json`? Or "None".
+
+## How to Test
+
+1. Steps to manually verify the feature works.
+2. Or the test command:
+   ```bash
+   bash scripts/agent/validate.sh backend
+   ```
+
+## Notes / Follow-ups
+
+- Any known limitations, tech debt, or follow-up work.
+- **BUG**: flag every confirmed bug found during review with severity.
+```
+
+#### Rules for the doc
+
+- **Problem**: 2–4 sentences maximum — no padding.
+- **Approach**: bullet list only; explain *why*, not just *what*.
+- **Changes table**: list every file touched with a short description. Mark new files `NEW —`.
+- **Notes / Follow-ups**: document ALL bugs found during implementation and review here,
+  formatted as `**BUG (Severity)**: description — fix hint.`
+- Do **NOT** write freeform narrative docs or use the old plain-markdown format.
+- Do **NOT** omit any section, even if it is `None` or `N/A`.
+
+#### 10c — Commit
 
 ```bash
-cd /home/felipe/workfolder/imoveis
-git worktree remove .worktrees/<feature_slug>
+git add docs/features/<NN>-<feature-slug>.md
+git commit -m "docs: <NN>-<feature-slug> feature doc"
+git push
 ```
 
 ## Output
 
-Report: merge result, validation status, docs path, Linear status updated to Done, worktree cleaned up.
+Report: branch name, PR URL, validation status, Linear status updated, docs path.

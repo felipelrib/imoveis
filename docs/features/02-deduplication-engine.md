@@ -1,0 +1,65 @@
+# Deduplication Engine — Multi-strategy property matching and merge with listing upsert
+
+> Feature branch: `feat/dedup-engine` · Linear: `BIN-XX` · Status: implemented
+
+## Problem
+
+Properties appear on multiple platforms or are re-listed. Without deduplication, the database would fill with duplicate entries, skewing scores and confusing users. The engine must handle exact platform matches, cross-platform fuzzy matches (same property on OLX and QuintoAndar), and track per-listing prices independently.
+
+## Approach
+
+- **Three-tier matching strategy** in `match_or_create_property()`:
+  1. **Exact match** — `(platform, platform_id)` lookup. If found, check if anything changed (`_is_unchanged`); if not, return `noop` to skip AI enrichment.
+  2. **Spatial + text fuzzy match** — PostGIS `ST_DWithin` radius search (default 50m) + Jaro-Winkler title similarity (default threshold 0.85) + area tolerance (±5m²). Merges into existing property.
+  3. **Create new** — No match found; inserts new property with PostGIS point geometry.
+
+- **Listing upsert** (`_upsert_listings`): Each scrape produces discrete `PropertyListing` rows keyed on `(platform, platform_listing_id, listing_type)`. Price changes trigger `_record_price_change`.
+
+- **Price history as open intervals**: Each `(property_id, listing_type, platform)` triplet maintains an open-ended time interval. When price changes, the old interval is closed (`end_ts = now`) and a new one is opened.
+
+- **Watchlist integration**: `_check_watchlist_alerts` fires price-drop notifications when a price decrease exceeds the user's configured `min_drop_pct` threshold.
+
+## Changes
+
+Files touched:
+
+```
+ src/core/dedupe.py     | Main dedup logic: match_or_create_property, _upsert_listings, _record_price_change, _check_watchlist_alerts
+ src/core/entities.py   | PropertyCandidate Pydantic model with validation
+ src/adapters/db/models.py | Property, PropertyListing, PriceHistory, Watchlist ORM models
+```
+
+## New Dependencies
+
+- `jellyfish` — Jaro-Winkler similarity algorithm
+- `geoalchemy2` + `shapely` — PostGIS geometry handling
+
+## How to Test
+
+1. Run unit tests:
+   ```bash
+   pytest src/tests/unit/test_dedupe.py src/tests/unit/test_dedupe_noop.py src/tests/unit/test_listings.py -v
+   ```
+2. Integration tests:
+   ```bash
+   pytest src/tests/integration/test_e2e.py src/tests/integration/test_listings_e2e.py -v
+   ```
+
+## Notes / Follow-ups
+
+### Bugs Found
+
+- **BUG (Moderate): `_is_unchanged` silently returns `True` on DB errors** (dedupe.py L211-214): If the `property_listings` table query fails (e.g., connection error), the function returns `True` — meaning the property is incorrectly marked as unchanged, skipping updates and AI re-enrichment. This should log a warning and return `False` to be safe.
+
+- **BUG (Minor): `text_similarity` catches ALL exceptions** (dedupe.py L49-51): The broad `except Exception` in `text_similarity` swallows import errors (e.g., if `jellyfish` is not installed) and returns 0.0, making fuzzy matching silently fail without clear feedback.
+
+- **BUG (Minor): `_record_price_change` uses raw SQL with `platform = :platform` but platform can be `None`** (dedupe.py L262): PostgreSQL `= NULL` is always false. When a property-level price history is recorded without a platform, the `SELECT` will never find the open interval, causing duplicate rows. Should use `IS NOT DISTINCT FROM` or `COALESCE`.
+
+- **BUG (Minor): Pydantic v1 `@validator` used in entities.py** — The `PropertyCandidate` and other entities use `@validator` (Pydantic v1 API) instead of `@field_validator` (Pydantic v2). This works via compatibility layer but may break in future Pydantic versions and triggers deprecation warnings.
+
+### Tech Debt
+
+- **`raw_json` is stored as `str(dict)` not proper JSON** (dedupe.py L430, L471): `_upsert_listings` does `str(listing.get("raw_json"))` which produces Python repr, not valid JSON. Should use `json.dumps()`.
+- **No unique constraint on `(platform, platform_id)` in `Property` model** — The dedup relies on a query, but concurrent scrapes could create duplicates.
+- **`config.yaml` defaults don't match code defaults** — Config has `text_similarity_threshold: 0.65` but `match_or_create_property` defaults to `text_threshold=0.85`. The config values are never passed to the function.
+- **`token_sort` algorithm declared in config but not implemented** — Only `jaro_winkler` and `levenshtein` are handled in `text_similarity()`.

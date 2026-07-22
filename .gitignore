@@ -61,5 +61,8 @@ worker.log
 .cline/memory/
 .cline/kanban/
 
+# Per-feature transient plan (only lives on feature branches)
+/implementation_plan.md
+
 # MkDocs build output
 site/
