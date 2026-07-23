@@ -62,5 +62,5 @@ None.
 ## Notes / Follow-ups
 
 - Story 2.2 ([BIN-46](https://linear.app/felipelrib/issue/BIN-46)): **done** — frontend credential gate (`docs/features/31-frontend-credential-gate.md`); SPA attaches `X-API-Key` from sessionStorage.
-- Story 2.3 ([BIN-45](https://linear.app/felipelrib/issue/BIN-45)): **done** — owner-scoped favourites / saved searches / watchlist (`docs/features/32-owner-scoped-favourites-searches-watchlist.md`).
+- Story 2.3 ([BIN-45](https://linear.app/felipelrib/issue/BIN-45)): **done** — owner-scoped favourites / saved searches / watchlist (`docs/features/34-owner-scoped-favourites-searches-watchlist.md`).
 - CORS `allow_headers` lists `X-API-Key`; admin JWT remains accepted at the edge for non-SPA clients.
