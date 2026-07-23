@@ -65,6 +65,8 @@ ai:
   text_model: llama3           # model for text/sentiment analysis
   timeout: 120
   max_tokens: 1024
+  visual_weight: 0.6
+  text_weight: 0.4
 
 # ---------------------------------------------------------------------------
 # GPU Resource Management

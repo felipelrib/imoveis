@@ -74,7 +74,7 @@ class ImageStore:
                     resp.raise_for_status()
                     content = resp.content
 
-                    content_hash = hashlib.md5(content).hexdigest()
+                    content_hash = hashlib.sha256(content).hexdigest()
                     if content_hash in existing_hashes:
                         logger.debug(
                             "image_download_dedup",

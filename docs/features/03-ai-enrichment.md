@@ -49,7 +49,7 @@ Files touched:
 
 ### Tech Debt
 
-- **No retry on AI inference failures** — If Ollama returns garbage JSON, the task fails and retries the entire enrichment (including re-downloading images).
-- **60/40 visual/sentiment weight is hardcoded** (tasks.py L265) — Should be configurable.
-- **Image store uses MD5** (image_store.py L71) — MD5 is fine for dedup but is technically insecure. Not a security concern here, but `hashlib.sha256` would be more appropriate.
-- **`image_storage_path` not in AppConfig schema** — The YAML has `image_storage_path: data/images` but `AppConfig` doesn't define this field. `ImageStore.__init__` calls `get_config().image_storage_path` which will raise `AttributeError`.
+- ~~**No retry on AI inference failures** — If Ollama returns garbage JSON, the task fails and retries the entire enrichment (including re-downloading images).~~ — FIXED
+- ~~**60/40 visual/sentiment weight is hardcoded** (tasks.py L265) — Should be configurable.~~ — FIXED
+- ~~**Image store uses MD5** (image_store.py L71) — MD5 is fine for dedup but is technically insecure. Not a security concern here, but `hashlib.sha256` would be more appropriate.~~ — FIXED
+- ~~**`image_storage_path` not in AppConfig schema** — The YAML has `image_storage_path: data/images` but `AppConfig` doesn't define this field. `ImageStore.__init__` calls `get_config().image_storage_path` which will raise `AttributeError`.~~ — FIXED

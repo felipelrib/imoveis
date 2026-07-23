@@ -273,7 +273,7 @@ def ai_enrich(
                 s_res = await client.analyze_text(description, sentiment_prompt)
 
                 # Weighted blend: visual condition 60%, location sentiment 40%
-                a_score = v_res.condition_score * 0.6 + s_res.sentiment_score * 0.4
+                a_score = v_res.condition_score * cfg.ai.visual_weight + s_res.sentiment_score * cfg.ai.text_weight
 
                 # --- Persist -------------------------------------------------------
                 from adapters.db.models import MetricsScoring  # local import avoids circular

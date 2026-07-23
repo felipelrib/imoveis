@@ -126,6 +126,8 @@ class AIConfig(BaseModel, frozen=True):
     text_model: str = "llama3"
     timeout: int = 120
     max_tokens: int = 1024
+    visual_weight: float = 0.6
+    text_weight: float = 0.4
 
 
 class PlatformConfig(BaseModel, frozen=True):

@@ -219,12 +219,18 @@ class OllamaClient(LocalAIClient):
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call Ollama for deal verdict synthesis."""
         try:
-            res = await self.generate(self.text_model, prompt, stream=False, format="json")
-            data = json.loads(res.get("response", "{}"))
-            return DealVerdictResult(
-                verdict=data.get("verdict", ""),
-                confidence=float(data.get("confidence", 0.8)),
-            )
+            for attempt in range(3):
+                res = await self.generate(self.text_model, prompt, stream=False, format="json")
+                try:
+                    data = json.loads(res.get("response", "{}"))
+                    return DealVerdictResult(
+                        verdict=data.get("verdict", ""),
+                        confidence=float(data.get("confidence", 0.8)),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as exc:
             logger.warning("ollama_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -272,16 +278,22 @@ class OllamaClient(LocalAIClient):
                 with open(path, "rb") as f:
                     images.append(base64.b64encode(f.read()).decode("utf-8"))
 
-            res = await self.generate(self.visual_model, prompt, images=images, stream=False, format="json")
-            data = json.loads(res.get("response", "{}"))
-            return VisualResult(
-                condition_score=data.get("condition_score", 0.5),
-                analysis=res.get("response", ""),
-                category=data.get("category", "Average"),
-                reasoning=data.get("reasoning", ""),
-                features_detected=data.get("features_detected", []),
-                issues_detected=data.get("issues_detected", []),
-            )
+            for attempt in range(3):
+                res = await self.generate(self.visual_model, prompt, images=images, stream=False, format="json")
+                try:
+                    data = json.loads(res.get("response", "{}"))
+                    return VisualResult(
+                        condition_score=data.get("condition_score", 0.5),
+                        analysis=res.get("response", ""),
+                        category=data.get("category", "Average"),
+                        reasoning=data.get("reasoning", ""),
+                        features_detected=data.get("features_detected", []),
+                        issues_detected=data.get("issues_detected", []),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as e:
             logger.error(f"Error in analyze_visuals: {e}")
             return VisualResult(condition_score=0.5, analysis="Error")
@@ -289,16 +301,22 @@ class OllamaClient(LocalAIClient):
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
-            res = await self.generate(self.text_model, full_prompt, stream=False, format="json")
-            data = json.loads(res.get("response", "{}"))
-            return SentimentResult(
-                sentiment_score=data.get("sentiment_score", 0.5),
-                analysis=res.get("response", ""),
-                category=data.get("category", "Average"),
-                reasoning=data.get("reasoning", ""),
-                green_flags=data.get("green_flags", []),
-                red_flags=data.get("red_flags", []),
-            )
+            for attempt in range(3):
+                res = await self.generate(self.text_model, full_prompt, stream=False, format="json")
+                try:
+                    data = json.loads(res.get("response", "{}"))
+                    return SentimentResult(
+                        sentiment_score=data.get("sentiment_score", 0.5),
+                        analysis=res.get("response", ""),
+                        category=data.get("category", "Average"),
+                        reasoning=data.get("reasoning", ""),
+                        green_flags=data.get("green_flags", []),
+                        red_flags=data.get("red_flags", []),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    full_prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as e:
             logger.error(f"Error in analyze_text: {e}")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
@@ -331,18 +349,24 @@ class LMStudioClient(LocalAIClient):
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call LM Studio for deal verdict synthesis."""
         try:
-            messages = [{"role": "user", "content": prompt}]
-            result = await self.chat_completions(
-                model=self.text_model,
-                messages=messages,
-                max_tokens=256,
-            )
-            text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            data = json.loads(text)
-            return DealVerdictResult(
-                verdict=data.get("verdict", ""),
-                confidence=float(data.get("confidence", 0.8)),
-            )
+            for attempt in range(3):
+                messages = [{"role": "user", "content": prompt}]
+                result = await self.chat_completions(
+                    model=self.text_model,
+                    messages=messages,
+                    max_tokens=256,
+                )
+                text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+                try:
+                    data = json.loads(text)
+                    return DealVerdictResult(
+                        verdict=data.get("verdict", ""),
+                        confidence=float(data.get("confidence", 0.8)),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as exc:
             logger.warning("lmstudio_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -407,25 +431,29 @@ class LMStudioClient(LocalAIClient):
                     "image_url": {"url": f"data:{media_type};base64,{b64}"},
                 })
 
-            messages = [{"role": "user", "content": content}]
-            result = await self.chat_completions(
-                model=self.visual_model,
-                messages=messages,
-                max_tokens=1024,
-            )
-            text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            data = json.loads(text)
-            return VisualResult(
-                condition_score=data.get("condition_score", 0.5),
-                analysis=data.get("analysis", text),
-                category=data.get("category", "Average"),
-                reasoning=data.get("reasoning", ""),
-                features_detected=data.get("features_detected", []),
-                issues_detected=data.get("issues_detected", []),
-            )
-        except json.JSONDecodeError:
-            logger.warning("LM Studio visual analysis returned non-JSON, using raw text")
-            return VisualResult(condition_score=0.5, analysis=text)
+            for attempt in range(3):
+                messages = [{"role": "user", "content": content}]
+                result = await self.chat_completions(
+                    model=self.visual_model,
+                    messages=messages,
+                    max_tokens=1024,
+                )
+                text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+                try:
+                    data = json.loads(text)
+                    return VisualResult(
+                        condition_score=data.get("condition_score", 0.5),
+                        analysis=data.get("analysis", text),
+                        category=data.get("category", "Average"),
+                        reasoning=data.get("reasoning", ""),
+                        features_detected=data.get("features_detected", []),
+                        issues_detected=data.get("issues_detected", []),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    if isinstance(content[0], dict) and content[0].get("type") == "text":
+                        content[0]["text"] += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as e:
             logger.error(f"Error in LMStudioClient.analyze_visuals: {e}")
             return VisualResult(condition_score=0.5, analysis="Error")
@@ -435,25 +463,28 @@ class LMStudioClient(LocalAIClient):
         text = "<unread>"
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
-            messages = [{"role": "user", "content": full_prompt}]
-            result = await self.chat_completions(
-                model=self.text_model,
-                messages=messages,
-                max_tokens=1024,
-            )
-            text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            data = json.loads(text)
-            return SentimentResult(
-                sentiment_score=data.get("sentiment_score", 0.5),
-                analysis=data.get("analysis", text),
-                category=data.get("category", "Average"),
-                reasoning=data.get("reasoning", ""),
-                green_flags=data.get("green_flags", []),
-                red_flags=data.get("red_flags", []),
-            )
-        except json.JSONDecodeError:
-            logger.warning("LM Studio text analysis returned non-JSON, using raw text")
-            return SentimentResult(sentiment_score=0.5, analysis=text)
+            for attempt in range(3):
+                messages = [{"role": "user", "content": full_prompt}]
+                result = await self.chat_completions(
+                    model=self.text_model,
+                    messages=messages,
+                    max_tokens=1024,
+                )
+                text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+                try:
+                    data = json.loads(text)
+                    return SentimentResult(
+                        sentiment_score=data.get("sentiment_score", 0.5),
+                        analysis=data.get("analysis", text),
+                        category=data.get("category", "Average"),
+                        reasoning=data.get("reasoning", ""),
+                        green_flags=data.get("green_flags", []),
+                        red_flags=data.get("red_flags", []),
+                    )
+                except json.JSONDecodeError:
+                    if attempt == 2:
+                        raise
+                    full_prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
         except Exception as e:
             logger.error(f"Error in LMStudioClient.analyze_text: {e}")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
