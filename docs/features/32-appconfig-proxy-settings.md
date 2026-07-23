@@ -49,6 +49,6 @@ None.
 
 - Related: BIN-48 (rotating proxy in scraper HTTP layer) — **done**
   (`docs/features/35-rotating-proxy-scraper-http.md`); BIN-49 (operator enablement /
-  observability) — **done** (`docs/features/36-operator-proxy-observability.md`).
+  observability) — **done** (`docs/features/37-operator-proxy-observability.md`).
 - Platform `extra.proxy` override vs global pool: non-null override wins; null
   defers to global (Story 3.2).
