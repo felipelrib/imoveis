@@ -16,6 +16,7 @@ class TestBuildBeatSchedule:
 
         # Arrange
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {
             "quintoandar": MagicMock(enabled=True, scrape_interval=60),
             "olx": MagicMock(enabled=True, scrape_interval=30),
@@ -44,6 +45,7 @@ class TestBuildBeatSchedule:
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {
             "quintoandar": MagicMock(enabled=False, scrape_interval=60),
             "olx": MagicMock(enabled=True, scrape_interval=30),
@@ -66,6 +68,7 @@ class TestBuildBeatSchedule:
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {
             "quintoandar": MagicMock(enabled=True, scrape_interval=0),
         }
@@ -77,7 +80,9 @@ class TestBuildBeatSchedule:
 
         schedule = build_beat_schedule()
 
-        assert len(schedule) == 0
+        assert "scrape-quintoandar" not in schedule
+        assert "evaluate-watchlist-alerts" in schedule
+        assert "monitor-queues" in schedule
 
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
@@ -86,6 +91,7 @@ class TestBuildBeatSchedule:
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {
             "olx": MagicMock(enabled=True, scrape_interval=60),
         }
@@ -106,6 +112,7 @@ class TestBuildBeatSchedule:
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {
             "olx": MagicMock(enabled=True, scrape_interval=60),
         }
@@ -117,15 +124,17 @@ class TestBuildBeatSchedule:
 
         schedule = build_beat_schedule()
 
-        assert len(schedule) == 0
+        assert "scrape-olx" not in schedule
+        assert "evaluate-watchlist-alerts" in schedule
 
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_empty_platforms(self, mock_get_redis, mock_get_config):
-        """No platforms configured → empty schedule."""
+        """No platforms configured → only always-on maintenance jobs."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
+        cfg.alerts.digest_mode = False
         cfg.scraping.platforms = {}
         mock_get_config.return_value = cfg
 
@@ -133,13 +142,13 @@ class TestBuildBeatSchedule:
         mock_get_redis.return_value = redis_inst
 
         schedule = build_beat_schedule()
-        assert schedule == {}
+        assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}
 
     @patch("adapters.queue.celery_app.get_config", side_effect=Exception("config error"))
     @patch("adapters.queue.celery_app.get_redis")
     def test_exception_returns_empty(self, mock_get_redis, mock_get_config):
-        """If config/Redis is unavailable, returns empty schedule (no crash)."""
+        """If config/Redis is unavailable, keep always-on jobs (no crash)."""
         from adapters.queue.celery_app import build_beat_schedule
 
         schedule = build_beat_schedule()
-        assert schedule == {}
+        assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}

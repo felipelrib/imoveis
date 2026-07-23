@@ -180,6 +180,8 @@ jobs:
       - name: Cassette unit tests + live dry-run
         run: bash scripts/agent/validate-scrapers.sh --require-live
         env:
+          # Dummy DB URL so AppConfig validates when Redis CB loads config
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
 

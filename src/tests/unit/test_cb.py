@@ -13,17 +13,34 @@ from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 
 def _make_redis_breaker(failure_threshold=3, cooldown_seconds=60):
     """Build a RedisCircuitBreaker with a dict-backed fake Redis client."""
-    store = {}
+    store: dict[str, object] = {}
 
-    def fake_get(key):
-        return store.get(key)
+    def fake_exists(key):
+        return 1 if key in store else 0
 
-    def fake_setex(key, ttl, value):
-        store[key] = value
+    def fake_delete(*keys):
+        for key in keys:
+            store.pop(key, None)
+
+    def fake_script(*, keys, args):
+        """Mirror RECORD_FAILURE_SCRIPT against the in-memory store."""
+        base = keys[0]
+        threshold = int(args[0])
+        open_key = f"{base}:open"
+        fail_key = f"{base}:failures"
+        if open_key in store:
+            return 0
+        count = int(store.get(fail_key, 0)) + 1
+        store[fail_key] = count
+        if count >= threshold:
+            store[open_key] = b"1"
+            return 1
+        return 0
 
     mock_redis = MagicMock()
-    mock_redis.get = fake_get
-    mock_redis.setex = fake_setex
+    mock_redis.exists = fake_exists
+    mock_redis.delete = fake_delete
+    mock_redis.register_script = MagicMock(return_value=fake_script)
 
     with patch("infra.redis_client.get_redis", return_value=mock_redis):
         cb = RedisCircuitBreaker(
@@ -32,6 +49,7 @@ def _make_redis_breaker(failure_threshold=3, cooldown_seconds=60):
             cooldown_seconds=cooldown_seconds,
         )
     cb.redis_client = mock_redis
+    cb._record_failure_script = fake_script
     return cb, mock_redis
 
 
@@ -41,7 +59,7 @@ def test_redis_cb_starts_closed():
 
 
 def test_redis_cb_opens_after_threshold():
-    cb, mock_redis = _make_redis_breaker(failure_threshold=3)
+    cb, _ = _make_redis_breaker(failure_threshold=3)
     cb.record_failure()
     cb.record_failure()
     assert not cb.is_open()
@@ -50,7 +68,7 @@ def test_redis_cb_opens_after_threshold():
 
 
 def test_redis_cb_resets_on_success():
-    cb, mock_redis = _make_redis_breaker(failure_threshold=2)
+    cb, _ = _make_redis_breaker(failure_threshold=2)
     cb.record_failure()
     cb.record_failure()
     assert cb.is_open()
