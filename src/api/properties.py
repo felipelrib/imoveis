@@ -286,8 +286,6 @@ def get_properties_by_ids(
     ids: Annotated[str, Query(description="Comma-separated property UUIDs (1–4)")],
 ) -> Dict[str, Any]:
     """Return 1–4 properties by id in request order (AD-12 projection for compare)."""
-    import uuid as uuid_mod
-
     raw_ids = [part.strip() for part in ids.split(",") if part.strip()]
     if not raw_ids or len(raw_ids) > 4:
         raise HTTPException(
