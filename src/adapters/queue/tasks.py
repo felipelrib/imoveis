@@ -269,7 +269,7 @@ def ai_enrich(
         async def _run_enrichment():
             async with client.session_context():
                 # --- Image pipeline ------------------------------------------------
-                paths: List[str] = await image_store.download_images(property_id, image_urls, max_images=5)
+                paths: List[str] = await image_store.download_images(property_id, image_urls, max_images=cfg.ai.max_images_per_property)
 
                 # --- Build prompts -------------------------------------------------
                 visual_prompt = build_visual_condition_prompt(len(paths))

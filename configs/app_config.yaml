@@ -67,6 +67,7 @@ ai:
   max_tokens: 1024
   visual_weight: 0.6
   text_weight: 0.4
+  max_images_per_property: 5
 
 # ---------------------------------------------------------------------------
 # GPU Resource Management

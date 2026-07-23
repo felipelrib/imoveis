@@ -128,6 +128,7 @@ class AIConfig(BaseModel, frozen=True):
     max_tokens: int = 1024
     visual_weight: float = 0.6
     text_weight: float = 0.4
+    max_images_per_property: int = 5
 
 
 class PlatformConfig(BaseModel, frozen=True):
