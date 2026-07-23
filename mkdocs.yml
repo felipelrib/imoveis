@@ -62,6 +62,7 @@ nav:
       - Watchlist Price-Drop Alerts: features/17-watchlist-price-drop-alerts.md
       - Admin Control Panel: features/18-admin-control-panel.md
       - System Status & Pipeline Telemetry: features/19-system-status-and-pipeline-telemetry.md
+      - AppConfig API Credential: features/30-appconfig-api-credential.md
   - ADR:
       - Dual-Model Development (superseded): adr/0001-dual-model-development.md
       - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
-from api.auth import verify_admin_jwt
+from api.auth import verify_admin_access
 from core.entities import ScoringWeights
 from infra.config import get_config
 from infra.db import SessionLocal
@@ -27,7 +27,7 @@ from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_admin_jwt)])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_admin_access)])
 
 REDIS_KEY_AI_PAUSED = "workers:ai:paused"
 _RESP_400 = {400: {"description": "Bad request"}}

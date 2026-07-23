@@ -61,6 +61,10 @@ _CONFIG_ENV_KEYS = [
     "REDIS_URL",
     "AI_MODEL",
     "OLLAMA_HOST",
+    "API_KEY",
+    "JWT_SECRET",
+    "ADMIN_USER",
+    "ADMIN_PASS",
 ]
 
 
@@ -253,6 +257,45 @@ def test_generic_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.Monkey
     cfg = load_config(cfg_file)
 
     assert cfg.app.debug is True
+
+
+@pytest.mark.unit
+def test_api_key_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """API_KEY env var maps into auth.api_key."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("API_KEY", "from-api-key-env")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.auth.api_key == "from-api-key-env"
+    assert cfg.auth.principal_id == "default"
+
+
+@pytest.mark.unit
+def test_imoveis_auth_principal_id_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """IMOVEIS_AUTH__PRINCIPAL_ID overrides auth.principal_id."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("IMOVEIS_AUTH__PRINCIPAL_ID", "operator-1")
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.auth.principal_id == "operator-1"
+
+
+@pytest.mark.unit
+def test_jwt_secret_and_admin_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """JWT_SECRET / ADMIN_USER / ADMIN_PASS map into auth.*."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("JWT_SECRET", "unit-jwt-secret")
+    monkeypatch.setenv("ADMIN_USER", "ops")
+    monkeypatch.setenv("ADMIN_PASS", "ops-pass")
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.auth.jwt_secret == "unit-jwt-secret"
+    assert cfg.auth.admin_user == "ops"
+    assert cfg.auth.admin_pass == "ops-pass"
 
 
 @pytest.mark.unit

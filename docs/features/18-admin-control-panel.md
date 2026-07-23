@@ -13,9 +13,12 @@ files. There was no safe, authenticated way to:
 
 ## Approach
 
-All admin endpoints are grouped under the `/admin` prefix with a **single `X-API-Key`
-header guard** (`api.auth.verify_api_key`). The key is read from the `API_KEY` environment
-variable. If unset, all requests are rejected with 403.
+All admin endpoints are grouped under the `/admin` prefix with
+`api.auth.verify_admin_access`. The canonical credential is `X-API-Key` validated
+against `AppConfig.auth.api_key` (env: `API_KEY`). A valid admin JWT is still
+accepted and maps to the same `auth.principal_id` (SPA continuity until Story 2.2).
+If the API key is unset in config, API-key requests are rejected with 403; requests
+with neither credential receive 401.
 
 ### Worker Management
 
@@ -72,38 +75,41 @@ None.
 
 ```bash
 # Set admin key
-export API_KEY=dev-secret
+export API_KEY=test-local-api-key
 
 # Pause AI workers
 curl -X POST http://localhost:8000/admin/workers/pause \
-  -H 'X-API-Key: dev-secret'
+  -H 'X-API-Key: test-local-api-key'
 
 # Check status
-curl http://localhost:8000/admin/workers/status -H 'X-API-Key: dev-secret'
+curl http://localhost:8000/admin/workers/status -H 'X-API-Key: test-local-api-key'
 # {"ai_workers_paused": true}
 
 # Resume workers
-curl -X POST http://localhost:8000/admin/workers/resume -H 'X-API-Key: dev-secret'
+curl -X POST http://localhost:8000/admin/workers/resume -H 'X-API-Key: test-local-api-key'
 
 # Scale GPU to 2 concurrent jobs
 curl -X POST http://localhost:8000/admin/gpu/scale \
-  -H 'Content-Type: application/json' -H 'X-API-Key: dev-secret' \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
   -d '{"limit": 2}'
 
 # Recalculate scores with custom weights
 curl -X POST http://localhost:8000/admin/scoring/recalculate \
-  -H 'Content-Type: application/json' -H 'X-API-Key: dev-secret' \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
   -d '{"stat_weight": 0.4, "ai_weight": 0.6}'
 
 # View / update schedule
-curl http://localhost:8000/admin/schedule -H 'X-API-Key: dev-secret'
+curl http://localhost:8000/admin/schedule -H 'X-API-Key: test-local-api-key'
 curl -X POST http://localhost:8000/admin/schedule \
-  -H 'Content-Type: application/json' -H 'X-API-Key: dev-secret' \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
   -d '{"platform": "olx", "interval_minutes": 120}'
 ```
 
 ## Implementation Notes
-- **API Key Security**: The `VITE_API_KEY` was removed from the SPA bundle to prevent exposure in DevTools. Admin endpoints rely on reverse-proxy level IP restrictions instead.
+- **API Key Security**: Prefer `API_KEY` via AppConfig / env. The SPA must not ship
+  hardcoded secrets (`VITE_API_KEY` was removed from the bundle). Story 2.2 adds a
+  paste-once / sessionStorage credential gate; until then admin JWT login remains
+  accepted at the edge alongside `X-API-Key`.
 - **Resource Management**: Fixed generator leaks in the admin scoring endpoints by using the `SessionLocal` context manager directly, preventing connection exhaustion.
 - **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
 - **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.

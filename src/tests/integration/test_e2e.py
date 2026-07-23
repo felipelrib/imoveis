@@ -61,18 +61,16 @@ def test_client():
 
 
 @pytest.fixture(scope="function")
-def admin_headers(test_client):
-    """Bearer token for admin endpoints (JWT via /auth/admin/login)."""
-    response = test_client.post(
-        "/auth/admin/login",
-        data={
-            "username": os.environ.get("ADMIN_USER", "admin"),
-            "password": os.environ.get("ADMIN_PASS", "admin"),
-        },
-    )
-    assert response.status_code == 200, response.text
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+def admin_headers():
+    """X-API-Key for admin endpoints (AppConfig-backed API credential)."""
+    import os
+
+    from infra.config import get_config
+
+    get_config.cache_clear()
+    api_key = get_config().auth.api_key or os.environ.get("API_KEY", "")
+    assert api_key, "API_KEY must be set (via env → AppConfig) for admin integration tests"
+    return {"X-API-Key": api_key}
 
 
 @pytest.fixture(scope="function")

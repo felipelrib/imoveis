@@ -188,6 +188,21 @@ class AlertsConfig(BaseModel, frozen=True):
     smtp_pass: str = ""
 
 
+class AuthConfig(BaseModel, frozen=True):
+    """API edge credential and JWT settings (AD-2 / AD-6 / AD-11).
+
+    Secrets are empty by default — supply via env (``API_KEY``, ``JWT_SECRET``,
+    ``ADMIN_USER``, ``ADMIN_PASS``, or ``IMOVEIS_AUTH__*``). Never commit real
+    credentials in YAML samples.
+    """
+
+    api_key: str = ""
+    jwt_secret: str = ""
+    principal_id: str = "default"
+    admin_user: str = "admin"
+    admin_pass: str = "admin"
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -208,6 +223,7 @@ class AppConfig(BaseModel, frozen=True):
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     image_storage_path: str = "data/images"
 
 
@@ -280,9 +296,9 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
     1. ``DATABASE_URL`` — parsed into ``database.*`` fields
     2. ``REDIS_URL``    — parsed into ``redis.*`` fields
-    3. ``AI_MODEL``     — overrides ``ai.visual_model``
-    4. ``OLLAMA_HOST``  — overrides ``ai.ollama_url``
-    5. ``IMOVEIS_<SECTION>_<KEY>`` — generic override for any leaf value
+    3. ``AI_MODEL`` / ``AI_TEXT_MODEL`` / ``AI_EMBEDDING_MODEL`` / ``OLLAMA_HOST``
+    4. ``API_KEY`` / ``JWT_SECRET`` / ``ADMIN_USER`` / ``ADMIN_PASS`` → ``auth.*``
+    5. ``IMOVEIS_<SECTION>__<KEY>`` — generic override for any leaf value
     """
     # 1. DATABASE_URL → database section
     db_url = os.environ.get("DATABASE_URL")
@@ -323,6 +339,21 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     if ollama_host:
         data.setdefault("ai", {})
         data["ai"]["ollama_url"] = ollama_host
+
+    # 3.6 Auth credentials → auth.* (prefer dedicated env names for DX / CI)
+    data.setdefault("auth", {})
+    api_key = os.environ.get("API_KEY")
+    if api_key is not None:
+        data["auth"]["api_key"] = api_key
+    jwt_secret = os.environ.get("JWT_SECRET")
+    if jwt_secret is not None:
+        data["auth"]["jwt_secret"] = jwt_secret
+    admin_user = os.environ.get("ADMIN_USER")
+    if admin_user is not None:
+        data["auth"]["admin_user"] = admin_user
+    admin_pass = os.environ.get("ADMIN_PASS")
+    if admin_pass is not None:
+        data["auth"]["admin_pass"] = admin_pass
 
     # 4. Generic IMOVEIS_* overrides
     prefix = _ENV_PREFIX
