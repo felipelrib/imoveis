@@ -1,7 +1,7 @@
 # Companion — Architecture delta & ticket altitude
 
-**Audience:** Felipe (builder / senior SWE)  
-**Job:** Keep `docs/architecture.md` and Linear tickets useful — enough to act, not a second novel.  
+**Audience:** Felipe (builder / senior SWE)
+**Job:** Keep `docs/architecture.md` and Linear tickets useful — enough to act, not a second novel.
 **Spine:** `ARCHITECTURE-SPINE.md` (same folder) is the build contract. This note is the human-facing delta.
 
 ## vs `docs/architecture.md` (today)
