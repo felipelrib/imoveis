@@ -143,6 +143,36 @@ validate_conventional_branch() {
   return 0
 }
 
+# --- Docs-only change detection ---------------------------------------------
+# True when every file in origin/main...HEAD is docs/planning prose (matches
+# ci.yml paths-ignore). Used to skip heavy validate.sh and wait on Docs CI.
+is_docs_only_vs_main() {
+  local files f
+  git fetch origin main --quiet 2>/dev/null || true
+  files="$(git diff --name-only "origin/main...HEAD" 2>/dev/null || true)"
+  if [ -z "$files" ]; then
+    return 1
+  fi
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in
+      docs/*|mkdocs.yml|README.md|_bmad-output/*|_bmad/*|.agents/*|*.md) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$files"
+  return 0
+}
+
+validate_docs_only() {
+  if command -v mkdocs >/dev/null 2>&1; then
+    log "Docs-only change — running mkdocs build --strict"
+    (cd "$REPO_ROOT" && mkdocs build --strict) || return 1
+    return 0
+  fi
+  warn "mkdocs not installed — skipping local docs build (CI Docs workflow will validate)"
+  return 0
+}
+
 # --- Registry locking (race-free across parallel setup runs) ----------------
 registry_lock() {
   mkdir -p "$REGISTRY_DIR" 2>/dev/null || true
