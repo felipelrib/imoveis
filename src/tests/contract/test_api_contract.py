@@ -237,12 +237,12 @@ class TestPropertyProjectionContract:
 
 
 class TestPropertyExportContract:
-    def test_export_rejects_invalid_format(self, client):
-        response = client.get("/properties/export?format=xml")
+    def test_export_rejects_invalid_format(self, client, admin_headers):
+        response = client.get("/properties/export?format=xml", headers=admin_headers)
         assert response.status_code == 422
 
-    def test_export_json_shape_and_projection(self, client):
-        response = client.get("/properties/export?format=json")
+    def test_export_json_shape_and_projection(self, client, admin_headers):
+        response = client.get("/properties/export?format=json", headers=admin_headers)
         if response.status_code == 200:
             data = response.json()
             assert "properties" in data
@@ -259,8 +259,8 @@ class TestPropertyExportContract:
         else:
             pytest.fail(f"Unexpected export json status {response.status_code}")
 
-    def test_export_csv_headers_and_empty_ok(self, client):
-        response = client.get("/properties/export?format=csv")
+    def test_export_csv_headers_and_empty_ok(self, client, admin_headers):
+        response = client.get("/properties/export?format=csv", headers=admin_headers)
         if response.status_code == 200:
             assert "text/csv" in response.headers.get("content-type", "")
             assert "properties-export.csv" in response.headers.get("content-disposition", "")
@@ -274,10 +274,11 @@ class TestPropertyExportContract:
         else:
             pytest.fail(f"Unexpected export csv status {response.status_code}")
 
-    def test_export_json_empty_result_set(self, client):
+    def test_export_json_empty_result_set(self, client, admin_headers):
         # Unlikely neighborhood name → empty set when DB is up
         response = client.get(
-            "/properties/export?format=json&neighborhood_name=__no_such_nbr_bin50__"
+            "/properties/export?format=json&neighborhood_name=__no_such_nbr_bin50__",
+            headers=admin_headers,
         )
         if response.status_code == 200:
             data = response.json()
@@ -288,6 +289,11 @@ class TestPropertyExportContract:
             pass
         else:
             pytest.fail(f"Unexpected empty export status {response.status_code}")
+
+    def test_export_requires_key_when_configured(self, client):
+        response = client.get("/properties/export?format=json")
+        assert response.status_code == 403
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
