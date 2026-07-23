@@ -37,7 +37,7 @@ test.describe("Properties multi-select for comparison", () => {
     await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
     await expect(page.getByTestId("compare-open")).toBeEnabled();
 
-    await page.getByTestId("compare-select-5").check();
+    await page.getByTestId("compare-select-5").click();
     await expect(page.getByText("You can compare up to 4 properties")).toBeVisible();
     await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
     await expect(page.getByTestId("compare-select-5")).not.toBeChecked();

@@ -88,7 +88,7 @@ test.describe("Scraper control critical path", () => {
     await expect(page.locator("option[value='quintoandar']")).toHaveCount(1);
 
     await page.getByRole("button", { name: /Run Scraper/i }).click();
-    await expect(page.locator("text=Scraper enqueued").or(page.locator("text=task-e2e-1")).or(page.locator("text=Enqueuing"))).toBeVisible({
+    await expect(page.getByText(/Scraper enqueued|Task enqueued|Enqueuing/i).first()).toBeVisible({
       timeout: 10000,
     });
   });
