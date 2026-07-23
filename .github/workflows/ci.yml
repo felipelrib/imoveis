@@ -166,6 +166,16 @@ jobs:
   scrapers:
     needs: lint
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -178,6 +188,8 @@ jobs:
 
       - name: Cassette unit tests + live dry-run
         run: bash scripts/agent/validate-scrapers.sh --require-live
+        env:
+          REDIS_URL: redis://localhost:6379/0
 
   # ---- E2E (Playwright) — PR gate + post-merge smoke test ----
   e2e:
