@@ -54,6 +54,11 @@ def build_beat_schedule() -> dict:
         "schedule": 300.0,
     }
 
+    schedule["monitor-queues"] = {
+        "task": "tasks.monitor_queues",
+        "schedule": 60.0,
+    }
+
     return schedule
 
 
@@ -82,6 +87,13 @@ def make_celery() -> Celery:
     # Configuração de retries para tarefas críticas
     celery_app.conf.task_default_retry_delay = 30
     celery_app.conf.task_default_max_retries = 3
+
+    # Task routes (TD-06-C)
+    celery_app.conf.task_routes = {
+        'tasks.scrape_listings': {'queue': 'scrapers'},
+        'tasks.ai_enrich': {'queue': 'ai'},
+        'tasks.send_price_drop_alert': {'queue': 'scrapers'},
+    }
 
     # Build and apply the beat schedule from config
     celery_app.conf.beat_schedule = build_beat_schedule()

@@ -112,6 +112,7 @@ class SystemStatusResponse(BaseModel):
     database: Dict[str, Any]
     redis: Dict[str, Any]
     ollama: Dict[str, Any]
+    workers: Dict[str, Any]
     ai_workers_paused: bool
     stats: Dict[str, Any]
 

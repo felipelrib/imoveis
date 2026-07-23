@@ -60,6 +60,19 @@ async def _check_ollama() -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
+def _check_workers() -> dict:
+    try:
+        from adapters.queue.celery_app import make_celery
+        app = make_celery()
+        i = app.control.inspect()
+        ping_res = i.ping()
+        if not ping_res:
+            return {"status": "error", "detail": "No workers responding"}
+        return {"status": "ok", "nodes": list(ping_res.keys())}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+
+
 @router.get("/status", response_model=SystemStatusResponse)
 async def system_status() -> Dict[str, Any]:
     """Return health of all system components — polled by the GUI dashboard."""
@@ -71,6 +84,7 @@ async def system_status() -> Dict[str, Any]:
         "database": db_status,
         "redis": _check_redis(),
         "ollama": await _check_ollama(),
+        "workers": _check_workers(),
         "ai_workers_paused": ai_paused,
         "stats": {
             "total_properties": total_props,

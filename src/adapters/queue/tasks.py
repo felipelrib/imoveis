@@ -71,6 +71,13 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
     scraper_config = platform_cfg.model_dump()
 
     session = SessionLocal()
+    r = get_redis()
+    
+    # Check paused flag (TD-06-A)
+    if r.exists("workers:scrapers:paused"):
+        logger.info("scrapers_paused", platform=platform_name)
+        raise self.retry(countdown=120, exc=Exception("Scrapers paused due to high AI queue depth"))
+        
     try:
         store = CheckpointStore(session)
         cp = store.get(platform_name) or {}
@@ -492,3 +499,30 @@ def send_price_drop_alert(alert_dict: dict):
             
     # Set debounce key to prevent spam
     r.setex(debounce_key, 3600, "1")
+
+# ---------------------------------------------------------------------------
+# Queue Monitoring
+# ---------------------------------------------------------------------------
+
+@celery.task(name="tasks.monitor_queues")
+def monitor_queues():
+    """Monitor queue depths and dynamically throttle scrapers."""
+    from infra.redis_client import get_redis
+    r = get_redis()
+    
+    # Threshold could be configurable
+    BATCH_THRESHOLD = 50 
+    
+    # LLEN gives pending items in Celery list queues (when using redis broker)
+    ai_len = r.llen("ai")
+    
+    logger.info("queue_monitor", ai_queue=ai_len)
+    
+    if ai_len > BATCH_THRESHOLD:
+        if not r.exists("workers:scrapers:paused"):
+            logger.warning("queue_monitor_pause_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
+            r.set("workers:scrapers:paused", "1")
+    else:
+        if r.exists("workers:scrapers:paused"):
+            logger.info("queue_monitor_resume_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
+            r.delete("workers:scrapers:paused")

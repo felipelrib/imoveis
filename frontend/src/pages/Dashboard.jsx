@@ -12,12 +12,15 @@ const SERVICES = [
   { key: 'database', icon: '🗄️', label: 'PostgreSQL',  sub: (s) => s?.database?.status === 'ok' ? 'Connected' : s?.database?.detail || 'Offline' },
   { key: 'redis',    icon: '⚡', label: 'Redis',        sub: (s) => s?.redis?.status === 'ok' ? 'Connected' : 'Offline' },
   { key: 'ollama',   icon: '🤖', label: 'Ollama VLM',   sub: (s) => s?.ollama?.status === 'ok' ? `${(s.ollama.models || []).length} model(s) loaded` : 'Offline' },
-  { key: 'workers',  icon: '⚙️', label: 'AI Workers',   sub: (s) => s?.ai_workers_paused ? '⏸ Paused' : '▶ Running' },
+  { key: 'workers',  icon: '⚙️', label: 'Celery Workers', sub: (s) => s?.workers?.status === 'ok' ? (s?.ai_workers_paused ? '⏸ Paused' : '▶ Running') : 'Offline' },
 ]
 
 function svcStatus(key, s) {
   if (!s) return 'loading'
-  if (key === 'workers') return s.ai_workers_paused ? 'warn' : 'ok'
+  if (key === 'workers') {
+    if (s?.workers?.status !== 'ok') return 'err'
+    return s.ai_workers_paused ? 'warn' : 'ok'
+  }
   return s[key]?.status === 'ok' ? 'ok' : 'err'
 }
 
