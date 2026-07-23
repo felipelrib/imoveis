@@ -152,8 +152,9 @@ def _geometry_equals(session: Session, existing, polygon: Polygon) -> bool:
 
 def upsert_neighbourhoods(session: Session, rows: Sequence[NeighbourhoodPolygon]) -> LoadResult:
     """Insert or update neighbourhood geometries. Idempotent on (name, city, state)."""
-    from adapters.db.models import Neighborhood
     from geoalchemy2.shape import from_shape
+
+    from adapters.db.models import Neighborhood
 
     inserted = updated = skipped = 0
     for row in rows:
