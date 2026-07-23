@@ -33,8 +33,12 @@ done
 rc=0
 cd "$REPO_ROOT"
 
+# Prefer python3 (matches validate.sh)
+PYTHON_BIN="python3"
+command -v python3 &>/dev/null || PYTHON_BIN="python"
+
 log "Scraper validation: HTML cassette + unit tests"
-if python -m pytest \
+if "$PYTHON_BIN" -m pytest \
   src/tests/unit/test_scraper_cassettes.py \
   src/tests/unit/test_olx.py \
   src/tests/unit/test_scoring_and_fees.py \
@@ -53,12 +57,12 @@ if [ "$REQUIRE_LIVE" = false ]; then
 fi
 
 log "Scraper validation: dry-run against live pages (merge-blocking)"
-if python scripts/dev/test_scraper_dryrun.py; then
+if "$PYTHON_BIN" scripts/dev/test_scraper_dryrun.py; then
   ok "scraper dry-run passed"
 else
   warn "scraper dry-run FAILED"
   warn "If HTTP succeeded but parsing/normalize broke, cassettes are likely OUTDATED."
-  warn "Refresh: python scripts/dev/record_scraper_cassettes.py"
+  warn "Refresh: $PYTHON_BIN scripts/dev/record_scraper_cassettes.py"
   warn "Then update test_scraper_cassettes.py expectations if fields changed, re-run this script."
   warn "If the site is down / blocked, fix connectivity or retry — do not skip this gate in CI."
   rc=1
