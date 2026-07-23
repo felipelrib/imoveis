@@ -1,5 +1,5 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-23T14:45:00-03:00
+# last_updated: 2026-07-23T15:30:00-03:00
 # project: Imoveis — Deal Tracker
 # project_key: NOKEY
 # tracking_system: file-system
@@ -45,7 +45,7 @@
 #   (keep AD-12 property projection before export/digest)
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-23T14:45:00-03:00
+last_updated: 2026-07-23T15:30:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -54,7 +54,7 @@ story_location: "{project-root}/_bmad-output/implementation-artifacts"
 development_status:
   epic-1: in-progress
   1-1-canonical-property-projection-for-decisioning: done
-  1-2-multi-select-properties-for-comparison: backlog
+  1-2-multi-select-properties-for-comparison: done
   1-3-side-by-side-compare-view: backlog
   epic-1-retrospective: optional
 

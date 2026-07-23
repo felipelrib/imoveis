@@ -3,6 +3,7 @@ import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, f
 import PropertyModal from '../components/PropertyModal.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
+import { useCompareSelection } from '../hooks/useCompareSelection.js'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', label: '⭐ Best Score' },
@@ -50,6 +51,23 @@ export default function Properties() {
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [favouriteIds, setFavouriteIds] = useState(new Set())
   const showToast = useToast()
+
+  const onCompareLimitReached = useCallback(() => {
+    showToast('You can compare up to 4 properties', { type: 'warning' })
+  }, [showToast])
+
+  const {
+    selectedIds: compareIds,
+    toggle: toggleCompare,
+    clear: clearCompare,
+    isSelected: isCompareSelected,
+    canCompare,
+  } = useCompareSelection({ onLimitReached: onCompareLimitReached })
+
+  const handleToggleCompare = useCallback((e, propertyId) => {
+    e.stopPropagation()
+    toggleCompare(propertyId)
+  }, [toggleCompare])
 
   // Saved searches state
   const [savedSearches, setSavedSearches] = useState([])
@@ -553,6 +571,8 @@ export default function Properties() {
                     onToggleWatchlist={toggleWatchlist}
                     isFavourited={favouriteIds.has(p.id)}
                     onToggleFavourite={toggleFavourite}
+                    isCompareSelected={isCompareSelected(p.id)}
+                    onToggleCompare={handleToggleCompare}
                   />
                 ))}
               </div>
@@ -597,6 +617,33 @@ export default function Properties() {
       )}
 
       {selectedId && <PropertyModal id={selectedId} onClose={() => setSelectedId(null)} />}
+
+      {compareIds.length > 0 && (
+        <div className="compare-bar" data-testid="compare-bar" role="region" aria-label="Compare selection">
+          <span className="compare-bar-count" data-testid="compare-count">
+            {compareIds.length} selected
+          </span>
+          <div className="compare-bar-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              data-testid="compare-clear"
+              onClick={clearCompare}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              data-testid="compare-open"
+              disabled={!canCompare}
+              onClick={() => { /* BIN-43: open side-by-side compare */ }}
+            >
+              Compare
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -643,7 +690,16 @@ function listingTypeColor(type) {
   return { bg: 'rgba(16,185,129,0.2)', color: '#34d399' }
 }
 
-function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFavourited, onToggleFavourite }) {
+function PropertyCard({
+  property: p,
+  onClick,
+  isWatched,
+  onToggleWatchlist,
+  isFavourited,
+  onToggleFavourite,
+  isCompareSelected,
+  onToggleCompare,
+}) {
   const img = (p.image_urls || [])[0]
   const listings = p.listings || []
   const groups = groupListings(listings)
@@ -653,10 +709,11 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
 
   return (
     <div
-      className="property-card"
+      className={`property-card${isCompareSelected ? ' property-card--selected' : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
+      data-property-id={p.id}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -664,6 +721,20 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
         }
       }}
     >
+      <label
+        className="property-compare-select"
+        title="Select for comparison"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          checked={!!isCompareSelected}
+          onChange={(e) => onToggleCompare(e, p.id)}
+          aria-label={isCompareSelected ? 'Remove from comparison' : 'Select for comparison'}
+          data-testid={`compare-select-${p.id}`}
+        />
+      </label>
       {img
         ? <img className="property-image" src={img} alt={p.title || 'property'} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
         : null
