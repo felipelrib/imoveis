@@ -193,6 +193,45 @@ body {
   font-size: 12px;
   color: var(--text-muted);
 }
+.credential-gate {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.credential-gate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.credential-gate-status {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+}
+.credential-gate-status.set { color: var(--accent-emerald); }
+.credential-gate-status.missing { color: var(--accent-rose); }
+.credential-gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.credential-gate-form .form-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.credential-gate-actions {
+  display: flex;
+  gap: 6px;
+}
+.credential-gate-actions .btn {
+  flex: 1;
+}
 .status-dot {
   display: inline-block;
   width: 7px; height: 7px;

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { useSystemStatus } from './hooks/useSystemStatus.js'
 import { ToastProvider } from './components/ToastProvider.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import CredentialGate from './components/CredentialGate.jsx'
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard.jsx'))
 const ScraperControl = React.lazy(() => import('./pages/ScraperControl.jsx'))
@@ -46,7 +47,7 @@ export default function App() {
             ))}
           </nav>
 
-          <div style={{ marginTop: 'auto', padding: '16px 20px 0', borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="sidebar-footer">
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>System</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <ServiceDot label="Database"  ok={status?.database?.status === 'ok'} loading={loading} />
@@ -54,6 +55,7 @@ export default function App() {
               <ServiceDot label="Ollama"    ok={status?.ollama?.status === 'ok'} loading={loading} />
               <ServiceDot label="AI Worker" ok={!status?.ai_workers_paused} loading={loading} />
             </div>
+            <CredentialGate />
           </div>
         </aside>
 

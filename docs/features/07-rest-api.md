@@ -21,7 +21,7 @@ The React frontend and external clients need a comprehensive REST API to query p
 
 - **Geospatial queries**: `bbox` parameter enables map-based property discovery using `ST_Within` + `ST_MakeEnvelope`.
 
-- **Admin API protection**: All `/admin/*` endpoints require a valid AppConfig credential — `X-API-Key` (canonical) or admin JWT (transitional until Story 2.2). Keys come from `auth.*` via `API_KEY` / `JWT_SECRET` env → AppConfig (AD-2).
+- **Admin API protection**: All `/admin/*` endpoints require a valid AppConfig credential — `X-API-Key` (canonical) or admin JWT (non-SPA clients). The SPA paste-once gate (BIN-46) sends `X-API-Key` from sessionStorage via `api.js`. Keys come from `auth.*` via `API_KEY` / `JWT_SECRET` env → AppConfig (AD-2).
 
 - **System health aggregation**: `/system/status` probes DB, Redis, and Ollama in one call for the dashboard service status panel.
 

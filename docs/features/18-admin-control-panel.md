@@ -16,7 +16,7 @@ files. There was no safe, authenticated way to:
 All admin endpoints are grouped under the `/admin` prefix with
 `api.auth.verify_admin_access`. The canonical credential is `X-API-Key` validated
 against `AppConfig.auth.api_key` (env: `API_KEY`). A valid admin JWT is still
-accepted and maps to the same `auth.principal_id` (SPA continuity until Story 2.2).
+accepted and maps to the same `auth.principal_id`. The SPA paste-once gate (Story 2.2 / BIN-46) stores the key in sessionStorage and sends `X-API-Key` via `api.js`.
 If the API key is unset in config, API-key requests are rejected with 403; requests
 with neither credential receive 401.
 
@@ -107,9 +107,9 @@ curl -X POST http://localhost:8000/admin/schedule \
 
 ## Implementation Notes
 - **API Key Security**: Prefer `API_KEY` via AppConfig / env. The SPA must not ship
-  hardcoded secrets (`VITE_API_KEY` was removed from the bundle). Story 2.2 adds a
-  paste-once / sessionStorage credential gate; until then admin JWT login remains
-  accepted at the edge alongside `X-API-Key`.
+  hardcoded secrets (`VITE_API_KEY` was removed from the bundle). Story 2.2 / BIN-46
+  provides a paste-once sessionStorage credential gate; `api.js` attaches `X-API-Key`.
+  Admin JWT remains accepted at the API edge for non-SPA clients.
 - **Resource Management**: Fixed generator leaks in the admin scoring endpoints by using the `SessionLocal` context manager directly, preventing connection exhaustion.
 - **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
 - **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.
