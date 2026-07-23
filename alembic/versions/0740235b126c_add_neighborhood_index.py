@@ -5,6 +5,8 @@ Revises: 3e4b18f30e04
 Create Date: 2026-07-22 21:30:14.776669
 
 """
+import geoalchemy2  # noqa: F401
+import sqlalchemy as sa  # noqa: F401
 
 from alembic import op
 
@@ -16,7 +18,7 @@ depends_on = None
 
 
 def upgrade():
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_properties_neighborhood ON properties ((props_json->>'neighborhood'))")  # noqa: E501
+    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_properties_neighborhood ON properties ((props_json->>'neighborhood'))")
 
 
 def downgrade():

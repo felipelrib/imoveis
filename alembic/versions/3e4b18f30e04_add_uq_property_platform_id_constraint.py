@@ -5,6 +5,8 @@ Revises: c7d8e9f0a1b2
 Create Date: 2026-07-22 19:55:04.066034
 
 """
+import geoalchemy2  # noqa: F401
+import sqlalchemy as sa  # noqa: F401
 
 from alembic import op
 
