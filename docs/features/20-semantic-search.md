@@ -57,3 +57,4 @@ Files touched:
 - Re-embed on text-only updates happens when scrape action is not `noop`.
 - LM Studio backends use `/v1/embeddings` for parity.
 - Closed mistaken PR #15 (wrong branch); shipped as [#16](https://github.com/felipelrib/imoveis/pull/16).
+- **BIN-38 (2026-07-23):** Status/docs reconcile closed — FR-15 complete; no remaining scope split into a v0.5 story. See `24-semantic-search-reconcile.md`.
