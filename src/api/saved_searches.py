@@ -5,17 +5,24 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
+from api.auth import Principal, verify_api_key
 from infra.db import SessionLocal
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/saved-searches", tags=["saved-searches"])
+router = APIRouter(
+    prefix="/saved-searches",
+    tags=["saved-searches"],
+    dependencies=[Depends(verify_api_key)],
+)
+
+CurrentPrincipal = Annotated[Principal, Depends(verify_api_key)]
 
 SAVED_SEARCH_NOT_FOUND = "Saved search not found"
 _RESP_404 = {404: {"description": SAVED_SEARCH_NOT_FOUND}}
@@ -63,20 +70,28 @@ class PaginatedSavedSearchesResponse(BaseModel):
 
 
 @router.get("")
-def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSearchesResponse:
-    """Return all saved searches ordered by most recent."""
+def list_saved_searches(
+    principal: CurrentPrincipal,
+    page: int = 1,
+    page_size: int = 50,
+) -> PaginatedSavedSearchesResponse:
+    """Return saved searches for the authenticated principal."""
     with SessionLocal() as session:
         offset = (page - 1) * page_size
 
-        total = session.execute(text("SELECT COUNT(*) FROM saved_searches")).scalar() or 0
+        total = session.execute(
+            text("SELECT COUNT(*) FROM saved_searches WHERE owner = :owner"),
+            {"owner": principal.id},
+        ).scalar() or 0
 
         rows = session.execute(
             text(
                 "SELECT id, name, filters, created_at "
-                "FROM saved_searches ORDER BY created_at DESC "
+                "FROM saved_searches WHERE owner = :owner "
+                "ORDER BY created_at DESC "
                 "LIMIT :limit OFFSET :offset"
             ),
-            {"limit": page_size, "offset": offset}
+            {"owner": principal.id, "limit": page_size, "offset": offset},
         ).fetchall()
 
         items = [
@@ -93,20 +108,20 @@ def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSea
             items=items,
             total=total,
             page=page,
-            page_size=page_size
+            page_size=page_size,
         )
 
 
 @router.get("/{search_id}", responses=_RESP_404)
-def get_saved_search(search_id: str) -> SavedSearchItem:
-    """Return a single saved search by ID."""
+def get_saved_search(search_id: str, principal: CurrentPrincipal) -> SavedSearchItem:
+    """Return a single saved search owned by the principal."""
     with SessionLocal() as session:
         row = session.execute(
             text(
                 "SELECT id, name, filters, created_at "
-                "FROM saved_searches WHERE id = :sid"
+                "FROM saved_searches WHERE id = :sid AND owner = :owner"
             ),
-            {"sid": search_id},
+            {"sid": search_id, "owner": principal.id},
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=SAVED_SEARCH_NOT_FOUND)
@@ -119,26 +134,34 @@ def get_saved_search(search_id: str) -> SavedSearchItem:
 
 
 @router.post("", status_code=201, responses=_RESP_500)
-def create_saved_search(req: SavedSearchCreate) -> SavedSearchItem:
-    """Create a new saved search."""
+def create_saved_search(
+    req: SavedSearchCreate, principal: CurrentPrincipal
+) -> SavedSearchItem:
+    """Create a new saved search for the authenticated principal."""
     with SessionLocal() as session:
         try:
             now = datetime.now(timezone.utc)
             search_id = str(uuid.uuid4())
             session.execute(
                 text(
-                    "INSERT INTO saved_searches (id, name, filters, created_at) "
-                    "VALUES (:id, :name, :filters, :now)"
+                    "INSERT INTO saved_searches (id, name, filters, owner, created_at) "
+                    "VALUES (:id, :name, :filters, :owner, :now)"
                 ),
                 {
                     "id": search_id,
                     "name": req.name,
                     "filters": json.dumps(req.filters.model_dump(exclude_none=True)),
+                    "owner": principal.id,
                     "now": now,
                 },
             )
             session.commit()
-            logger.info("saved_search_create", search_id=search_id, name=req.name)
+            logger.info(
+                "saved_search_create",
+                search_id=search_id,
+                search_name=req.name,
+                owner=principal.id,
+            )
             return SavedSearchItem(
                 id=search_id,
                 name=req.name,
@@ -151,18 +174,26 @@ def create_saved_search(req: SavedSearchCreate) -> SavedSearchItem:
 
 
 @router.delete("/{search_id}", responses={**_RESP_404, **_RESP_500})
-def delete_saved_search(search_id: str) -> Dict[str, str]:
-    """Delete a saved search."""
+def delete_saved_search(
+    search_id: str, principal: CurrentPrincipal
+) -> Dict[str, str]:
+    """Delete a saved search owned by the principal."""
     with SessionLocal() as session:
         try:
             result = session.execute(
-                text("DELETE FROM saved_searches WHERE id = :sid"),
-                {"sid": search_id},
+                text(
+                    "DELETE FROM saved_searches WHERE id = :sid AND owner = :owner"
+                ),
+                {"sid": search_id, "owner": principal.id},
             )
             session.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail=SAVED_SEARCH_NOT_FOUND)
-            logger.info("saved_search_delete", search_id=search_id)
+            logger.info(
+                "saved_search_delete",
+                search_id=search_id,
+                owner=principal.id,
+            )
             return {"status": "deleted", "id": search_id}
         except HTTPException:
             raise
@@ -172,21 +203,25 @@ def delete_saved_search(search_id: str) -> Dict[str, str]:
 
 
 @router.patch("/{search_id}", responses={**_RESP_404, **_RESP_500})
-def update_saved_search(search_id: str, req: SavedSearchUpdate) -> SavedSearchItem:
-    """Update a saved search."""
+def update_saved_search(
+    search_id: str, req: SavedSearchUpdate, principal: CurrentPrincipal
+) -> SavedSearchItem:
+    """Update a saved search owned by the principal."""
     with SessionLocal() as session:
         try:
-            # Check if exists first
             existing = session.execute(
-                text("SELECT id, name, filters FROM saved_searches WHERE id = :sid"),
-                {"sid": search_id}
+                text(
+                    "SELECT id, name, filters FROM saved_searches "
+                    "WHERE id = :sid AND owner = :owner"
+                ),
+                {"sid": search_id, "owner": principal.id},
             ).fetchone()
 
             if not existing:
                 raise HTTPException(status_code=404, detail=SAVED_SEARCH_NOT_FOUND)
 
             update_fields = []
-            params = {"sid": search_id}
+            params: Dict[str, Any] = {"sid": search_id, "owner": principal.id}
 
             if req.name is not None:
                 update_fields.append("name = :name")
@@ -197,17 +232,23 @@ def update_saved_search(search_id: str, req: SavedSearchUpdate) -> SavedSearchIt
                 params["filters"] = json.dumps(req.filters.model_dump(exclude_none=True))
 
             if not update_fields:
-                # No updates requested, just return existing
-                return get_saved_search(search_id)
+                return get_saved_search(search_id, principal)
 
             session.execute(
-                text(f"UPDATE saved_searches SET {', '.join(update_fields)} WHERE id = :sid"),
-                params
+                text(
+                    f"UPDATE saved_searches SET {', '.join(update_fields)} "
+                    "WHERE id = :sid AND owner = :owner"
+                ),
+                params,
             )
             session.commit()
 
-            logger.info("saved_search_update", search_id=search_id)
-            return get_saved_search(search_id)
+            logger.info(
+                "saved_search_update",
+                search_id=search_id,
+                owner=principal.id,
+            )
+            return get_saved_search(search_id, principal)
         except HTTPException:
             raise
         except Exception as exc:
