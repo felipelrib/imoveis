@@ -32,6 +32,7 @@ from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
+from core.neighbourhood_assignment import assign_property_neighbourhood
 from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -164,6 +165,9 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                         radius_m=cfg.dedup.radius_m,
                         area_tol=cfg.dedup.area_tolerance_m2,
                     )
+                    # AD-10 geo stage: assign neighbourhood before AI enqueue
+                    if result.action != "noop":
+                        assign_property_neighbourhood(session, result.property_id)
                     session.commit()
                     _enqueue_post_scrape_jobs(candidate, result)
                     processed += 1
@@ -313,6 +317,9 @@ def ai_enrich(
                         stat = float(ms.stat_score or 0.0)
                         ms.combined_score = stat * stat_weight + a_score * ai_weight
                     session.flush()
+
+                    # AD-10 geo stage: refresh spatial neighbourhood before scoring
+                    assign_property_neighbourhood(session, property_id)
 
                     # Recompute neighbourhood-relative stat_score for this property
                     score_single_property(session, property_id)
