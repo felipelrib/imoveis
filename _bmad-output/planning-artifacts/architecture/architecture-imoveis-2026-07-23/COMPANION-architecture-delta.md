@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Layout | Source tree + component blurbs | Same tree, named as **hexagonal roles** |
 | Data flow | Scrape → … → alerts | Same path, named **pipeline**; boundaries are hexagonal |
-| Stack table | Technologies by purpose | Pinned versions (seed); code owns drift |
+| Stack table | Still says React 18 + plain PostGIS in places | Spine seed (refreshed BIN-35): React 19.2 / Vite 8.1, PostGIS 15-3.3 + pgvector via `Dockerfile.postgres`; code/lockfiles own drift |
 | Dependencies | Implicit | **AD-1:** `core` ↛ `adapters`/`api` (ideal; current leaks = debt) |
 | Config | Mentions YAML | **AD-2:** only AppConfig channel |
 | Entities | Light | **AD-3:** Property / Listing; pipeline-only commercial/geo writes |

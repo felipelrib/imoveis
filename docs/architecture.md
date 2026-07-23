@@ -28,7 +28,7 @@ src/
 ├── core/                         # Business logic (dedup, entities)
 ├── infra/                        # Config, DB, Redis, logging
 └── tests/                        # pytest suite (unit + integration)
-frontend/                         # React 18 + Vite
+frontend/                         # React 19 + Vite 8
 configs/app_config.yaml           # Single source of truth for all settings
 scripts/                          # Project management scripts
 ```
@@ -39,9 +39,9 @@ scripts/                          # Project management scripts
 |-----------|-----------|---------|
 | API | FastAPI | REST endpoints, admin controls |
 | Task Queue | Celery + Redis | Async scraping, AI enrichment |
-| Database | PostgreSQL 15 + PostGIS | Geospatial property storage |
+| Database | PostgreSQL 15 + PostGIS + pgvector | Geospatial + embedding storage |
 | AI | Ollama / LM Studio | Local VLM + text models |
-| Frontend | React 18 + Vite | Score-coloured property grid |
+| Frontend | React 19 + Vite 8 | Score-coloured property grid |
 | Config | Pydantic + YAML | Single source of truth |
 | Migrations | Alembic | Schema versioning |
 | CI/CD | GitHub Actions | Tests, lint, build |
@@ -69,4 +69,4 @@ Celery workers split into two queues:
 
 ### Frontend (`frontend/`)
 
-React 18 + Vite application with a dark-themed property grid. Properties are scored and colour-coded by deal quality. Includes a dashboard with system status, scraper controls, and price history charts.
+React 19 + Vite 8 application with a dark-themed property grid. Properties are scored and colour-coded by deal quality. Includes a dashboard with system status, scraper controls, and price history charts.
