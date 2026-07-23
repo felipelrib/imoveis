@@ -79,5 +79,5 @@ development_status:
   epic-5: in-progress
   5-1-load-neighbourhood-polygons: done
   5-2-assign-properties-by-spatial-containment: done
-  5-3-scoring-cohorts-prefer-spatial-neighbourhoods: backlog
+  5-3-scoring-cohorts-prefer-spatial-neighbourhoods: done
   epic-5-retrospective: optional

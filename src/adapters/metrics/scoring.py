@@ -22,6 +22,11 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Cohort identity: spatial neighbourhood name wins over props_json string.
+# Used by bulk stats SQL and single-property scoring so preference cannot drift.
+_COHORT_KEY_SQL = "COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')"
+_COHORT_KEY_SQL_P2 = "COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown')"
+
 
 def _sigmoid_undervalued(z_score: float) -> float:
     """Map z-score to 0..1 stat_score.
@@ -78,36 +83,31 @@ def compute_neighborhood_stats(
     weights = _scoring_weights()
 
     where_clause = (
-        "AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey"
+        f"AND {_COHORT_KEY_SQL} = :nkey"
         if neighborhood_key is not None
         else ""
     )
 
     sql = text(f"""
-        stats AS (
+        WITH stats AS (
             SELECT
                 p.id                                                  AS property_id,
-                COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') as n_key,
+                {_COHORT_KEY_SQL}                                     AS n_key,
                 p.price / NULLIF(p.area_m2, 0)                       AS price_per_m2,
                 AVG(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY
-                        COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
-                    ) AS neighborhood_mean,
+                    OVER (PARTITION BY {_COHORT_KEY_SQL}) AS neighborhood_mean,
                 (
                     SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p2.price / NULLIF(p2.area_m2, 0))
                     FROM properties p2
                     LEFT JOIN neighborhoods n2 ON n2.id = p2.neighborhood_id
                     WHERE p2.area_m2 > 0 AND p2.active = true
-                      AND COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown')
-                          = COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
+                      AND {_COHORT_KEY_SQL_P2} = {_COHORT_KEY_SQL}
                 ) AS neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
-                    OVER (PARTITION BY
-                        COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
-                    ) AS neighborhood_stddev,
+                    OVER (PARTITION BY {_COHORT_KEY_SQL}) AS neighborhood_stddev,
                 PERCENT_RANK()
                     OVER (
-                        PARTITION BY COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
+                        PARTITION BY {_COHORT_KEY_SQL}
                         ORDER BY p.price / NULLIF(p.area_m2, 0)
                     )                                                 AS percentile_rank
             FROM properties p
@@ -241,7 +241,7 @@ def get_neighborhood_stats_cached(session: Session, n_key: str) -> dict:
     if cached:
         return json.loads(cached)
 
-    sql = text("""
+    sql = text(f"""
         SELECT
             AVG(p.price / NULLIF(p.area_m2, 0)) AS mean,
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.price / NULLIF(p.area_m2, 0)) AS median,
@@ -250,7 +250,7 @@ def get_neighborhood_stats_cached(session: Session, n_key: str) -> dict:
         FROM properties p
         LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
         WHERE p.area_m2 > 0 AND p.active = true
-          AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey
+          AND {_COHORT_KEY_SQL} = :nkey
     """)
     row = session.execute(sql, {"nkey": n_key}).mappings().fetchone()
     stats = {
@@ -315,8 +315,11 @@ def score_single_property(session: Session, property_id: str) -> None:
 
 
 def _property_neighborhood_key(session: Session, prop: Property) -> str:
-    if not prop.neighborhood_id:
-        return (prop.props_json or {}).get("neighborhood", "Unknown")
-    from adapters.db.models import Neighborhood
-    neighborhood = session.get(Neighborhood, prop.neighborhood_id)
-    return neighborhood.name if neighborhood else "Unknown"
+    """Resolve cohort key: spatial FK name preferred over props_json string."""
+    if prop.neighborhood_id:
+        from adapters.db.models import Neighborhood
+
+        neighborhood = session.get(Neighborhood, prop.neighborhood_id)
+        if neighborhood is not None:
+            return neighborhood.name
+    return (prop.props_json or {}).get("neighborhood") or "Unknown"
