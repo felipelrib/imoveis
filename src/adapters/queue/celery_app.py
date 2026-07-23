@@ -2,8 +2,8 @@ import logging
 import os
 
 from celery import Celery
-from celery.signals import task_failure, task_revoked
 from celery.schedules import crontab
+from celery.signals import task_failure, task_revoked
 
 from infra.config import get_config
 from infra.redis_client import get_redis
@@ -26,9 +26,11 @@ def build_beat_schedule() -> dict:
     Returns a dict suitable for ``celery_app.conf.beat_schedule``.
     """
     schedule: dict = {}
+    digest_mode = False
     try:
         cfg = get_config()
         r = get_redis()
+        digest_mode = bool(getattr(cfg.alerts, "digest_mode", False))
 
         for name, platform_cfg in cfg.scraping.platforms.items():
             if not platform_cfg.enabled:
@@ -50,6 +52,7 @@ def build_beat_schedule() -> dict:
     except Exception:
         logger.warning("beat_schedule_build_failed", exc_info=True)
 
+    # Always-on maintenance jobs (independent of scraper platform config)
     schedule["evaluate-watchlist-alerts"] = {
         "task": "tasks.evaluate_watchlist_alerts",
         "schedule": 300.0,
@@ -60,7 +63,7 @@ def build_beat_schedule() -> dict:
         "schedule": 60.0,
     }
 
-    if getattr(get_config().alerts, "digest_mode", False):
+    if digest_mode:
         schedule["send-daily-digest"] = {
             "task": "tasks.send_daily_digest",
             "schedule": crontab(hour=8, minute=0),

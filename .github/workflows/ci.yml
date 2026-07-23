@@ -7,8 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Independent suites run in parallel. Merge still requires all required checks green;
+# there is no artificial "wait for lint before tests" chain.
 jobs:
-  # ---- Lint (fastest feedback) ----
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -28,9 +29,7 @@ jobs:
       - name: Run pre-commit (matches local hooks exactly)
         uses: pre-commit/action@v3.0.1
 
-  # ---- Unit tests (fast, no Docker) — runs in parallel with integration/contract ----
   unit:
-    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,18 +44,24 @@ jobs:
       - name: Run unit tests
         run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30
 
-      - name: Upload coverage to Codecov
-        if: success() || failure()
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.xml
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      # Prefer CI-based Sonar (with coverage) over Automatic Analysis.
+      - name: Disable SonarCloud Automatic Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/sonar-autoscan.json -w "%{http_code}" \
+            -u "${SONAR_TOKEN}:" \
+            -X POST \
+            "https://sonarcloud.io/api/autoscan/activation?projectKey=felipelrib_imoveis&enable=false" || true)
+          echo "autoscan API HTTP ${code}"
+          cat /tmp/sonar-autoscan.json || true
+          if [ "${code}" != "204" ] && [ "${code}" != "200" ]; then
+            echo "::warning::Could not disable Automatic Analysis (HTTP ${code}). Turn it off in SonarCloud → Administration → Analysis Method."
+          fi
 
       - name: SonarCloud Scan
-        if: success() || failure()
-        uses: SonarSource/sonarqube-scan-action@v4
-        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
@@ -66,9 +71,7 @@ jobs:
             -Dsonar.sources=src/
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-  # ---- Integration (needs PostGIS + Redis) — runs in parallel with unit ----
   integration:
-    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -116,9 +119,7 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-integration-key
 
-  # ---- Contract tests (API schema + DB schema) — runs in parallel with unit ----
   contract:
-    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -160,9 +161,38 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- E2E (Playwright) — PR gate + post-merge smoke test ----
+  scrapers:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-timeout
+
+      - name: Cassette unit tests + live dry-run
+        run: bash scripts/agent/validate-scrapers.sh --require-live
+        env:
+          # Dummy DB URL so AppConfig validates when Redis CB loads config
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          REDIS_URL: redis://localhost:6379/0
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+
+  # Playwright uses page.route mocks — independent of backend test jobs
   e2e:
-    needs: [unit, integration]
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -181,9 +211,7 @@ jobs:
       - name: Run E2E tests
         run: npm run test:e2e --prefix frontend
 
-  # ---- Security scan (PR gate + post-merge) ----
   security-scan:
-    needs: integration
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
@@ -202,9 +230,7 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-  # ---- Docs deploy (only on push to main) ----
   docs:
-    needs: integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

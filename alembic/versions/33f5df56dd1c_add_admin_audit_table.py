@@ -5,11 +5,11 @@ Revises: 0740235b126c
 Create Date: 2026-07-22 23:43:52.407199
 
 """
-from alembic import op
-import sqlalchemy as sa
-import geoalchemy2
+import geoalchemy2  # noqa: F401
+import sqlalchemy as sa  # noqa: F401
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '33f5df56dd1c'

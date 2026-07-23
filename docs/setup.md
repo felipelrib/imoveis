@@ -115,8 +115,8 @@ pre-commit install --hook-type pre-push  # runs on push (unit tests, frontend bu
 ```
 
 After installation, all checks run automatically on every `git commit` and `git push`.
-This is the **same** hook set used by pre-commit.ci and the CI `lint` job — running
-them locally avoids the bot creating fixup commits on your PR.
+This is the **same** hook set used by the CI `lint` job (`pre-commit/action`) —
+run them locally so formatting/lint issues never reach GitHub Actions.
 
 To run all hooks manually:
 

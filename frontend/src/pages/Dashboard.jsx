@@ -144,9 +144,9 @@ export default function Dashboard({ status, loading }) {
         <>
           <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'flex', justifyContent: 'space-between' }}>
             <span>🚨 Price Drop Alerts</span>
-            <button 
-              className="btn btn-ghost" 
-              style={{ padding: '4px 8px', fontSize: 12, height: 'auto' }} 
+            <button
+              className="btn btn-ghost"
+              style={{ padding: '4px 8px', fontSize: 12, height: 'auto' }}
               onClick={() => setAlerts([])}
               aria-label="Dismiss all alerts"
             >

@@ -67,4 +67,3 @@ None.
    pytest src/tests/unit/test_deal_verdict.py -v
    ```
    All 19 tests should pass.
-

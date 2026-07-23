@@ -44,4 +44,3 @@ Files touched:
    ```bash
    pytest src/tests/integration/test_e2e.py src/tests/integration/test_listings_e2e.py -v
    ```
-

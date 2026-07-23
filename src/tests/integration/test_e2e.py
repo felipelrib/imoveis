@@ -61,6 +61,21 @@ def test_client():
 
 
 @pytest.fixture(scope="function")
+def admin_headers(test_client):
+    """Bearer token for admin endpoints (JWT via /auth/admin/login)."""
+    response = test_client.post(
+        "/auth/admin/login",
+        data={
+            "username": os.environ.get("ADMIN_USER", "admin"),
+            "password": os.environ.get("ADMIN_PASS", "admin"),
+        },
+    )
+    assert response.status_code == 200, response.text
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
 def mock_redis():
     """Use real Redis from CI when available, otherwise mock it."""
     import os
@@ -107,38 +122,38 @@ class TestAPIEndpoints:
         assert data["service"] == "local-realestate"
         assert data["status"] == "running"
 
-    def test_admin_health(self, test_client):
+    def test_admin_health(self, test_client, admin_headers):
         """Verify admin health endpoint."""
-        response = test_client.get("/admin/health", headers={"X-API-Key": os.environ.get("API_KEY", "dev_admin_key_123")})
+        response = test_client.get("/admin/health", headers=admin_headers)
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
-    def test_admin_workers_status(self, test_client, mock_redis):
+    def test_admin_workers_status(self, test_client, mock_redis, admin_headers):
         """Verify admin workers status endpoint."""
-        response = test_client.get("/admin/workers/status", headers={"X-API-Key": os.environ.get("API_KEY", "dev_admin_key_123")})
+        response = test_client.get("/admin/workers/status", headers=admin_headers)
         assert response.status_code == 200
         data = response.json()
         assert "ai_workers_paused" in data
         assert isinstance(data["ai_workers_paused"], bool)
 
-    def test_pause_workers(self, test_client, mock_redis):
+    def test_pause_workers(self, test_client, mock_redis, admin_headers):
         """Test pausing AI workers."""
-        response = test_client.post("/admin/workers/pause", headers={"X-API-Key": os.environ.get("API_KEY", "dev_admin_key_123")})
+        response = test_client.post("/admin/workers/pause", headers=admin_headers)
         assert response.status_code == 200
         assert response.json() == {"paused": True}
 
-    def test_resume_workers(self, test_client, mock_redis):
+    def test_resume_workers(self, test_client, mock_redis, admin_headers):
         """Test resuming AI workers."""
-        response = test_client.post("/admin/workers/resume", headers={"X-API-Key": os.environ.get("API_KEY", "dev_admin_key_123")})
+        response = test_client.post("/admin/workers/resume", headers=admin_headers)
         assert response.status_code == 200
         assert response.json() == {"paused": False}
 
-    def test_gpu_scale_endpoint(self, test_client, mock_redis):
+    def test_gpu_scale_endpoint(self, test_client, mock_redis, admin_headers):
         """Test GPU scaling endpoint."""
         response = test_client.post(
             "/admin/gpu/scale",
             json={"limit": 2},
-            headers={"X-API-Key": os.environ.get("API_KEY", "dev_admin_key_123")},
+            headers=admin_headers,
         )
         assert response.status_code == 200
         assert response.json() == {"gpu_limit": 2}

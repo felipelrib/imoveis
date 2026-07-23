@@ -54,10 +54,10 @@ worker.log
 .worktrees/
 .env.local
 
-# Cursor IDE
+# Cursor IDE / agent harness (local only — not committed)
 .cursor/
 
-# Cline transient state (skills are committed, memory/kanban are local-only)
+# Legacy Cline local-only state (if present)
 .cline/memory/
 .cline/kanban/
 

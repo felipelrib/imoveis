@@ -6,20 +6,23 @@ Create Date: 2026-07-22 21:30:14.776669
 
 """
 from alembic import op
-import sqlalchemy as sa
-import geoalchemy2
-
 
 # revision identifiers, used by Alembic.
-revision = '0740235b126c'
-down_revision = '3e4b18f30e04'
+revision = "0740235b126c"
+down_revision = "3e4b18f30e04"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_properties_neighborhood ON properties ((props_json->>'neighborhood'))")
+    # CONCURRENTLY cannot run inside a transaction block
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_properties_neighborhood "
+            "ON properties ((props_json->>'neighborhood'))"
+        )
 
 
 def downgrade():
-    op.execute("DROP INDEX IF EXISTS ix_properties_neighborhood")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_properties_neighborhood")

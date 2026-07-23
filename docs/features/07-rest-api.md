@@ -55,4 +55,3 @@ None beyond FastAPI core.
    ```bash
    curl 'http://localhost:8000/properties?page=1&page_size=5&sort_by=combined_score&sort_dir=desc'
    ```
-

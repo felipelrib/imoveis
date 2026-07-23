@@ -29,7 +29,7 @@ act on those changes.
     (capped at 200 entries, 7-day TTL) for frontend polling.
   - `get_notifiers()` reads `cfg.alerts.channels` and constructs the list once,
     cached in a module-level variable. `reset_notifiers()` clears the cache for tests.
-  - **Evaluation Loop (`adapters/queue/tasks.py`)**: A periodic Celery beat task (`evaluate_watchlist_alerts`) 
+  - **Evaluation Loop (`adapters/queue/tasks.py`)**: A periodic Celery beat task (`evaluate_watchlist_alerts`)
     runs every 5 minutes. It compares the current `property_listings.price` against `watchlist.last_notified_price`
     (or the original price if never notified). If the drop exceeds the configured `min_drop_pct`,
     it generates an alert and updates the `last_notified_price`.

@@ -63,7 +63,8 @@ nav:
       - Admin Control Panel: features/18-admin-control-panel.md
       - System Status & Pipeline Telemetry: features/19-system-status-and-pipeline-telemetry.md
   - ADR:
-      - Dual-Model Development: adr/0001-dual-model-development.md
+      - Dual-Model Development (superseded): adr/0001-dual-model-development.md
+      - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md
 
 plugins:
   - search

@@ -56,9 +56,7 @@ class OLXScraper(BaseScraper):
         import httpx
 
         proxy = self.config.get("extra", {}).get("proxy")
-        proxies = {"http://": proxy, "https://": proxy} if proxy else None
-
-        self.session = httpx.Client(proxies=proxies)
+        self.session = httpx.Client(proxy=proxy)
         self.session.headers.update(
             {
                 "User-Agent": (
@@ -254,6 +252,10 @@ class OLXScraper(BaseScraper):
 
         # --- Listing type ---
         listing_type = self._detect_listing_type(raw)
+
+        # Calculate full rent price for rentals
+        if listing_type == "rent":
+            price = price + float(props.get("condo_fee") or 0.0) + float(props.get("iptu") or 0.0)
 
         # --- Build listings array ---
         listing_url = raw.get("url") or raw.get("_olx_url") or f"https://www.olx.com.br/detalhes/{platform_id}"

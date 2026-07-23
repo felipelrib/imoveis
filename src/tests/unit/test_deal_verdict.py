@@ -139,8 +139,10 @@ class TestSummarizeDeal:
     """Tests for the summarize_deal method with mocked LLM."""
 
     @pytest.mark.asyncio
-    async def test_ollama_verdict_calls_llm(self):
+    async def test_ollama_verdict_calls_llm(self, monkeypatch: pytest.MonkeyPatch):
         """OllamaClient.summarize_deal calls the LLM and returns its verdict."""
+        from unittest.mock import MagicMock
+
         client = OllamaClient.__new__(OllamaClient)
         client.base_url = "http://fake"
         client.timeout = None
@@ -153,6 +155,10 @@ class TestSummarizeDeal:
             return DealVerdictResult(verdict="Mocked verdict from LLM", confidence=0.9)
 
         client._llm_verdict = mock_llm
+
+        cfg = MagicMock()
+        cfg.ai.output_language = "pt-br"
+        monkeypatch.setattr("infra.config.get_config", lambda: cfg)
 
         result = await client.summarize_deal(
             stat_analysis={"category": "Average", "reasoning": "..."},

@@ -2,7 +2,7 @@ const BASE = '/api'
 
 async function apiFetch(endpoint, options = {}) {
   const headers = { ...options.headers }
-  
+
   // Attach JWT if available
   const token = sessionStorage.getItem('auth_token')
   if (token) {
@@ -17,7 +17,7 @@ async function apiFetch(endpoint, options = {}) {
       options.body = JSON.stringify(options.body)
     }
   }
-  
+
   const r = await fetch(`${BASE}${endpoint}`, { ...options, headers })
   if (!r.ok) {
     const err = await r.json().catch(() => ({}))
@@ -88,7 +88,7 @@ export async function adminLogin(username, password) {
   const params = new URLSearchParams()
   params.append('username', username)
   params.append('password', password)
-  
+
   const r = await apiFetch('/auth/admin/login', {
     method: 'POST',
     body: params

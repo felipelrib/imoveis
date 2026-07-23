@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from api.auth import verify_jwt
 from infra.db import SessionLocal
 from infra.logging import get_logger
-from api.auth import verify_jwt
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
+
+CurrentUserId = Annotated[str, Depends(verify_jwt)]
 
 
 class WatchlistCreate(BaseModel):
@@ -32,7 +34,7 @@ class WatchlistItem(BaseModel):
 
 
 @router.get("")
-def list_watchlist(user_id: str = Depends(verify_jwt)) -> List[WatchlistItem]:
+def list_watchlist(user_id: CurrentUserId) -> List[WatchlistItem]:
     """Return all watched properties."""
     with SessionLocal() as session:
         rows = session.execute(
@@ -56,7 +58,7 @@ def list_watchlist(user_id: str = Depends(verify_jwt)) -> List[WatchlistItem]:
 
 
 @router.post("", status_code=201)
-def add_to_watchlist(req: WatchlistCreate, user_id: str = Depends(verify_jwt)) -> WatchlistItem:
+def add_to_watchlist(req: WatchlistCreate, user_id: CurrentUserId) -> WatchlistItem:
     """Add a property to the watchlist."""
     req.user_id = user_id
     with SessionLocal() as session:
@@ -104,7 +106,7 @@ def add_to_watchlist(req: WatchlistCreate, user_id: str = Depends(verify_jwt)) -
 
 
 @router.delete("/{property_id}")
-def remove_from_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) -> Dict[str, str]:
+def remove_from_watchlist(property_id: str, user_id: CurrentUserId) -> Dict[str, str]:
     """Remove a property from the watchlist."""
     with SessionLocal() as session:
         try:
@@ -125,11 +127,14 @@ def remove_from_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) 
 
 
 @router.get("/check/{property_id}")
-def check_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) -> Dict[str, Any]:
+def check_watchlist(property_id: str, user_id: CurrentUserId) -> Dict[str, Any]:
     """Check if a specific property is in the watchlist."""
     with SessionLocal() as session:
         row = session.execute(
-            text("SELECT id, min_drop_pct, user_id, last_notified_price FROM watchlist WHERE property_id = :pid AND user_id = :uid"),
+            text(
+                "SELECT id, min_drop_pct, user_id, last_notified_price "
+                "FROM watchlist WHERE property_id = :pid AND user_id = :uid"
+            ),
             {"pid": property_id, "uid": user_id},
         ).fetchone()
         if row is None:
