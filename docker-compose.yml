@@ -136,6 +136,14 @@ services:
     volumes:
       - ./configs:/app/configs
 
+  # ---------------------------------------------------------------------------
+  # Ollama Models Init
+  # ---------------------------------------------------------------------------
+  ollama_init:
+    image: curlimages/curl:latest
+    restart: "no"
+    command: ["sh", "-c", "curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"llama3\"}' && curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"llava\"}'"]
+
 volumes:
   postgres_data:
   redis_data:

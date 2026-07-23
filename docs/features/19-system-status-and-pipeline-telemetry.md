@@ -84,7 +84,7 @@ Files touched:
    ```
 5. In the frontend — **Scraper Control** page should show live queue counts updating every 3 seconds.
 
-  and handling Ollama startup in Docker Compose or a separate init container.
+  and handling Ollama startup in Docker Compose or a separate init container (FIXED in TD-19-B).
 - **Logs persist in `localStorage` across sessions**: `ScraperControl.jsx` saves up to
   200 log entries to `localStorage`. The log content can include task IDs and error
   messages — consider clearing on logout when authentication is implemented.

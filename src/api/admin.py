@@ -190,6 +190,7 @@ def get_schedule():
             "interval_minutes": interval,
             "last_run": last_run,
             "next_run": next_run,
+            "estimated": True if next_run else False,
         })
 
     return {"schedules": schedules}
