@@ -36,7 +36,7 @@ Grounding sources (read before inventing requirements):
 - docs/adr/0002-cursor-single-agent-workflow.md, docs/adr/0003-bmad-planning-bridge.md
 - _bmad-output/planning-artifacts/bmad-help-session.md
 - Linear project Imoveis — Deal Tracker; parent BIN-31; open Future items BIN-18..23
-  (BIN-18 partially implemented — note drift)
+  (BIN-18 was partially implemented at hand-off — **reconciled Done** in BIN-38 / PR #16)
 
 Output: English PRD under _bmad-output/planning-artifacts/ (plus addendum/memlog per workflow).
 
