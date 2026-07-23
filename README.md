@@ -110,21 +110,26 @@ Preview docs locally: `pip install mkdocs-material && mkdocs serve`
 
 Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 
-1. **Plan** — Read the Linear issue, write `implementation_plan.md`.
+1. **Plan** — Cursor Plan mode for non-trivial work (optional `implementation_plan.md` for long tasks).
 2. **Branch** — `bash scripts/agent/setup-branch.sh <feature-slug>`.
-3. **Implement** — Small conventional commits on the feature branch.
+3. **Implement** — TDD with small conventional commits on the feature branch.
 4. **Validate** — `bash scripts/agent/validate.sh all`.
 5. **PR** — `bash scripts/agent/finish-feature.sh --pr`.
-6. **Update Linear** — Mark issue Done.
-7. **Document** — `bash scripts/agent/gen-docs.sh`.
+6. **Babysit** — Watch CI and triage comments until green (`.cursor/skills/babysit-pr`).
+7. **Update Linear** — Mark issue Done.
+8. **Document** — Numbered file under `docs/features/` from `_template.md`.
+
+Full pipeline skill: `.cursor/skills/feature-pipeline/`.
 
 ### Code Quality
 
 - Pre-commit hooks: `pre-commit install && pre-commit install --hook-type pre-push`
 - Linting: isort, flake8 (backend), eslint (frontend)
-- Tests: pytest (unit/integration/contract), Playwright (E2E)
+- Tests: pytest (unit/cassettes/integration/contract), Playwright (E2E)
+- Scraper fixtures: `src/tests/fixtures/scrapers/` — refresh with `python scripts/dev/record_scraper_cassettes.py` when the merge-blocking live dry-run fails due to HTML drift (agent/babysit does this; no scheduled refresh job).
+- Scraper gate: `bash scripts/agent/validate-scrapers.sh --require-live` (CI job `scrapers`).
 
-See [`.clinerules/`](.clinerules/) for coding standards and [`.cline/skills/`](.cline/skills/) for automated workflows.
+See [`.cursor/rules/`](.cursor/rules/) for coding standards and [`.cursor/skills/`](.cursor/skills/) for automated workflows. ADRs: [0002 Cursor workflow](docs/adr/0002-cursor-single-agent-workflow.md).
 
 ## License
 

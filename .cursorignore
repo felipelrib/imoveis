@@ -31,10 +31,9 @@ frontend/package-lock.json
 *.json.gz
 *.sql
 
-# IDE settings
+# IDE settings (keep .cursor/ for rules & skills)
 .idea/
 .vscode/
-.cursor/
 
 # MkDocs build output
 site/

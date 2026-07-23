@@ -1,0 +1,62 @@
+---
+description: Testing strategy — TDD, pyramid, HTML cassettes, markers, CI gates
+globs: src/tests/**,frontend/tests/**,pytest.ini
+alwaysApply: false
+---
+
+# Testing Strategy
+
+## Test pyramid
+
+```
+E2E (Playwright)     ← Critical user flows (list, filter, modal, scrape)
+Integration          ← pytest + real PostGIS/Redis
+Contract             ← API schema, DB schema
+Unit + HTML cassettes ← pytest + mocks / committed scraper fixtures
+```
+
+## TDD (MANDATORY)
+
+1. Write a FAILING test first.
+2. Implement the minimum code to pass.
+3. Refactor (test stays green).
+4. Commit: `test: add test for X` → `feat: implement X`.
+
+Show the test failing before implementing. No exceptions.
+
+## pytest markers
+
+- `@pytest.mark.unit` — fast, no external deps
+- `@pytest.mark.integration` — PostGIS + Redis
+- `@pytest.mark.e2e` — full stack / Playwright-adjacent
+- `@pytest.mark.slow` — skip during rapid iteration
+- `@pytest.mark.flaky` — known-flaky (create Linear ticket)
+
+## HTML scraper cassettes (merge-blocking)
+
+- Fixtures live in `src/tests/fixtures/scrapers/` (HTML wrapping `__NEXT_DATA__`).
+- Unit tests parse fixtures → extract → `normalize()` and assert stable fields.
+- **CI job `scrapers`** runs `bash scripts/agent/validate-scrapers.sh --require-live` and **blocks merges**.
+- When live dry-run fails because HTML/schema drifted, **do not weaken CI**. Refresh cassettes:
+  1. `python scripts/dev/record_scraper_cassettes.py`
+  2. Update `src/tests/unit/test_scraper_cassettes.py` expectations if fields changed
+  3. Re-run `bash scripts/agent/validate-scrapers.sh --require-live`
+  4. Commit fixtures + tests and push (babysit-pr loop)
+- Use `--skip-live` only for fast local iteration — never in CI.
+- There is **no** scheduled cassette-refresh job; the agent refreshes on failure.
+
+## Unit / integration / contract
+
+- Unit: `src/tests/unit/` — SQLite/mocks; one module per file.
+- Integration: `src/tests/integration/` — skip if services unavailable; truncate tables after.
+- Contract: `src/tests/contract/` — response shapes + `alembic check`.
+
+## AI / scraper validation
+
+- AI golden: `bash scripts/agent/validate-ai.sh` (skip if Ollama down).
+- Scrapers: `bash scripts/agent/validate-scrapers.sh` (cassettes + optional live dry-run).
+
+## CI
+
+- `validate.sh all` mirrors CI: lint → unit → integration → contract → frontend → E2E.
+- Never skip failing gates; fix and re-run.

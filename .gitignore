@@ -54,10 +54,14 @@ worker.log
 .worktrees/
 .env.local
 
-# Cursor IDE
-.cursor/
+# Cursor IDE — commit rules/skills; ignore local-only Cursor state
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
 
-# Cline transient state (skills are committed, memory/kanban are local-only)
+# Legacy Cline local-only state (if present)
 .cline/memory/
 .cline/kanban/
 

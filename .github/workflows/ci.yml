@@ -160,6 +160,25 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
+  # ---- Scrapers: HTML cassettes + live dry-run (merge-blocking) ----
+  # If live HTML drifted, agents must refresh cassettes (see babysit-pr skill),
+  # not weaken this job.
+  scrapers:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-timeout
+
+      - name: Cassette unit tests + live dry-run
+        run: bash scripts/agent/validate-scrapers.sh --require-live
+
   # ---- E2E (Playwright) — PR gate + post-merge smoke test ----
   e2e:
     needs: [unit, integration]

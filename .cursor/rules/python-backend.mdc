@@ -1,8 +1,7 @@
 ---
-paths:
-  - "src/**"
-  - "alembic/**"
-  - "requirements.txt"
+description: Python backend conventions — SQLAlchemy, FastAPI, config, logging, imports
+globs: src/**,alembic/**,requirements.txt
+alwaysApply: false
 ---
 
 # Python Backend Rules

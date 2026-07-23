@@ -49,7 +49,8 @@ nav:
       - Per-Platform Listings: features/per-platform-listings.md
       - Interactive Map: features/interactive-map.md
   - ADR:
-      - Dual-Model Development: adr/0001-dual-model-development.md
+      - Dual-Model Development (superseded): adr/0001-dual-model-development.md
+      - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md
 
 plugins:
   - search
