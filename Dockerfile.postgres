@@ -1,0 +1,18 @@
+# PostGIS 15 + pgvector (compiled from source) for semantic search (BIN-18).
+FROM postgis/postgis:15-3.3-alpine
+
+ARG PGVECTOR_VERSION=v0.8.0
+
+RUN set -eux; \
+    apk add --no-cache --virtual .build-deps \
+        build-base \
+        clang15 \
+        llvm15 \
+        git \
+        postgresql15-dev; \
+    git clone --branch "${PGVECTOR_VERSION}" --depth 1 \
+        https://github.com/pgvector/pgvector.git /tmp/pgvector; \
+    make -C /tmp/pgvector OPTFLAGS="" PG_CONFIG=/usr/local/bin/pg_config; \
+    make -C /tmp/pgvector install PG_CONFIG=/usr/local/bin/pg_config; \
+    rm -rf /tmp/pgvector; \
+    apk del .build-deps

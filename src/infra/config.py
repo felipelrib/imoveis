@@ -124,6 +124,7 @@ class AIConfig(BaseModel, frozen=True):
     lmstudio_url: str = "http://localhost:1234"
     visual_model: str = "llava"
     text_model: str = "llama3"
+    embedding_model: str = "nomic-embed-text"
     timeout: int = 120
     max_tokens: int = 1024
     visual_weight: float = 0.6
@@ -308,6 +309,12 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     if ai_text_model:
         data.setdefault("ai", {})
         data["ai"]["text_model"] = ai_text_model
+
+    # 3.2 AI_EMBEDDING_MODEL → ai.embedding_model
+    ai_embedding_model = os.environ.get("AI_EMBEDDING_MODEL")
+    if ai_embedding_model:
+        data.setdefault("ai", {})
+        data["ai"]["embedding_model"] = ai_embedding_model
 
     # 3.5. OLLAMA_HOST → ai.ollama_url
     ollama_host = os.environ.get("OLLAMA_HOST")

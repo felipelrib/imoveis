@@ -1,5 +1,6 @@
 import sqlalchemy as sa
 from geoalchemy2 import Geometry
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base
@@ -87,6 +88,8 @@ class Property(Base):
     last_updated = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
     active = Column(Boolean, server_default=sa.text("true"))
     neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
+    # nomic-embed-text (Ollama) produces 768-d vectors for semantic search
+    embedding = Column(Vector(768), nullable=True)
 
 
 class MetricsScoring(Base):

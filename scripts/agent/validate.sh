@@ -22,9 +22,13 @@ if [ -f "$HERE/setup-tools.sh" ]; then
     source "$HERE/setup-tools.sh" 2>/dev/null || true
 fi
 
-# Detect python binary (prefer python3)
+# Detect python binary (prefer project .venv, then python3)
 PYTHON_BIN=""
-if command -v python3 &>/dev/null; then
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
+elif [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
+    PYTHON_BIN="$REPO_ROOT/.venv/bin/python3"
+elif command -v python3 &>/dev/null; then
     PYTHON_BIN="python3"
 elif command -v python &>/dev/null; then
     PYTHON_BIN="python"

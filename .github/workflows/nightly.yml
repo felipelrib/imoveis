@@ -10,19 +10,6 @@ jobs:
   full-suite:
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgis/postgis:15-3.3-alpine
-        env:
-          POSTGRES_USER: imoveis
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: realestate
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U imoveis -d realestate"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
       redis:
         image: redis:7-alpine
         ports:
@@ -35,6 +22,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start Postgres (PostGIS + pgvector)
+        run: bash scripts/ci/start-postgres-pgvector.sh
 
       - uses: actions/setup-python@v5
         with:
