@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from api.auth import Principal, verify_api_key_if_configured
+from api.property_export import EXPORT_MAX_ROWS, properties_to_csv, properties_to_export_json
 from api.property_projection import map_property_detail, map_property_list_item
 from api.schemas import (
     NeighborhoodModel,
@@ -16,6 +19,7 @@ from api.schemas import (
     PriceHistoryModel,
     PropertyBatchResponse,
     PropertyDetailModel,
+    PropertyExportResponse,
 )
 from infra.db import SessionLocal
 from infra.limiter import limiter
@@ -66,6 +70,30 @@ class PropertyListFilters(BaseModel):
     sort_dir: str = Field("desc", pattern="^(asc|desc)$")
     bbox: Optional[str] = None
     q: Optional[str] = Field(None, max_length=500)
+
+
+class PropertyExportFilters(BaseModel):
+    """Same filter surface as the Properties list, without pagination (BIN-50)."""
+
+    platform: Optional[str] = None
+    min_score: Optional[float] = Field(None, ge=0, le=1)
+    max_price: Optional[float] = None
+    min_bedrooms: Optional[int] = None
+    min_parking: Optional[int] = None
+    neighborhood_name: Optional[str] = None
+    listing_type: Optional[str] = Field(None, pattern="^(rent|sale|both)$")
+    property_type: Optional[str] = None
+    is_furnished: Optional[bool] = None
+    accepts_pets: Optional[bool] = None
+    sort_by: str = Field("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$")
+    sort_dir: str = Field("desc", pattern="^(asc|desc)$")
+    bbox: Optional[str] = None
+    q: Optional[str] = Field(None, max_length=500)
+
+
+def _export_filters_as_list_filters(filters_in: PropertyExportFilters) -> PropertyListFilters:
+    """Adapt export filters for ``_build_list_filters`` (pagination overridden by caller)."""
+    return PropertyListFilters(page=1, page_size=1, **filters_in.model_dump())
 
 
 def _embed_query_literal(query_text: str) -> str:
@@ -316,6 +344,76 @@ def get_properties_by_ids(
         return {
             "properties": [by_id[pid] for pid in ordered_ids if pid in by_id],
         }
+
+
+@router.get(
+    "/export",
+    response_model=None,
+    responses={
+        200: {
+            "description": "Filtered property export (JSON or CSV)",
+            "content": {
+                "application/json": {"schema": PropertyExportResponse.model_json_schema()},
+                "text/csv": {"schema": {"type": "string"}},
+            },
+        },
+    },
+)
+@limiter.limit("60/minute")
+def export_properties(
+    request: Request,
+    filters_in: Annotated[PropertyExportFilters, Query()],
+    export_format: Annotated[str, Query(alias="format", pattern="^(csv|json)$")] = "json",
+    _principal: Annotated[Optional[Principal], Depends(verify_api_key_if_configured)] = None,
+) -> Union[Dict[str, Any], Response]:
+    """Export the filtered property set as CSV or JSON (AD-12 projection, AD-8).
+
+    Uses the same filters as ``GET /properties``. Caps at ``EXPORT_MAX_ROWS``;
+    JSON reports ``truncated`` when more rows match. Auth follows Epic 2 edge
+    rules when ``auth.api_key`` is configured.
+    """
+    query_text = (filters_in.q or "").strip()
+    query_vec_literal = _embed_query_literal(query_text) if query_text else None
+    list_filters = _export_filters_as_list_filters(filters_in)
+    where, params, order = _build_list_filters(list_filters, query_vec_literal)
+    params["limit"] = EXPORT_MAX_ROWS
+    params["offset"] = 0
+
+    with SessionLocal() as session:
+        sql = text(f"""
+            SELECT {_LIST_SELECT_COLUMNS}
+            FROM properties p
+            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE {where}
+            ORDER BY {order}
+            LIMIT :limit OFFSET :offset
+        """)
+        count_sql = text(f"""
+            SELECT COUNT(*)
+            FROM properties p
+            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE {where}
+        """)
+        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+        total = session.execute(count_sql, count_params).scalar() or 0
+        rows = session.execute(sql, params).mappings().fetchall()
+        items = [map_property_list_item(row) for row in rows]
+
+    if export_format == "csv":
+        body = properties_to_csv(items)
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="properties-export.csv"',
+                "X-Export-Total": str(total),
+                "X-Export-Truncated": "true" if total > len(items) else "false",
+            },
+        )
+
+    return properties_to_export_json(items, total)
 
 
 @router.get("/{property_id}", response_model=PropertyDetailModel, responses=_RESP_404)

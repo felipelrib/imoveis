@@ -73,6 +73,14 @@ class PropertyBatchResponse(BaseModel):
     properties: List[PropertyModel]
 
 
+class PropertyExportResponse(BaseModel):
+    """JSON export envelope for ``GET /properties/export?format=json`` (BIN-50)."""
+
+    properties: List[PropertyModel]
+    total: int
+    truncated: bool
+
+
 class NeighborhoodModel(BaseModel):
     name: str
     count: int

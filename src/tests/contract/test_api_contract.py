@@ -236,6 +236,60 @@ class TestPropertyProjectionContract:
             pytest.fail(f"Unexpected batch status {response.status_code}")
 
 
+class TestPropertyExportContract:
+    def test_export_rejects_invalid_format(self, client):
+        response = client.get("/properties/export?format=xml")
+        assert response.status_code == 422
+
+    def test_export_json_shape_and_projection(self, client):
+        response = client.get("/properties/export?format=json")
+        if response.status_code == 200:
+            data = response.json()
+            assert "properties" in data
+            assert "total" in data
+            assert "truncated" in data
+            assert isinstance(data["properties"], list)
+            assert isinstance(data["total"], int)
+            assert isinstance(data["truncated"], bool)
+            assert data["total"] >= len(data["properties"])
+            for item in data["properties"]:
+                _assert_projection_keys(item)
+        elif response.status_code >= 500:
+            pass
+        else:
+            pytest.fail(f"Unexpected export json status {response.status_code}")
+
+    def test_export_csv_headers_and_empty_ok(self, client):
+        response = client.get("/properties/export?format=csv")
+        if response.status_code == 200:
+            assert "text/csv" in response.headers.get("content-type", "")
+            assert "properties-export.csv" in response.headers.get("content-disposition", "")
+            body = response.text
+            assert body.startswith("id,")
+            assert "primary_listing_price" in body.splitlines()[0]
+            assert "X-Export-Total" in response.headers
+            assert "X-Export-Truncated" in response.headers
+        elif response.status_code >= 500:
+            pass
+        else:
+            pytest.fail(f"Unexpected export csv status {response.status_code}")
+
+    def test_export_json_empty_result_set(self, client):
+        # Unlikely neighborhood name → empty set when DB is up
+        response = client.get(
+            "/properties/export?format=json&neighborhood_name=__no_such_nbr_bin50__"
+        )
+        if response.status_code == 200:
+            data = response.json()
+            assert data["properties"] == []
+            assert data["total"] == 0
+            assert data["truncated"] is False
+        elif response.status_code >= 500:
+            pass
+        else:
+            pytest.fail(f"Unexpected empty export status {response.status_code}")
+
+
 # ---------------------------------------------------------------------------
 # Admin endpoints (contract shape, not auth logic)
 # ---------------------------------------------------------------------------
