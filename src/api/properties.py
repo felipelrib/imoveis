@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from api.schemas import NeighborhoodModel, PaginatedPropertiesResponse, PriceHistoryModel, PropertyDetailModel
+from api.property_projection import map_property_detail, map_property_list_item
+from api.schemas import (
+    NeighborhoodModel,
+    PaginatedPropertiesResponse,
+    PriceHistoryModel,
+    PropertyBatchResponse,
+    PropertyDetailModel,
+)
 from infra.db import SessionLocal
 from infra.limiter import limiter
 from infra.logging import get_logger
@@ -177,114 +185,7 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
     return where, params, order
 
 
-def _round_or_none(value: Any, digits: int) -> Optional[float]:
-    return round(float(value), digits) if value is not None else None
-
-
-def _map_property_row(row: Any) -> Dict[str, Any]:
-    meta = row["meta"] or {}
-    visual = meta.get("visual", {})
-    sentiment = meta.get("sentiment", {})
-    props_json = row["props_json"] or {}
-    neighborhood_name_val = row["neighborhood_name"] or props_json.get("neighborhood")
-    return {
-        "id": str(row["id"]),
-        "platform": row["platform"],
-        "platform_id": row["platform_id"],
-        "title": row["title"],
-        "price": row["price"],
-        "area_m2": row["area_m2"],
-        "bedrooms": row["bedrooms"],
-        "bathrooms": row["bathrooms"],
-        "address": row["address"],
-        "image_urls": row["image_urls"] or [],
-        "created_at": row["first_seen"].isoformat() if row["first_seen"] else None,
-        "lat": float(row["lat"]) if row["lat"] is not None else None,
-        "lon": float(row["lon"]) if row["lon"] is not None else None,
-        "stat_score": _round_or_none(row["stat_score"], 3),
-        "ai_score": _round_or_none(row["ai_score"], 3),
-        "combined_score": _round_or_none(row["combined_score"], 3),
-        "percentile_rank": _round_or_none(row["percentile_rank"], 3),
-        "z_score": _round_or_none(row["z_score"], 3),
-        "price_per_m2": _round_or_none(row["price_per_m2"], 2),
-        "neighborhood_mean": _round_or_none(row["neighborhood_mean"], 2),
-        "neighborhood_name": neighborhood_name_val,
-        "parking": row["parking"],
-        "description": row["description"],
-        "available_for_rent": props_json.get("available_for_rent", False),
-        "available_for_sale": props_json.get("available_for_sale", False),
-        "ai_features": visual.get("features_detected", []),
-        "ai_issues": visual.get("issues_detected", []),
-        "ai_green_flags": sentiment.get("green_flags", []),
-        "ai_red_flags": sentiment.get("red_flags", []),
-        "condition_score": visual.get("condition_score"),
-        "sentiment_score": sentiment.get("sentiment_score"),
-        "stat_category": meta.get("stat_analysis", {}).get("category"),
-        "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
-        "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
-        "visual_category": visual.get("category"),
-        "visual_reasoning": visual.get("reasoning"),
-        "sentiment_category": sentiment.get("category"),
-        "sentiment_reasoning": sentiment.get("reasoning"),
-        "listings": row["listings"] or [],
-    }
-
-
-def _map_property_detail(row: Any) -> Dict[str, Any]:
-    meta = row["meta"] or {}
-    return {
-        "id": str(row["id"]),
-        "platform": row["platform"],
-        "platform_id": row["platform_id"],
-        "title": row["title"],
-        "description": row["description"],
-        "price": row["price"],
-        "area_m2": row["area_m2"],
-        "bedrooms": row["bedrooms"],
-        "bathrooms": row["bathrooms"],
-        "parking": row["parking"],
-        "address": row["address"],
-        "image_urls": row["image_urls"] or [],
-        "created_at": row["first_seen"].isoformat() if row["first_seen"] else None,
-        "props_json": row["props_json"] or {},
-        "stat_score": float(row["stat_score"]) if row["stat_score"] is not None else None,
-        "ai_score": float(row["ai_score"]) if row["ai_score"] is not None else None,
-        "combined_score": float(row["combined_score"]) if row["combined_score"] is not None else None,
-        "percentile_rank": float(row["percentile_rank"]) if row["percentile_rank"] is not None else None,
-        "z_score": float(row["z_score"]) if row["z_score"] is not None else None,
-        "price_per_m2": float(row["price_per_m2"]) if row["price_per_m2"] is not None else None,
-        "neighborhood_mean": float(row["neighborhood_mean"]) if row["neighborhood_mean"] is not None else None,
-        "neighborhood_median": float(row["neighborhood_median"]) if row["neighborhood_median"] is not None else None,
-        "neighborhood_name": row["neighborhood_name"] or (row["props_json"] or {}).get("neighborhood"),
-        "location": {"lon": row["lon"], "lat": row["lat"]},
-        "listings": row["listings"] or [],
-        "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
-        "stat_analysis": meta.get("stat_analysis", {}),
-        "ai_analysis": {
-            "visual": meta.get("visual", {}),
-            "sentiment": meta.get("sentiment", {}),
-        },
-    }
-
-
-@router.get("", response_model=PaginatedPropertiesResponse)
-@limiter.limit("60/minute")
-def list_properties(
-    request: Request,
-    filters_in: Annotated[PropertyListFilters, Query()],
-) -> Dict[str, Any]:
-    """Return paginated, filtered, scored properties for the GUI grid.
-
-    When ``q`` is provided, results are ordered by cosine distance to the
-    query embedding (semantic search) and only rows with embeddings are returned.
-    """
-    query_text = (filters_in.q or "").strip()
-    query_vec_literal = _embed_query_literal(query_text) if query_text else None
-    where, params, order = _build_list_filters(filters_in, query_vec_literal)
-
-    with SessionLocal() as session:
-        sql = text(f"""
-            SELECT
+_LIST_SELECT_COLUMNS = f"""
                 p.id,
                 p.platform,
                 p.platform_id,
@@ -304,6 +205,7 @@ def list_properties(
                 ms.price_per_m2,
                 ms.neighborhood_mean,
                 ms.meta,
+                p.neighborhood_id,
                 n.name AS neighborhood_name,
                 p.parking,
                 p.description,
@@ -311,6 +213,27 @@ def list_properties(
                 ST_X(p.location::geometry) AS lon,
                 ST_Y(p.location::geometry) AS lat,
                 {_LISTINGS_JSON_AGG}
+"""
+
+
+@router.get("", response_model=PaginatedPropertiesResponse)
+@limiter.limit("60/minute")
+def list_properties(
+    request: Request,
+    filters_in: Annotated[PropertyListFilters, Query()],
+) -> Dict[str, Any]:
+    """Return paginated, filtered, scored properties for the GUI grid.
+
+    When ``q`` is provided, results are ordered by cosine distance to the
+    query embedding (semantic search) and only rows with embeddings are returned.
+    """
+    query_text = (filters_in.q or "").strip()
+    query_vec_literal = _embed_query_literal(query_text) if query_text else None
+    where, params, order = _build_list_filters(filters_in, query_vec_literal)
+
+    with SessionLocal() as session:
+        sql = text(f"""
+            SELECT {_LIST_SELECT_COLUMNS}
             FROM properties p
             LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
@@ -336,7 +259,7 @@ def list_properties(
             "page": filters_in.page,
             "page_size": page_size,
             "pages": (total + page_size - 1) // page_size,
-            "properties": [_map_property_row(row) for row in rows],
+            "properties": [map_property_list_item(row) for row in rows],
         }
 
 
@@ -356,6 +279,47 @@ def list_neighborhoods() -> List[Dict[str, Any]]:
         return [{"name": r[0], "count": r[1]} for r in rows if r[0]]
 
 
+@router.get("/by-ids", response_model=PropertyBatchResponse)
+@limiter.limit("60/minute")
+def get_properties_by_ids(
+    request: Request,
+    ids: Annotated[str, Query(description="Comma-separated property UUIDs (1–4)")],
+) -> Dict[str, Any]:
+    """Return 1–4 properties by id in request order (AD-12 projection for compare)."""
+    import uuid as uuid_mod
+
+    raw_ids = [part.strip() for part in ids.split(",") if part.strip()]
+    if not raw_ids or len(raw_ids) > 4:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide between 1 and 4 property ids via the ids query parameter",
+        )
+    # Preserve first-seen order; drop duplicates
+    ordered_ids: List[str] = list(dict.fromkeys(raw_ids))
+    for pid in ordered_ids:
+        try:
+            uuid.UUID(pid)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid property id: {pid}") from exc
+
+    placeholders = ", ".join(f":id_{i}" for i in range(len(ordered_ids)))
+    params = {f"id_{i}": pid for i, pid in enumerate(ordered_ids)}
+
+    with SessionLocal() as session:
+        sql = text(f"""
+            SELECT {_LIST_SELECT_COLUMNS}
+            FROM properties p
+            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE p.id IN ({placeholders})
+        """)
+        rows = session.execute(sql, params).mappings().fetchall()
+        by_id = {str(row["id"]): map_property_list_item(row) for row in rows}
+        return {
+            "properties": [by_id[pid] for pid in ordered_ids if pid in by_id],
+        }
+
+
 @router.get("/{property_id}", response_model=PropertyDetailModel, responses=_RESP_404)
 def get_property(property_id: str) -> Dict[str, Any]:
     """Return a single property with full scoring details."""
@@ -368,6 +332,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
                 ms.stat_score, ms.ai_score, ms.combined_score,
                 ms.percentile_rank, ms.z_score, ms.price_per_m2,
                 ms.neighborhood_mean, ms.neighborhood_median, ms.meta,
+                p.neighborhood_id,
                 n.name AS neighborhood_name,
                 ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat,
                 {_LISTINGS_JSON_AGG}
@@ -379,7 +344,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
         row = session.execute(sql, {"id": property_id}).mappings().fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Property not found")
-        return _map_property_detail(row)
+        return map_property_detail(row)
 
 
 @router.get(

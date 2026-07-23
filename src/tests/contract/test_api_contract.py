@@ -103,10 +103,124 @@ class TestNeighborhoodsEndpoint:
             pytest.fail(f"Unexpected status {response.status_code}")
 
 
+_PROJECTION_KEYS = (
+    "price",
+    "price_per_m2",
+    "stat_score",
+    "ai_score",
+    "combined_score",
+    "neighborhood_name",
+    "neighborhood_id",
+    "primary_listing",
+    "listings",
+)
+
+
+def _assert_projection_keys(item: dict) -> None:
+    for key in _PROJECTION_KEYS:
+        assert key in item, f"missing projection key: {key}"
+    assert isinstance(item["listings"], list)
+    if item["primary_listing"] is not None:
+        assert isinstance(item["primary_listing"], dict)
+        assert "price" in item["primary_listing"]
+        assert "listing_type" in item["primary_listing"]
+        assert "platform" in item["primary_listing"]
+
+
+class TestPropertyProjectionContract:
+    def test_list_items_include_ad12_fields(self, client):
+        response = client.get("/properties?page=1&page_size=5")
+        if response.status_code == 200:
+            data = response.json()
+            assert "properties" in data
+            for item in data["properties"]:
+                _assert_projection_keys(item)
+        elif response.status_code >= 500:
+            pass
+        else:
+            assert isinstance(response.json(), dict)
+
+    def test_detail_includes_ad12_fields(self, client):
+        list_resp = client.get("/properties?page=1&page_size=1")
+        if list_resp.status_code != 200:
+            if list_resp.status_code >= 500:
+                return
+            pytest.fail(f"Unexpected list status {list_resp.status_code}")
+        props = list_resp.json().get("properties") or []
+        if not props:
+            return
+        prop_id = props[0]["id"]
+        response = client.get(f"/properties/{prop_id}")
+        if response.status_code == 200:
+            _assert_projection_keys(response.json())
+        elif response.status_code >= 500:
+            pass
+        else:
+            pytest.fail(f"Unexpected detail status {response.status_code}")
+
+    def test_batch_rejects_empty_ids(self, client):
+        response = client.get("/properties/by-ids?ids=")
+        assert response.status_code == 400
+        assert "detail" in response.json()
+
+    def test_batch_rejects_more_than_four_ids(self, client):
+        ids = ",".join(
+            [
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+                "33333333-3333-3333-3333-333333333333",
+                "44444444-4444-4444-4444-444444444444",
+                "55555555-5555-5555-5555-555555555555",
+            ]
+        )
+        response = client.get(f"/properties/by-ids?ids={ids}")
+        assert response.status_code == 400
+        assert "detail" in response.json()
+
+    def test_batch_rejects_malformed_id(self, client):
+        response = client.get("/properties/by-ids?ids=not-a-uuid")
+        assert response.status_code == 400
+        assert "detail" in response.json()
+
+    def test_batch_returns_projection_shape(self, client):
+        list_resp = client.get("/properties?page=1&page_size=2")
+        if list_resp.status_code != 200:
+            if list_resp.status_code >= 500:
+                return
+            pytest.fail(f"Unexpected list status {list_resp.status_code}")
+        props = list_resp.json().get("properties") or []
+        if not props:
+            # Empty DB still exercises endpoint with a valid UUID (returns empty list)
+            response = client.get(
+                "/properties/by-ids?ids=11111111-1111-1111-1111-111111111111"
+            )
+            if response.status_code == 200:
+                data = response.json()
+                assert "properties" in data
+                assert isinstance(data["properties"], list)
+            elif response.status_code >= 500:
+                pass
+            else:
+                pytest.fail(f"Unexpected batch status {response.status_code}")
+            return
+
+        ids = ",".join(p["id"] for p in props[:2])
+        response = client.get(f"/properties/by-ids?ids={ids}")
+        if response.status_code == 200:
+            data = response.json()
+            assert "properties" in data
+            assert isinstance(data["properties"], list)
+            for item in data["properties"]:
+                _assert_projection_keys(item)
+        elif response.status_code >= 500:
+            pass
+        else:
+            pytest.fail(f"Unexpected batch status {response.status_code}")
+
+
 # ---------------------------------------------------------------------------
 # Admin endpoints (contract shape, not auth logic)
 # ---------------------------------------------------------------------------
-
 
 class TestAdminEndpoints:
     def test_health_admin_shape(self, client):

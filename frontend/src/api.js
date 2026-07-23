@@ -85,6 +85,17 @@ export async function fetchProperty(id) {
   return r.json()
 }
 
+export async function fetchPropertiesByIds(ids) {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : []
+  if (list.length < 1 || list.length > 4) {
+    throw new Error('fetchPropertiesByIds requires 1–4 ids')
+  }
+  const params = new URLSearchParams({ ids: list.join(',') })
+  const r = await fetch(`${BASE}/properties/by-ids?${params}`)
+  if (!r.ok) throw new Error('Properties batch fetch failed')
+  return r.json()
+}
+
 export async function adminLogin(username, password) {
   const params = new URLSearchParams()
   params.append('username', username)
