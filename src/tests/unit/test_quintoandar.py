@@ -20,8 +20,9 @@ class TestQuintoAndarLifecycle:
     def test_start_and_close(self):
         s = _scraper()
         fake_client = MagicMock()
-        with patch("httpx.Client", return_value=fake_client):
+        with patch.object(s, "create_http_session", return_value=fake_client) as create_session:
             s.start()
+        create_session.assert_called_once_with()
         assert s.session is fake_client
         fake_client.headers.update.assert_called()
         s.close()

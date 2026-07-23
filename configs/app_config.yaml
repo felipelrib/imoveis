@@ -38,6 +38,7 @@ scraping:
       jitter_max: 7           # maximum delay between requests (seconds)
       extra:
         city_slug: belo-horizonte-mg-brasil
+        # null → use global proxy: block; non-null URL → fixed override (no rotation)
         proxy: null
     olx:
       base_url: https://www.olx.com.br
@@ -50,6 +51,7 @@ scraping:
         max_pages: 5
         region: mg
         city_slug: belo-horizonte
+        # null → use global proxy: block; non-null URL → fixed override (no rotation)
         proxy: null
 
 # ---------------------------------------------------------------------------
@@ -94,8 +96,11 @@ gpu:
   semaphore_name: gpu
 
 # ---------------------------------------------------------------------------
-# Proxy Configuration (future use — rotating residential proxies)
+# Proxy Configuration (scraper HTTP layer — FR-20 / AD-5)
 # ---------------------------------------------------------------------------
+# When enabled with a pool (or single url), scrapers obtain clients via
+# BaseScraper.create_http_session(). Platform extra.proxy overrides this
+# when set to a non-null URL; null/absent defers to this block.
 proxy:
   enabled: false
   url: null                             # single proxy URL (e.g. http://user:pass@proxy:8080)
