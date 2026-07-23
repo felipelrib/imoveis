@@ -98,17 +98,21 @@ gpu:
 # ---------------------------------------------------------------------------
 # Proxy Configuration (scraper HTTP layer — FR-20 / AD-5)
 # ---------------------------------------------------------------------------
-# When enabled with a pool (or single url), scrapers obtain clients via
-# BaseScraper.create_http_session(). Platform extra.proxy overrides this
-# when set to a non-null URL; null/absent defers to this block.
+# Operator enablement: set enabled: true and fill pool (or url), then restart
+# scraper workers. Logs emit scraper_proxy_mode (host only, no credentials);
+# Redis pipeline:scraper:*:status carries the same safe fields.
+# Disable with enabled: false → next scrape is direct (no code change).
+# Prefer env / local overrides for real credentials — never commit passwords.
+# Platform extra.proxy (non-null) overrides this block; null/absent defers here.
+# See docs/setup.md § Proxy rotation.
 proxy:
   enabled: false
-  url: null                             # single proxy URL (e.g. http://user:pass@proxy:8080)
+  url: null                             # single proxy URL (example only — use env for secrets)
   rotation_strategy: round_robin        # round_robin | random
   pool: []                              # list of proxy URLs for rotation
   # pool:
-  #   - http://user:pass@proxy1:8080
-  #   - http://user:pass@proxy2:8080
+  #   - http://user:pass@proxy1.example:8080
+  #   - http://user:pass@proxy2.example:8080
 
 # ---------------------------------------------------------------------------
 # Price-Drop Alerts

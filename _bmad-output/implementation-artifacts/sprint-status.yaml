@@ -67,7 +67,7 @@ development_status:
   epic-3: in-progress
   3-1-appconfig-proxy-settings: done
   3-2-rotating-proxy-in-the-scraper-http-layer: done
-  3-3-operator-enablement-observability: backlog
+  3-3-operator-enablement-observability: done
   epic-3-retrospective: optional
 
   epic-4: in-progress
