@@ -45,7 +45,7 @@ class RedisCircuitBreaker:
         from infra.redis_client import get_redis
 
         self.redis_client = get_redis()
-        
+
         if self.redis_client:
             self._record_failure_script = self.redis_client.register_script(RECORD_FAILURE_SCRIPT)
         else:
@@ -61,7 +61,7 @@ class RedisCircuitBreaker:
         """Record a failure in the circuit breaker. Returns True if this failure opened the circuit."""
         if not self._record_failure_script:
             return False
-            
+
         opened = self._record_failure_script(
             keys=[f"circuit_breaker:{self.platform}"],
             args=[self.failure_threshold, self.cooldown_seconds]
@@ -74,7 +74,7 @@ class RedisCircuitBreaker:
         """Record a success in the circuit breaker."""
         if not self.redis_client:
             return
-        
+
         # Reset state on success
         self.redis_client.delete(
             f"circuit_breaker:{self.platform}:open",

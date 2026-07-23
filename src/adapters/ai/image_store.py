@@ -86,7 +86,7 @@ class ImageStore:
                     content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
                     ext = CONTENT_TYPE_EXT.get(content_type, ".jpg")
                     dest = prop_dir / f"{content_hash}{ext}"
-                    
+
                     dest.write_bytes(content)
                     existing_hashes.add(content_hash)
                     saved_paths.append(str(dest))

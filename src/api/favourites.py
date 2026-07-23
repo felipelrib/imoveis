@@ -52,9 +52,9 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
     """Return all favourites with property details."""
     with SessionLocal() as session:
         offset = (page - 1) * page_size
-        
+
         total = session.execute(text("SELECT COUNT(*) FROM favourites")).scalar() or 0
-        
+
         rows = session.execute(
             text(
                 "SELECT f.id, f.property_id, f.created_at, "
@@ -69,7 +69,7 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
             ),
             {"limit": page_size, "offset": offset}
         ).fetchall()
-        
+
         items = [
             FavouriteWithProperty(
                 id=str(r[0]),
@@ -85,7 +85,7 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
             )
             for r in rows
         ]
-        
+
         return PaginatedFavouritesResponse(
             items=items,
             total=total,

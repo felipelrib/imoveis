@@ -2,8 +2,8 @@ import logging
 import os
 
 from celery import Celery
-from celery.signals import task_failure, task_revoked
 from celery.schedules import crontab
+from celery.signals import task_failure, task_revoked
 
 from infra.config import get_config
 from infra.redis_client import get_redis

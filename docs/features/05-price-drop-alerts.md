@@ -47,4 +47,3 @@ None.
    ```bash
    redis-cli LRANGE alerts:price_drops 0 -1
    ```
-

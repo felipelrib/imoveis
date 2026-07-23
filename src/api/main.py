@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from contextlib import asynccontextmanager
-from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
-from infra.limiter import limiter
+from slowapi.errors import RateLimitExceeded
 
 from api.admin import router as admin_router
+from api.auth import router as auth_router
 from api.favourites import router as favourites_router
 from api.properties import router as properties_router
 from api.saved_searches import router as saved_searches_router
 from api.system import router as system_router
 from api.watchlist import router as watchlist_router
-from api.auth import router as auth_router
+from infra.limiter import limiter
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -99,8 +100,8 @@ class ScrapeRequest(BaseModel):
 def trigger_scrape(request: Request, req: ScrapeRequest):
     try:
         # Import scrapers so they self-register
-        import adapters.scrapers.quintoandar  # noqa: F401
         import adapters.scrapers.olx  # noqa: F401
+        import adapters.scrapers.quintoandar  # noqa: F401
         from adapters.queue.tasks import scrape_listings
         from adapters.scrapers.registry import ScraperRegistry
 
@@ -130,8 +131,8 @@ def trigger_scrape(request: Request, req: ScrapeRequest):
 @app.get("/platforms", tags=["ingestion"])
 def list_platforms():
     """Return registered scraper platforms for the GUI dropdown."""
-    import adapters.scrapers.quintoandar  # noqa: F401 — triggers registration
     import adapters.scrapers.olx  # noqa: F401
+    import adapters.scrapers.quintoandar  # noqa: F401 — triggers registration
     from adapters.scrapers.registry import ScraperRegistry
     from infra.config import get_config
 

@@ -606,8 +606,8 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
   const hasListings = listings.length > 0
 
   return (
-    <div 
-      className="property-card" 
+    <div
+      className="property-card"
       onClick={onClick}
       role="button"
       tabIndex={0}

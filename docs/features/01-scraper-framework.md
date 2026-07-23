@@ -52,4 +52,3 @@ Files touched:
    ```bash
    pytest src/tests/unit/test_olx.py src/tests/unit/test_registry.py -v
    ```
-

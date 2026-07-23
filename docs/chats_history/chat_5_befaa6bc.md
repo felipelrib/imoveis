@@ -44,7 +44,7 @@ Let me know if you need any adjustments to the prompt or if you'd like me to sta
 
 ### 👤 User (22:03:47)
 
-Now give me another prompt, this time to analyze the existing features to check how they were implemented, how they work and document everything according to 
+Now give me another prompt, this time to analyze the existing features to check how they were implemented, how they work and document everything according to
 @[/wsl+ubuntu/home/felipe/workfolder/imoveis/docs/features/_template.md]  . Also to verify if there are any bugs or possible issues in the existing implementations. Consider that this will be a brand new agent, so I'll need the required context again
 
 <ADDITIONAL_METADATA>
@@ -70,7 +70,7 @@ The user has mentioned some items in the form @[ITEM]. Here is extra information
 
 ### 👤 Assistant (22:04:02)
 
-I have created the second prompt for you! 
+I have created the second prompt for you!
 
 This prompt instructs Claude Opus to thoroughly scan your `src/` and `frontend/` directories, reverse-engineer the features that are already implemented, and evaluate them for bugs, race conditions, and architecture anti-patterns. Crucially, it instructs Claude to output its findings as markdown files in `docs/features/` matching your `_template.md` perfectly.
 
