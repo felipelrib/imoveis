@@ -181,6 +181,7 @@ jobs:
         run: bash scripts/agent/validate-scrapers.sh --require-live
         env:
           REDIS_URL: redis://localhost:6379/0
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
 
   # Playwright uses page.route mocks — independent of backend test jobs
   e2e:

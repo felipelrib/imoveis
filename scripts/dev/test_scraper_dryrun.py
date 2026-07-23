@@ -7,8 +7,10 @@ import json
 import os
 import sys
 
-# Ensure src is in PYTHONPATH
-sys.path.insert(0, os.path.abspath("src"))
+# Ensure repo root (for `src.*` imports) and src/ (for `adapters.*`) are on path
+_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _REPO)
+sys.path.insert(0, os.path.join(_REPO, "src"))
 
 from adapters.scrapers.quintoandar import QuintoAndarScraper  # noqa: E402
 
