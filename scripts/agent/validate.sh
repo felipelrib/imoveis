@@ -63,9 +63,12 @@ if [ -z "${REDIS_URL:-}" ] && [ -n "${REDIS_PORT:-}" ]; then
   export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
   log "Derived REDIS_URL from REDIS_PORT"
 fi
-# Set API_KEY for admin endpoint tests
+# Set API_KEY / JWT_SECRET for admin endpoint tests (via AppConfig env channel)
 if [ -z "${API_KEY:-}" ]; then
-  export API_KEY="dev-secret-key"
+  export API_KEY="test-local-api-key"
+fi
+if [ -z "${JWT_SECRET:-}" ]; then
+  export JWT_SECRET="test-local-jwt-secret"
 fi
 
 rc=0

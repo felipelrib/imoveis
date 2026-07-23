@@ -5,8 +5,22 @@
 #   DATABASE_URL  — PostgreSQL connection string
 #   REDIS_URL     — Redis connection string
 #   AI_MODEL      — Override the default VLM model name
+#   API_KEY       — API edge credential (auth.api_key)
+#   JWT_SECRET    — JWT signing secret (auth.jwt_secret)
+#   ADMIN_USER / ADMIN_PASS — admin login (auth.admin_*)
+#   IMOVEIS_AUTH__* — generic auth overrides (e.g. IMOVEIS_AUTH__PRINCIPAL_ID)
 
 database: {}
+
+# ---------------------------------------------------------------------------
+# API edge auth (BIN-44) — secrets via env only; never commit real values
+# ---------------------------------------------------------------------------
+auth:
+  api_key: ""
+  jwt_secret: ""
+  principal_id: default
+  admin_user: admin
+  admin_pass: admin
 
 redis_url: redis://localhost:6379/0
 

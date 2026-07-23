@@ -1,5 +1,3 @@
-import os
-
 """
 Integration tests for the Real-Estate ingestion system.
 Tests cover API endpoints, deduplication, scraping, and async task processing.
@@ -7,6 +5,7 @@ Tests cover API endpoints, deduplication, scraping, and async task processing.
 Run with: pytest src/tests/integration/ -v
 """
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,8 +34,6 @@ def test_db():
     DATABASE_URL must be set by the test runner (validate.sh guarantees this).
     Truncates all tables after each test for isolation.
     """
-    import os
-
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
@@ -61,25 +58,19 @@ def test_client():
 
 
 @pytest.fixture(scope="function")
-def admin_headers(test_client):
-    """Bearer token for admin endpoints (JWT via /auth/admin/login)."""
-    response = test_client.post(
-        "/auth/admin/login",
-        data={
-            "username": os.environ.get("ADMIN_USER", "admin"),
-            "password": os.environ.get("ADMIN_PASS", "admin"),
-        },
-    )
-    assert response.status_code == 200, response.text
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+def admin_headers():
+    """X-API-Key for admin endpoints (AppConfig-backed API credential)."""
+    from infra.config import get_config
+
+    get_config.cache_clear()
+    api_key = get_config().auth.api_key or os.environ.get("API_KEY", "")
+    assert api_key, "API_KEY must be set (via env → AppConfig) for admin integration tests"
+    return {"X-API-Key": api_key}
 
 
 @pytest.fixture(scope="function")
 def mock_redis():
     """Use real Redis from CI when available, otherwise mock it."""
-    import os
-
     redis_url = os.environ.get("REDIS_URL")
     if redis_url:
         import redis
@@ -290,8 +281,6 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_opens_on_failures(self):
         """Test that circuit breaker opens after threshold failures."""
-        import os
-
         redis_url = os.environ.get("REDIS_URL")
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
@@ -311,8 +300,6 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_resets_on_success(self):
         """Test that circuit breaker resets on success."""
-        import os
-
         redis_url = os.environ.get("REDIS_URL")
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
@@ -337,8 +324,6 @@ class TestGPUSemaphore:
 
     def test_semaphore_basic_acquire_release(self, mock_redis):
         """Test basic semaphore acquire and release."""
-        import os
-
         # This test requires a real Redis connection because GPUSemaphore uses
         # Redis pipelines internally. The mock fixture returns a MagicMock when
         # REDIS_URL is not set, which cannot simulate pipeline transactions.

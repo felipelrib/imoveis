@@ -15,13 +15,13 @@ The React frontend and external clients need a comprehensive REST API to query p
   - `api/watchlist.py` — Watchlist CRUD
   - `api/favourites.py` — Favourites CRUD
   - `api/saved_searches.py` — Saved search CRUD
-  - `api/auth.py` — API key verification via `X-API-Key` header
+  - `api/auth.py` — AppConfig-backed API key / JWT verification; returns a stable `Principal`
 
 - **Rich property queries**: `GET /properties` supports 12+ filter parameters (platform, price, bedrooms, parking, neighbourhood, listing type, property type, furnished, pets, score, bbox) with sort and pagination.
 
 - **Geospatial queries**: `bbox` parameter enables map-based property discovery using `ST_Within` + `ST_MakeEnvelope`.
 
-- **Admin API protection**: All `/admin/*` endpoints require `X-API-Key` header validated against `API_KEY` env var.
+- **Admin API protection**: All `/admin/*` endpoints require a valid AppConfig credential — `X-API-Key` (canonical) or admin JWT (transitional until Story 2.2). Keys come from `auth.*` via `API_KEY` / `JWT_SECRET` env → AppConfig (AD-2).
 
 - **System health aggregation**: `/system/status` probes DB, Redis, and Ollama in one call for the dashboard service status panel.
 

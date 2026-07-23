@@ -10,6 +10,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from infra.config import get_config
+
+_TEST_API_KEY = "contract-test-api-key"
+
+
+@pytest.fixture(autouse=True)
+def _auth_env_for_contracts(monkeypatch: pytest.MonkeyPatch):
+    """Wire a known API key through AppConfig for admin contract calls."""
+    monkeypatch.setenv("API_KEY", _TEST_API_KEY)
+    monkeypatch.setenv("JWT_SECRET", "contract-test-jwt-secret")
+    get_config.cache_clear()
+    yield
+    get_config.cache_clear()
 
 
 @pytest.fixture
@@ -22,6 +35,11 @@ def client():
     """
     c = TestClient(app, raise_server_exceptions=False)
     return c
+
+
+@pytest.fixture
+def admin_headers():
+    return {"X-API-Key": _TEST_API_KEY}
 
 
 # ---------------------------------------------------------------------------
@@ -223,29 +241,26 @@ class TestPropertyProjectionContract:
 # ---------------------------------------------------------------------------
 
 class TestAdminEndpoints:
-    def test_health_admin_shape(self, client):
+    def test_health_admin_shape(self, client, admin_headers):
         response = client.get(
             "/admin/health",
-            headers={"X-API-Key": "test_key"},
+            headers=admin_headers,
         )
         data = response.json()
         assert isinstance(data, dict)
-        # Either authorized or 403 — both are valid shapes
-        if response.status_code == 200:
-            assert data == {"status": "ok"}
-        elif response.status_code == 403:
-            assert "detail" in data
+        assert response.status_code == 200
+        assert data == {"status": "ok"}
 
     def test_system_status_shape(self, client):
         response = client.get("/system/status")
         data = response.json()
         assert isinstance(data, dict)
 
-    def test_schedule_get_returns_shape(self, client):
+    def test_schedule_get_returns_shape(self, client, admin_headers):
         """GET /admin/schedule must return a dict with a schedules list."""
         response = client.get(
             "/admin/schedule",
-            headers={"X-API-Key": "test_key"},
+            headers=admin_headers,
         )
         data = response.json()
         if response.status_code == 200:

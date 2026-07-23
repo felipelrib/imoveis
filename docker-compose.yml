@@ -56,6 +56,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       # Point Ollama to host machine (Ollama runs on Windows host, not in Docker)
       OLLAMA_HOST: http://host.docker.internal:11434
+      API_KEY: ${API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

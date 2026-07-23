@@ -132,6 +132,7 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-integration-key
+          JWT_SECRET: test-integration-jwt-secret
 
   contract:
     runs-on: ubuntu-latest
