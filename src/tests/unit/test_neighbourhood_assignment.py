@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -33,10 +35,40 @@ class TestAssignPropertyNeighbourhoodUnit:
         session.flush.assert_not_called()
         assert prop.neighborhood_id == existing_nid
 
-    def test_api_modules_do_not_import_assigner(self):
-        import ast
-        from pathlib import Path
+    def test_covers_match_sets_neighborhood_id(self):
+        matched = uuid4()
+        prop = MagicMock()
+        prop.id = uuid4()
+        prop.location = object()
+        prop.neighborhood_id = None
+        session = MagicMock()
+        session.get.return_value = prop
+        session.execute.return_value.scalar.return_value = matched
 
+        result = assign_property_neighbourhood(session, prop.id)
+
+        assert result == matched
+        assert prop.neighborhood_id == matched
+        session.execute.assert_called_once()
+        session.flush.assert_called_once()
+
+    def test_no_covering_polygon_clears_fk(self):
+        stale = uuid4()
+        prop = MagicMock()
+        prop.id = uuid4()
+        prop.location = object()
+        prop.neighborhood_id = stale
+        session = MagicMock()
+        session.get.return_value = prop
+        session.execute.return_value.scalar.return_value = None
+
+        result = assign_property_neighbourhood(session, prop.id)
+
+        assert result is None
+        assert prop.neighborhood_id is None
+        session.flush.assert_called_once()
+
+    def test_api_modules_do_not_import_assigner(self):
         api_root = Path(__file__).resolve().parents[2] / "api"
         offenders = []
         for path in api_root.rglob("*.py"):
