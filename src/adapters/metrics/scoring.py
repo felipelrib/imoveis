@@ -224,23 +224,22 @@ def recalculate_all_combined_scores(
 
 def get_neighborhood_stats_cached(session: Session, n_key: str) -> dict:
     import json
-
     from infra.redis_client import get_redis
     r = get_redis()
     cache_key = f"n_stats:{n_key}"
     cached = r.get(cache_key)
     if cached:
         return json.loads(cached)
-
+    
     sql = text("""
-        SELECT
+        SELECT 
             AVG(p.price / NULLIF(p.area_m2, 0)) AS mean,
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.price / NULLIF(p.area_m2, 0)) AS median,
             STDDEV(p.price / NULLIF(p.area_m2, 0)) AS stddev,
             COUNT(p.id) AS count
         FROM properties p
         LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-        WHERE p.area_m2 > 0 AND p.active = true
+        WHERE p.area_m2 > 0 AND p.active = true 
           AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey
     """)
     row = session.execute(sql, {"nkey": n_key}).mappings().fetchone()
@@ -277,7 +276,7 @@ def score_single_property(session: Session, property_id: str) -> None:
         n_key = (prop.props_json or {}).get("neighborhood", "Unknown")
 
     stats = get_neighborhood_stats_cached(session, n_key)
-
+    
     if prop.area_m2 and prop.area_m2 > 0:
         price_per_m2 = prop.price / prop.area_m2
     else:
@@ -287,9 +286,9 @@ def score_single_property(session: Session, property_id: str) -> None:
         z = (price_per_m2 - stats["mean"]) / stats["stddev"]
     else:
         z = 0.0
-
+        
     stat_score = _sigmoid_undervalued(z)
-
+    
     stat_category = "Average"
     stat_reasoning = "Priced closely to the neighborhood average."
     if z < -1.0:
@@ -341,7 +340,7 @@ def score_single_property(session: Session, property_id: str) -> None:
         meta = dict(ms.meta or {})
         meta["stat_analysis"] = stat_analysis
         ms.meta = meta
-
+        
     session.flush()
 
     logger.info("single_property_scored", property_id=property_id)

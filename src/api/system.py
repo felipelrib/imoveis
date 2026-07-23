@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from api.schemas import PipelineResponse, SystemStatusResponse
+from api.auth import verify_api_key
 from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
+from api.schemas import SystemStatusResponse, PipelineResponse
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
@@ -23,7 +25,6 @@ router = APIRouter(prefix="/system", tags=["system"])
 def _check_db_and_counts() -> tuple[dict, int, int]:
     try:
         import sqlalchemy
-
         from infra.db import SessionLocal
 
         with SessionLocal() as session:
@@ -179,7 +180,7 @@ def get_alerts() -> List[Dict[str, Any]]:
     """Return the last 100 price drop alerts from Redis."""
     import json
     r = get_redis()
-
+    
     raw_alerts = r.lrange("alerts:price_drops", 0, 99)
     alerts = []
     for raw in raw_alerts:
@@ -187,5 +188,5 @@ def get_alerts() -> List[Dict[str, Any]]:
             alerts.append(json.loads(raw))
         except Exception:
             pass
-
+            
     return alerts

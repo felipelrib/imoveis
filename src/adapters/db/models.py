@@ -232,7 +232,7 @@ class Favourite(Base):
 
 class AdminAudit(Base):
     """Log of actions performed by administrators."""
-
+    
     __tablename__ = "admin_audit"
     id = Column(
         UUID(as_uuid=True),
@@ -248,15 +248,12 @@ class AdminAudit(Base):
 
 import shutil
 from pathlib import Path
-
 from sqlalchemy import event
-
 
 @event.listens_for(Property, "after_delete")
 def delete_property_images(mapper, connection, target):
-    import structlog
-
     from infra.config import get_config
+    import structlog
     logger = structlog.get_logger()
     base = get_config().image_storage_path
     if not base:

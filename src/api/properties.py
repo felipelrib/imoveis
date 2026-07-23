@@ -6,11 +6,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import text
-
-from api.schemas import NeighborhoodModel, PaginatedPropertiesResponse, PriceHistoryModel, PropertyDetailModel
-from infra.db import SessionLocal
 from infra.limiter import limiter
+
+from infra.db import SessionLocal
 from infra.logging import get_logger
+
+from infra.limiter import limiter
+from api.schemas import PaginatedPropertiesResponse, NeighborhoodModel, PropertyDetailModel, PriceHistoryModel
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/properties", tags=["properties"])

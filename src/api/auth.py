@@ -4,8 +4,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
 from pydantic import BaseModel
+from jose import JWTError, jwt
 
 from src.infra.logging import get_logger
 
@@ -30,11 +30,11 @@ def verify_api_key(key: str = Security(api_key_header)):
     if not _api_key:
         logger.warning("auth_failed", reason="api_key_not_set")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin API key not configured")
-
+    
     if key != _api_key:
         logger.warning("auth_failed", reason="invalid_api_key")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate API Key")
-
+        
     return key
 
 
@@ -88,10 +88,10 @@ def login_for_admin_token(form_data: OAuth2PasswordRequestForm = Depends()):
     """Issue a short-lived JWT for admin access."""
     admin_user = os.environ.get("ADMIN_USER", "admin")
     admin_pass = os.environ.get("ADMIN_PASS", "admin")
-
+    
     if form_data.username != admin_user or form_data.password != admin_pass:
         raise HTTPException(status_code=401, detail="Incorrect admin credentials")
-
+        
     access_token_expires = timedelta(minutes=15)
     access_token = create_access_token(
         data={"sub": admin_user, "role": "admin"}, expires_delta=access_token_expires

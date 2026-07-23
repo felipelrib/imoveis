@@ -15,9 +15,9 @@ _notifiers: List[Notifier] | None = None
 
 def _build_notifiers() -> List[Notifier]:
     """Build notifier list from config."""
-    from adapters.notify.email_notifier import EmailNotifier
     from adapters.notify.log_notifier import LogNotifier
     from adapters.notify.redis_notifier import RedisNotifier
+    from adapters.notify.email_notifier import EmailNotifier
 
     cfg = get_config()
     channels = getattr(cfg, "alerts", None)
