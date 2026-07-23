@@ -10,6 +10,7 @@ Single-tenant attribution: existing null/legacy rows get owner = 'default'
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "a1b2c3d4e5f6"
