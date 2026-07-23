@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
+import CompareView from '../components/CompareView.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
@@ -68,6 +69,17 @@ export default function Properties() {
     e.stopPropagation()
     toggleCompare(propertyId)
   }, [toggleCompare])
+
+  const [compareOpen, setCompareOpen] = useState(false)
+
+  const openCompare = useCallback(() => {
+    if (!canCompare) return
+    setCompareOpen(true)
+  }, [canCompare])
+
+  const closeCompare = useCallback(() => {
+    setCompareOpen(false)
+  }, [])
 
   // Saved searches state
   const [savedSearches, setSavedSearches] = useState([])
@@ -618,7 +630,15 @@ export default function Properties() {
 
       {selectedId && <PropertyModal id={selectedId} onClose={() => setSelectedId(null)} />}
 
-      {compareIds.length > 0 && (
+      {compareOpen && (
+        <CompareView
+          ids={compareIds}
+          onClose={closeCompare}
+          onClearSelection={clearCompare}
+        />
+      )}
+
+      {compareIds.length > 0 && !compareOpen && (
         <div className="compare-bar" data-testid="compare-bar" role="region" aria-label="Compare selection">
           <span className="compare-bar-count" data-testid="compare-count">
             {compareIds.length} selected
@@ -637,7 +657,7 @@ export default function Properties() {
               className="btn btn-primary btn-sm"
               data-testid="compare-open"
               disabled={!canCompare}
-              onClick={() => { /* BIN-43: open side-by-side compare */ }}
+              onClick={openCompare}
             >
               Compare
             </button>

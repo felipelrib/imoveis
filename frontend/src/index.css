@@ -472,6 +472,89 @@ body {
   gap: 8px;
   margin-left: auto;
 }
+.compare-view {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  padding: 20px 24px 28px;
+}
+.compare-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+.compare-view-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.compare-view-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.compare-view-status {
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.compare-view-status--error {
+  color: var(--score-low, #f87171);
+}
+.compare-view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.compare-table-wrap {
+  overflow-x: auto;
+}
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  font-size: 13px;
+}
+.compare-table th,
+.compare-table td {
+  border: 1px solid var(--border-subtle);
+  padding: 10px 12px;
+  vertical-align: top;
+  text-align: left;
+  color: var(--text-primary);
+}
+.compare-table thead th {
+  background: var(--bg-card);
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.compare-table tbody th {
+  background: var(--bg-surface);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  width: 140px;
+}
+.compare-attr-col {
+  width: 140px;
+}
+.compare-placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.compare-history-chart {
+  min-width: 200px;
+  height: 160px;
+}
 .property-image {
   width: 100%; height: 180px;
   object-fit: cover;
