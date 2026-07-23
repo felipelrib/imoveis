@@ -74,5 +74,8 @@ frontend/test-results/
 _bmad/config.user.toml
 _bmad/**/*.user.toml
 
+# BMad architecture reviewer-gate scratch (not a deliverable)
+_bmad-output/planning-artifacts/architecture/**/reviews/
+
 # Port registry for sibling worktrees
 .agent-workspaces/
