@@ -2,18 +2,25 @@
 # ---------------------------------------------------------------------------
 # finish-feature.sh [feature-slug]
 #
-# Pushes the current feature branch, validates it, and prepares it for a PR.
-# Run from INSIDE the feature branch (or pass the slug so the script can find it).
+# Validates the current feature branch, pushes it, and optionally opens a PR.
+# Run from INSIDE the feature workspace (primary solo branch or a worktree).
+#
+# Idle invariant: after a successful finish on the PRIMARY checkout, checks out
+# main so the next agent sees primary_is_idle and can use solo mode.
+# Worktree finishes leave the primary alone; use teardown.sh --remove to drop
+# the worktree when done.
 #
 # Exit codes:
-#   0  pushed, validated — ready for PR
+#   0  pushed, validated — ready for PR / PR created
 #   1  validation failed — fix, commit, re-run
 #
 # Flags:
 #   --dry-run        Show what would happen without doing it
 #   --skip-docs      Skip the gen-docs step
 #   --skip-validate  Skip validation (use for rules/docs-only changes)
-#   --validate-only  Only validate, don't merge (sync with main + re-validate)
+#   --validate-only  Only validate, don't push
+#   --pr             Push, open PR, watch CI
+#   --keep-branch    Do not checkout main on primary after finish (rare)
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +33,7 @@ SKIP_DOCS=false
 VALIDATE_ONLY=false
 SKIP_VALIDATE=false
 PR_MODE=false
+KEEP_BRANCH=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -34,13 +42,35 @@ for arg in "$@"; do
     --skip-validate)  SKIP_VALIDATE=true ;;
     --validate-only)  VALIDATE_ONLY=true ;;
     --pr)             PR_MODE=true ;;
+    --keep-branch)    KEEP_BRANCH=true ;;
   esac
 done
 
-# --- Resolve the feature branch and worktree --------------------------------
+return_primary_to_idle() {
+  if [ "$KEEP_BRANCH" = true ]; then
+    warn "skipping return-to-main (--keep-branch)"
+    return 0
+  fi
+  if in_linked_worktree; then
+    log "Finished in a worktree — primary left as-is. Optional: bash scripts/agent/teardown.sh --remove"
+    return 0
+  fi
+  if [ "$REPO_ROOT" != "$PRIMARY_ROOT" ]; then
+    return 0
+  fi
+  log "Returning primary checkout to main (idle invariant for parallel agents)..."
+  git -C "$PRIMARY_ROOT" fetch origin --quiet 2>/dev/null || true
+  if git -C "$PRIMARY_ROOT" checkout main 2>/dev/null; then
+    git -C "$PRIMARY_ROOT" pull --ff-only origin main 2>/dev/null || true
+    ok "primary now on $(git -C "$PRIMARY_ROOT" rev-parse --abbrev-ref HEAD)"
+  else
+    warn "could not checkout main on primary — fix manually so the next agent can detect idle"
+  fi
+}
+
+# --- Resolve the feature branch ---------------------------------------------
 resolve_branch() {
   local slug="$1"
-  # Try both common prefixes: feat/ and feature/
   local type
   for type in feat feature; do
     if git rev-parse --verify "$type/$slug" >/dev/null 2>&1; then
@@ -56,28 +86,22 @@ if [ -n "${1:-}" ] && [[ ! "$1" =~ ^-- ]]; then
   BRANCH="$(resolve_branch "$SLUG")" || die "could not find branch 'feat/$SLUG' or 'feature/$SLUG'"
 else
   BRANCH="$(current_branch)"
-  # Extract slug: strip the type prefix (feat/, fix/, feature/, etc.)
   SLUG="${BRANCH#*/}"
 fi
 
 [ "$BRANCH" != "main" ] || die "you are ON main — run this from a feature branch"
-# Accept any branch under a recognized conventional type prefix.
 BRANCH_TYPE="${BRANCH%%/*}"
 echo "$BRANCH_TYPE" | grep -qE "^($VALID_BRANCH_TYPES)$" || die "branch '$BRANCH' does not have a valid conventional type prefix (expected one of: $VALID_BRANCH_TYPES)"
 
-# --- Validate-only mode (sync with main + re-validate) ----------------------
+# --- Validate-only mode -----------------------------------------------------
 if [ "$VALIDATE_ONLY" = true ]; then
   log "Validate-only mode: syncing with main and re-validating"
 
-  cd "$PRIMARY_ROOT"
   log "Fetching latest from origin..."
   git fetch origin --quiet || warn "git fetch failed"
 
   log "Syncing feature branch with main..."
-  if ! git checkout "$BRANCH"; then
-    die "could not checkout $BRANCH"
-  fi
-  if ! git merge --no-edit "origin/$BASE_BRANCH" 2>/dev/null && ! git merge --no-edit main 2>/dev/null; then
+  if ! git merge --no-edit "origin/main" 2>/dev/null && ! git merge --no-edit main 2>/dev/null; then
     warn "could not sync with main — may need manual merge"
     exit 2
   fi
@@ -100,7 +124,9 @@ fi
 if [ "$DRY_RUN" = true ]; then
   log "DRY RUN — would do:"
   log "  1. Run validate.sh all"
-  log "  2. Delete branch $BRANCH (after PR)"
+  log "  2. Push $BRANCH"
+  [ "$PR_MODE" = true ] && log "  3. Open PR + watch CI"
+  log "  4. Return primary to main (unless worktree / --keep-branch)"
   exit 0
 fi
 
@@ -124,7 +150,7 @@ fi
 # --- Open PR and wait for CI (--pr mode) -----------------------------------
 if [ "$PR_MODE" = true ]; then
   log "Pushing branch $BRANCH..."
-  git push origin "$BRANCH" 2>/dev/null || die "git push failed"
+  git push -u origin "$BRANCH" 2>/dev/null || die "git push failed"
 
   log "Opening pull request..."
   PR_TITLE="$(git log -1 --pretty=%s "$BRANCH" 2>/dev/null || echo "Feature: $SLUG")"
@@ -144,13 +170,14 @@ if [ "$PR_MODE" = true ]; then
     exit 1
   }
   ok "All CI checks passed"
+  return_primary_to_idle
   exit 0
 fi
 
 log "Pushing branch $BRANCH..."
-git push origin "$BRANCH" 2>/dev/null || die "git push failed"
+git push -u origin "$BRANCH" 2>/dev/null || die "git push failed"
 ok "Feature '$SLUG' is pushed and ready for PR."
-echo "  Run: gh pr create"
+echo "  Run: gh pr create   (or: bash scripts/agent/finish-feature.sh --pr)"
 
 # --- Generate docs (unless skipped) -----------------------------------------
 if [ "$SKIP_DOCS" = false ] && [ -f "$HERE/gen-docs.sh" ]; then
@@ -162,7 +189,7 @@ if [ "$SKIP_DOCS" = false ] && [ -f "$HERE/gen-docs.sh" ]; then
   fi
 fi
 
-# --- Clean up feature branch (if requested by user later, script doesn't delete it directly now since it's a PR) ----
+return_primary_to_idle
 
 echo ""
 ok "Feature '$SLUG' processed."

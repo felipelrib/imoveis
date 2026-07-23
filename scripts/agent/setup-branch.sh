@@ -2,8 +2,10 @@
 # ---------------------------------------------------------------------------
 # setup-branch.sh <branch> [base-branch]
 #
-# Creates a standard git branch for one feature and installs dependencies.
-# This replaces the old worktree-based setup which was too complex for agents.
+# Creates/checks out a conventional branch in the CURRENT (usually primary)
+# checkout. Prefer scripts/agent/setup-workspace.sh — it auto-selects this
+# path when the primary is idle, or a sibling worktree when another agent is
+# already using the primary.
 #
 # <branch> follows the Conventional Branch v1.1.0 spec:
 #   <type>/<description>          — e.g. feat/eng-123-add-login

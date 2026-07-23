@@ -30,9 +30,11 @@ CI suites (`lint`, `unit`, `integration`, `contract`, `scrapers`, `e2e`, `securi
 - Cline `.clinerules/` / `.cline/` removed.
 - Scraper HTML cassettes + merge-blocking live dry-run (`scrapers` job); agents refresh cassettes on HTML drift.
 - Harness wording iterates locally via `harness-retrospect` without forcing PRs.
+- Multiple agents may run **different** features in parallel via sibling worktrees when the primary is busy — see [ADR 0004](0004-parallel-agent-workspaces.md). Each agent remains a single Plan→Implement flow.
 
 ## Alternatives considered
 
 1. Dual-model Planner/Implementer in Cursor — rejected (redundant with Plan mode).
 2. Commit `.cursor/` to the repo — rejected for this project (local is enough; scripts/CI stay shared).
 3. Keep lint as a hard prerequisite for all jobs — rejected (unnecessary serialization).
+4. Always-on nested worktrees for every feature — rejected; revived only as **parallel-when-busy** in ADR 0004.
