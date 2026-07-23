@@ -1,5 +1,5 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-23T14:45:00-03:00
+# last_updated: 2026-07-23T15:45:00-03:00
 # project: Imoveis — Deal Tracker
 # project_key: NOKEY
 # tracking_system: file-system
@@ -45,7 +45,7 @@
 #   (keep AD-12 property projection before export/digest)
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-23T14:45:00-03:00
+last_updated: 2026-07-23T15:45:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -76,8 +76,8 @@ development_status:
   4-3-scheduled-top-deals-digest: backlog
   epic-4-retrospective: optional
 
-  epic-5: backlog
-  5-1-load-neighbourhood-polygons: backlog
+  epic-5: in-progress
+  5-1-load-neighbourhood-polygons: done
   5-2-assign-properties-by-spatial-containment: backlog
   5-3-scoring-cohorts-prefer-spatial-neighbourhoods: backlog
   epic-5-retrospective: optional
