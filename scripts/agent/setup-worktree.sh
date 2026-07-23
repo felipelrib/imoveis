@@ -97,6 +97,14 @@ FRONTEND_PORT=$FE
 EOF
 ok ".env.local written"
 
+# validate.sh prefers $REPO_ROOT/.venv; worktrees have none — link primary's
+# so host pytest does not fall back to system python (missing pgvector, etc.).
+if [ -x "$PRIMARY_ROOT/.venv/bin/python" ] && [ ! -e "$WORKTREE/.venv" ]; then
+  ln -sfn "$PRIMARY_ROOT/.venv" "$WORKTREE/.venv" \
+    && ok "symlinked .venv from primary" \
+    || warn "could not symlink .venv (optional — create one or pip install -r requirements.txt)"
+fi
+
 # Best-effort: copy local Cursor harness so agents keep project skills/rules.
 if [ -d "$PRIMARY_ROOT/.cursor" ] && [ ! -e "$WORKTREE/.cursor" ]; then
   cp -a "$PRIMARY_ROOT/.cursor" "$WORKTREE/.cursor" 2>/dev/null \
