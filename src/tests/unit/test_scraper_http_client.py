@@ -52,7 +52,10 @@ class TestResolveProxyUrl:
             rotation_strategy="random",
             pool=["http://a.example:1", "http://b.example:2"],
         )
-        with patch("adapters.scrapers.http_client.random.choice", return_value="http://b.example:2") as choice:
+        with patch(
+            "adapters.scrapers.http_client.secrets.choice",
+            return_value="http://b.example:2",
+        ) as choice:
             assert resolve_proxy_url(cfg) == "http://b.example:2"
         choice.assert_called_once_with(cfg.pool)
 

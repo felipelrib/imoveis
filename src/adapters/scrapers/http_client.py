@@ -6,7 +6,7 @@ global pool when set; otherwise ``AppConfig.proxy`` drives rotation.
 
 from __future__ import annotations
 
-import random
+import secrets
 import threading
 from typing import Any
 
@@ -46,7 +46,7 @@ def resolve_proxy_url(
 
     if proxy.pool:
         if proxy.rotation_strategy == "random":
-            return random.choice(proxy.pool)
+            return secrets.choice(proxy.pool)
         global _rr_index
         with _rr_lock:
             url = proxy.pool[_rr_index % len(proxy.pool)]
