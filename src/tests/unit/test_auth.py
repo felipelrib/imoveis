@@ -96,6 +96,42 @@ def test_verify_api_key_returns_stable_principal(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.unit
+def test_verify_api_key_if_configured_skips_when_unset(monkeypatch: pytest.MonkeyPatch):
+    from api.auth import verify_api_key_if_configured
+
+    cfg = MagicMock()
+    cfg.auth = _auth_config(api_key="")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+
+    assert verify_api_key_if_configured(None) is None
+    assert verify_api_key_if_configured("anything") is None
+
+
+@pytest.mark.unit
+def test_verify_api_key_if_configured_requires_valid_key(monkeypatch: pytest.MonkeyPatch):
+    from fastapi import HTTPException
+
+    from api.auth import verify_api_key_if_configured
+
+    cfg = MagicMock()
+    cfg.auth = _auth_config(principal_id="tenant-export", api_key="export-key")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+
+    with pytest.raises(HTTPException) as missing:
+        verify_api_key_if_configured(None)
+    assert missing.value.status_code == 403
+
+    with pytest.raises(HTTPException) as invalid:
+        verify_api_key_if_configured("wrong")
+    assert invalid.value.status_code == 403
+
+    principal = verify_api_key_if_configured("export-key")
+    assert principal is not None
+    assert principal.id == "tenant-export"
+    assert principal.method == "api_key"
+
+
+@pytest.mark.unit
 def test_admin_jwt_maps_to_same_principal(client_with_auth):
     client, auth = client_with_auth
     login = client.post(

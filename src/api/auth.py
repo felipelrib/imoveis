@@ -71,6 +71,32 @@ def verify_api_key(key: Annotated[str, Security(api_key_header)]) -> Principal:
     return Principal(id=cfg.principal_id, method="api_key")
 
 
+def verify_api_key_if_configured(
+    key: Annotated[Optional[str], Security(api_key_header_optional)] = None,
+) -> Optional[Principal]:
+    """Require ``X-API-Key`` only when ``auth.api_key`` is set (Epic 2 edge rules).
+
+    When the key is empty/unconfigured, allow anonymous access (browse/export).
+    When configured, missing or invalid keys are rejected like ``verify_api_key``.
+    """
+    cfg = _auth_cfg()
+    if not cfg.api_key:
+        return None
+
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Could not validate API Key",
+        )
+    if key != cfg.api_key:
+        logger.warning("auth_failed", reason="invalid_api_key")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Could not validate API Key",
+        )
+    return Principal(id=cfg.principal_id, method="api_key")
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
