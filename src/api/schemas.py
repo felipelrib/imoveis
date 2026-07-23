@@ -37,6 +37,7 @@ class PropertyModel(BaseModel):
     z_score: Optional[float] = None
     price_per_m2: Optional[float] = None
     neighborhood_mean: Optional[float] = None
+    neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     parking: Optional[int] = None
     description: Optional[str] = None
@@ -56,6 +57,7 @@ class PropertyModel(BaseModel):
     sentiment_category: Optional[str] = None
     sentiment_reasoning: Optional[str] = None
     listings: List[PropertyListingModel] = []
+    primary_listing: Optional[PropertyListingModel] = None
     model_config = ConfigDict(extra="ignore")
 
 
@@ -64,6 +66,10 @@ class PaginatedPropertiesResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+    properties: List[PropertyModel]
+
+
+class PropertyBatchResponse(BaseModel):
     properties: List[PropertyModel]
 
 
@@ -95,9 +101,11 @@ class PropertyDetailModel(BaseModel):
     price_per_m2: Optional[float] = None
     neighborhood_mean: Optional[float] = None
     neighborhood_median: Optional[float] = None
+    neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     location: Dict[str, Any]
     listings: List[PropertyListingModel] = []
+    primary_listing: Optional[PropertyListingModel] = None
     deal_summary: Optional[str] = None
     stat_analysis: Dict[str, Any]
     ai_analysis: Dict[str, Any]
