@@ -168,10 +168,12 @@ flowchart TB
 | Pydantic | >=2.13.4 (venv 2.13.4) |
 | Celery | 5.6.3 in venv; **unpinned** in requirements |
 | Redis (client / server) | client 6.4.0 (unpinned) / server `redis:7-alpine` |
-| PostgreSQL + PostGIS | `postgis/postgis:15-3.3-alpine` (compose pin) |
-| React | 18.3.x |
-| Vite | 5.4.21 (lockfile) |
+| PostgreSQL + PostGIS + pgvector | Compose builds `Dockerfile.postgres` from `postgis/postgis:15-3.3-alpine` + pgvector `v0.8.0`; Python `pgvector` in `requirements.txt` |
+| React | 19.2.8 (`frontend/package-lock.json`) |
+| Vite | 8.1.5 (`frontend/package-lock.json`) |
 | Local AI | Host Ollama and/or LM Studio (not containerized) |
+
+*Stack seed refreshed 2026-07-23 on BIN-35 after BIN-34 landed on an outdated base (missed React 19 / Vite 8 upgrade and PostGIS+pgvector image).*
 
 ## Structural Seed
 
@@ -199,7 +201,7 @@ erDiagram
   Principal ||--o{ DigestSubscription : owns
 ```
 
-Sole system of record: **Postgres + PostGIS**. Redis is queue/cache/semaphore, not the system of record. Embedding storage (e.g. pgvector) is **not yet evidenced in-repo** — treat as optional extension when FR-15 storage is confirmed, not as a silent dependency.
+Sole system of record: **Postgres + PostGIS + pgvector** (embeddings for FR-15 semantic search). Redis is queue/cache/semaphore, not the system of record.
 
 ## Capability → Architecture Map
 
@@ -228,7 +230,6 @@ Sole system of record: **Postgres + PostGIS**. Redis is queue/cache/semaphore, n
 | FR-22 polygon data source (open data vs manual GeoJSON) | PRD open question; revisit when FR-22 epic starts |
 | FR-23 additional platforms schedule | Product backlog; AD-5 constrains *how* |
 | Burning down AD-1 debt in `core` | Implementation stories after this spine |
-| Embedding / pgvector as required SoR | Not evidenced in current code; confirm with FR-15 storage |
 | Numeric success-metric instrumentation as KPIs | Product metrics — not architectural divergence points |
 | Event-driven bus / CQRS | Rejected for current altitude |
 | Multi-tenant cloud deploy | Explicit non-goal |
