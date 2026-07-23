@@ -148,6 +148,7 @@ export default function Dashboard({ status, loading }) {
               className="btn btn-ghost" 
               style={{ padding: '4px 8px', fontSize: 12, height: 'auto' }} 
               onClick={() => setAlerts([])}
+              aria-label="Dismiss all alerts"
             >
               Dismiss All
             </button>

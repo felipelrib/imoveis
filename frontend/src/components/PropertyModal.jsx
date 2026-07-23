@@ -106,6 +106,7 @@ export default function PropertyModal({ id, onClose }) {
                   className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}
                   onClick={toggleFavourite}
                   title={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
+                  aria-label={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
                   style={{ fontSize: 18, padding: '6px 10px' }}
                 >
                   {isFavourited ? '★' : '☆'}
@@ -128,6 +129,7 @@ export default function PropertyModal({ id, onClose }) {
                     className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
                     onClick={toggleWatchlist}
                     title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                    aria-label={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
                     style={{ fontSize: 18, padding: '6px 10px', background: 'none', border: 'none' }}
                   >
                     {isWatched ? '🔔' : '☆'}
@@ -162,7 +164,7 @@ export default function PropertyModal({ id, onClose }) {
                 🔗 Ver Original
               </a>
             )}
-            <button className="modal-close" onClick={onClose}>✕</button>
+            <button className="modal-close" onClick={onClose} aria-label="Close modal">✕</button>
           </div>
         </div>
 
@@ -187,8 +189,16 @@ export default function PropertyModal({ id, onClose }) {
                         <img
                           key={i}
                           src={url}
-                          alt=""
+                          alt={`Thumbnail ${i + 1}`}
                           onClick={() => setImgIndex(i)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setImgIndex(i);
+                            }
+                          }}
                           style={{ width: 60, height: 45, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', opacity: i === imgIndex ? 1 : 0.5, border: i === imgIndex ? '2px solid var(--accent)' : '2px solid transparent', flexShrink: 0 }}
                           onError={e => e.target.style.display = 'none'}
                         />

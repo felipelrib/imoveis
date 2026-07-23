@@ -70,8 +70,10 @@ Files touched:
 
 ### Tech Debt
 
-- **No lazy loading/code splitting** — All pages load eagerly.
-- **No error boundaries** — An unhandled error in any component crashes the entire app.
 - **`VITE_API_KEY` exposed in client bundle** — Admin API key is visible in browser DevTools. Fine for local dev but should not be used in production.
-- **No accessibility (a11y)** — Missing ARIA labels, keyboard navigation, and screen reader support.
 - **Inline styles proliferate** — Most component styling uses inline `style={{}}` objects rather than CSS classes.
+
+### Fixed Tech Debt
+- ~~**No lazy loading/code splitting**~~ — FIXED
+- ~~**No error boundaries**~~ — FIXED
+- ~~**No accessibility (a11y)**~~ — FIXED

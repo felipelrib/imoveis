@@ -603,7 +603,18 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
   const hasListings = listings.length > 0
 
   return (
-    <div className="property-card" onClick={onClick}>
+    <div 
+      className="property-card" 
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
       {img
         ? <img className="property-image" src={img} alt={p.title || 'property'} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
         : null
@@ -650,20 +661,38 @@ function PropertyCard({ property: p, onClick, isWatched, onToggleWatchlist, isFa
                 {platformCount} plataformas
               </span>
             )}
-            <button
-              className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}
+            <div
+              className={`icon-btn ${isFavourited ? 'active' : ''}`}
+              title="Add to Favourites"
+              aria-label={isFavourited ? "Remove from Favourites" : "Add to Favourites"}
+              role="button"
+              tabIndex={0}
               onClick={(e) => onToggleFavourite(e, p.id)}
-              title={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onToggleFavourite(e, p.id);
+                }
+              }}
             >
               {isFavourited ? '★' : '☆'}
-            </button>
-            <button
-              className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+            </div>
+            <div
+              className={`icon-btn ${isWatched ? 'active' : ''}`}
+              title="Watch for price drops"
+              aria-label={isWatched ? "Remove from Watchlist" : "Add to Watchlist"}
+              role="button"
+              tabIndex={0}
               onClick={(e) => onToggleWatchlist(e, p.id)}
-              title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onToggleWatchlist(e, p.id);
+                }
+              }}
             >
               {isWatched ? '🔔' : '☆'}
-            </button>
+            </div>
           </div>
         </div>
         <div className="property-title">{p.title || p.address || 'Sem título'}</div>

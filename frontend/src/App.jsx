@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import Dashboard from './pages/Dashboard.jsx'
-import ScraperControl from './pages/ScraperControl.jsx'
-import Properties from './pages/Properties.jsx'
 import { useSystemStatus } from './hooks/useSystemStatus.js'
 import { ToastProvider } from './components/ToastProvider.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+
+const Dashboard = React.lazy(() => import('./pages/Dashboard.jsx'))
+const ScraperControl = React.lazy(() => import('./pages/ScraperControl.jsx'))
+const Properties = React.lazy(() => import('./pages/Properties.jsx'))
 
 const NAV = [
   { path: '/',          icon: '⚡', label: 'Dashboard' },
@@ -57,11 +59,15 @@ export default function App() {
 
         {/* ── Main ── */}
         <main className="main-content">
-          <Routes>
-            <Route path="/"           element={<Dashboard status={status} loading={loading} />} />
-            <Route path="/scraper"    element={<ScraperControl />} />
-            <Route path="/properties" element={<Properties />} />
-          </Routes>
+          <ErrorBoundary>
+            <React.Suspense fallback={<div style={{ padding: '24px', color: 'var(--text-secondary)' }}>Loading...</div>}>
+              <Routes>
+                <Route path="/"           element={<Dashboard status={status} loading={loading} />} />
+                <Route path="/scraper"    element={<ScraperControl />} />
+                <Route path="/properties" element={<Properties />} />
+              </Routes>
+            </React.Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </BrowserRouter>
