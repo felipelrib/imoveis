@@ -60,8 +60,8 @@ None beyond FastAPI core.
 
 ### Tech Debt
 
-- **No OpenAPI response models** — Most endpoints return untyped dicts, losing API documentation benefits.
+- ~~**No OpenAPI response models** — Most endpoints return untyped dicts, losing API documentation benefits.~~ — FIXED
 - **Sync database sessions in async FastAPI** — All endpoints use `SessionLocal()` synchronously, blocking the event loop. Should use async sessions or run in thread pool.
-- **No rate limiting on public endpoints** — Anyone can query `/properties` at high rates.
-- **CORS allows `*` methods/headers** — Over-permissive for production.
-- **`/system/ollama/ensure` uses `subprocess.Popen`** — Security risk: if an attacker can somehow influence the command, this is a shell injection vector.
+- ~~**No rate limiting on public endpoints** — Anyone can query `/properties` at high rates.~~ — FIXED
+- ~~**CORS allows `*` methods/headers** — Over-permissive for production.~~ — FIXED
+- ~~**`/system/ollama/ensure` uses `subprocess.Popen`** — Security risk: if an attacker can somehow influence the command, this is a shell injection vector.~~ — FIXED

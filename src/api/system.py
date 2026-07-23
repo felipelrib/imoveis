@@ -11,6 +11,7 @@ from api.auth import verify_api_key
 from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
+from api.schemas import SystemStatusResponse, PipelineResponse
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
@@ -59,7 +60,7 @@ async def _check_ollama() -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
-@router.get("/status")
+@router.get("/status", response_model=SystemStatusResponse)
 async def system_status() -> Dict[str, Any]:
     """Return health of all system components — polled by the GUI dashboard."""
     r = get_redis()
@@ -83,26 +84,10 @@ async def system_status() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/ollama/ensure", dependencies=[Depends(verify_api_key)])
-def ensure_ollama():
-    """Attempt to start ollama serve if not already running."""
-    try:
-        import httpx
-
-        httpx.get(f"{get_config().ai.ollama_url}/api/tags", timeout=2)
-        return {"status": "already_running"}
-    except Exception:
-        pass
-
-    try:
-        subprocess.Popen(
-            ["ollama", "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return {"status": "started"}
-    except FileNotFoundError:
-        return {"status": "error", "detail": "ollama not found on PATH"}
+@router.get("/ollama/status")
+async def ollama_status():
+    """Check ollama connectivity."""
+    return await _check_ollama()
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +95,7 @@ def ensure_ollama():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/pipeline")
+@router.get("/pipeline", response_model=PipelineResponse)
 def system_pipeline() -> Dict[str, Any]:
     """Return live status of the ingestion pipeline (queues and active tasks)."""
     import json

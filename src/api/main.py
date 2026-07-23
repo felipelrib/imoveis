@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+from infra.limiter import limiter
 
 from api.admin import router as admin_router
 from api.favourites import router as favourites_router
@@ -30,6 +33,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS — allow the Vite dev server and any local origin
 app.add_middleware(
     CORSMiddleware,
@@ -39,8 +45,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 
 app.include_router(admin_router)
@@ -87,7 +93,8 @@ class ScrapeRequest(BaseModel):
 
 
 @app.post("/scrape", tags=["ingestion"])
-def trigger_scrape(req: ScrapeRequest):
+@limiter.limit("10/minute")
+def trigger_scrape(request: Request, req: ScrapeRequest):
     try:
         # Import scrapers so they self-register
         import adapters.scrapers.quintoandar  # noqa: F401

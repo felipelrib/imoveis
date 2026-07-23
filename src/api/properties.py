@@ -4,18 +4,24 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from sqlalchemy import text
+from infra.limiter import limiter
 
 from infra.db import SessionLocal
 from infra.logging import get_logger
+
+from infra.limiter import limiter
+from api.schemas import PaginatedPropertiesResponse, NeighborhoodModel, PropertyDetailModel, PriceHistoryModel
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/properties", tags=["properties"])
 
 
-@router.get("")
+@router.get("", response_model=PaginatedPropertiesResponse)
+@limiter.limit("60/minute")
 def list_properties(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     platform: Optional[str] = None,
@@ -241,7 +247,7 @@ def list_properties(
         }
 
 
-@router.get("/neighborhoods")
+@router.get("/neighborhoods", response_model=List[NeighborhoodModel])
 def list_neighborhoods() -> List[Dict[str, Any]]:
     """Return distinct neighborhoods with property counts for dynamic filter options."""
     with SessionLocal() as session:
@@ -257,7 +263,7 @@ def list_neighborhoods() -> List[Dict[str, Any]]:
         return [{"name": r[0], "count": r[1]} for r in rows if r[0]]
 
 
-@router.get("/{property_id}")
+@router.get("/{property_id}", response_model=PropertyDetailModel)
 def get_property(property_id: str) -> Dict[str, Any]:
     """Return a single property with full scoring details."""
     with SessionLocal() as session:
@@ -336,7 +342,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
         }
 
 
-@router.get("/{property_id}/price-history")
+@router.get("/{property_id}/price-history", response_model=List[PriceHistoryModel])
 def get_price_history(
     property_id: str,
     listing_type: Optional[str] = Query(None, pattern="^(rent|sale)$"),
