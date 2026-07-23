@@ -32,6 +32,10 @@ CI suites (`lint`, `unit`, `integration`, `contract`, `scrapers`, `e2e`, `securi
 - Harness wording iterates locally via `harness-retrospect` without forcing PRs.
 - Multiple agents may run **different** features in parallel via sibling worktrees when the primary is busy — see [ADR 0004](0004-parallel-agent-workspaces.md). Each agent remains a single Plan→Implement flow.
 
+## Related
+
+Product planning / solutioning (PRD, architecture, epics) may use **BMad Method**; see [ADR 0003 — BMad Planning Bridge](0003-bmad-planning-bridge.md). That does **not** revive dual-model implementation — merge gates remain this ADR.
+
 ## Alternatives considered
 
 1. Dual-model Planner/Implementer in Cursor — rejected (redundant with Plan mode).

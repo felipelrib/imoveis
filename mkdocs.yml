@@ -65,6 +65,7 @@ nav:
   - ADR:
       - Dual-Model Development (superseded): adr/0001-dual-model-development.md
       - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md
+      - BMad Planning Bridge: adr/0003-bmad-planning-bridge.md
       - Parallel Agent Workspaces: adr/0004-parallel-agent-workspaces.md
 
 plugins:
