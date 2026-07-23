@@ -287,6 +287,76 @@ export async function installCommonMocks(page, opts = {}) {
 }
 
 /**
+ * Mock GET /properties/export (BIN-51). Register before list mocks when capturing URLs.
+ * @param {Page} page
+ * @param {object} [opts]
+ * @param {number} [opts.status]
+ * @param {'csv'|'json'|null} [opts.format] — if set, only fulfill matching format
+ * @param {string|object} [opts.body]
+ * @param {string[]} [opts.capturedUrls]
+ * @param {Record<string, string>} [opts.headers]
+ */
+export async function mockPropertiesExport(page, opts = {}) {
+  const status = opts.status ?? 200;
+  const capturedUrls = opts.capturedUrls;
+  const formatFilter = opts.format ?? null;
+
+  await page.route("**/api/properties/export**", async (route) => {
+    const url = route.request().url();
+    if (capturedUrls) capturedUrls.push(url);
+
+    const reqFormat = new URL(url).searchParams.get("format");
+    if (formatFilter && reqFormat !== formatFilter) {
+      return route.fallback();
+    }
+
+    if (status >= 400) {
+      const errBody =
+        typeof opts.body === "object" && opts.body !== null
+          ? opts.body
+          : { detail: typeof opts.body === "string" ? opts.body : "Export failed" };
+      return route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(errBody),
+      });
+    }
+
+    if (reqFormat === "csv") {
+      const csv =
+        typeof opts.body === "string"
+          ? opts.body
+          : "id,title\n1,2BR Apartment Savassi\n";
+      return route.fulfill({
+        status: 200,
+        contentType: "text/csv; charset=utf-8",
+        headers: {
+          "Content-Disposition": 'attachment; filename="properties-export.csv"',
+          "X-Export-Total": "1",
+          "X-Export-Truncated": "false",
+          ...(opts.headers || {}),
+        },
+        body: csv,
+      });
+    }
+
+    const jsonBody =
+      typeof opts.body === "object" && opts.body !== null
+        ? opts.body
+        : {
+            properties: [SAMPLE_PROPERTY],
+            total: 1,
+            truncated: false,
+          };
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(jsonBody),
+    });
+  });
+}
+
+/**
  * @param {Page} page
  * @param {object} body
  */
