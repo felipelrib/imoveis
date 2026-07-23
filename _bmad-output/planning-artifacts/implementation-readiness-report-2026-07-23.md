@@ -314,6 +314,6 @@ None.
 
 This assessment identified **0 critical**, **2 major**, **1 medium**, and **2 low** issues across FR coverage, UX alignment, and epic quality. Address the major items via sprint planning and Epic 2 story shaping; they do not require rewriting the PRD or architecture spine before implementation starts.
 
-**Assessor:** Auto (BMad check-implementation-readiness)  
-**Date:** 2026-07-23  
+**Assessor:** Auto (BMad check-implementation-readiness)
+**Date:** 2026-07-23
 **Branch / ticket:** `feat/bin-36` / BIN-36
