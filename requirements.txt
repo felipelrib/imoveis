@@ -12,7 +12,7 @@ alembic
 onnxruntime
 onnx
 python-dotenv
-pydantic>=2.0
+pydantic>=2.13.4
 rapidfuzz
 pytest
 pytest-cov
