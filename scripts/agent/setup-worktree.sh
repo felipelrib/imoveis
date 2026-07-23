@@ -104,6 +104,15 @@ if [ -d "$PRIMARY_ROOT/.cursor" ] && [ ! -e "$WORKTREE/.cursor" ]; then
     || warn "could not copy .cursor/ (optional)"
 fi
 
+# Sync agent scripts from primary so parallel trees get latest harness even when
+# the worktree was branched from an older main.
+if [ -d "$PRIMARY_ROOT/scripts/agent" ]; then
+  mkdir -p "$WORKTREE/scripts/agent"
+  cp -a "$PRIMARY_ROOT/scripts/agent/." "$WORKTREE/scripts/agent/" 2>/dev/null \
+    && ok "synced scripts/agent/ from primary" \
+    || warn "could not sync scripts/agent/ (optional)"
+fi
+
 echo ""
 echo "  MODE=parallel"
 echo "  BRANCH=$BRANCH"
