@@ -15,7 +15,20 @@ export const SAMPLE_PROPERTY = {
   platform: "olx",
   platform_id: "123456789",
   combined_score: 0.72,
+  stat_score: 0.68,
+  ai_score: 0.75,
+  price_per_m2: 46.67,
+  neighborhood_name: "Savassi",
+  deal_summary: null,
   image_urls: [],
+  primary_listing: {
+    platform: "olx",
+    platform_listing_id: "123456789",
+    listing_type: "rent",
+    price: 3500,
+    currency: "BRL",
+    url: "https://www.olx.com.br/imovel/aluguel/apartamentos/mg/detalhes/123456789",
+  },
   listings: [
     {
       platform: "olx",
@@ -25,6 +38,26 @@ export const SAMPLE_PROPERTY = {
     },
   ],
 };
+
+/** Sample price-history points (≥2) for compare charts. */
+export const SAMPLE_PRICE_HISTORY = [
+  {
+    id: "ph-1",
+    price: 3600,
+    start_ts: "2026-01-01T00:00:00Z",
+    end_ts: "2026-02-01T00:00:00Z",
+    listing_type: "rent",
+    platform: "olx",
+  },
+  {
+    id: "ph-2",
+    price: 3500,
+    start_ts: "2026-02-01T00:00:00Z",
+    end_ts: null,
+    listing_type: "rent",
+    platform: "olx",
+  },
+];
 
 export const EMPTY_PROPERTIES = {
   properties: [],
@@ -51,6 +84,17 @@ export const PROPERTIES_PAGE_FIVE = {
       address: "Rua da Bahia, 100, Lourdes",
       price: 4200,
       bedrooms: 3,
+      price_per_m2: 56,
+      neighborhood_name: "Lourdes",
+      combined_score: 0.65,
+      primary_listing: {
+        platform: "quintoandar",
+        platform_listing_id: "2",
+        listing_type: "rent",
+        price: 4200,
+        currency: "BRL",
+        url: "https://example.com/2",
+      },
       listings: [
         {
           platform: "quintoandar",
@@ -68,6 +112,16 @@ export const PROPERTIES_PAGE_FIVE = {
       price: 2100,
       bedrooms: 1,
       area_m2: 40,
+      price_per_m2: 52.5,
+      neighborhood_name: "Funcionarios",
+      primary_listing: {
+        platform: "olx",
+        platform_listing_id: "3",
+        listing_type: "rent",
+        price: 2100,
+        currency: "BRL",
+        url: "https://example.com/3",
+      },
       listings: [
         {
           platform: "olx",
@@ -85,6 +139,16 @@ export const PROPERTIES_PAGE_FIVE = {
       price: 8900,
       bedrooms: 4,
       area_m2: 180,
+      price_per_m2: 4944,
+      neighborhood_name: "Santo Antonio",
+      primary_listing: {
+        platform: "olx",
+        platform_listing_id: "4",
+        listing_type: "sale",
+        price: 890000,
+        currency: "BRL",
+        url: "https://example.com/4",
+      },
       listings: [
         {
           platform: "olx",
@@ -102,6 +166,16 @@ export const PROPERTIES_PAGE_FIVE = {
       price: 2800,
       bedrooms: 1,
       area_m2: 55,
+      price_per_m2: 50.91,
+      neighborhood_name: "Centro",
+      primary_listing: {
+        platform: "quintoandar",
+        platform_listing_id: "5",
+        listing_type: "rent",
+        price: 2800,
+        currency: "BRL",
+        url: "https://example.com/5",
+      },
       listings: [
         {
           platform: "quintoandar",
@@ -270,6 +344,46 @@ export async function mockPropertyDetail(page, property = SAMPLE_PROPERTY) {
       body: JSON.stringify({ favourited: false }),
     })
   );
+}
+
+/**
+ * Mock GET /properties/by-ids for compare view.
+ * @param {Page} page
+ * @param {object[]} properties
+ */
+export async function mockPropertiesByIds(page, properties) {
+  await page.route("**/api/properties/by-ids**", (route) => {
+    const url = new URL(route.request().url());
+    const requested = (url.searchParams.get("ids") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const byId = new Map(properties.map((p) => [String(p.id), p]));
+    const ordered = requested.map((id) => byId.get(id)).filter(Boolean);
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ properties: ordered }),
+    });
+  });
+}
+
+/**
+ * Mock price-history for one or more property ids.
+ * @param {Page} page
+ * @param {Record<string, object[]>} historyById
+ */
+export async function mockPriceHistoryByIds(page, historyById = {}) {
+  await page.route("**/api/properties/*/price-history**", (route) => {
+    const match = route.request().url().match(/\/properties\/([^/]+)\/price-history/);
+    const id = match ? match[1] : null;
+    const body = (id && historyById[id]) || [];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  });
 }
 
 /**
