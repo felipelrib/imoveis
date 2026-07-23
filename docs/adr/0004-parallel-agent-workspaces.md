@@ -1,7 +1,7 @@
 # ADR 0004: Parallel Agent Workspaces
 
-**Status:** Accepted  
-**Date:** 2026-07-23  
+**Status:** Accepted
+**Date:** 2026-07-23
 **Related:** [ADR 0002 — Cursor Single-Agent Workflow](0002-cursor-single-agent-workflow.md)
 
 ## Decision
@@ -14,7 +14,7 @@ Multiple Cursor agents may work on **different features in parallel**. Isolation
 | Primary **busy** (feature branch checked out and/or dirty) | **Parallel** — sibling git worktree via `setup-worktree.sh` |
 | Explicit | `--force-worktree` / `--force-branch` on `setup-workspace.sh` |
 
-**Entry point:** `bash scripts/agent/setup-workspace.sh <slug>` (auto-detects).  
+**Entry point:** `bash scripts/agent/setup-workspace.sh <slug>` (auto-detects).
 **Status:** `bash scripts/agent/workspace-status.sh`.
 
 **Idle invariant:** after `finish-feature.sh` on the primary checkout, return to `main` so the next agent can detect a free primary. Worktree finishes leave primary alone; use `teardown.sh --remove` to drop the worktree.
