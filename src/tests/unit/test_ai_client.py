@@ -245,6 +245,7 @@ class TestCreateAIClient:
         mock_cfg.ai.lmstudio_url = "http://lmstudio:1234"
         mock_cfg.ai.visual_model = "bakllava"
         mock_cfg.ai.text_model = "mistral"
+        mock_cfg.ai.embedding_model = "nomic-embed-text"
         mock_cfg.ai.timeout = 60
         mock_get_config.return_value = mock_cfg
 
@@ -253,6 +254,7 @@ class TestCreateAIClient:
         assert client.base_url == "http://ollama:11434"
         assert client.visual_model == "bakllava"
         assert client.text_model == "mistral"
+        assert client.embedding_model == "nomic-embed-text"
         assert client.timeout.total == 60
 
     @patch("infra.config.get_config")
@@ -264,6 +266,7 @@ class TestCreateAIClient:
         mock_cfg.ai.lmstudio_url = "http://lmstudio:1234"
         mock_cfg.ai.visual_model = "my-vlm"
         mock_cfg.ai.text_model = "my-text"
+        mock_cfg.ai.embedding_model = "text-embedding-nomic"
         mock_cfg.ai.timeout = 90
         mock_get_config.return_value = mock_cfg
 
@@ -272,6 +275,7 @@ class TestCreateAIClient:
         assert client.base_url == "http://lmstudio:1234"
         assert client.visual_model == "my-vlm"
         assert client.text_model == "my-text"
+        assert client.embedding_model == "text-embedding-nomic"
         assert client.timeout.total == 90
 
     @patch("infra.config.get_config")
@@ -283,11 +287,73 @@ class TestCreateAIClient:
         mock_cfg.ai.lmstudio_url = "http://lmstudio:1234"
         mock_cfg.ai.visual_model = "llava"
         mock_cfg.ai.text_model = "llama3"
+        mock_cfg.ai.embedding_model = "nomic-embed-text"
         mock_cfg.ai.timeout = 30
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()
         assert isinstance(client, OllamaClient)
+
+
+# ---------------------------------------------------------------------------
+# embed()
+# ---------------------------------------------------------------------------
+
+
+class TestEmbed:
+    """Verify embed() calls the correct endpoints and parses vectors."""
+
+    def test_ollama_embed(self):
+        client = OllamaClient(
+            base_url="http://localhost:11434",
+            embedding_model="nomic-embed-text",
+        )
+        fake_vec = [0.1, 0.2, 0.3]
+        mock_session = MagicMock()
+
+        async def _run():
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={"embedding": fake_vec})
+            mock_session.post = MagicMock(return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_resp),
+                __aexit__=AsyncMock(return_value=None),
+            ))
+            client.session = mock_session
+            return await client.embed("apartamento em Savassi")
+
+        result = asyncio.run(_run())
+        assert result == fake_vec
+        call_kwargs = mock_session.post.call_args
+        assert call_kwargs[0][0] == "http://localhost:11434/api/embeddings"
+        assert call_kwargs[1]["json"]["model"] == "nomic-embed-text"
+        assert call_kwargs[1]["json"]["prompt"] == "apartamento em Savassi"
+
+    def test_lmstudio_embed(self):
+        client = LMStudioClient(
+            base_url="http://localhost:1234",
+            embedding_model="nomic-embed",
+        )
+        fake_vec = [0.4, 0.5, 0.6]
+        mock_session = MagicMock()
+
+        async def _run():
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={"data": [{"embedding": fake_vec}]})
+            mock_session.post = MagicMock(return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_resp),
+                __aexit__=AsyncMock(return_value=None),
+            ))
+            client.session = mock_session
+            return await client.embed("cobertura com vista")
+
+        result = asyncio.run(_run())
+        assert result == fake_vec
+        call_kwargs = mock_session.post.call_args
+        assert call_kwargs[0][0] == "http://localhost:1234/v1/embeddings"
+        assert call_kwargs[1]["json"]["model"] == "nomic-embed"
+        assert call_kwargs[1]["json"]["input"] == "cobertura com vista"
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,9 @@ services:
   # PostgreSQL 15 + PostGIS 3
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgis/postgis:15-3.3-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     # NOTE: no container_name — a fixed name is global and ignores `-p <project>`,
     # so it would collide across parallel agent worktrees. Compose derives a
     # project-scoped name automatically (<project>-postgres-1).

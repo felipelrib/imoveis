@@ -121,13 +121,15 @@ Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 **Feature / merge-bound work:**
 
 1. **Plan** — Prefer BMad PRD/epics for product scope; Cursor Plan mode for ticket-level design.
-2. **Branch** — `bash scripts/agent/setup-branch.sh <feature-slug>`.
+2. **Workspace** — `bash scripts/agent/setup-workspace.sh <feature-slug>` (solo on idle primary, or sibling worktree if primary is busy). See [ADR 0004](docs/adr/0004-parallel-agent-workspaces.md).
 3. **Implement** — TDD with conventional commits.
 4. **Validate** — `bash scripts/agent/validate.sh all`.
-5. **PR** — `bash scripts/agent/finish-feature.sh --pr`.
+5. **PR** — `bash scripts/agent/finish-feature.sh --pr` (returns primary to `main` when finishing solo).
 6. **Babysit** — Watch CI until green.
 7. **Linear Done** + numbered `docs/features/` doc.
 8. **Harness retrospect** — update local Cursor rules/skills if the session exposed a gap.
+
+**Parallel agents:** run `bash scripts/agent/workspace-status.sh`. If `primary_idle=no`, the next agent gets a worktree under `../imoveis-wt-<slug>` with private Compose ports.
 
 **Punctual asks** (small fixes, harness tweaks, questions): no PR unless you ask for one.
 

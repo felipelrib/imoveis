@@ -2,9 +2,9 @@
 # ---------------------------------------------------------------------------
 # teardown.sh [--remove]
 #
-# Stops and removes this worktree's containers + volumes (frees the ports).
-# With --remove, also removes the git worktree and its registry entry.
-# Run from INSIDE the worktree.
+# Stops and removes this workspace's containers + volumes (frees the ports).
+# With --remove, also removes a linked git worktree and its registry entry.
+# Run from INSIDE the worktree (or any checkout with .env.local).
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,8 @@ REMOVE=0; [ "${1:-}" = "--remove" ] && REMOVE=1
 cd "$REPO_ROOT"
 
 if [ -f "$REPO_ROOT/.env.local" ]; then
-  set -a; source "$REPO_ROOT/.env.local"; set +a
+  set -a; # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env.local"; set +a
   PROJ="${COMPOSE_PROJECT_NAME:-imoveis}"
   log "Tearing down containers + volumes for project '$PROJ'"
   dc --env-file .env.local -p "$PROJ" down -v --remove-orphans || warn "compose down had issues"
@@ -27,6 +28,9 @@ fi
 if [ "$REMOVE" -eq 1 ]; then
   BRANCH="$(current_branch)"
   WT="$REPO_ROOT"
+  if ! in_linked_worktree; then
+    die "--remove only applies to linked worktrees (you are in the primary checkout)"
+  fi
   log "Removing worktree $WT and registry entry for $BRANCH"
   registry_lock
   if [ -f "$REGISTRY_FILE" ]; then

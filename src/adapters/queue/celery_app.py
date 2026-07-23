@@ -102,6 +102,7 @@ def make_celery() -> Celery:
     celery_app.conf.task_routes = {
         'tasks.scrape_listings': {'queue': 'scrapers'},
         'tasks.ai_enrich': {'queue': 'ai'},
+        'tasks.embed_property': {'queue': 'ai'},
         'tasks.send_price_drop_alert': {'queue': 'scrapers'},
     }
 

@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 sqlalchemy>=2.0.51
 geoalchemy2
+pgvector
 psycopg2-binary
 httpx
 celery[redis]
