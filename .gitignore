@@ -50,8 +50,10 @@ qa_data.json
 scratch.log
 worker.log
 
-# Parallel agent workspaces (git worktrees live here, per-worktree env)
+# Parallel agent workspaces
 .worktrees/
+# Port registry for sibling worktrees (../imoveis-wt-<slug>)
+.agent-workspaces/
 .env.local
 
 # Cursor IDE / agent harness (local only — not committed)

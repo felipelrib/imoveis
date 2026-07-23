@@ -19,9 +19,49 @@ case "$_common_git" in
   *)             PRIMARY_ROOT="$(cd "$REPO_ROOT/$(dirname "$_common_git")" && pwd)" ;;
 esac
 
-REGISTRY_DIR="$PRIMARY_ROOT/.worktrees"
-REGISTRY_FILE="$REGISTRY_DIR/registry.tsv"     # branch <tab> proj <tab> pg <tab> redis <tab> api <tab> fe
+# Port/session registry (user-writable). Nested `.worktrees/` is legacy/root-owned —
+# sibling dirs `../<repo>-wt-<slug>` are used for parallel isolation instead.
+REGISTRY_DIR="$PRIMARY_ROOT/.agent-workspaces"
+REGISTRY_FILE="$REGISTRY_DIR/registry.tsv"     # branch <tab> proj <tab> pg <tab> redis <tab> api <tab> fe <tab> path
 REGISTRY_LOCK="$REGISTRY_DIR/.lock"            # mkdir-based lock (atomic, portable)
+WORKTREE_PARENT="$(dirname "$PRIMARY_ROOT")"
+PRIMARY_BASENAME="$(basename "$PRIMARY_ROOT")"
+
+# Absolute path for a parallel worktree: sibling of the primary checkout.
+worktree_path_for_slug() {
+  printf '%s/%s-wt-%s' "$WORKTREE_PARENT" "$PRIMARY_BASENAME" "$1"
+}
+
+primary_branch() {
+  git -C "$PRIMARY_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+}
+
+# Idle = primary on main/master AND clean working tree.
+# Agents treat a non-idle primary as "another agent is using this checkout" → use a worktree.
+primary_is_idle() {
+  local b
+  b="$(primary_branch)"
+  case "$b" in
+    main|master) ;;
+    *) return 1 ;;
+  esac
+  [ -z "$(git -C "$PRIMARY_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] || return 1
+  return 0
+}
+
+# List absolute paths of linked worktrees other than PRIMARY_ROOT (one per line).
+other_worktree_paths() {
+  git -C "$PRIMARY_ROOT" worktree list --porcelain 2>/dev/null \
+    | awk -v primary="$PRIMARY_ROOT" '
+        /^worktree / {
+          p = substr($0, 10)
+          if (p != primary) print p
+        }'
+}
+
+in_linked_worktree() {
+  [ "$REPO_ROOT" != "$PRIMARY_ROOT" ]
+}
 
 # --- Logging ----------------------------------------------------------------
 _c() { printf '\033[%sm' "$1"; }
@@ -105,13 +145,20 @@ validate_conventional_branch() {
 
 # --- Registry locking (race-free across parallel setup runs) ----------------
 registry_lock() {
-  mkdir -p "$REGISTRY_DIR"
-  local waited=0
+  mkdir -p "$REGISTRY_DIR" 2>/dev/null || true
+  if [ ! -d "$REGISTRY_DIR" ] || [ ! -w "$REGISTRY_DIR" ]; then
+    die "registry dir not writable: $REGISTRY_DIR (fix ownership or use .agent-workspaces on primary)"
+  fi
+  local attempts=0
   until mkdir "$REGISTRY_LOCK" 2>/dev/null; do
-    sleep 1; waited=$((waited + 1))
-    if [ "$waited" -ge 30 ]; then
-      warn "registry lock held >30s — breaking assumed-stale lock"
+    sleep 1
+    attempts=$((attempts + 1))
+    if [ "$attempts" -eq 30 ] || [ "$attempts" -eq 60 ]; then
+      warn "registry lock held — breaking assumed-stale lock (attempt $attempts)"
       rm -rf "$REGISTRY_LOCK"
+    fi
+    if [ "$attempts" -ge 90 ]; then
+      die "could not acquire registry lock after ${attempts}s at $REGISTRY_LOCK"
     fi
   done
 }
