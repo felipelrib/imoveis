@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from api.auth import Principal, verify_api_key_if_configured
+from api.auth import verify_api_key_if_configured
 from api.property_export import EXPORT_MAX_ROWS, properties_to_csv, properties_to_export_json
 from api.property_projection import map_property_detail, map_property_list_item
 from api.schemas import (
@@ -75,6 +75,7 @@ class PropertyListFilters(BaseModel):
 class PropertyExportFilters(BaseModel):
     """Same filter surface as the Properties list, without pagination (BIN-50)."""
 
+    format: str = Field("json", pattern="^(csv|json)$")
     platform: Optional[str] = None
     min_score: Optional[float] = Field(None, ge=0, le=1)
     max_price: Optional[float] = None
@@ -93,7 +94,8 @@ class PropertyExportFilters(BaseModel):
 
 def _export_filters_as_list_filters(filters_in: PropertyExportFilters) -> PropertyListFilters:
     """Adapt export filters for ``_build_list_filters`` (pagination overridden by caller)."""
-    return PropertyListFilters(page=1, page_size=1, **filters_in.model_dump())
+    data = filters_in.model_dump(exclude={"format"})
+    return PropertyListFilters(page=1, page_size=1, **data)
 
 
 def _embed_query_literal(query_text: str) -> str:
@@ -358,13 +360,12 @@ def get_properties_by_ids(
             },
         },
     },
+    dependencies=[Depends(verify_api_key_if_configured)],
 )
 @limiter.limit("60/minute")
 def export_properties(
     request: Request,
     filters_in: Annotated[PropertyExportFilters, Query()],
-    export_format: Annotated[str, Query(alias="format", pattern="^(csv|json)$")] = "json",
-    _principal: Annotated[Optional[Principal], Depends(verify_api_key_if_configured)] = None,
 ) -> Union[Dict[str, Any], Response]:
     """Export the filtered property set as CSV or JSON (AD-12 projection, AD-8).
 
@@ -401,7 +402,7 @@ def export_properties(
         rows = session.execute(sql, params).mappings().fetchall()
         items = [map_property_list_item(row) for row in rows]
 
-    if export_format == "csv":
+    if filters_in.format == "csv":
         body = properties_to_csv(items)
         return Response(
             content=body,
