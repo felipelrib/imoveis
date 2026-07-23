@@ -7,9 +7,10 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-from adapters.db.models import Property
+from adapters.db.models import Base, Property
 from api.main import app
 from infra.config import get_config
 
@@ -19,6 +20,25 @@ def _clear_config_cache():
     get_config.cache_clear()
     yield
     get_config.cache_clear()
+
+
+@pytest.fixture
+def test_db():
+    """Connect to the test database and truncate after the test."""
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    yield session
+    session.close()
+    with engine.connect() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(table.delete())
+        conn.commit()
+    engine.dispose()
 
 
 @pytest.fixture
