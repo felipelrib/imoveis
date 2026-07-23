@@ -68,9 +68,3 @@ None.
    ```
    All 19 tests should pass.
 
-## Notes / Follow-ups
-
-- ~~**Token usage limits**~~ — FIXED (added config `ai.max_description_chars`)
-- ~~**Latency impact**~~ — FIXED (parallelized `analyze_visuals` and `analyze_text` with `asyncio.gather`)
-- ~~**Language configuration**~~ — FIXED (added config `ai.output_language`)
-- ~~Future: `POST /admin/verdict/recompute`~~ — FIXED (added endpoint)

@@ -62,6 +62,3 @@ None.
 ## Notes / Follow-ups
 
 ### Fixed Tech Debt
-- ~~**No update endpoint for saved searches**~~ — FIXED
-- ~~**No pagination for favourites/saved searches**~~ — FIXED
-- ~~**Favourites view doesn't support sorting/filtering**~~ — FIXED

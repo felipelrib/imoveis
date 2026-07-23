@@ -69,9 +69,3 @@ None.
 3. Force 5 consecutive scraper errors to verify the circuit opens and
    `CircuitBreakerOpenError` is logged, stopping further retries.
 
-## Notes / Follow-ups
-
-- ~~**BUG (Race Condition — `RedisCircuitBreaker`)**~~ — **FIXED**: Replaced `record_failure` with an atomic Lua script.
-- ~~**`CircuitBreaker` (in-memory) is not useful for Celery**~~ — **FIXED**: Added prominent `IN-MEMORY CIRCUIT BREAKER — FOR TESTING ONLY` docstring.
-- ~~**Checkpoint `data` column has no schema validation**~~ — **FIXED**: Implemented `OLXCheckpoint` and `QuintoAndarCheckpoint` Pydantic models in `checkpoint_store.py` for schema validation.
-- ~~**`CheckpointStore.set()` rolls back on error but re-raises**~~ — **FIXED**: Added a `try/except` block to cleanly log checkpoint save failures in the error handler in `tasks.py`.

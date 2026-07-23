@@ -56,12 +56,3 @@ None beyond FastAPI core.
    curl 'http://localhost:8000/properties?page=1&page_size=5&sort_by=combined_score&sort_dir=desc'
    ```
 
-## Notes / Follow-ups
-
-### Tech Debt
-
-- ~~**No OpenAPI response models** — Most endpoints return untyped dicts, losing API documentation benefits.~~ — FIXED
-- **Sync database sessions in async FastAPI** — All endpoints use `SessionLocal()` synchronously, blocking the event loop. Should use async sessions or run in thread pool.
-- ~~**No rate limiting on public endpoints** — Anyone can query `/properties` at high rates.~~ — FIXED
-- ~~**CORS allows `*` methods/headers** — Over-permissive for production.~~ — FIXED
-- ~~**`/system/ollama/ensure` uses `subprocess.Popen`** — Security risk: if an attacker can somehow influence the command, this is a shell injection vector.~~ — FIXED

@@ -86,4 +86,3 @@ Files touched:
   Creating a new event loop per task is safe but wasteful. A better approach is to make
   `ai_enrich` an `async def` task with `celery[gevent]` or use a thread pool for
   async-in-sync bridging.
-- ~~**Image count limit is fixed at 5**~~ — FIXED (now in config as `ai.max_images_per_property`)

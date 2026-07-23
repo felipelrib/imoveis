@@ -108,7 +108,3 @@ curl -X POST http://localhost:8000/admin/schedule \
 - **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
 - **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.
 
-## Notes / Follow-ups
-- ~~**Session-based Admin Auth**~~: FIXED (added POST /auth/admin/login and JWT verification, stored in sessionStorage).
-- ~~**Dynamic Beat Schedule**~~: FIXED (implemented RedisAwareScheduler for Celery beat to allow schedule changes without restart).
-- ~~**No audit log**~~: FIXED (created admin_audit table and /admin/audit endpoint to log admin actions).

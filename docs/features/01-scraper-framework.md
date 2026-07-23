@@ -53,12 +53,3 @@ Files touched:
    pytest src/tests/unit/test_olx.py src/tests/unit/test_registry.py -v
    ```
 
-## Notes / Follow-ups
-
-### Tech Debt
-
-- ~~**In-process `CircuitBreaker` is dead code** — `circuit_breaker.py` exists but is never used; both scrapers use `RedisCircuitBreaker`. Should be removed.~~ — FIXED
-- ~~**OLX import not auto-registered** — `tasks.py` imports `quintoandar` but not `olx` for registry registration. OLX scraper will not appear in the registry unless imported elsewhere. The `/scrape` endpoint also only imports `quintoandar`. OLX is effectively unreachable.~~ — FIXED
-- ~~**No proxy support implemented** — Config defines `proxy` section but no scraper uses it.~~ — FIXED
-- ~~**Hardcoded BH region** — Both scrapers are hardcoded to Belo Horizonte. Should be configurable.~~ — FIXED
-- ~~**No `close()` called on httpx sessions** — Both scrapers create `httpx.Client()` in `start()` but never explicitly close them (due to the `__exit__` bug above).~~ — FIXED

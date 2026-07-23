@@ -52,14 +52,4 @@ Files touched:
 
 ## Notes / Follow-ups
 
-### Tech Debt
-
-- **No task result storage** — Tasks use `ignore_result=True` equivalent, making it impossible to query task outcomes programmatically.
-- **Hardcoded queue names** — "scrapers" and "ai" are string literals scattered throughout; should be constants.
-- **No dead letter queue** — Tasks that exhaust retries are silently dropped.
-- **GPU semaphore uses SETNX without proper Redlock** — Fine for single-Redis setups but would need Redlock for multi-node Redis.
-
 ### Fixed Tech Debt
-- ~~**Dynamic AI batching based on queue depth**~~ — FIXED
-- ~~**Centralised worker health check**~~ — FIXED
-- ~~**Separate queues for fast (dedup) vs slow (VLM) tasks**~~ — FIXED

@@ -52,11 +52,3 @@ Files touched:
    pytest src/tests/unit/test_config.py -v
    ```
 
-## Notes / Follow-ups
-
-### Tech Debt
-
-- ~~**No connection pool tuning** — SQLAlchemy engine uses default pool settings. Should configure `pool_size`, `max_overflow`, `pool_timeout` for production.~~ — FIXED
-- ~~**No health check on Redis connection** — `get_redis()` creates a connection but doesn't ping. A bad Redis URL will only fail on first use.~~ — FIXED
-- ~~**Database URL hardcoded in fallback** — If `DATABASE_URL` env var is not set, the code may use a hardcoded development URL.~~ — FIXED
-- **No secret management** — API keys and database passwords are plain environment variables.

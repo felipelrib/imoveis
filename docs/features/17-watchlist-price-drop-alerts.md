@@ -88,8 +88,6 @@ None.
 
 ## Notes / Follow-ups
 
-- ~~**Authentication needed**~~: FIXED (added JWT token check in `src/api/auth.py` and gated watchlist endpoints).
-- ~~**Batched emails**~~: FIXED (added `EmailNotifier` in digest mode, pushing to Redis and sending via daily Celery beat task).
 - **`DELETE /watchlist/{property_id}` — parameter semantics**: The path parameter is
   `property_id`, not the watchlist row's own `id`. This is consistent but non-RESTful.
   Document clearly in the OpenAPI schema.
