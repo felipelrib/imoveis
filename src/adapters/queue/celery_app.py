@@ -27,10 +27,18 @@ def build_beat_schedule() -> dict:
     """
     schedule: dict = {}
     digest_mode = False
+    top_deals_enabled = False
+    top_deals_cfg = None
     try:
         cfg = get_config()
         r = get_redis()
         digest_mode = bool(getattr(cfg.alerts, "digest_mode", False))
+        top_deals_cfg = getattr(cfg.alerts, "top_deals", None)
+        top_deals_enabled = (
+            getattr(top_deals_cfg, "enabled", False) is True
+            if top_deals_cfg is not None
+            else False
+        )
 
         for name, platform_cfg in cfg.scraping.platforms.items():
             if not platform_cfg.enabled:
@@ -67,6 +75,16 @@ def build_beat_schedule() -> dict:
         schedule["send-daily-digest"] = {
             "task": "tasks.send_daily_digest",
             "schedule": crontab(hour=8, minute=0),
+        }
+
+    if top_deals_enabled and top_deals_cfg is not None:
+        schedule["send-top-deals-digest"] = {
+            "task": "tasks.send_top_deals_digest",
+            "schedule": crontab(
+                hour=int(getattr(top_deals_cfg, "crontab_hour", 8)),
+                minute=int(getattr(top_deals_cfg, "crontab_minute", 0)),
+                day_of_week=str(getattr(top_deals_cfg, "crontab_day_of_week", "0")),
+            ),
         }
 
     return schedule

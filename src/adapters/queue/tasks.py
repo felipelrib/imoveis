@@ -647,3 +647,58 @@ def send_daily_digest(self):
     notifier = EmailNotifier()
     notifier.send_batch(alerts)
     return {"sent": len(alerts)}
+
+
+@celery.task(bind=True, name="tasks.send_top_deals_digest")
+def send_top_deals_digest(self):
+    """Select top new deals (AD-12) and deliver via the notifier registry (AD-9).
+
+    Distinct from ``send_daily_digest`` (price-drop email batching).
+    Gated by ``alerts.top_deals.enabled``; subscriber is ``auth.principal_id`` (AD-11).
+    """
+    from datetime import datetime, timezone
+
+    from adapters.notify import get_notifiers
+    from adapters.notify.base import TopDealsDigest
+    from core.top_deals_digest import TOP_DEALS_RULE, select_top_deals
+
+    cfg = get_config()
+    top_deals = cfg.alerts.top_deals
+    if not top_deals.enabled:
+        logger.info("top_deals_digest_skipped", reason="disabled")
+        return {"status": "skipped", "sent": 0}
+
+    with SessionLocal() as session:
+        properties = select_top_deals(
+            session,
+            lookback_hours=top_deals.lookback_hours,
+            min_combined_score=top_deals.min_combined_score,
+            limit=top_deals.limit,
+        )
+
+    if not properties:
+        logger.info("top_deals_digest_empty")
+        return {"status": "empty", "sent": 0}
+
+    digest = TopDealsDigest(
+        principal_id=cfg.auth.principal_id,
+        generated_at=datetime.now(timezone.utc),
+        properties=properties,
+        rule=TOP_DEALS_RULE,
+    )
+    for notifier in get_notifiers():
+        try:
+            notifier.send_digest(digest)
+        except Exception as exc:
+            logger.error(
+                "top_deals_digest_notifier_error",
+                notifier=type(notifier).__name__,
+                error=str(exc),
+            )
+
+    logger.info(
+        "top_deals_digest_sent",
+        principal_id=digest.principal_id,
+        count=len(properties),
+    )
+    return {"status": "sent", "sent": len(properties)}

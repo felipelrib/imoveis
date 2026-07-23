@@ -166,3 +166,56 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
             "sentiment": meta.get("sentiment", {}),
         },
     }
+
+
+# Shared SQL fragments for AD-12 list/export/digest queries (BIN-50 / BIN-52).
+LISTINGS_JSON_AGG = """
+    (
+        SELECT json_agg(
+            json_build_object(
+                'platform', pl.platform,
+                'platform_listing_id', pl.platform_listing_id,
+                'listing_type', pl.listing_type,
+                'price', pl.price,
+                'currency', pl.currency,
+                'url', pl.url,
+                'is_furnished', pl.is_furnished,
+                'accepts_pets', pl.accepts_pets,
+                'condo_fee', pl.condo_fee,
+                'iptu', pl.iptu
+            )
+        )
+        FROM property_listings pl
+        WHERE pl.property_id = p.id
+    ) AS listings
+"""
+
+LIST_SELECT_COLUMNS = f"""
+                p.id,
+                p.platform,
+                p.platform_id,
+                p.title,
+                p.price,
+                p.area_m2,
+                p.bedrooms,
+                p.bathrooms,
+                p.address,
+                p.image_urls,
+                p.first_seen,
+                ms.stat_score,
+                ms.ai_score,
+                ms.combined_score,
+                ms.percentile_rank,
+                ms.z_score,
+                ms.price_per_m2,
+                ms.neighborhood_mean,
+                ms.meta,
+                p.neighborhood_id,
+                n.name AS neighborhood_name,
+                p.parking,
+                p.description,
+                p.props_json,
+                ST_X(p.location::geometry) AS lon,
+                ST_Y(p.location::geometry) AS lat,
+                {LISTINGS_JSON_AGG}
+"""
