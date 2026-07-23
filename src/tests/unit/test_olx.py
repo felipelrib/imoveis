@@ -302,12 +302,14 @@ class TestConfigDrivenParams:
 class TestOLXFetchLifecycle:
     def test_start_creates_http_client_and_circuit_breaker(self, scraper):
         session = MagicMock()
-        with patch("httpx.Client", return_value=session) as client, patch(
+        with patch.object(
+            scraper, "create_http_session", return_value=session
+        ) as create_session, patch(
             "adapters.scrapers.olx.RedisCircuitBreaker"
         ) as circuit_breaker:
             scraper.start()
 
-        client.assert_called_once_with(proxy=None)
+        create_session.assert_called_once_with()
         assert scraper.session is session
         session.headers.update.assert_called_once()
         circuit_breaker.assert_called_once_with(

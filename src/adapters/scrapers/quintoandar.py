@@ -28,10 +28,7 @@ class QuintoAndarScraper(BaseScraper):
         self.city_slug = config.get("extra", {}).get("city_slug", "belo-horizonte-mg-brasil")
 
     def start(self) -> None:
-        import httpx
-
-        proxy = self.config.get("extra", {}).get("proxy")
-        self.session = httpx.Client(proxy=proxy)
+        self.session = self.create_http_session()
         self.session.headers.update(
             {
                 "User-Agent": (

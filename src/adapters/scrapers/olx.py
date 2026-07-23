@@ -55,10 +55,7 @@ class OLXScraper(BaseScraper):
         ]
 
     def start(self) -> None:
-        import httpx
-
-        proxy = self.config.get("extra", {}).get("proxy")
-        self.session = httpx.Client(proxy=proxy)
+        self.session = self.create_http_session()
         self.session.headers.update(
             {
                 "User-Agent": (
