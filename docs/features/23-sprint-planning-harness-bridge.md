@@ -39,3 +39,4 @@ None.
 - Next: story cycle — `bmad-create-story` (fresh chat) for `1-1-canonical-property-projection-for-decisioning` → implement via feature-pipeline (Linear BIN-41).
 - Before Epic 2 Story 2.3: split/sequence owner migration (BIN-20 follow-up from readiness).
 - Optional thin `bmad-ux` if Compare UI blocks Epic 1 (BIN-19).
+- PR: https://github.com/felipelrib/imoveis/pull/22
