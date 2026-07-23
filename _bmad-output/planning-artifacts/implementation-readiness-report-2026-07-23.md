@@ -71,7 +71,7 @@ FR-13: Interactive map — User can browse Properties on a map and filter by vie
 
 FR-14: Favourites & saved searches — User can star Properties and persist named filter sets (single-tenant). Realizes UJ-1.
 
-FR-15: Semantic free-text search — User can query Properties with natural language via embeddings (`q=`). Realizes UJ-1. Notes: BIN-18 Done; UX polish reconciled in v0.5 hygiene (BIN-38).
+FR-15: Semantic free-text search — User can query Properties with natural language via embeddings (`q=`). Realizes UJ-1. Notes: BIN-18 Done; hygiene BIN-38 Done (`docs/features/20-semantic-search.md`, `24-semantic-search-reconcile.md`).
 
 FR-16: Watchlist price-drop alerts — User can watch a Property and receive notifications when price drops past threshold. Realizes UJ-2.
 
@@ -115,7 +115,7 @@ Total NFRs: 8
 
 **Scope / constraints**
 - Baseline shipped MVP: FR-1–FR-17 (v0.1–v0.4 + BIN-18 Done).
-- v0.5 in scope: formalize PRD/architecture/epics; prioritize and deliver a cut of FR-18–FR-22; harness bridge; BIN-38 reconcile.
+- v0.5 in scope: formalize PRD/architecture/epics; prioritize and deliver a cut of FR-18–FR-22; harness bridge; ~~BIN-38 reconcile~~ (Done).
 - Out of scope for v0.5: FR-23 unless capacity remains; hot-reload of `app_config.yaml`; multi-city productization UX.
 
 **Explicit non-goals**
@@ -170,7 +170,7 @@ Total FRs accounted in epics map: 23
 | FR-12 | Filterable property grid | Baseline (shipped) | ✓ Covered |
 | FR-13 | Interactive map | Baseline (shipped) | ✓ Covered |
 | FR-14 | Favourites & saved searches | Baseline (shipped) | ✓ Covered |
-| FR-15 | Semantic free-text search | Baseline + hygiene BIN-38 | ✓ Covered |
+| FR-15 | Semantic free-text search | Baseline (BIN-18) + hygiene BIN-38 Done | ✓ Covered |
 | FR-16 | Watchlist price-drop alerts | Baseline (shipped) | ✓ Covered |
 | FR-17 | Admin & pipeline telemetry | Baseline (shipped) | ✓ Covered |
 | FR-18 | Side-by-side comparison | Epic 1 (1.1–1.3) | ✓ Covered |
@@ -193,7 +193,7 @@ None.
 ### Notes (not missing FRs)
 
 - Epics invent **NFR-8** (single-operator privacy / BH-first) — present in PRD vision/non-users but not numbered in PRD §8. Traceable; recommend either add NFR-8 to PRD or cite as derived from vision.
-- FR-15 hygiene (BIN-38) is planning/ops, not a delivery epic — correctly called out in inventory.
+- FR-15 hygiene (BIN-38) was planning/ops, not a delivery epic — **closed** with no scope split (`docs/features/24-semantic-search-reconcile.md`).
 - FR-23 correctly deferred per PRD §6.3; no delivery epic required for readiness.
 
 ### Coverage Statistics
@@ -227,7 +227,7 @@ PRD and epics assume a substantial React SPA surface:
 ### Warnings
 
 - **WARNING (Medium):** User-facing v0.5 epics (especially Epic 1 Compare and Epic 2 credential gate) proceed without `bmad-ux`. Acceptable for brownfield retrofit if stories stay thin and mirror current UI language; recommend a focused UX pass before or during Epic 1 if compare UI grows beyond a simple table.
-- **WARNING (Low):** BIN-38 hygiene for FR-15 semantic search polish has no UX artifact — keep polish scoped to existing patterns.
+- **WARNING (Low, resolved):** BIN-38 hygiene for FR-15 had no UX artifact — polish stayed on existing Properties Search patterns; reconcile closed without a new story.
 - Not a blocker for implementation readiness given explicit brownfield exclusion and shipped MVP UI as the pattern source of truth.
 
 ## Epic Quality Review

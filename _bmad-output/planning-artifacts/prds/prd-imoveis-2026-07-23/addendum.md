@@ -31,7 +31,7 @@ Technical and planning notes that should not bloat the PRD spine.
 
 | FR | Rough Linear seed |
 |----|-------------------|
-| FR-15 | BIN-18 (Done) + BIN-38 reconcile |
+| FR-15 | BIN-18 (Done) + BIN-38 reconcile (Done) |
 | FR-18 | BIN-19 |
 | FR-19 | BIN-20 |
 | FR-20 | BIN-21 |

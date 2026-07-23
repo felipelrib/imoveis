@@ -44,7 +44,7 @@ FR-11: Re-scrapes of unchanged Listings do not re-enqueue expensive AI tasks.
 FR-12: User can filter the property grid by neighbourhood, price, score, listing type, etc., with non-blocking errors/toasts.
 FR-13: User can browse Properties on a map and filter by viewport bbox.
 FR-14: User can star Properties and persist named filter sets (single-tenant today).
-FR-15: User can query Properties with natural language via embeddings (`q=`). [Shipped BIN-18; hygiene reconcile BIN-38.]
+FR-15: User can query Properties with natural language via embeddings (`q=`). [Shipped BIN-18; hygiene reconcile BIN-38 Done.]
 FR-16: User can watch a Property and receive notifications when price drops past threshold.
 FR-17: Operator can inspect health, queues, GPU scale, schedules, and enrichment throughput.
 FR-18: User can select 2–4 Properties and compare attributes, scores, price/m², and price history in one view. [v0.5; Linear seed BIN-19]

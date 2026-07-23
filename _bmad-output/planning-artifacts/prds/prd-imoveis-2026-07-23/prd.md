@@ -155,7 +155,7 @@ User can star Properties and persist named filter sets (single-tenant). Realizes
 #### FR-15: Semantic free-text search
 User can query Properties with natural language via embeddings (`q=`). Realizes UJ-1.
 
-**Notes:** BIN-18 is Done in Linear; ensure feature doc + any remaining UX polish is reconciled in v0.5 hygiene (BIN-38).
+**Notes:** BIN-18 Done ([#16](https://github.com/felipelrib/imoveis/pull/16)); feature doc `docs/features/20-semantic-search.md`. Hygiene reconcile BIN-38 closed (no scope split) — see `docs/features/24-semantic-search-reconcile.md`.
 
 ### 4.5 Alerts & operations (shipped)
 
@@ -208,7 +208,7 @@ FR-1 through FR-17 as implemented and documented in `docs/features/` (+ BIN-18 s
 - Formalize this PRD + architecture spine + epics (Linear v0.5 milestone / BIN-31 children).
 - Prioritize and deliver a cut of FR-18–FR-22 (exact subset set in epics after readiness).
 - Harness: BMad planning bridge (ADR 0003) + parallel agent workspaces (ADR 0004) already landing.
-- Reconcile BIN-18 documentation/status drift (BIN-38).
+- ~~Reconcile BIN-18 documentation/status drift (BIN-38).~~ **Done** — see `docs/features/24-semantic-search-reconcile.md`.
 
 ### 6.3 Out of scope for v0.5 (deferred)
 

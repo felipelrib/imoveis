@@ -5,7 +5,8 @@
 - **Product:** Local-first Brazilian real-estate deal tracker (BH/MG): scrape QuintoAndar + OLX → geospatial/heuristic dedupe → price history → local Ollama AI enrich → score-coloured React UI + watchlist alerts.
 - **Stack:** FastAPI, Celery, Redis, PostgreSQL 15 + PostGIS + pgvector, React 18/Vite, host Ollama.
 - **Maturity:** MVP milestones v0.1–v0.4 are **100% Done** in Linear. No in-repo PRD. Planning intent lived in Linear + `docs/features/`.
-- **Open backlog:** BIN-18 (semantic search — In Progress / partially implemented), BIN-19 comparison UI, BIN-20 auth, BIN-21 proxy rotation, BIN-22 weekly digest, BIN-23 neighbourhood polygons.
+- **Open backlog (at session time):** BIN-18 (semantic search — then In Progress / partial), BIN-19 comparison UI, BIN-20 auth, BIN-21 proxy rotation, BIN-22 weekly digest, BIN-23 neighbourhood polygons.
+- **Reconcile (BIN-38, 2026-07-23):** BIN-18 is **Done** (PR #16 + `docs/features/20-semantic-search.md`); no remaining FR-15 scope to split. Open Beyond-MVP seeds are BIN-19–23 (now epics BIN-41..55).
 - **Harness:** ADR 0002 single Cursor agent; local `.cursor/` rules/skills; committed `scripts/agent/` validate/finish/babysit gates. Linear team Bino, project Imoveis — Deal Tracker.
 - **User decisions:** BMad Method track; **retrofit MVP + plan v0.5+**; English artifacts.
 
