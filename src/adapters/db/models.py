@@ -26,6 +26,9 @@ class GPUControl(Base):
 
 class Neighborhood(Base):
     __tablename__ = "neighborhoods"
+    __table_args__ = (
+        sa.UniqueConstraint("name", "city", "state", name="uq_neighborhoods_name_city_state"),
+    )
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
