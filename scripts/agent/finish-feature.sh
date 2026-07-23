@@ -5,9 +5,9 @@
 # Validates the current feature branch, pushes it, and optionally opens a PR.
 # Run from INSIDE the feature workspace (primary solo branch or a worktree).
 #
-# With --pr: after required checks are green, MERGES the PR into main, then
+# With --pr: after required checks are green, SQUASH-MERGES the PR into main, then
 # cleans up the workspace (worktree teardown --remove, or primary → main).
-# Merge-ready is NOT finished — merged to main is finished.
+# Merge-ready is NOT finished — squash-merged to main is finished.
 #
 # Docs-only branches (prose under docs/, *.md, _bmad-output/, etc.):
 #   - Local gate is mkdocs build --strict (not validate.sh all)
@@ -304,10 +304,11 @@ if [ "$PR_MODE" = true ]; then
     exit 0
   fi
 
-  log "Merging PR into main (merge-ready is not finished)..."
+  log "Squash-merging PR into main (merge-ready is not finished)..."
+  # Always squash into main — keeps history linear (one commit per PR).
   # Do NOT use gh --delete-branch: it tries to checkout main locally and can
   # steal/switch the primary checkout when main is locked in another worktree.
-  gh pr merge --merge || die "gh pr merge failed — resolve blockers and re-run"
+  gh pr merge --squash || die "gh pr merge failed — resolve blockers and re-run"
   ok "PR merged: $PR_URL"
   if git push origin --delete "$BRANCH" 2>/dev/null; then
     ok "Deleted remote branch $BRANCH"
