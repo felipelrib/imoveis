@@ -14,14 +14,13 @@ Changes from original:
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 from typing import List, Optional
 
 from pydantic import ValidationError
 
-import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 import adapters.scrapers.olx  # noqa: F401
+import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 from adapters.ai.client import create_ai_client
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
@@ -72,12 +71,12 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
     session = SessionLocal()
     r = get_redis()
-    
+
     # Check paused flag (TD-06-A)
     if r.exists("workers:scrapers:paused"):
         logger.info("scrapers_paused", platform=platform_name)
         raise self.retry(countdown=120, exc=Exception("Scrapers paused due to high AI queue depth"))
-        
+
     try:
         store = CheckpointStore(session)
         cp = store.get(platform_name) or {}
@@ -297,10 +296,10 @@ def ai_enrich(
                             "sentiment": s_res.model_dump(),
                         }
                     )
-                    
+
                     stat_weight = getattr(getattr(cfg, "scoring", None), "stat_weight", 0.5)
                     ai_weight = getattr(getattr(cfg, "scoring", None), "ai_weight", 0.5)
-                    
+
                     if ms is None:
                         ms = MetricsScoring(
                             property_id=property_id,
@@ -337,7 +336,7 @@ def ai_enrich(
                             ).fetchone()
                             if nb:
                                 neighborhood_name = nb.name
-                        
+
                         if neighborhood_name == "Unknown" and _prop.props_json:
                             neighborhood_name = _prop.props_json.get("neighborhood", "Unknown")
 
@@ -408,16 +407,17 @@ def evaluate_watchlist_alerts(self):
     Periodic task: compare current prices against watchlist thresholds.
     Should run every N minutes via Celery beat.
     """
+    from sqlalchemy import text
+
     from adapters.notify import get_notifiers
     from adapters.notify.base import PriceDropAlert
-    from sqlalchemy import text
-    
+
     logger = get_logger("evaluate_watchlist_alerts")
-    
+
     with SessionLocal() as session:
         # Get all watchlist entries with current price
         rows = session.execute(text("""
-            SELECT 
+            SELECT
                 w.id,
                 w.property_id,
                 w.min_drop_pct,
@@ -436,16 +436,16 @@ def evaluate_watchlist_alerts(self):
                 LIMIT 1
             ) pl ON true
         """)).fetchall()
-        
+
         notifiers = get_notifiers()
-        
+
         for row in rows:
             reference = row.last_notified_price or row.current_price
             if reference is None or reference <= 0:
                 continue
-            
+
             drop_pct = (float(reference) - float(row.current_price)) / float(reference) * 100
-            
+
             if drop_pct >= row.min_drop_pct:
                 alert = PriceDropAlert(
                     property_id=str(row.property_id),
@@ -461,45 +461,46 @@ def evaluate_watchlist_alerts(self):
                         notifier.send(alert)
                     except Exception as exc:
                         logger.error("notifier_error", notifier=type(notifier).__name__, error=str(exc))
-                
+
                 # Update last_notified_price
                 session.execute(
                     text("UPDATE watchlist SET last_notified_price = :price WHERE id = :id"),
                     {"price": row.current_price, "id": row.id}
                 )
-        
+
         session.commit()
         logger.info("watchlist_evaluation_complete", evaluated=len(rows))
 
 @celery.task(name="tasks.send_price_drop_alert")
 def send_price_drop_alert(alert_dict: dict):
+    import json
+
     from adapters.notify import get_notifiers
     from adapters.notify.base import PriceDropAlert
     from infra.redis_client import get_redis
-    import json
 
     r = get_redis()
     property_id = alert_dict.get("property_id")
-    
+
     # Alert Debouncing (TD-05-D)
     debounce_key = f"alerts:debounce:{property_id}"
     if r.exists(debounce_key):
         logger.info("alert_debounced", property_id=property_id)
         return
-        
+
     alert = PriceDropAlert(**alert_dict)
-    
+
     # Store in Redis for frontend Alerts Panel (TD-05-B)
     alert_list_key = "alerts:price_drops"
     r.lpush(alert_list_key, json.dumps(alert_dict))
     r.ltrim(alert_list_key, 0, 99) # Keep last 100 alerts
-    
+
     for notifier in get_notifiers():
         try:
             notifier.send(alert)
         except Exception as exc:
             logger.error("notifier_error", notifier=type(notifier).__name__, error=str(exc))
-            
+
     # Set debounce key to prevent spam
     r.setex(debounce_key, 3600, "1")
 
@@ -512,15 +513,15 @@ def monitor_queues():
     """Monitor queue depths and dynamically throttle scrapers."""
     from infra.redis_client import get_redis
     r = get_redis()
-    
+
     # Threshold could be configurable
-    BATCH_THRESHOLD = 50 
-    
+    BATCH_THRESHOLD = 50
+
     # LLEN gives pending items in Celery list queues (when using redis broker)
     ai_len = r.llen("ai")
-    
+
     logger.info("queue_monitor", ai_queue=ai_len)
-    
+
     if ai_len > BATCH_THRESHOLD:
         if not r.exists("workers:scrapers:paused"):
             logger.warning("queue_monitor_pause_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
@@ -530,16 +531,16 @@ def monitor_queues():
             logger.info("queue_monitor_resume_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
             r.delete("workers:scrapers:paused")
 
-@celery_app.task(bind=True)
+@celery.task(bind=True, name="tasks.send_daily_digest")
 def send_daily_digest(self):
     """Batch process queued email digest alerts and send them."""
     r = get_redis()
     alerts_json = r.lrange("alerts:email_digest", 0, -1)
     if not alerts_json:
         return {"sent": 0}
-        
+
     r.delete("alerts:email_digest")
-    
+
     import json
     alerts = []
     for item in alerts_json:
@@ -547,10 +548,10 @@ def send_daily_digest(self):
             alerts.append(json.loads(item))
         except Exception:
             pass
-            
+
     if not alerts:
         return {"sent": 0}
-        
+
     from adapters.notify.email_notifier import EmailNotifier
     notifier = EmailNotifier()
     notifier.send_batch(alerts)

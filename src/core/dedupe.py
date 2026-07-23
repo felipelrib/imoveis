@@ -1,7 +1,7 @@
+import json
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from typing import List, Optional, Tuple
 
 from sqlalchemy import text
@@ -353,7 +353,7 @@ def _check_watchlist_alerts(
         # Calculate percentage drop
         if reference_price is None or float(reference_price) <= 0:
             continue
-            
+
         reference_price_float = float(reference_price)
         drop_pct = ((reference_price_float - float(new_price)) / reference_price_float) * 100.0
 

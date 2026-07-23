@@ -68,4 +68,3 @@ None.
    `checkpoint_loaded` with non-empty data).
 3. Force 5 consecutive scraper errors to verify the circuit opens and
    `CircuitBreakerOpenError` is logged, stopping further retries.
-

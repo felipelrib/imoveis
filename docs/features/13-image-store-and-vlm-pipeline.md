@@ -25,7 +25,7 @@ The AI enrichment pipeline needed property photos to run visual-condition analys
     `max_images` (default: 5) caps disk usage per property.
   - `encode_base64(file_path)` reads a cached file and returns its base64 string for VLM
     submission.
-  - An ORM hook is registered in `adapters/db/models.py` (`delete_property_images`) to automatically 
+  - An ORM hook is registered in `adapters/db/models.py` (`delete_property_images`) to automatically
     delete image directories when a property is deleted, preventing disk leaks.
 
 - **VLM prompt** (`adapters/ai/prompts.py` → `build_visual_condition_prompt()`) is a

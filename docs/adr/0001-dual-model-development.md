@@ -1,7 +1,7 @@
 # ADR 0001: Dual-Model AI Development Strategy
 
-**Status:** Superseded by [ADR 0002 — Cursor Single-Agent Workflow](0002-cursor-single-agent-workflow.md)  
-**Date:** 2026-07-20  
+**Status:** Superseded by [ADR 0002 — Cursor Single-Agent Workflow](0002-cursor-single-agent-workflow.md)
+**Date:** 2026-07-20
 **Context:** Development workflow for the Imoveis project
 
 ## Decision

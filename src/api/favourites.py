@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -52,9 +50,9 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
     """Return all favourites with property details."""
     with SessionLocal() as session:
         offset = (page - 1) * page_size
-        
+
         total = session.execute(text("SELECT COUNT(*) FROM favourites")).scalar() or 0
-        
+
         rows = session.execute(
             text(
                 "SELECT f.id, f.property_id, f.created_at, "
@@ -69,7 +67,7 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
             ),
             {"limit": page_size, "offset": offset}
         ).fetchall()
-        
+
         items = [
             FavouriteWithProperty(
                 id=str(r[0]),
@@ -85,7 +83,7 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
             )
             for r in rows
         ]
-        
+
         return PaginatedFavouritesResponse(
             items=items,
             total=total,
@@ -97,6 +95,11 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
 @router.post("", status_code=201, response_model=FavouriteItem)
 def add_favourite(req: FavouriteCreate) -> FavouriteItem:
     """Add a property to favourites."""
+    import uuid
+    from datetime import datetime, timezone
+
+    fav_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
     with SessionLocal() as session:
         try:
             # Verify property exists

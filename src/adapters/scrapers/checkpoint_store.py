@@ -35,7 +35,7 @@ class CheckpointStore:
         row = self.session.query(PlatformCheckpoint).filter_by(platform_name=platform_name).first()
         if not row:
             return {}
-            
+
         raw = row.data or {}
         try:
             model_cls = CHECKPOINT_MODELS.get(platform_name)

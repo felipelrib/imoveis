@@ -133,10 +133,10 @@ def recalculate_scores(weights: Optional[ScoringWeights] = None):
             stat_rows = compute_neighborhood_stats(session)
             count = recalculate_all_combined_scores(session, weights)
             session.commit()
-            
+
             payload = weights.model_dump() if weights else {}
             log_audit_action("recalculate_scores", payload)
-            
+
             return {
                 "stat_rows_updated": stat_rows,
                 "combined_rows_updated": count,
@@ -238,10 +238,11 @@ def recompute_verdicts():
     """Query properties where metrics_scoring.meta->'deal_verdict' IS NULL
     and dispatch ai_enrich for each.
     """
-    from adapters.queue.tasks import ai_enrich
-    from adapters.db.models import MetricsScoring, Property
     from sqlalchemy import text
-    
+
+    from adapters.db.models import MetricsScoring, Property
+    from adapters.queue.tasks import ai_enrich
+
     count = 0
     with SessionLocal() as session:
         try:
@@ -251,7 +252,7 @@ def recompute_verdicts():
             ).filter(
                 text("metrics_scoring.meta->'deal_verdict' IS NULL")
             )
-            
+
             for prop, ms in query:
                 image_urls = prop.image_urls or []
                 description = prop.description or ""
@@ -260,7 +261,7 @@ def recompute_verdicts():
         except Exception as exc:
             logger.error("verdict_recompute_failed", error=str(exc))
             raise HTTPException(status_code=500, detail=str(exc))
-            
+
     logger.info("verdicts_recompute_queued", count=count)
     log_audit_action("recompute_verdicts", {"queued": count})
     return {"queued_recomputations": count}

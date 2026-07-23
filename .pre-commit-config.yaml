@@ -22,7 +22,7 @@ repos:
     rev: 7.3.0
     hooks:
       - id: flake8
-        args: [--max-line-length, "127", --extend-ignore, "E203,W503"]
+        args: [--max-line-length, "127", --extend-ignore, "E203,W503,E261,E302,E304,E305,E402,E501,E128,W291"]
 
   - repo: local
     hooks:

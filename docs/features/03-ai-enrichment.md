@@ -44,4 +44,3 @@ Files touched:
    ```bash
    pytest src/tests/unit/test_ai_client.py src/tests/unit/test_ai_quality.py src/tests/unit/test_deal_verdict.py -v
    ```
-

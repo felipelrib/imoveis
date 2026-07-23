@@ -51,4 +51,3 @@ Files touched:
    ```bash
    pytest src/tests/unit/test_config.py -v
    ```
-

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from api.auth import verify_jwt
 from infra.db import SessionLocal
 from infra.logging import get_logger
-from api.auth import verify_jwt
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
@@ -129,7 +129,10 @@ def check_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) -> Dic
     """Check if a specific property is in the watchlist."""
     with SessionLocal() as session:
         row = session.execute(
-            text("SELECT id, min_drop_pct, user_id, last_notified_price FROM watchlist WHERE property_id = :pid AND user_id = :uid"),
+            text(
+                "SELECT id, min_drop_pct, user_id, last_notified_price "
+                "FROM watchlist WHERE property_id = :pid AND user_id = :uid"
+            ),
             {"pid": property_id, "uid": user_id},
         ).fetchone()
         if row is None:

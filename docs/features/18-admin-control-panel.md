@@ -107,4 +107,3 @@ curl -X POST http://localhost:8000/admin/schedule \
 - **Resource Management**: Fixed generator leaks in the admin scoring endpoints by using the `SessionLocal` context manager directly, preventing connection exhaustion.
 - **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
 - **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.
-

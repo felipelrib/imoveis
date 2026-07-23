@@ -43,4 +43,3 @@ None — uses PostgreSQL window functions and built-in Python `math`.
    SELECT property_id, stat_score, ai_score, combined_score, z_score, percentile_rank
    FROM metrics_scoring ORDER BY combined_score DESC LIMIT 10;
    ```
-
