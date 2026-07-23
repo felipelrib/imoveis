@@ -37,3 +37,4 @@ None.
 - Before Epic 2 Story 2.3: split/sequence owner migration vs personalization surfaces (comment on BIN-20).
 - Optional focused `bmad-ux` if Compare UI ambiguity blocks Epic 1 (comment on BIN-19).
 - **BUG (Low):** Epic 2 Linear child id order lists BIN-46 before BIN-45 — verify titles match stories 2.1–2.3.
+
