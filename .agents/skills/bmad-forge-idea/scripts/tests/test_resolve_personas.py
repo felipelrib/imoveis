@@ -119,7 +119,7 @@ class TestOverrideMergeFallback(unittest.TestCase):
     """When party-mode isn't installed, user override TOMLs are read directly."""
 
     def test_arrays_append_scalars_override(self):
-        import tempfile, os
+        import tempfile
         with tempfile.TemporaryDirectory() as d:
             custom = Path(d) / "_bmad" / "custom"
             custom.mkdir(parents=True)

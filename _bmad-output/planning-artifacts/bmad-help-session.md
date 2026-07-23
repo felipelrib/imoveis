@@ -32,9 +32,9 @@
 
 ### Next required
 
-3. `[PRD]` **Create Edit and Review PRD** — `bmad-prd`  
-   **Action: Create.** Intent: retrofit shipped MVP as baseline; define goals/KPIs/non-goals for **v0.5 / Beyond MVP**. English.  
-   Output: `_bmad-output/planning-artifacts/` PRD (+ addendum/memlog).  
+3. `[PRD]` **Create Edit and Review PRD** — `bmad-prd`
+   **Action: Create.** Intent: retrofit shipped MVP as baseline; define goals/KPIs/non-goals for **v0.5 / Beyond MVP**. English.
+   Output: `_bmad-output/planning-artifacts/` PRD (+ addendum/memlog).
    Starter: `NEXT-bmad-prd-prompt.md`
 
 ### Then (required Method track)

@@ -1,7 +1,7 @@
 # ADR 0003: BMad Method Planning Bridge
 
-**Status:** Accepted  
-**Date:** 2026-07-23  
+**Status:** Accepted
+**Date:** 2026-07-23
 **Related:** [ADR 0002 — Cursor Single-Agent Workflow](0002-cursor-single-agent-workflow.md)
 
 ## Decision
