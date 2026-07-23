@@ -44,18 +44,24 @@ jobs:
       - name: Run unit tests
         run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30
 
-      - name: Upload coverage to Codecov
-        if: success() || failure()
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.xml
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      # Prefer CI-based Sonar (with coverage) over Automatic Analysis.
+      - name: Disable SonarCloud Automatic Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/sonar-autoscan.json -w "%{http_code}" \
+            -u "${SONAR_TOKEN}:" \
+            -X POST \
+            "https://sonarcloud.io/api/autoscan/activation?projectKey=felipelrib_imoveis&enable=false" || true)
+          echo "autoscan API HTTP ${code}"
+          cat /tmp/sonar-autoscan.json || true
+          if [ "${code}" != "204" ] && [ "${code}" != "200" ]; then
+            echo "::warning::Could not disable Automatic Analysis (HTTP ${code}). Turn it off in SonarCloud → Administration → Analysis Method."
+          fi
 
       - name: SonarCloud Scan
-        if: success() || failure()
-        uses: SonarSource/sonarqube-scan-action@v4
-        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
