@@ -111,7 +111,8 @@ Preview docs locally: `pip install mkdocs-material && mkdocs serve`
 Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-started/) for PRD / architecture / epics. Planning artifacts land in `_bmad-output/`. Cursor skills are under `.agents/skills/` (e.g. `bmad-help`, `bmad-prd`).
 
 - Orientation: invoke **`bmad-help`** (see `_bmad-output/planning-artifacts/bmad-help-session.md`).
-- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` execute. Local skill: `.cursor/skills/imoveis-planning-bridge`.
+- Sprint tracker: `_bmad-output/implementation-artifacts/sprint-status.yaml`.
+- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` / local `feature-pipeline` execute. Local skill: `.cursor/skills/imoveis-planning-bridge`.
 - Re-install / update: `npx bmad-method install --yes --modules bmm --tools cursor --action update`
 
 ## Development Workflow

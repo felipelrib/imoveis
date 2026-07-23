@@ -20,12 +20,24 @@ BMad agent personas (PM, Architect, Dev, etc.) are **workflow skills**, not a re
 
 MVP milestones v0.1–v0.4 shipped without an in-repo PRD. Beyond-MVP work needed a durable planning spine. BMad Method track fits a brownfield product: retrofit requirements, ratify architecture, then epic delivery.
 
+## Story → ship (execution handoff)
+
+After readiness + sprint planning:
+
+1. Optional `bmad-create-story` (fresh chat) → story file under `_bmad-output/implementation-artifacts/`.
+2. Ensure Linear child exists (v0.5: BIN-41..55 under epic parents BIN-19..23).
+3. Local `feature-pipeline`: `setup-workspace.sh` → TDD → `validate.sh` (+ scraper/AI gates when relevant) → `finish-feature.sh --pr` → babysit → Linear Done → `docs/features/`.
+4. Keep `_bmad-output/implementation-artifacts/sprint-status.yaml` in sync (never downgrade statuses).
+
+Recommended v0.5 delivery order (from readiness): **Epic 1 → 2 → 3|5 → 4** so AD-12 property projection lands before export/digest.
+
 ## Consequences
 
-- Commit `_bmad/`, `.agents/skills/`, and `_bmad-output/` planning artifacts; gitignore personal `*.user.toml`.
+- Commit `_bmad/`, `.agents/skills/`, and `_bmad-output/` planning **and** implementation artifacts (`sprint-status.yaml`); gitignore personal `*.user.toml` and local `.cursor/`.
 - Run each major BMad workflow in a **fresh chat**.
 - After epics exist, sync stories to Linear before coding; do not invent a parallel backlog ahead of the PRD.
 - Optional `bmad-dev-story` / `bmad-code-review` may assist implementation, but cannot skip `validate.sh` or CI.
+- Local bridge skill: `.cursor/skills/imoveis-planning-bridge`; execution skill: `.cursor/skills/feature-pipeline`.
 
 ## Alternatives considered
 
