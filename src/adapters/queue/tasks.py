@@ -146,6 +146,15 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                             queue="ai",
                         )
 
+                    # Semantic search embedding (independent of images)
+                    if result.action != "noop" and (
+                        (candidate.title or "").strip() or (candidate.description or "").strip()
+                    ):
+                        embed_property.apply_async(
+                            args=[str(result.property_id)],
+                            queue="ai",
+                        )
+
                     processed += 1
                 except Exception as exc:
                     session.rollback()
@@ -394,6 +403,74 @@ def ai_enrich(
         raise self.retry(exc=exc, countdown=60)
     finally:
         sem.release()
+
+
+# ---------------------------------------------------------------------------
+# Embedding task (semantic search) — no GPU semaphore
+# ---------------------------------------------------------------------------
+
+
+@celery.task(
+    name="tasks.embed_property",
+    bind=True,
+    max_retries=5,
+)
+def embed_property(self, property_id: str):
+    """Generate and store a pgvector embedding for a property's title+description."""
+    from sqlalchemy import text
+
+    from adapters.ai.embeddings import build_embedding_text, vector_literal
+
+    cfg = get_config()
+    r = get_redis()
+
+    if r.exists("workers:ai:paused"):
+        logger.info("embed_property_paused", property_id=property_id)
+        raise self.retry(countdown=60, exc=Exception("AI workers paused"))
+
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT title, description FROM properties WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": property_id},
+            ).mappings().first()
+            if not row:
+                logger.warning("embed_property_missing", property_id=property_id)
+                return {"status": "missing"}
+
+            text_in = build_embedding_text(
+                row["title"],
+                row["description"],
+                cfg.ai.max_description_chars,
+            )
+            if not text_in:
+                logger.info("embed_property_empty_text", property_id=property_id)
+                return {"status": "skipped_empty"}
+
+            client = create_ai_client()
+
+            async def _run():
+                async with client:
+                    return await client.embed(text_in)
+
+            embedding = asyncio.run(_run())
+            literal = vector_literal(embedding)
+            session.execute(
+                text(
+                    "UPDATE properties SET embedding = CAST(:emb AS vector) "
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"emb": literal, "id": property_id},
+            )
+            session.commit()
+
+        logger.info("embed_property_completed", property_id=property_id, dims=len(embedding))
+        return {"status": "completed", "dims": len(embedding)}
+    except Exception as exc:
+        logger.error("embed_property_error", property_id=property_id, error=str(exc))
+        raise self.retry(exc=exc, countdown=60)
 
 
 # ---------------------------------------------------------------------------

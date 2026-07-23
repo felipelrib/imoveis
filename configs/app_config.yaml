@@ -63,6 +63,7 @@ ai:
   lmstudio_url: http://localhost:1234
   visual_model: llava          # model for image analysis (VLM)
   text_model: llama3           # model for text/sentiment analysis
+  embedding_model: nomic-embed-text  # model for semantic search embeddings
   timeout: 120
   max_tokens: 1024
   visual_weight: 0.6

@@ -179,6 +179,10 @@ class LocalAIClient(ABC):
         """LLM call — to be overridden by concrete clients."""
         raise NotImplementedError
 
+    @abstractmethod
+    async def embed(self, text: str) -> List[float]:
+        """Return an embedding vector for ``text``."""
+
     async def _ensure_session(self):
         """Ensure HTTP session is initialized."""
         if self.session is None:
@@ -214,10 +218,12 @@ class OllamaClient(LocalAIClient):
         timeout: int = 30,
         visual_model: str = "llava",
         text_model: str = "llama3",
+        embedding_model: str = "nomic-embed-text",
     ):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
+        self.embedding_model = embedding_model
 
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call Ollama for deal verdict synthesis."""
@@ -324,6 +330,22 @@ class OllamaClient(LocalAIClient):
             logger.error(f"Error in analyze_text: {e}")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
+    async def embed(self, text: str) -> List[float]:
+        """Embed text via Ollama ``POST /api/embeddings``."""
+        await self._ensure_session()
+        url = f"{self.base_url}/api/embeddings"
+        payload = {"model": self.embedding_model, "prompt": text}
+        async with self.session.post(url, json=payload) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                logger.error("Ollama embeddings error: %s - %s", response.status, error_text)
+                raise Exception(f"Ollama embeddings error: {response.status}")
+            result = await response.json()
+        embedding = result.get("embedding")
+        if not isinstance(embedding, list) or not embedding:
+            raise ValueError("Ollama embeddings response missing embedding list")
+        return [float(x) for x in embedding]
+
 
 class LMStudioClient(LocalAIClient):
     """Client for LM Studio using the OpenAI-compatible chat completions API.
@@ -344,10 +366,12 @@ class LMStudioClient(LocalAIClient):
         timeout: int = 30,
         visual_model: str = "llava",
         text_model: str = "llama3",
+        embedding_model: str = "nomic-embed-text",
     ):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
+        self.embedding_model = embedding_model
 
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call LM Studio for deal verdict synthesis."""
@@ -492,6 +516,22 @@ class LMStudioClient(LocalAIClient):
             logger.error(f"Error in LMStudioClient.analyze_text: {e}")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
+    async def embed(self, text: str) -> List[float]:
+        """Embed text via LM Studio OpenAI-compatible ``POST /v1/embeddings``."""
+        await self._ensure_session()
+        url = f"{self.base_url}/v1/embeddings"
+        payload = {"model": self.embedding_model, "input": text}
+        async with self.session.post(url, json=payload) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                logger.error("LM Studio embeddings error: %s - %s", response.status, error_text)
+                raise Exception(f"LM Studio embeddings error: {response.status}")
+            result = await response.json()
+        data = result.get("data") or []
+        if not data or not isinstance(data[0].get("embedding"), list):
+            raise ValueError("LM Studio embeddings response missing embedding list")
+        return [float(x) for x in data[0]["embedding"]]
+
 
 def create_ai_client() -> LocalAIClient:
     """Factory to create an AI client based on configuration.
@@ -510,6 +550,7 @@ def create_ai_client() -> LocalAIClient:
             timeout=cfg.ai.timeout,
             visual_model=cfg.ai.visual_model,
             text_model=cfg.ai.text_model,
+            embedding_model=cfg.ai.embedding_model,
         )
     else:
         # Default to Ollama
@@ -518,4 +559,5 @@ def create_ai_client() -> LocalAIClient:
             timeout=cfg.ai.timeout,
             visual_model=cfg.ai.visual_model,
             text_model=cfg.ai.text_model,
+            embedding_model=cfg.ai.embedding_model,
         )

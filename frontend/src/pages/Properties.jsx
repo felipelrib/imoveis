@@ -24,6 +24,7 @@ const DEFAULT_FILTERS = {
   neighborhood: '',
   isFurnished: false,
   acceptsPets: false,
+  q: '',
 }
 
 export default function Properties() {
@@ -42,6 +43,8 @@ export default function Properties() {
   const [neighborhood, setNeighborhood] = useState(DEFAULT_FILTERS.neighborhood)
   const [isFurnished, setIsFurnished] = useState(DEFAULT_FILTERS.isFurnished)
   const [acceptsPets, setAcceptsPets] = useState(DEFAULT_FILTERS.acceptsPets)
+  const [q, setQ] = useState(DEFAULT_FILTERS.q)
+  const [qDraft, setQDraft] = useState(DEFAULT_FILTERS.q)
   const [selectedId, setSelectedId] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [watchedIds, setWatchedIds] = useState(new Set())
@@ -68,7 +71,7 @@ export default function Properties() {
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, maxPrice,
-    minBedrooms, minParking, minScore, neighborhood, isFurnished, acceptsPets,
+    minBedrooms, minParking, minScore, neighborhood, isFurnished, acceptsPets, q,
   }
 
   const handleBboxChange = useCallback(async (bboxStr) => {
@@ -89,6 +92,7 @@ export default function Properties() {
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
         bbox: bboxStr,
+        q: q || undefined,
       })
       setMapProperties(res.properties || [])
     } catch (e) {
@@ -96,7 +100,7 @@ export default function Properties() {
     } finally {
       setMapLoading(false)
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets])
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets, q])
 
   const applyFilters = useCallback((filters) => {
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
@@ -110,6 +114,10 @@ export default function Properties() {
     if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood)
     if (filters.isFurnished !== undefined) setIsFurnished(filters.isFurnished)
     if (filters.acceptsPets !== undefined) setAcceptsPets(filters.acceptsPets)
+    if (filters.q !== undefined) {
+      setQ(filters.q)
+      setQDraft(filters.q)
+    }
   }, [])
 
   const load = async (p = page) => {
@@ -152,6 +160,7 @@ export default function Properties() {
         propertyType: propertyType || undefined,
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
+        q: q || undefined,
       })
       setData(res)
     } catch (e) {
@@ -220,7 +229,7 @@ export default function Properties() {
       load(1)
       setPage(1)
     }
-  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, viewMode])
+  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, viewMode, q])
 
   useEffect(() => {
     if (page !== 1 && viewMode === 'all') load(page)
@@ -323,6 +332,42 @@ export default function Properties() {
         {/* Toolbar */}
           <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
+              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0, flex: '1 1 220px' }}>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }} htmlFor="semantic-search">Search</label>
+                <input
+                  id="semantic-search"
+                  className="form-input"
+                  style={{ flex: 1, minWidth: 160 }}
+                  type="search"
+                  placeholder="e.g. apto perto do metro com varanda"
+                  value={qDraft}
+                  onChange={e => setQDraft(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      setQ(qDraft.trim())
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setQ(qDraft.trim())}
+                >
+                  Search
+                </button>
+                {q && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setQ(''); setQDraft('') }}
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                 <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Sort by</label>
                 <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
@@ -440,6 +485,7 @@ export default function Properties() {
                   setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
                   setNeighborhood(''); setPropertyType(''); setListingType('both');
                   setIsFurnished(false); setAcceptsPets(false);
+                  setQ(''); setQDraft('');
                 }}>✕ Clear All</button>
               </div>
             )}

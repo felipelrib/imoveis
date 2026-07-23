@@ -267,6 +267,35 @@ def recompute_verdicts():
     return {"queued_recomputations": count}
 
 
+@router.post("/embeddings/backfill")
+def backfill_embeddings():
+    """Enqueue embed_property for active properties missing an embedding."""
+    from sqlalchemy import text
+
+    from adapters.queue.tasks import embed_property
+
+    count = 0
+    with SessionLocal() as session:
+        try:
+            rows = session.execute(
+                text(
+                    "SELECT id FROM properties "
+                    "WHERE active = true AND embedding IS NULL "
+                    "AND (COALESCE(title, '') <> '' OR COALESCE(description, '') <> '')"
+                )
+            ).fetchall()
+            for (prop_id,) in rows:
+                embed_property.apply_async(args=[str(prop_id)], queue="ai")
+                count += 1
+        except Exception as exc:
+            logger.error("embeddings_backfill_failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    logger.info("embeddings_backfill_queued", count=count)
+    log_audit_action("embeddings_backfill", {"queued": count})
+    return {"queued_embeddings": count}
+
+
 @router.get("/audit")
 def get_audit_log():
     from adapters.db.models import AdminAudit

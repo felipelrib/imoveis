@@ -35,14 +35,44 @@ def list_properties(
     sort_by: str = Query("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     bbox: Optional[str] = None,
+    q: Optional[str] = Query(None, max_length=500),
 ) -> Dict[str, Any]:
-    """Return paginated, filtered, scored properties for the GUI grid."""
+    """Return paginated, filtered, scored properties for the GUI grid.
+
+    When ``q`` is provided, results are ordered by cosine distance to the
+    query embedding (semantic search) and only rows with embeddings are returned.
+    """
+    import asyncio
+
+    from adapters.ai.client import create_ai_client
+    from adapters.ai.embeddings import vector_literal
+    from infra.config import get_config
+
+    query_text = (q or "").strip()
+    query_vec_literal: Optional[str] = None
+    if query_text:
+        cfg = get_config()
+        max_chars = cfg.ai.max_description_chars
+        embed_input = query_text[:max_chars] if max_chars > 0 else query_text
+        client = create_ai_client()
+
+        async def _embed_query():
+            async with client:
+                return await client.embed(embed_input)
+
+        query_embedding = asyncio.run(_embed_query())
+        query_vec_literal = vector_literal(query_embedding)
+
     with SessionLocal() as session:
         filters = ["p.active = true"]
         params: Dict[str, Any] = {
             "limit": page_size,
             "offset": (page - 1) * page_size,
         }
+
+        if query_vec_literal is not None:
+            filters.append("p.embedding IS NOT NULL")
+            params["q_vec"] = query_vec_literal
 
         if platform:
             filters.append("p.platform = :platform")
@@ -107,14 +137,17 @@ def list_properties(
                 pass  # ignore malformed bbox
 
         where = " AND ".join(filters)
-        sort_col_map = {
-            "combined_score": "COALESCE(ms.combined_score, 0)",
-            "price": "p.price",
-            "first_seen": "p.first_seen",
-            "created_at": "p.first_seen",
-            "area_m2": "p.area_m2",
-        }
-        order = f"{sort_col_map[sort_by]} {sort_dir.upper()}"
+        if query_vec_literal is not None:
+            order = "p.embedding <=> CAST(:q_vec AS vector)"
+        else:
+            sort_col_map = {
+                "combined_score": "COALESCE(ms.combined_score, 0)",
+                "price": "p.price",
+                "first_seen": "p.first_seen",
+                "created_at": "p.first_seen",
+                "area_m2": "p.area_m2",
+            }
+            order = f"{sort_col_map[sort_by]} {sort_dir.upper()}"
 
         sql = text(f"""
             SELECT
