@@ -61,8 +61,7 @@ None.
 
 ## Notes / Follow-ups
 
-### Tech Debt
-
-- **No update endpoint for saved searches** — `SavedSearchUpdate` model exists but no `PATCH`/`PUT` endpoint is defined.
-- **No pagination for favourites/saved searches** — Lists return all items. Fine for personal use but won't scale.
-- **Favourites view doesn't support sorting/filtering** — The favourites mode displays a flat list without any of the advanced filtering available in the main grid.
+### Fixed Tech Debt
+- ~~**No update endpoint for saved searches**~~ — FIXED
+- ~~**No pagination for favourites/saved searches**~~ — FIXED
+- ~~**Favourites view doesn't support sorting/filtering**~~ — FIXED

@@ -40,10 +40,21 @@ class FavouriteWithProperty(BaseModel):
     platform: Optional[str] = None
 
 
-@router.get("", response_model=List[FavouriteWithProperty])
-def list_favourites() -> List[FavouriteWithProperty]:
+class PaginatedFavouritesResponse(BaseModel):
+    items: List[FavouriteWithProperty]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("", response_model=PaginatedFavouritesResponse)
+def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesResponse:
     """Return all favourites with property details."""
     with SessionLocal() as session:
+        offset = (page - 1) * page_size
+        
+        total = session.execute(text("SELECT COUNT(*) FROM favourites")).scalar() or 0
+        
         rows = session.execute(
             text(
                 "SELECT f.id, f.property_id, f.created_at, "
@@ -53,10 +64,13 @@ def list_favourites() -> List[FavouriteWithProperty]:
                 "JOIN properties p ON p.id = f.property_id "
                 "LEFT JOIN metrics_scoring ms ON ms.property_id = f.property_id "
                 "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-                "ORDER BY f.created_at DESC"
-            )
+                "ORDER BY f.created_at DESC "
+                "LIMIT :limit OFFSET :offset"
+            ),
+            {"limit": page_size, "offset": offset}
         ).fetchall()
-        return [
+        
+        items = [
             FavouriteWithProperty(
                 id=str(r[0]),
                 property_id=str(r[1]),
@@ -71,6 +85,13 @@ def list_favourites() -> List[FavouriteWithProperty]:
             )
             for r in rows
         ]
+        
+        return PaginatedFavouritesResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size
+        )
 
 
 @router.post("", status_code=201, response_model=FavouriteItem)

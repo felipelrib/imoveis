@@ -55,7 +55,7 @@ export default function Properties() {
 
   // View mode: 'all' | 'favourites'
   const [viewMode, setViewMode] = useState('all')
-  const [favouritesData, setFavouritesData] = useState([])
+  const [favouritesData, setFavouritesData] = useState({ items: [], total: 0 })
 
   // Dynamic neighborhoods from backend
   const [neighborhoods, setNeighborhoods] = useState([])
@@ -113,11 +113,15 @@ export default function Properties() {
   }, [])
 
   const load = async (p = page) => {
+    const isPriceDesc = sortBy === 'price_desc'
+    const actualSortBy = isPriceDesc ? 'price' : sortBy
+    const actualSortDir = sortBy === 'price' ? 'asc' : isPriceDesc ? 'desc' : sortDir
+
     if (viewMode === 'favourites') {
       setLoading(true)
       setLoadError(null)
       try {
-        const favs = await fetchFavourites()
+        const favs = await fetchFavourites({ page: p, pageSize: 24, sortBy: actualSortBy, sortDir: actualSortDir })
         setFavouritesData(favs)
       } catch (e) {
         console.error(e)
@@ -165,10 +169,10 @@ export default function Properties() {
       .then(items => setWatchedIds(new Set(items.map(i => i.property_id))))
       .catch(() => {})
     fetchSavedSearches()
-      .then(setSavedSearches)
+      .then(res => setSavedSearches(res.items || []))
       .catch(() => {})
-    fetchFavourites()
-      .then(favs => setFavouriteIds(new Set(favs.map(f => f.property_id))))
+    fetchFavourites({ page: 1, pageSize: 1000 })
+      .then(res => setFavouriteIds(new Set((res.items || []).map(f => f.property_id))))
       .catch(() => {})
     // Fetch dynamic neighborhoods
     setNeighborhoodsLoading(true)
@@ -259,8 +263,9 @@ export default function Properties() {
     applyFilters(filters)
   }
 
-  const properties = viewMode === 'favourites' ? favouritesData : (data?.properties || [])
-  const pages = data?.pages || 1
+  const totalResults = viewMode === 'favourites' ? favouritesData.total : (data?.total || 0)
+  const properties = viewMode === 'favourites' ? (favouritesData.items || []) : (data?.properties || [])
+  const pages = viewMode === 'favourites' ? Math.ceil(totalResults / 24) : (data?.pages || 1)
 
   return (
     <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 60px)' }}>
@@ -308,15 +313,14 @@ export default function Properties() {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="page-header">
           <h1 className="page-title">{viewMode === 'favourites' ? '★ Favourites' : 'Properties'}</h1>
-          <p className="page-subtitle">
-            {viewMode === 'favourites'
-              ? `${favouritesData.length} favourited`
-              : (data ? `${data.total.toLocaleString()} properties found` : 'Loading…')}
-          </p>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              {viewMode === 'favourites'
+                ? `${favouritesData.total} favourited`
+                : `${totalResults.toLocaleString('pt-BR')} properties`}
+            </div>
         </div>
 
-        {/* Toolbar (only in all mode) */}
-        {viewMode === 'all' && (
+        {/* Toolbar */}
           <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
@@ -440,7 +444,6 @@ export default function Properties() {
               </div>
             )}
           </div>
-        )}
 
         {/* Error state */}
         {loadError && !loading && (

@@ -51,17 +51,30 @@ class SavedSearchItem(BaseModel):
     created_at: Optional[str] = None
 
 
-@router.get("", response_model=List[SavedSearchItem])
-def list_saved_searches() -> List[SavedSearchItem]:
+class PaginatedSavedSearchesResponse(BaseModel):
+    items: List[SavedSearchItem]
+    total: int
+    page: int
+    page_size: int
+
+@router.get("", response_model=PaginatedSavedSearchesResponse)
+def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSearchesResponse:
     """Return all saved searches ordered by most recent."""
     with SessionLocal() as session:
+        offset = (page - 1) * page_size
+        
+        total = session.execute(text("SELECT COUNT(*) FROM saved_searches")).scalar() or 0
+        
         rows = session.execute(
             text(
                 "SELECT id, name, filters, created_at "
-                "FROM saved_searches ORDER BY created_at DESC"
-            )
+                "FROM saved_searches ORDER BY created_at DESC "
+                "LIMIT :limit OFFSET :offset"
+            ),
+            {"limit": page_size, "offset": offset}
         ).fetchall()
-        return [
+        
+        items = [
             SavedSearchItem(
                 id=str(r[0]),
                 name=r[1],
@@ -70,6 +83,13 @@ def list_saved_searches() -> List[SavedSearchItem]:
             )
             for r in rows
         ]
+        
+        return PaginatedSavedSearchesResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size
+        )
 
 
 @router.get("/{search_id}", response_model=SavedSearchItem)
@@ -137,6 +157,49 @@ def delete_saved_search(search_id: str) -> Dict[str, str]:
                 raise HTTPException(status_code=404, detail="Saved search not found")
             logger.info("saved_search_delete", search_id=search_id)
             return {"status": "deleted", "id": search_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(exc))
+
+@router.patch("/{search_id}", response_model=SavedSearchItem)
+def update_saved_search(search_id: str, req: SavedSearchUpdate) -> SavedSearchItem:
+    """Update a saved search."""
+    with SessionLocal() as session:
+        try:
+            # Check if exists first
+            existing = session.execute(
+                text("SELECT id, name, filters FROM saved_searches WHERE id = :sid"),
+                {"sid": search_id}
+            ).fetchone()
+            
+            if not existing:
+                raise HTTPException(status_code=404, detail="Saved search not found")
+                
+            update_fields = []
+            params = {"sid": search_id}
+            
+            if req.name is not None:
+                update_fields.append("name = :name")
+                params["name"] = req.name
+                
+            if req.filters is not None:
+                update_fields.append("filters = :filters")
+                params["filters"] = json.dumps(req.filters.model_dump(exclude_none=True))
+                
+            if not update_fields:
+                # No updates requested, just return existing
+                return get_saved_search(search_id)
+                
+            session.execute(
+                text(f"UPDATE saved_searches SET {', '.join(update_fields)} WHERE id = :sid"),
+                params
+            )
+            session.commit()
+            
+            logger.info("saved_search_update", search_id=search_id)
+            return get_saved_search(search_id)
         except HTTPException:
             raise
         except Exception as exc:

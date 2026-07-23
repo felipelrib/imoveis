@@ -168,8 +168,9 @@ export async function checkWatchlist(propertyId) {
 // Saved Searches API
 // ---------------------------------------------------------------------------
 
-export async function fetchSavedSearches() {
-  const r = await fetch(`${BASE}/saved-searches`)
+export async function fetchSavedSearches(page = 1, pageSize = 50) {
+  const params = new URLSearchParams({ page, page_size: pageSize })
+  const r = await fetch(`${BASE}/saved-searches?${params}`)
   if (!r.ok) throw new Error('Saved searches fetch failed')
   return r.json()
 }
@@ -200,8 +201,9 @@ export async function deleteSavedSearch(id) {
 // Favourites API
 // ---------------------------------------------------------------------------
 
-export async function fetchFavourites() {
-  const r = await fetch(`${BASE}/favourites`)
+export async function fetchFavourites({ page = 1, pageSize = 50, sortBy = 'combined_score', sortDir = 'desc' } = {}) {
+  const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_dir: sortDir })
+  const r = await fetch(`${BASE}/favourites?${params}`)
   if (!r.ok) throw new Error('Favourites fetch failed')
   return r.json()
 }
