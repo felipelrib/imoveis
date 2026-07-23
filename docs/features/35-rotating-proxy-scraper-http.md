@@ -53,6 +53,6 @@ None.
 ## Notes / Follow-ups
 
 - Related: BIN-47 (AppConfig proxy settings), BIN-49 (operator enablement /
-  observability) — **done** (`docs/features/36-operator-proxy-observability.md`).
+  observability) — **done** (`docs/features/37-operator-proxy-observability.md`).
 - Round-robin state is process-local (per Celery worker); not shared across
   processes.

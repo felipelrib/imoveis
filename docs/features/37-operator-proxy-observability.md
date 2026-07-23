@@ -29,7 +29,7 @@ Files touched:
  src/tests/unit/test_scrape_proxy_observability.py    | NEW — Redis status + scrape start signal
  configs/app_config.yaml                              | UPDATE — operator enablement comments
  docs/setup.md                                        | ADD — Proxy rotation section
- docs/features/36-operator-proxy-observability.md     | NEW — this doc
+ docs/features/37-operator-proxy-observability.md     | NEW — this doc
  _bmad-output/implementation-artifacts/sprint-status.yaml | UPDATE — 3-3 done
 ```
 
