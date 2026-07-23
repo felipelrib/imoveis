@@ -20,11 +20,13 @@ from infra.logging import get_logger
 logger = get_logger(__name__)
 
 CONTENT_TYPE_EXT = {
+
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+
 
 class ImageStore:
     """Manage local image cache for property photos."""

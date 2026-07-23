@@ -14,6 +14,10 @@ from infra.logging import get_logger
 logger = get_logger(__name__)
 router = APIRouter(prefix="/favourites", tags=["favourites"])
 
+_RESP_404 = {404: {"description": "Not found"}}
+_RESP_409 = {409: {"description": "Conflict"}}
+_RESP_500 = {500: {"description": "Internal server error"}}
+
 
 class FavouriteCreate(BaseModel):
     property_id: str
@@ -45,7 +49,7 @@ class PaginatedFavouritesResponse(BaseModel):
     page_size: int
 
 
-@router.get("", response_model=PaginatedFavouritesResponse)
+@router.get("")
 def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesResponse:
     """Return all favourites with property details."""
     with SessionLocal() as session:
@@ -92,7 +96,7 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
         )
 
 
-@router.post("", status_code=201, response_model=FavouriteItem)
+@router.post("", status_code=201, responses={**_RESP_404, **_RESP_409, **_RESP_500})
 def add_favourite(req: FavouriteCreate) -> FavouriteItem:
     """Add a property to favourites."""
     import uuid
@@ -135,7 +139,7 @@ def add_favourite(req: FavouriteCreate) -> FavouriteItem:
             raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.delete("/{property_id}")
+@router.delete("/{property_id}", responses={**_RESP_404, **_RESP_500})
 def remove_favourite(property_id: str) -> Dict[str, str]:
     """Remove a property from favourites."""
     with SessionLocal() as session:

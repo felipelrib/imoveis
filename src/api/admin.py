@@ -29,6 +29,10 @@ from infra.redis_client import get_redis
 logger = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_admin_jwt)])
 
+REDIS_KEY_AI_PAUSED = "workers:ai:paused"
+_RESP_400 = {400: {"description": "Bad request"}}
+_RESP_500 = {500: {"description": "Internal server error"}}
+
 
 # ---------------------------------------------------------------------------
 # Audit Log Helper
@@ -62,14 +66,14 @@ def admin_health():
 @router.get("/workers/status")
 def workers_status():
     r = get_redis()
-    paused = r.exists("workers:ai:paused") > 0  # fixed: was r.get() is not None
+    paused = r.exists(REDIS_KEY_AI_PAUSED) > 0  # fixed: was r.get() is not None
     return {"ai_workers_paused": paused}
 
 
 @router.post("/workers/pause")
 def pause_workers():
     r = get_redis()
-    r.set("workers:ai:paused", "1")
+    r.set(REDIS_KEY_AI_PAUSED, "1")
     logger.info("ai_workers_paused")
     log_audit_action("workers_pause")
     return {"paused": True}
@@ -78,7 +82,7 @@ def pause_workers():
 @router.post("/workers/resume")
 def resume_workers():
     r = get_redis()
-    r.delete("workers:ai:paused")
+    r.delete(REDIS_KEY_AI_PAUSED)
     logger.info("ai_workers_resumed")
     log_audit_action("workers_resume")
     return {"paused": False}
@@ -117,7 +121,7 @@ def set_scoring_weights(weights: ScoringWeights):
     return {"weights": weights.model_dump(), "status": "saved"}
 
 
-@router.post("/scoring/recalculate")
+@router.post("/scoring/recalculate", responses=_RESP_500)
 def recalculate_scores(weights: Optional[ScoringWeights] = None):
     """Recompute all neighbourhood stats then bulk-update combined scores.
 
@@ -196,7 +200,7 @@ def get_schedule():
     return {"schedules": schedules}
 
 
-@router.post("/schedule")
+@router.post("/schedule", responses=_RESP_400)
 def update_schedule(payload: ScheduleUpdateRequest):
     """Update the scrape interval for a platform (persisted in Redis).
 
@@ -233,7 +237,7 @@ def update_schedule(payload: ScheduleUpdateRequest):
 # Deal Verdict Recomputation
 # ---------------------------------------------------------------------------
 
-@router.post("/verdict/recompute")
+@router.post("/verdict/recompute", responses=_RESP_500)
 def recompute_verdicts():
     """Query properties where metrics_scoring.meta->'deal_verdict' IS NULL
     and dispatch ai_enrich for each.
@@ -267,7 +271,7 @@ def recompute_verdicts():
     return {"queued_recomputations": count}
 
 
-@router.post("/embeddings/backfill")
+@router.post("/embeddings/backfill", responses=_RESP_500)
 def backfill_embeddings():
     """Enqueue embed_property for active properties missing an embedding."""
     from sqlalchemy import text

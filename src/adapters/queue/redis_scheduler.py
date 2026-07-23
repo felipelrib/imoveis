@@ -35,7 +35,12 @@ class RedisAwareScheduler(PersistentScheduler):
                     new_interval_sec = new_interval * 60
 
                     if entry.schedule.run_every.total_seconds() != new_interval_sec:
-                        logger.info("redis_scheduler_updated", task=entry.name, old=entry.schedule.run_every.total_seconds(), new=new_interval_sec)
+                        logger.info(
+                            "redis_scheduler_updated",
+                            task=entry.name,
+                            old=entry.schedule.run_every.total_seconds(),
+                            new=new_interval,
+                        )
                         from celery.schedules import schedule
                         entry.schedule = schedule(run_every=new_interval_sec)
 

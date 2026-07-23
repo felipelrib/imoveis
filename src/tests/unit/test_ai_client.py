@@ -14,7 +14,17 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from adapters.ai.client import LMStudioClient, LocalAIClient, OllamaClient, SentimentResult, VisualResult, create_ai_client
+import pytest
+
+from adapters.ai.client import (
+    AIClientError,
+    LMStudioClient,
+    LocalAIClient,
+    OllamaClient,
+    SentimentResult,
+    VisualResult,
+    create_ai_client,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -357,6 +367,150 @@ class TestEmbed:
 
 
 # ---------------------------------------------------------------------------
+# Error handling and retry paths
+# ---------------------------------------------------------------------------
+
+
+class TestAIClientErrors:
+    @staticmethod
+    def _response_context(response):
+        return AsyncMock(
+            __aenter__=AsyncMock(return_value=response),
+            __aexit__=AsyncMock(return_value=None),
+        )
+
+    def test_ollama_retries_invalid_json_before_success(self):
+        client = OllamaClient()
+        client.generate = AsyncMock(
+            side_effect=[
+                {"response": "not json"},
+                _make_ollama_response(FAKE_SENTIMENT_RESPONSE),
+            ]
+        )
+
+        result = asyncio.run(client.analyze_text("description", "prompt"))
+
+        assert result.sentiment_score == 0.70
+        assert client.generate.call_count == 2
+        assert "invalid JSON" in client.generate.call_args_list[1].args[1]
+
+    def test_lmstudio_retries_invalid_json_before_success(self):
+        client = LMStudioClient()
+        client.chat_completions = AsyncMock(
+            side_effect=[
+                _make_chat_completion("not json"),
+                _make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE)),
+            ]
+        )
+
+        result = asyncio.run(client.analyze_text("description", "prompt"))
+
+        assert result.sentiment_score == 0.70
+        assert client.chat_completions.call_count == 2
+        retry_message = client.chat_completions.call_args_list[1].kwargs["messages"][0]["content"]
+        assert "invalid JSON" in retry_message
+
+    def test_ollama_invalid_json_after_retries_returns_fallback(self):
+        client = OllamaClient()
+        client.generate = AsyncMock(return_value={"response": "not json"})
+
+        result = asyncio.run(client.analyze_text("description", "prompt"))
+
+        assert result.sentiment_score == 0.5
+        assert result.analysis == "Error"
+        assert client.generate.call_count == 3
+
+    def test_lmstudio_visual_invalid_json_after_retries_returns_fallback(self, tmp_path):
+        image = tmp_path / "property.png"
+        image.write_bytes(b"image")
+        client = LMStudioClient()
+        client.chat_completions = AsyncMock(return_value=_make_chat_completion("not json"))
+
+        result = asyncio.run(client.analyze_visuals([str(image)], "prompt"))
+
+        assert result.condition_score == 0.5
+        assert result.analysis == "Error"
+        assert client.chat_completions.call_count == 3
+
+    def test_ollama_generate_rejects_non_200_response(self):
+        client = OllamaClient()
+        response = AsyncMock(status=503)
+        response.text.return_value = "unavailable"
+        client.session = MagicMock()
+        client.session.post.return_value = self._response_context(response)
+
+        with pytest.raises(AIClientError, match="503"):
+            asyncio.run(client.generate("llama3", "hello"))
+
+    def test_lmstudio_chat_rejects_non_200_response(self):
+        client = LMStudioClient()
+        response = AsyncMock(status=400)
+        response.text.return_value = "bad request"
+        client.session = MagicMock()
+        client.session.post.return_value = self._response_context(response)
+
+        with pytest.raises(AIClientError, match="400"):
+            asyncio.run(client.chat_completions("llama3", []))
+
+    def test_ollama_generate_reraises_timeout(self):
+        client = OllamaClient()
+        client.session = MagicMock()
+        client.session.post.side_effect = asyncio.TimeoutError()
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(client.generate("llama3", "hello"))
+
+    def test_lmstudio_chat_reraises_timeout(self):
+        client = LMStudioClient()
+        client.session = MagicMock()
+        client.session.post.side_effect = asyncio.TimeoutError()
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(client.chat_completions("llama3", []))
+
+    @pytest.mark.parametrize("client_cls", [OllamaClient, LMStudioClient])
+    def test_close_swallows_session_close_error(self, client_cls):
+        client = client_cls()
+        client.session = MagicMock()
+        client.session.close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        asyncio.run(client.close())
+
+        client.session.close.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("client_cls", "payload"),
+        [
+            (OllamaClient, {"embedding": []}),
+            (LMStudioClient, {"data": []}),
+        ],
+    )
+    def test_embed_rejects_missing_embedding(self, client_cls, payload):
+        client = client_cls()
+        response = AsyncMock(status=200)
+        response.json.return_value = payload
+        client.session = MagicMock()
+        client.session.post.return_value = self._response_context(response)
+
+        with pytest.raises(ValueError, match="missing embedding"):
+            asyncio.run(client.embed("property text"))
+
+    @pytest.mark.parametrize(
+        ("client_cls", "error_prefix"),
+        [(OllamaClient, "Ollama embeddings"), (LMStudioClient, "LM Studio embeddings")],
+    )
+    def test_embed_rejects_non_200_response(self, client_cls, error_prefix):
+        client = client_cls()
+        response = AsyncMock(status=500)
+        response.text.return_value = "server error"
+        client.session = MagicMock()
+        client.session.post.return_value = self._response_context(response)
+
+        with pytest.raises(AIClientError, match=error_prefix):
+            asyncio.run(client.embed("property text"))
+
+
+# ---------------------------------------------------------------------------
 # Import / type sanity
 # ---------------------------------------------------------------------------
 
@@ -377,3 +531,93 @@ class TestAIModels:
     def test_issubclass_local_ai_client(self):
         assert issubclass(OllamaClient, LocalAIClient)
         assert issubclass(LMStudioClient, LocalAIClient)
+
+
+@pytest.mark.unit
+class TestSummarizeAndSession:
+    def test_summarize_deal_uses_llm_result(self):
+        from adapters.ai.client import DealVerdictResult, OllamaClient
+
+        client = OllamaClient()
+        client._llm_verdict = AsyncMock(return_value=DealVerdictResult(verdict="ok", confidence=0.9))
+        with patch("adapters.ai.prompts.build_deal_verdict_prompt", return_value="prompt"):
+            with patch("infra.config.get_config") as cfg:
+                cfg.return_value.ai.output_language = "pt-BR"
+                result = asyncio.run(client.summarize_deal({"category": "Average"}, None, None, "Centro"))
+        assert result.verdict == "ok"
+        assert result.confidence == 0.9
+
+    def test_summarize_deal_falls_back_on_error(self):
+        from adapters.ai.client import OllamaClient
+
+        client = OllamaClient()
+        client._llm_verdict = AsyncMock(side_effect=RuntimeError("llm down"))
+        with patch("adapters.ai.prompts.build_deal_verdict_prompt", side_effect=RuntimeError("boom")):
+            result = asyncio.run(client.summarize_deal(None, None, None, None))
+        assert result.confidence == 0.0
+        assert "Sem dados" in result.verdict
+
+    def test_session_context_sets_and_clears_session(self):
+        client = OllamaClient()
+
+        async def _run():
+            async with client.session_context() as session:
+                assert client.session is session
+            assert client.session is None
+
+        asyncio.run(_run())
+
+    def test_ollama_llm_verdict_success(self):
+        from adapters.ai.client import OllamaClient
+
+        client = OllamaClient()
+        client.generate = AsyncMock(return_value={"response": json.dumps({"verdict": "bom", "confidence": 0.7})})
+        result = asyncio.run(client._llm_verdict("prompt"))
+        assert result.verdict == "bom"
+        assert result.confidence == 0.7
+
+    def test_lmstudio_llm_verdict_success(self):
+        from adapters.ai.client import LMStudioClient
+
+        client = LMStudioClient()
+        client.chat_completions = AsyncMock(
+            return_value=_make_chat_completion(json.dumps({"verdict": "ruim", "confidence": 0.4}))
+        )
+        result = asyncio.run(client._llm_verdict("prompt"))
+        assert result.verdict == "ruim"
+        assert result.confidence == 0.4
+
+    def test_ollama_analyze_visuals_success(self, tmp_path):
+        image = tmp_path / "x.jpg"
+        image.write_bytes(b"img")
+        client = OllamaClient()
+        client.generate = AsyncMock(return_value=_make_ollama_response(FAKE_VISUAL_RESPONSE))
+        result = asyncio.run(client.analyze_visuals([str(image)], "p"))
+        assert result.condition_score == 0.85
+
+
+@pytest.mark.unit
+class TestContextManagers:
+    def test_aenter_creates_session(self):
+        client = OllamaClient()
+        assert client.session is None
+
+        async def _run():
+            async with client:
+                assert client.session is not None
+            # __aexit__ closes but may leave attribute set; close explicitly
+            await client.close()
+
+        asyncio.run(_run())
+
+    def test_base_llm_verdict_not_implemented(self):
+        class Stub(LocalAIClient):
+            async def close(self):
+                return None
+
+            async def embed(self, text: str):
+                return []
+
+        stub = Stub("http://x")
+        with pytest.raises(NotImplementedError):
+            asyncio.run(stub._llm_verdict("p"))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestBuildBeatSchedule:
     """Tests for adapters.queue.celery_app.build_beat_schedule."""
@@ -143,6 +145,114 @@ class TestBuildBeatSchedule:
 
         schedule = build_beat_schedule()
         assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}
+
+
+@pytest.mark.unit
+class TestCeleryConfiguration:
+    @patch("adapters.queue.celery_app.build_beat_schedule", return_value={"scheduled": {}})
+    @patch("adapters.queue.celery_app.Celery")
+    def test_make_celery_applies_broker_routes_and_schedule(self, celery_cls, build_schedule, monkeypatch):
+        from adapters.queue.celery_app import make_celery
+
+        monkeypatch.setenv("REDIS_URL", "redis://broker:6379/9")
+        app = MagicMock()
+        celery_cls.return_value = app
+
+        result = make_celery()
+
+        assert result is app
+        celery_cls.assert_called_once_with("real_estate_scraper")
+        app.conf.update.assert_called_once_with(
+            broker_url="redis://broker:6379/9",
+            result_backend="redis://broker:6379/9",
+            task_serializer="json",
+            accept_content=["json"],
+            result_serializer="json",
+            timezone="UTC",
+            enable_utc=True,
+            worker_prefetch_multiplier=1,
+            task_acks_late=True,
+            task_reject_on_worker_lost=True,
+            task_track_started=True,
+        )
+        assert app.conf.task_default_retry_delay == 30
+        assert app.conf.task_default_max_retries == 3
+        assert app.conf.task_routes["tasks.ai_enrich"] == {"queue": "ai"}
+        assert app.conf.beat_schedule == {"scheduled": {}}
+        build_schedule.assert_called_once()
+
+    @patch("adapters.queue.celery_app.Celery")
+    def test_make_celery_uses_default_redis_url(self, celery_cls, monkeypatch):
+        from adapters.queue.celery_app import make_celery
+
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        celery_cls.return_value = MagicMock()
+
+        make_celery()
+
+        assert celery_cls.return_value.conf.update.call_args.kwargs["broker_url"] == "redis://localhost:6379/0"
+
+
+@pytest.mark.unit
+class TestTaskSignals:
+    def test_failure_handler_logs_task_context(self):
+        from adapters.queue.celery_app import handle_task_failure
+
+        sender = MagicMock()
+        sender.name = "tasks.scrape"
+        with patch("adapters.queue.celery_app.logger") as logger:
+            handle_task_failure(
+                sender=sender,
+                task_id="task-1",
+                exception=ValueError("bad listing"),
+                traceback="trace",
+                args=["olx"],
+                kwargs={"force": True},
+            )
+
+        logger.error.assert_called_once()
+        extra = logger.error.call_args.kwargs["extra"]
+        assert extra["task_id"] == "task-1"
+        assert extra["task_name"] == "tasks.scrape"
+        assert extra["exception"] == "bad listing"
+        assert extra["args"] == ["olx"]
+
+    def test_failure_handler_logs_its_own_logging_error(self):
+        from adapters.queue.celery_app import handle_task_failure
+
+        with patch("adapters.queue.celery_app.logger") as logger:
+            logger.error.side_effect = RuntimeError("logger failed")
+            handle_task_failure()
+
+        logger.exception.assert_called_once_with("Error in task failure handler")
+
+    def test_revoked_handler_logs_request_context(self):
+        from adapters.queue.celery_app import handle_task_revoked
+
+        sender = MagicMock()
+        sender.name = "tasks.ai"
+        request = MagicMock(id="task-2")
+        with patch("adapters.queue.celery_app.logger") as logger:
+            handle_task_revoked(sender=sender, request=request, terminated=True, signum="TERM", expired=False)
+
+        logger.warning.assert_called_once()
+        extra = logger.warning.call_args.kwargs["extra"]
+        assert extra == {
+            "task_id": "task-2",
+            "task_name": "tasks.ai",
+            "terminated": True,
+            "signum": "TERM",
+            "expired": False,
+        }
+
+    def test_revoked_handler_logs_its_own_logging_error(self):
+        from adapters.queue.celery_app import handle_task_revoked
+
+        with patch("adapters.queue.celery_app.logger") as logger:
+            logger.warning.side_effect = RuntimeError("logger failed")
+            handle_task_revoked()
+
+        logger.exception.assert_called_once_with("Error in task revoked handler")
 
     @patch("adapters.queue.celery_app.get_config", side_effect=Exception("config error"))
     @patch("adapters.queue.celery_app.get_redis")

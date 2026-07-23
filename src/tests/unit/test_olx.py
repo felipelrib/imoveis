@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from adapters.scrapers.olx import OLXScraper
+from core.exceptions import CircuitBreakerOpenError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -293,3 +296,119 @@ class TestConfigDrivenParams:
         assert scraper_no_extra._max_pages == 5  # default
         assert scraper_no_extra._jitter_max == 6  # default from OLXScraper
         assert scraper_no_extra._jitter_min == 2  # default from OLXScraper
+
+
+@pytest.mark.unit
+class TestOLXFetchLifecycle:
+    def test_start_creates_http_client_and_circuit_breaker(self, scraper):
+        session = MagicMock()
+        with patch("httpx.Client", return_value=session) as client, patch(
+            "adapters.scrapers.olx.RedisCircuitBreaker"
+        ) as circuit_breaker:
+            scraper.start()
+
+        client.assert_called_once_with(proxy=None)
+        assert scraper.session is session
+        session.headers.update.assert_called_once()
+        circuit_breaker.assert_called_once_with(
+            platform="olx", failure_threshold=5, cooldown_seconds=120
+        )
+
+    def test_close_closes_existing_session(self, scraper):
+        scraper.session = MagicMock()
+
+        scraper.close()
+
+        scraper.session.close.assert_called_once()
+
+    def test_close_without_session_is_a_noop(self, scraper):
+        scraper.close()
+
+    def test_throttled_request_records_success(self, scraper):
+        scraper.session = MagicMock()
+        scraper._cb = MagicMock()
+        scraper._cb.is_open.return_value = False
+        response = MagicMock(status_code=200)
+        scraper.session.get.return_value = response
+        with patch("adapters.scrapers.olx.random.uniform", return_value=0), patch(
+            "adapters.scrapers.olx.time.sleep"
+        ) as sleep:
+            assert scraper._throttled_request("https://example.test") is response
+
+        sleep.assert_called_once_with(0)
+        scraper._cb.record_success.assert_called_once()
+
+    def test_throttled_request_records_failure_for_server_and_rate_limit(self, scraper):
+        scraper.session = MagicMock()
+        scraper._cb = MagicMock()
+        scraper._cb.is_open.return_value = False
+        scraper.session.get.return_value = MagicMock(status_code=429)
+        with patch("adapters.scrapers.olx.random.uniform", return_value=0), patch(
+            "adapters.scrapers.olx.time.sleep"
+        ):
+            scraper._throttled_request("https://example.test")
+
+        scraper._cb.record_failure.assert_called_once()
+
+    def test_throttled_request_rejects_open_circuit(self, scraper):
+        scraper._cb = MagicMock()
+        scraper._cb.is_open.return_value = True
+
+        with pytest.raises(CircuitBreakerOpenError, match="circuit breaker is open"):
+            scraper._throttled_request("https://example.test")
+
+    def test_fetch_page_handles_request_error(self, scraper):
+        scraper._throttled_request = MagicMock(side_effect=RuntimeError("network"))
+
+        with patch("adapters.scrapers.olx.logger"):
+            assert scraper._fetch_page_listings("https://example.test", 1) == []
+
+    @pytest.mark.parametrize(
+        ("status", "html"),
+        [
+            (500, ""),
+            (200, "<html></html>"),
+            (200, '<script id="__NEXT_DATA__">not-json</script>'),
+        ],
+    )
+    def test_fetch_page_returns_empty_for_invalid_response(self, scraper, status, html):
+        scraper._throttled_request = MagicMock(
+            return_value=MagicMock(status_code=status, text=html)
+        )
+
+        with patch("adapters.scrapers.olx.logger"):
+            assert scraper._fetch_page_listings("https://example.test", 1) == []
+
+    def test_fetch_page_extracts_listings_from_next_data(self, scraper):
+        html = (
+            '<script id="__NEXT_DATA__">'
+            '{"props":{"pageProps":{"initialState":{"search":{"ads":[{"list_id":"1"}]}}}}}'
+            "</script>"
+        )
+        scraper._throttled_request = MagicMock(
+            return_value=MagicMock(status_code=200, text=html)
+        )
+
+        assert scraper._fetch_page_listings("https://example.test", 1) == [{"list_id": "1"}]
+
+    def test_fetch_pages_obeys_checkpoint_type_and_stops_empty_page(self, scraper):
+        scraper._RENT_PATHS = ["rent"]
+        scraper._SALE_PATHS = ["sale"]
+        scraper._max_pages = 3
+        scraper._fetch_page_listings = MagicMock(
+            side_effect=[[{"list_id": "first"}], [], [{"list_id": "unused"}], []]
+        )
+
+        listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
+
+        assert listings == [{"list_id": "first", "_olx_url": "https://www.olx.com.br/imoveis/rent?o=1"}]
+        assert scraper._fetch_page_listings.call_count == 2
+
+    def test_fetch_pages_uses_both_paths_for_invalid_checkpoint(self, scraper):
+        scraper._RENT_PATHS = ["rent"]
+        scraper._SALE_PATHS = ["sale"]
+        scraper._max_pages = 1
+        scraper._fetch_page_listings = MagicMock(return_value=[])
+
+        assert list(scraper.fetch_pages("not-a-checkpoint")) == []
+        assert scraper._fetch_page_listings.call_count == 2

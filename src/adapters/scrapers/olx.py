@@ -25,6 +25,8 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+_NON_DIGIT_RE = re.compile(r"[^\d]")
+
 
 @ScraperRegistry.register("olx")
 class OLXScraper(BaseScraper):
@@ -118,60 +120,39 @@ class OLXScraper(BaseScraper):
             paths.extend(self._SALE_PATHS)
 
         for path in paths:
-            listings_found = 0
             for page in range(1, self._max_pages + 1):
                 url = f"{self._BASE_URL}/{path}?o={page}"
-                logger.info("olx_fetching_page", url=url, page=page)
-
-                try:
-                    response = self._throttled_request(url)
-                except Exception as exc:
-                    logger.error("olx_request_error", url=url, error=str(exc))
-                    break
-
-                if response.status_code != 200:
-                    logger.warning(
-                        "olx_http_error",
-                        status_code=response.status_code,
-                        url=url,
-                    )
-                    break
-
-                # --- Parse __NEXT_DATA__ ---
-                soup = BeautifulSoup(response.text, "html.parser")
-                script = soup.find("script", id="__NEXT_DATA__")
-
-                if not script or not script.string:
-                    logger.warning("olx_no_next_data", url=url)
-                    break
-
-                try:
-                    data = json.loads(script.string)
-                except (json.JSONDecodeError, TypeError) as exc:
-                    logger.error("olx_json_parse_error", url=url, error=str(exc))
-                    break
-
-                # Navigate to listings — OLX state structure:
-                # data["props"]["pageProps"]["initialState"] or
-                # data["props"]["pageProps"]["data"]
-                listings = self._extract_listings(data)
-
+                listings = self._fetch_page_listings(url, page)
                 if not listings:
-                    logger.debug("olx_no_listings_in_page", url=url, page=page)
-                    break  # No more results
-
-                listings_found += len(listings)
-                logger.info(
-                    "olx_page_listings",
-                    url=url,
-                    page=page,
-                    count=len(listings),
-                )
-
+                    break
                 for listing in listings:
-                    # Tag with scrape context
                     listing["_olx_url"] = url
                     yield listing
+
+    def _fetch_page_listings(self, url: str, page: int) -> list[dict]:
+        logger.info("olx_fetching_page", url=url, page=page)
+        try:
+            response = self._throttled_request(url)
+        except Exception:
+            logger.exception("olx_request_error", url=url)
+            return []
+        if response.status_code != 200:
+            logger.warning("olx_http_error", status_code=response.status_code, url=url)
+            return []
+        script = BeautifulSoup(response.text, "html.parser").find("script", id="__NEXT_DATA__")
+        if not script or not script.string:
+            logger.warning("olx_no_next_data", url=url)
+            return []
+        try:
+            listings = self._extract_listings(json.loads(script.string))
+        except (json.JSONDecodeError, TypeError):
+            logger.exception("olx_json_parse_error", url=url)
+            return []
+        if listings:
+            logger.info("olx_page_listings", url=url, page=page, count=len(listings))
+        else:
+            logger.debug("olx_no_listings_in_page", url=url, page=page)
+        return listings
 
     def _extract_listings(self, data: dict) -> list[dict]:
         """Navigate the OLX page data tree to find listing objects."""
@@ -314,79 +295,79 @@ class OLXScraper(BaseScraper):
     @staticmethod
     def _parse_price(raw: dict) -> float:
         """Extract numeric price from OLX listing."""
-        # Try direct numeric field
-        for key in ("value", "price", "pricingInfos"):
-            val = raw.get(key)
-            if isinstance(val, (int, float)) and val > 0:
-                return float(val)
-
-        # pricingInfos is a list of dicts with "value" field
+        direct = OLXScraper._positive_number(raw.get(key) for key in ("value", "price", "pricingInfos"))
+        if direct is not None:
+            return direct
         pricing_infos = raw.get("pricingInfos")
-        if isinstance(pricing_infos, list) and pricing_infos:
-            first = pricing_infos[0]
-            if isinstance(first, dict):
-                val = first.get("value") or first.get("price")
-                if isinstance(val, (int, float)) and val > 0:
-                    return float(val)
-
-        # Fall back to parsing "R$ X.XXX" string
+        if isinstance(pricing_infos, list) and pricing_infos and isinstance(pricing_infos[0], dict):
+            nested = OLXScraper._positive_number(pricing_infos[0].get(key) for key in ("value", "price"))
+            if nested is not None:
+                return nested
         for key in ("price_str", "value_str", "subject"):
-            val = raw.get(key)
-            if isinstance(val, str):
-                # More robust: strip non-numeric except dots and commas
-                cleaned = re.sub(r"[^\d,.]", "", val)
-                cleaned = cleaned.replace(".", "").replace(",", ".")
-                try:
-                    v = float(cleaned)
-                    if v > 0:
-                        return v
-                except ValueError:
-                    continue
-
+            parsed = OLXScraper._parse_brazilian_number(raw.get(key))
+            if parsed is not None:
+                return parsed
         raise ValueError(f"Could not parse price from OLX listing: {raw.get('list_id', raw.get('id', '?'))}")
 
     @staticmethod
-    def _parse_location(raw: dict) -> tuple:
-        """Return (location_dict, address_str)."""
-        loc = raw.get("location") or raw.get("region") or {}
+    def _positive_number(values) -> float | None:
+        for value in values:
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+        return None
 
-        lat = None
-        lon = None
+    @staticmethod
+    def _parse_brazilian_number(value: Any) -> float | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = float(re.sub(r"[^\d,.]", "", value).replace(".", "").replace(",", "."))
+            return parsed if parsed > 0 else None
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _coords_from_raw(raw: dict) -> tuple[float | None, float | None]:
+        loc = raw.get("location") or raw.get("region") or {}
+        lat = lon = None
         if isinstance(loc, dict):
             lat = loc.get("lat") or loc.get("latitude")
             lon = loc.get("lon") or loc.get("lng") or loc.get("longitude")
-
-        # Try nested coordinates
         if lat is None or lon is None:
             coords = raw.get("coordinates") or {}
             if isinstance(coords, dict):
                 lat = lat or coords.get("lat")
                 lon = lon or coords.get("lon") or coords.get("lng")
-
         try:
-            lat = float(lat) if lat else None
-            lon = float(lon) if lon else None
+            return (float(lat) if lat else None, float(lon) if lon else None)
         except (TypeError, ValueError):
-            lat, lon = None, None
+            return None, None
 
+    @staticmethod
+    def _address_from_loc(loc: dict) -> str | None:
+        parts = []
+        for key in ("address", "street"):
+            if loc.get(key):
+                parts.append(loc[key])
+                break
+        neighborhood = loc.get("neighborhood") or loc.get("neighborhoodName")
+        if neighborhood:
+            parts.append(neighborhood)
+        city = loc.get("city") or loc.get("cityName")
+        if city:
+            parts.append(city)
+        return ", ".join(parts) if parts else None
+
+    @staticmethod
+    def _parse_location(raw: dict) -> tuple:
+        """Return (location_dict, address_str)."""
+        loc = raw.get("location") or raw.get("region") or {}
+        lat, lon = OLXScraper._coords_from_raw(raw)
         location_dict = None
-        if lat and lon:
+        if lat and lon and isinstance(loc, dict):
             neighborhood = loc.get("neighborhood") or loc.get("neighborhoodName") or ""
             location_dict = {"lat": lat, "lon": lon, "neighborhood": neighborhood}
-
-        # Build address string
-        parts = []
-        if isinstance(loc, dict):
-            for key in ("address", "street"):
-                if loc.get(key):
-                    parts.append(loc[key])
-                    break
-            if loc.get("neighborhood") or loc.get("neighborhoodName"):
-                parts.append(loc.get("neighborhood") or loc.get("neighborhoodName"))
-            if loc.get("city") or loc.get("cityName"):
-                parts.append(loc.get("city") or loc.get("cityName"))
-
-        address_str = ", ".join(parts) if parts else None
+        address_str = OLXScraper._address_from_loc(loc) if isinstance(loc, dict) else None
         return location_dict, address_str
 
     @staticmethod
@@ -409,87 +390,65 @@ class OLXScraper(BaseScraper):
         return urls
 
     @staticmethod
-    def _parse_properties(raw: dict) -> dict:
-        """Extract property attributes from OLX listing."""
-        props = {}
-
-        # OLX stores attributes in a properties array or object
+    def _prop_map_from_raw(raw: dict) -> dict:
         raw_props = raw.get("properties") or raw.get("attributes") or []
-        prop_map = {}
         if isinstance(raw_props, list):
+            prop_map = {}
             for p in raw_props:
                 if isinstance(p, dict):
                     label = (p.get("label") or p.get("name") or "").lower()
                     value = p.get("value") or p.get("text") or ""
                     if label:
                         prop_map[label] = value
-        elif isinstance(raw_props, dict):
-            prop_map = {k.lower(): v for k, v in raw_props.items()}
+            return prop_map
+        if isinstance(raw_props, dict):
+            return {k.lower(): v for k, v in raw_props.items()}
+        return {}
 
-        # Area
-        for key in ("área", "area", "area_total", "area_util"):
+    @staticmethod
+    def _set_float_prop(props: dict, prop_map: dict, keys: tuple[str, ...], dest: str) -> None:
+        for key in keys:
+            val = prop_map.get(key)
+            if not val:
+                continue
+            try:
+                props[dest] = float(re.sub(r"[^\d.]", "", str(val)).replace(",", "."))
+            except (ValueError, TypeError):
+                pass
+            break
+
+    @staticmethod
+    def _set_int_prop(props: dict, prop_map: dict, keys: tuple[str, ...], dest: str) -> None:
+        for key in keys:
+            val = prop_map.get(key)
+            if not val:
+                continue
+            try:
+                props[dest] = int(_NON_DIGIT_RE.sub("", str(val)))
+            except (ValueError, TypeError):
+                pass
+            break
+
+    @staticmethod
+    def _set_bool_prop(props: dict, prop_map: dict, keys: tuple[str, ...], dest: str) -> None:
+        for key in keys:
             val = prop_map.get(key)
             if val:
-                try:
-                    props["area_m2"] = float(re.sub(r"[^\d.]", "", str(val)).replace(",", "."))
-                except (ValueError, TypeError):
-                    pass
+                props[dest] = "sim" in str(val).lower()
                 break
 
-        # Bedrooms
-        for key in ("quartos", "dormitórios", "bedrooms"):
-            val = prop_map.get(key)
-            if val:
-                try:
-                    props["bedrooms"] = int(re.sub(r"[^\d]", "", str(val)))
-                except (ValueError, TypeError):
-                    pass
-                break
-
-        # Bathrooms
-        for key in ("banheiros", "bathrooms"):
-            val = prop_map.get(key)
-            if val:
-                try:
-                    props["bathrooms"] = int(re.sub(r"[^\d]", "", str(val)))
-                except (ValueError, TypeError):
-                    pass
-                break
-
-        # Parking
-        for key in ("vagas", "garagem", "parking", "parking_spaces"):
-            val = prop_map.get(key)
-            if val:
-                try:
-                    props["parking"] = int(re.sub(r"[^\d]", "", str(val)))
-                except (ValueError, TypeError):
-                    pass
-                break
-
-        # Condo fee
-        for key in ("condo", "condomínio", "taxa de condomínio"):
-            val = prop_map.get(key)
-            if val:
-                try:
-                    props["condo_fee"] = float(re.sub(r"[^\d.]", "", str(val)).replace(",", "."))
-                except (ValueError, TypeError):
-                    pass
-                break
-
-        # Pets
-        for key in ("aceita animais", "aceita_animais", "pets"):
-            val = prop_map.get(key)
-            if val:
-                props["accepts_pets"] = "sim" in str(val).lower()
-                break
-
-        # Furnished
-        for key in ("mobiliado", "furnished"):
-            val = prop_map.get(key)
-            if val:
-                props["is_furnished"] = "sim" in str(val).lower()
-                break
-
+    @staticmethod
+    def _parse_properties(raw: dict) -> dict:
+        """Extract property attributes from OLX listing."""
+        props = {}
+        prop_map = OLXScraper._prop_map_from_raw(raw)
+        OLXScraper._set_float_prop(props, prop_map, ("área", "area", "area_total", "area_util"), "area_m2")
+        OLXScraper._set_int_prop(props, prop_map, ("quartos", "dormitórios", "bedrooms"), "bedrooms")
+        OLXScraper._set_int_prop(props, prop_map, ("banheiros", "bathrooms"), "bathrooms")
+        OLXScraper._set_int_prop(props, prop_map, ("vagas", "garagem", "parking", "parking_spaces"), "parking")
+        OLXScraper._set_float_prop(props, prop_map, ("condo", "condomínio", "taxa de condomínio"), "condo_fee")
+        OLXScraper._set_bool_prop(props, prop_map, ("aceita animais", "aceita_animais", "pets"), "accepts_pets")
+        OLXScraper._set_bool_prop(props, prop_map, ("mobiliado", "furnished"), "is_furnished")
         return props
 
     @staticmethod

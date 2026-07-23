@@ -32,6 +32,33 @@ def _sigmoid_undervalued(z_score: float) -> float:
     return 1.0 / (1.0 + math.exp(z_score))
 
 
+def _stat_analysis(z_score: float) -> dict:
+    bands = (
+        (-1.0, "Highly Undervalued", "Significantly cheaper than similar properties in the area."),
+        (-0.2, "Slightly Undervalued", "Priced slightly below the neighborhood average."),
+        (0.2, "Average", "Priced closely to the neighborhood average."),
+        (1.0, "Slightly Overvalued", "Priced slightly above the neighborhood average."),
+    )
+    for threshold, category, reasoning in bands:
+        if z_score < threshold:
+            return {"category": category, "reasoning": reasoning}
+    return {"category": "Highly Overvalued", "reasoning": "Significantly more expensive than similar properties in the area."}
+
+
+def _scoring_weights() -> ScoringWeights:
+    cfg = get_config()
+    return ScoringWeights(stat_weight=cfg.scoring.stat_weight, ai_weight=cfg.scoring.ai_weight)
+
+
+def _update_metrics_score(ms, stat_score, price_per_m2, stats, z_score, weights, stat_analysis) -> None:
+    ms.stat_score, ms.price_per_m2 = stat_score, price_per_m2
+    ms.neighborhood_mean, ms.neighborhood_median, ms.z_score = stats["mean"], stats["median"], z_score
+    ms.combined_score = stat_score * weights.stat_weight + float(ms.ai_score or 0.0) * weights.ai_weight
+    meta = dict(ms.meta or {})
+    meta["stat_analysis"] = stat_analysis
+    ms.meta = meta
+
+
 def compute_neighborhood_stats(
     session: Session,
     neighborhood_key: Optional[str] = None,
@@ -48,11 +75,7 @@ def compute_neighborhood_stats(
     Returns:
         Number of property rows processed.
     """
-    cfg = get_config()
-    weights = ScoringWeights(
-        stat_weight=cfg.scoring.stat_weight,
-        ai_weight=cfg.scoring.ai_weight,
-    )
+    weights = _scoring_weights()
 
     where_clause = (
         "AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey"
@@ -75,7 +98,8 @@ def compute_neighborhood_stats(
                     FROM properties p2
                     LEFT JOIN neighborhoods n2 ON n2.id = p2.neighborhood_id
                     WHERE p2.area_m2 > 0 AND p2.active = true
-                      AND COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown') = COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
+                      AND COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown')
+                          = COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
                 ) AS neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
                     OVER (PARTITION BY
@@ -124,22 +148,7 @@ def compute_neighborhood_stats(
 
         stat_score = _sigmoid_undervalued(z)
 
-        stat_category = "Average"
-        stat_reasoning = "Priced closely to the neighborhood average."
-        if z < -1.0:
-            stat_category = "Highly Undervalued"
-            stat_reasoning = "Significantly cheaper than similar properties in the area."
-        elif z < -0.2:
-            stat_category = "Slightly Undervalued"
-            stat_reasoning = "Priced slightly below the neighborhood average."
-        elif z > 1.0:
-            stat_category = "Highly Overvalued"
-            stat_reasoning = "Significantly more expensive than similar properties in the area."
-        elif z > 0.2:
-            stat_category = "Slightly Overvalued"
-            stat_reasoning = "Priced slightly above the neighborhood average."
-
-        stat_analysis = {"category": stat_category, "reasoning": stat_reasoning}
+        stat_analysis = _stat_analysis(z)
 
         ms = session.query(MetricsScoring).filter_by(property_id=prop_id).one_or_none()
         if ms is None:
@@ -253,6 +262,7 @@ def get_neighborhood_stats_cached(session: Session, n_key: str) -> dict:
     r.setex(cache_key, 60, json.dumps(stats))
     return stats
 
+
 def score_single_property(session: Session, property_id: str) -> None:
     """Recompute combined_score for a single property after AI enrichment.
 
@@ -269,49 +279,17 @@ def score_single_property(session: Session, property_id: str) -> None:
         logger.warning("score_single_property_not_found", property_id=property_id)
         return
 
-    if prop.neighborhood_id:
-        from adapters.db.models import Neighborhood
-        n = session.get(Neighborhood, prop.neighborhood_id)
-        n_key = n.name if n else "Unknown"
-    else:
-        n_key = (prop.props_json or {}).get("neighborhood", "Unknown")
+    n_key = _property_neighborhood_key(session, prop)
 
     stats = get_neighborhood_stats_cached(session, n_key)
 
-    if prop.area_m2 and prop.area_m2 > 0:
-        price_per_m2 = prop.price / prop.area_m2
-    else:
-        price_per_m2 = 0.0
-
-    if stats["stddev"] > 0:
-        z = (price_per_m2 - stats["mean"]) / stats["stddev"]
-    else:
-        z = 0.0
+    price_per_m2 = prop.price / prop.area_m2 if prop.area_m2 and prop.area_m2 > 0 else 0.0
+    z = (price_per_m2 - stats["mean"]) / stats["stddev"] if stats["stddev"] > 0 else 0.0
 
     stat_score = _sigmoid_undervalued(z)
 
-    stat_category = "Average"
-    stat_reasoning = "Priced closely to the neighborhood average."
-    if z < -1.0:
-        stat_category = "Highly Undervalued"
-        stat_reasoning = "Significantly cheaper than similar properties in the area."
-    elif z < -0.2:
-        stat_category = "Slightly Undervalued"
-        stat_reasoning = "Priced slightly below the neighborhood average."
-    elif z > 1.0:
-        stat_category = "Highly Overvalued"
-        stat_reasoning = "Significantly more expensive than similar properties in the area."
-    elif z > 0.2:
-        stat_category = "Slightly Overvalued"
-        stat_reasoning = "Priced slightly above the neighborhood average."
-
-    stat_analysis = {"category": stat_category, "reasoning": stat_reasoning}
-
-    cfg = get_config()
-    weights = ScoringWeights(
-        stat_weight=cfg.scoring.stat_weight,
-        ai_weight=cfg.scoring.ai_weight,
-    )
+    stat_analysis = _stat_analysis(z)
+    weights = _scoring_weights()
 
     ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
     if ms is None:
@@ -324,24 +302,21 @@ def score_single_property(session: Session, property_id: str) -> None:
             neighborhood_mean=stats["mean"],
             neighborhood_median=stats["median"],
             z_score=z,
-            percentile_rank=0.5, # Approximation
+            percentile_rank=0.5,  # Approximation
             meta={"stat_analysis": stat_analysis},
         )
         session.add(ms)
     else:
-        ms.stat_score = stat_score
-        ms.price_per_m2 = price_per_m2
-        ms.neighborhood_mean = stats["mean"]
-        ms.neighborhood_median = stats["median"]
-        ms.z_score = z
-        # Keep percentile_rank unchanged since it's hard to approximate accurately
-        ai = float(ms.ai_score or 0.0)
-        ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
-
-        meta = dict(ms.meta or {})
-        meta["stat_analysis"] = stat_analysis
-        ms.meta = meta
+        _update_metrics_score(ms, stat_score, price_per_m2, stats, z, weights, stat_analysis)
 
     session.flush()
 
     logger.info("single_property_scored", property_id=property_id)
+
+
+def _property_neighborhood_key(session: Session, prop: Property) -> str:
+    if not prop.neighborhood_id:
+        return (prop.props_json or {}).get("neighborhood", "Unknown")
+    from adapters.db.models import Neighborhood
+    neighborhood = session.get(Neighborhood, prop.neighborhood_id)
+    return neighborhood.name if neighborhood else "Unknown"

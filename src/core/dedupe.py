@@ -79,69 +79,70 @@ def match_or_create_property(
     """
     from adapters.db.models import Property
 
-    # --- Step 1: Exact platform match ---
     existing = session.query(Property).filter_by(platform=candidate.platform, platform_id=candidate.platform_id).one_or_none()
     if existing is not None:
-        # Check if anything materially changed — if not, skip DB writes and AI
-        if _is_unchanged(session, existing, candidate):
-            return DedupeMatchResult(property_id=str(existing.id), action="noop")
+        return _update_or_noop(session, existing, candidate)
+    matched = _find_fuzzy_match(session, candidate, radius_m, text_threshold, area_tol, algorithm)
+    if matched is not None:
+        return _update_fuzzy_match(session, matched, candidate)
+    return _create_property(session, candidate)
 
-        # Update mutable fields
-        existing.price = candidate.price
-        existing.title = candidate.title
-        existing.description = candidate.description
-        existing.image_urls = candidate.image_urls
-        existing.props_json = candidate.props_json
-        existing.active = True
-        listings = candidate.listings or []
-        _upsert_listings(session, str(existing.id), listings)
-        # Fallback: if no listings provided, record property-level price history
-        if not listings:
-            _record_price_change(session, str(existing.id), candidate.price)
-        session.flush()
-        return DedupeMatchResult(property_id=str(existing.id), action="updated")
 
-    # --- Step 2: Spatial + text fuzzy match ---
+def _record_candidate_listings(session: Session, property_id: str, candidate: PropertyCandidate) -> None:
+    listings = candidate.listings or []
+    _upsert_listings(session, property_id, listings)
+    if not listings:
+        _record_price_change(session, property_id, candidate.price)
+
+
+def _update_or_noop(session: Session, existing, candidate: PropertyCandidate) -> DedupeMatchResult:
+    if _is_unchanged(session, existing, candidate):
+        return DedupeMatchResult(property_id=str(existing.id), action="noop")
+    for field in ("price", "title", "description", "image_urls", "props_json"):
+        setattr(existing, field, getattr(candidate, field))
+    existing.active = True
+    _record_candidate_listings(session, str(existing.id), candidate)
+    session.flush()
+    return DedupeMatchResult(property_id=str(existing.id), action="updated")
+
+
+def _find_fuzzy_match(session, candidate, radius_m, text_threshold, area_tol, algorithm):
     loc = candidate.location
-    if loc and loc.get("lat") and loc.get("lon"):
-        lat, lon = loc["lat"], loc["lon"]
-        nearby_query = text("""
-            SELECT id, title, area_m2
-            FROM properties
-            WHERE ST_DWithin(
-                location::geography,
-                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                :radius
-            )
-            AND active = true
-        """)
-        nearby = session.execute(nearby_query, {"lat": lat, "lon": lon, "radius": radius_m}).fetchall()
+    if not (loc and loc.get("lat") and loc.get("lon")):
+        return None
+    nearby = session.execute(text("""
+        SELECT id, title, area_m2 FROM properties
+        WHERE ST_DWithin(location::geography,
+            ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radius)
+        AND active = true
+    """), {"lat": loc["lat"], "lon": loc["lon"], "radius": radius_m}).fetchall()
+    for row in nearby:
+        area_close = not (candidate.area_m2 and row.area_m2) or abs(candidate.area_m2 - row.area_m2) <= area_tol
+        if area_close and text_similarity(candidate.title, row.title, algorithm=algorithm) >= text_threshold:
+            return row.id
+    return None
 
-        for row in nearby:
-            title_sim = text_similarity(candidate.title, row.title, algorithm=algorithm)
-            area_close = (
-                abs((candidate.area_m2 or 0) - (row.area_m2 or 0)) <= area_tol if candidate.area_m2 and row.area_m2 else True
-            )
-            if title_sim >= text_threshold and area_close:
-                # Merge: update the matched property
-                prop = session.get(Property, row.id)
-                if prop:
-                    prop.price = candidate.price
-                    prop.active = True
-                    prop.image_urls = candidate.image_urls
-                    prop.props_json = candidate.props_json
-                    listings = candidate.listings or []
-                    _upsert_listings(session, str(prop.id), listings)
-                    # Fallback: if no listings provided, record property-level price history
-                    if not listings:
-                        _record_price_change(session, str(prop.id), candidate.price)
-                    session.flush()
-                    return DedupeMatchResult(property_id=str(prop.id), action="updated")
 
-    # --- Step 3: Create new property ---
+def _update_fuzzy_match(session: Session, property_id, candidate: PropertyCandidate) -> DedupeMatchResult:
+    from adapters.db.models import Property
+
+    prop = session.get(Property, property_id)
+    if prop is None:
+        return _create_property(session, candidate)
+    prop.price, prop.active = candidate.price, True
+    prop.image_urls, prop.props_json = candidate.image_urls, candidate.props_json
+    _record_candidate_listings(session, str(prop.id), candidate)
+    session.flush()
+    return DedupeMatchResult(property_id=str(prop.id), action="updated")
+
+
+def _create_property(session: Session, candidate: PropertyCandidate) -> DedupeMatchResult:
     from geoalchemy2.shape import from_shape
     from shapely.geometry import Point
 
+    from adapters.db.models import Property
+
+    loc = candidate.location
     new_location = None
     if loc and loc.get("lat") and loc.get("lon"):
         new_location = from_shape(Point(loc["lon"], loc["lat"]), srid=4326)
@@ -165,11 +166,7 @@ def match_or_create_property(
     )
     session.add(new_prop)
     session.flush()
-    listings = candidate.listings or []
-    _upsert_listings(session, str(new_prop.id), listings)
-    # Fallback: if no listings provided, seed property-level price history
-    if not listings:
-        _record_price_change(session, str(new_prop.id), candidate.price)
+    _record_candidate_listings(session, str(new_prop.id), candidate)
     session.flush()
     return DedupeMatchResult(property_id=str(new_prop.id), action="created")
 
@@ -182,31 +179,20 @@ def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> b
     """
     from adapters.db.models import PropertyListing
 
-    # Price
-    if float(existing.price or 0) != float(candidate.price or 0):
+    if any((
+        float(existing.price or 0) != float(candidate.price or 0),
+        (existing.title or "") != (candidate.title or ""),
+        (existing.description or "") != (candidate.description or ""),
+        sorted(existing.image_urls or []) != sorted(candidate.image_urls or []),
+    )):
         return False
 
-    # Title
-    if (existing.title or "") != (candidate.title or ""):
-        return False
-
-    # Description
-    if (existing.description or "") != (candidate.description or ""):
-        return False
-
-    # Image URLs — compare as sorted lists
-    existing_images = sorted(existing.image_urls or [])
-    candidate_images = sorted(candidate.image_urls or [])
-    if existing_images != candidate_images:
-        return False
-
-    # Listings — compare prices for existing active listings
     try:
         existing_listings = (
             session.query(PropertyListing)
             .filter(
                 PropertyListing.property_id == existing.id,
-                PropertyListing.active == True,  # noqa: E712
+                PropertyListing.active == True,   # noqa: E712
             )
             .all()
         )
@@ -214,24 +200,20 @@ def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> b
         logger.warning("is_unchanged_db_error", property_id=str(existing.id), error=str(exc))
         return False  # Safe default: treat as changed, allow re-enrichment
 
-    # If we have listings in DB but candidate has none, that's a change
-    candidate_listings = candidate.listings or []
+    return _listings_prices_unchanged(existing_listings, candidate.listings or [])
+
+
+def _listings_prices_unchanged(existing_listings, candidate_listings) -> bool:
     if existing_listings and not candidate_listings:
         return False
-
-    # Build a map of (platform, platform_listing_id, listing_type) → price
-    candidate_map = {}
-    for cl in candidate_listings:
-        key = (cl.get("platform"), cl.get("platform_listing_id"), cl.get("listing_type"))
-        candidate_map[key] = float(cl.get("price", 0))
-
+    candidate_map = {
+        (cl.get("platform"), cl.get("platform_listing_id"), cl.get("listing_type")): float(cl.get("price", 0))
+        for cl in candidate_listings
+    }
     for el in existing_listings:
         key = (el.platform, el.platform_listing_id, el.listing_type)
-        if key in candidate_map:
-            if float(el.price or 0) != candidate_map[key]:
-                return False
-        # If existing listing not in candidate, it might be inactive — OK
-
+        if key in candidate_map and float(el.price or 0) != candidate_map[key]:
+            return False
     return True
 
 
@@ -369,7 +351,7 @@ def _check_watchlist_alerts(
                     "drop_pct": drop_pct,
                     "platform": platform,
                     "listing_type": listing_type,
-                    "title": "Property", # Fallback, should ideally fetch title
+                    "title": "Property",  # Fallback, should ideally fetch title
                 }
                 send_price_drop_alert.delay(alert_dict)
 

@@ -17,6 +17,10 @@ router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 
 CurrentUserId = Annotated[str, Depends(verify_jwt)]
 
+_RESP_404 = {404: {"description": "Not found"}}
+_RESP_409 = {409: {"description": "Conflict"}}
+_RESP_500 = {500: {"description": "Internal server error"}}
+
 
 class WatchlistCreate(BaseModel):
     property_id: str
@@ -57,7 +61,7 @@ def list_watchlist(user_id: CurrentUserId) -> List[WatchlistItem]:
         ]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, responses={**_RESP_404, **_RESP_409, **_RESP_500})
 def add_to_watchlist(req: WatchlistCreate, user_id: CurrentUserId) -> WatchlistItem:
     """Add a property to the watchlist."""
     req.user_id = user_id
@@ -105,7 +109,7 @@ def add_to_watchlist(req: WatchlistCreate, user_id: CurrentUserId) -> WatchlistI
             raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.delete("/{property_id}")
+@router.delete("/{property_id}", responses={**_RESP_404, **_RESP_500})
 def remove_from_watchlist(property_id: str, user_id: CurrentUserId) -> Dict[str, str]:
     """Remove a property from the watchlist."""
     with SessionLocal() as session:

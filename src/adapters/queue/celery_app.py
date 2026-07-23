@@ -128,8 +128,8 @@ def handle_task_failure(sender=None, task_id=None, exception=None, traceback=Non
                 "kwargs": kwargs.get("kwargs", {}),
             },
         )
-    except Exception as e:
-        logger.error(f"Error in task failure handler: {e}")
+    except Exception:
+        logger.exception("Error in task failure handler")
 
 
 # Sinal para tratamento de tarefas revogadas
@@ -147,5 +147,5 @@ def handle_task_revoked(sender=None, request=None, terminated=None, signum=None,
                 "expired": expired,
             },
         )
-    except Exception as e:
-        logger.error(f"Error in task revoked handler: {e}")
+    except Exception:
+        logger.exception("Error in task revoked handler")

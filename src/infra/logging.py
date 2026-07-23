@@ -36,12 +36,6 @@ class _StructuredLogger:
         """Log a message with structured data."""
         extra_fields = kwargs if kwargs else {}
 
-        # Criar um record customizado com os campos extras
-        class LogRecord(logging.LogRecord):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.extra_fields = extra_fields
-
         # Usar o método interno do logger para evitar problemas de formatação
         if hasattr(self.logger, "makeRecord"):
             record = self.logger.makeRecord(
@@ -54,6 +48,7 @@ class _StructuredLogger:
                 None,
                 extra=extra_fields,
             )
+            record.extra_fields = extra_fields
             self.logger.handle(record)
         else:
             # Fallback para o comportamento padrão
@@ -70,6 +65,11 @@ class _StructuredLogger:
 
     def error(self, msg: str, **kwargs: Any) -> None:
         self._log(logging.ERROR, msg, **kwargs)
+
+    def exception(self, msg: str, **kwargs: Any) -> None:
+        """Log an error with exception info from the current context."""
+        extra_fields = kwargs if kwargs else {}
+        self.logger.exception(msg, extra=extra_fields)
 
     def critical(self, msg: str, **kwargs: Any) -> None:
         self._log(logging.CRITICAL, msg, **kwargs)
