@@ -43,11 +43,25 @@ nav:
   - Architecture: architecture.md
   - API Reference: api.md
   - Features:
-      - Config YAML Loader: features/config-yaml-loader.md
-      - Deal Summary Enrichment: features/deal-summary-enrichment.md
-      - Saved Searches & Favourites: features/saved-searches-favourites.md
-      - Per-Platform Listings: features/per-platform-listings.md
-      - Interactive Map: features/interactive-map.md
+      - Scraper Framework: features/01-scraper-framework.md
+      - Deduplication Engine: features/02-deduplication-engine.md
+      - AI Enrichment: features/03-ai-enrichment.md
+      - Scoring Engine: features/04-scoring-engine.md
+      - Price-Drop Alerts: features/05-price-drop-alerts.md
+      - Task Orchestration: features/06-task-orchestration.md
+      - REST API: features/07-rest-api.md
+      - Frontend Dashboard: features/08-frontend-dashboard.md
+      - Infrastructure: features/09-infrastructure.md
+      - Favourites & Saved Searches: features/10-favourites-and-saved-searches.md
+      - Config YAML Loader: features/11-config-yaml-loader.md
+      - Circuit Breaker & Checkpoint: features/12-circuit-breaker-and-checkpoint.md
+      - Image Store & VLM Pipeline: features/13-image-store-and-vlm-pipeline.md
+      - Interactive Map: features/14-interactive-map.md
+      - Deal Summary Enrichment: features/15-deal-summary-enrichment.md
+      - Per-Platform Listings: features/16-per-platform-listings.md
+      - Watchlist Price-Drop Alerts: features/17-watchlist-price-drop-alerts.md
+      - Admin Control Panel: features/18-admin-control-panel.md
+      - System Status & Pipeline Telemetry: features/19-system-status-and-pipeline-telemetry.md
   - ADR:
       - Dual-Model Development: adr/0001-dual-model-development.md
 
