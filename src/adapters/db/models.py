@@ -7,17 +7,21 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
+SQL_GEN_RANDOM_UUID = "gen_random_uuid()"
+SQL_NOW = "now()"
+FK_PROPERTIES_ID = "properties.id"
+
 
 class GPUControl(Base):
     __tablename__ = "gpu_control"
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     name = Column(String, unique=True, nullable=False)
     value = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
 
 
 class Neighborhood(Base):
@@ -25,13 +29,13 @@ class Neighborhood(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     name = Column(String, nullable=False)
     city = Column(String, nullable=False)
     state = Column(String(2), nullable=False)
     geometry = Column(Geometry(geometry_type="POLYGON", srid=4326))
-    created_at = Column(DateTime, server_default=sa.text("now()"))
+    created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
 
 class PlatformCheckpoint(Base):
@@ -39,11 +43,11 @@ class PlatformCheckpoint(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     platform_name = Column(String, unique=True, nullable=False)
     data = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
 
 
 class PlatformConfig(Base):
@@ -51,7 +55,7 @@ class PlatformConfig(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     platform_name = Column(String, unique=True)
     base_url = Column(String)
@@ -68,7 +72,7 @@ class Property(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     platform = Column(String, nullable=False)
     platform_id = Column(String, nullable=False, index=True)
@@ -84,8 +88,8 @@ class Property(Base):
     address = Column(String)
     image_urls = Column(JSON)
     props_json = Column(JSON)
-    first_seen = Column(DateTime, server_default=sa.text("now()"))
-    last_updated = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    first_seen = Column(DateTime, server_default=sa.text(SQL_NOW))
+    last_updated = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
     active = Column(Boolean, server_default=sa.text("true"))
     neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
     # nomic-embed-text (Ollama) produces 768-d vectors for semantic search
@@ -97,9 +101,9 @@ class MetricsScoring(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"))
+    property_id = Column(UUID(as_uuid=True), ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"))
     stat_score = Column(Float)
     ai_score = Column(Float)
     combined_score = Column(Float)
@@ -109,7 +113,7 @@ class MetricsScoring(Base):
     neighborhood_mean = Column(Float)
     neighborhood_median = Column(Float)
     meta = Column(JSON)
-    updated_at = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
 
 
 class PriceHistory(Base):
@@ -117,9 +121,9 @@ class PriceHistory(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"))
+    property_id = Column(UUID(as_uuid=True), ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"))
     listing_type = Column(String, nullable=False, default="sale")  # 'rent' or 'sale'
     platform = Column(String, nullable=True)
     property_listing_id = Column(
@@ -128,7 +132,7 @@ class PriceHistory(Base):
         nullable=True,
     )
     price = Column(Float, nullable=False)
-    start_ts = Column(DateTime, server_default=sa.text("now()"))
+    start_ts = Column(DateTime, server_default=sa.text(SQL_NOW))
     end_ts = Column(DateTime)
 
 
@@ -137,11 +141,11 @@ class PropertyListing(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     property_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("properties.id", ondelete="CASCADE"),
+        ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -156,8 +160,8 @@ class PropertyListing(Base):
     condo_fee = Column(Float)
     iptu = Column(Float)
     raw_json = Column(JSON)
-    first_seen = Column(DateTime, server_default=sa.text("now()"))
-    last_seen = Column(DateTime, server_default=sa.text("now()"), onupdate=sa.text("now()"))
+    first_seen = Column(DateTime, server_default=sa.text(SQL_NOW))
+    last_seen = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
     active = Column(Boolean, server_default=sa.text("true"))
 
     __table_args__ = (
@@ -177,18 +181,18 @@ class Watchlist(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     property_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("properties.id", ondelete="CASCADE"),
+        ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     user_id = Column(String, nullable=True)
     min_drop_pct = Column(Float, default=5.0, nullable=False)
     last_notified_price = Column(Float, nullable=True)
-    created_at = Column(DateTime, server_default=sa.text("now()"))
+    created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
     __table_args__ = (
         sa.UniqueConstraint("property_id", name="uq_watchlist_property"),
@@ -202,12 +206,12 @@ class SavedSearch(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     name = Column(String, nullable=False)
     filters = Column(sa.JSON, nullable=False)
     owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
-    created_at = Column(DateTime, server_default=sa.text("now()"))
+    created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
 
 class Favourite(Base):
@@ -217,16 +221,16 @@ class Favourite(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     property_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("properties.id", ondelete="CASCADE"),
+        ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
-    created_at = Column(DateTime, server_default=sa.text("now()"))
+    created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
     __table_args__ = (
         sa.UniqueConstraint("property_id", name="uq_favourite_property"),
@@ -240,19 +244,19 @@ class AdminAudit(Base):
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
-        server_default=sa.text("gen_random_uuid()"),
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
     action = Column(String, nullable=False)
     payload = Column(sa.JSON, nullable=True)
-    performed_at = Column(DateTime, server_default=sa.text("now()"))
+    performed_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
 
 # --- ORM Event Hooks ---
 
-import shutil
-from pathlib import Path
+import shutil  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-from sqlalchemy import event
+from sqlalchemy import event  # noqa: E402
 
 
 @event.listens_for(Property, "after_delete")

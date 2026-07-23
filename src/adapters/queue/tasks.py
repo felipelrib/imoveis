@@ -38,12 +38,65 @@ from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
+
+REDIS_KEY_SCRAPERS_PAUSED = "workers:scrapers:paused"
+REDIS_KEY_AI_PAUSED = "workers:ai:paused"
+
 celery = make_celery()
 
 
 # ---------------------------------------------------------------------------
 # Scrape task
 # ---------------------------------------------------------------------------
+
+
+def _normalize_scrape_item(scraper, raw, platform_name: str):
+    """Normalize one raw listing; return (candidate|None, outcome).
+
+    outcome is one of: ok, skipped, error, circuit_open.
+    """
+    try:
+        normalized = scraper.normalize(raw)
+        return PropertyCandidate(**normalized), "ok"
+    except CircuitBreakerOpenError:
+        logger.warning("circuit_breaker_open_stopping", platform=platform_name)
+        return None, "circuit_open"
+    except ValidationError as exc:
+        logger.warning(
+            "scrape_validation_skipped",
+            platform=platform_name,
+            errors=exc.error_count(),
+        )
+        return None, "skipped"
+    except Exception as exc:
+        import traceback
+        logger.error(
+            "scrape_normalize_error",
+            platform=platform_name,
+            error=str(exc),
+            trace=traceback.format_exc(),
+        )
+        return None, "error"
+
+
+def _enqueue_post_scrape_jobs(candidate, result) -> None:
+    if result.action == "noop":
+        return
+    if candidate.image_urls:
+        ai_enrich.apply_async(
+            args=[str(result.property_id), candidate.image_urls, candidate.description or ""],
+            queue="ai",
+        )
+    if (candidate.title or "").strip() or (candidate.description or "").strip():
+        embed_property.apply_async(args=[str(result.property_id)], queue="ai")
+
+
+def _write_scraper_status(r, status_key: str, processed: int, skipped: int, errors: int, status: str) -> None:
+    r.set(
+        status_key,
+        json.dumps({"processed": processed, "skipped": skipped, "errors": errors, "status": status}),
+        ex=3600,
+    )
 
 
 @celery.task(
@@ -73,7 +126,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
     r = get_redis()
 
     # Check paused flag (TD-06-A)
-    if r.exists("workers:scrapers:paused"):
+    if r.exists(REDIS_KEY_SCRAPERS_PAUSED):
         logger.info("scrapers_paused", platform=platform_name)
         raise self.retry(countdown=120, exc=Exception("Scrapers paused due to high AI queue depth"))
 
@@ -92,34 +145,13 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
         with scraper:
             for raw in scraper.fetch_pages(cp):
-                try:
-                    normalized = scraper.normalize(raw)
-                    candidate = PropertyCandidate(**normalized)
-                except CircuitBreakerOpenError:
-                    # Circuit breaker is open — stop this scrape run and let
-                    # Celery retry with backoff instead of hammering the platform.
-                    logger.warning(
-                        "circuit_breaker_open_stopping",
-                        platform=platform_name,
-                    )
+                candidate, outcome = _normalize_scrape_item(scraper, raw, platform_name)
+                if outcome == "circuit_open":
                     break
-                except ValidationError as exc:
-                    logger.warning(
-                        "scrape_validation_skipped",
-                        platform=platform_name,
-                        errors=exc.error_count(),
-                    )
+                if outcome == "skipped":
                     skipped += 1
                     continue
-                except Exception as exc:
-                    import traceback
-
-                    logger.error(
-                        "scrape_normalize_error",
-                        platform=platform_name,
-                        error=str(exc),
-                        trace=traceback.format_exc(),
-                    )
+                if outcome == "error":
                     errors += 1
                     continue
 
@@ -133,28 +165,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                         area_tol=cfg.dedup.area_tolerance_m2,
                     )
                     session.commit()
-
-                    # Enqueue AI enrichment if images are present and property
-                    # is new or updated (not a noop duplicate)
-                    if candidate.image_urls and result.action != "noop":
-                        ai_enrich.apply_async(
-                            args=[
-                                str(result.property_id),
-                                candidate.image_urls,
-                                candidate.description or "",
-                            ],
-                            queue="ai",
-                        )
-
-                    # Semantic search embedding (independent of images)
-                    if result.action != "noop" and (
-                        (candidate.title or "").strip() or (candidate.description or "").strip()
-                    ):
-                        embed_property.apply_async(
-                            args=[str(result.property_id)],
-                            queue="ai",
-                        )
-
+                    _enqueue_post_scrape_jobs(candidate, result)
                     processed += 1
                 except Exception as exc:
                     session.rollback()
@@ -167,34 +178,9 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
                 # Persist checkpoint after every item so we can resume mid-run
                 store.set(platform_name, cp)
+                _write_scraper_status(r, status_key, processed, skipped, errors, "running")
 
-                # Update telemetry
-                r.set(
-                    status_key,
-                    json.dumps(
-                        {
-                            "processed": processed,
-                            "skipped": skipped,
-                            "errors": errors,
-                            "status": "running",
-                        }
-                    ),
-                    ex=3600,
-                )
-
-        # Mark as completed
-        r.set(
-            status_key,
-            json.dumps(
-                {
-                    "processed": processed,
-                    "skipped": skipped,
-                    "errors": errors,
-                    "status": "completed",
-                }
-            ),
-            ex=3600,
-        )
+        _write_scraper_status(r, status_key, processed, skipped, errors, "completed")
 
         # Record last-run timestamp for schedule display
         import time as _ts
@@ -256,7 +242,7 @@ def ai_enrich(
     cfg = get_config()
 
     # Respect admin pause flag
-    if r.exists("workers:ai:paused"):
+    if r.exists(REDIS_KEY_AI_PAUSED):
         logger.info("ai_enrich_paused", property_id=property_id)
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
 
@@ -277,7 +263,9 @@ def ai_enrich(
         async def _run_enrichment():
             async with client.session_context():
                 # --- Image pipeline ------------------------------------------------
-                paths: List[str] = await image_store.download_images(property_id, image_urls, max_images=cfg.ai.max_images_per_property)
+                paths: List[str] = await image_store.download_images(
+                    property_id, image_urls, max_images=cfg.ai.max_images_per_property
+                )
 
                 # --- Build prompts -------------------------------------------------
                 visual_prompt = build_visual_condition_prompt(len(paths))
@@ -424,7 +412,7 @@ def embed_property(self, property_id: str):
     cfg = get_config()
     r = get_redis()
 
-    if r.exists("workers:ai:paused"):
+    if r.exists(REDIS_KEY_AI_PAUSED):
         logger.info("embed_property_paused", property_id=property_id)
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
 
@@ -548,6 +536,7 @@ def evaluate_watchlist_alerts(self):
         session.commit()
         logger.info("watchlist_evaluation_complete", evaluated=len(rows))
 
+
 @celery.task(name="tasks.send_price_drop_alert")
 def send_price_drop_alert(alert_dict: dict):
     import json
@@ -570,7 +559,7 @@ def send_price_drop_alert(alert_dict: dict):
     # Store in Redis for frontend Alerts Panel (TD-05-B)
     alert_list_key = "alerts:price_drops"
     r.lpush(alert_list_key, json.dumps(alert_dict))
-    r.ltrim(alert_list_key, 0, 99) # Keep last 100 alerts
+    r.ltrim(alert_list_key, 0, 99)  # Keep last 100 alerts
 
     for notifier in get_notifiers():
         try:
@@ -581,9 +570,11 @@ def send_price_drop_alert(alert_dict: dict):
     # Set debounce key to prevent spam
     r.setex(debounce_key, 3600, "1")
 
+
 # ---------------------------------------------------------------------------
 # Queue Monitoring
 # ---------------------------------------------------------------------------
+
 
 @celery.task(name="tasks.monitor_queues")
 def monitor_queues():
@@ -600,13 +591,14 @@ def monitor_queues():
     logger.info("queue_monitor", ai_queue=ai_len)
 
     if ai_len > BATCH_THRESHOLD:
-        if not r.exists("workers:scrapers:paused"):
+        if not r.exists(REDIS_KEY_SCRAPERS_PAUSED):
             logger.warning("queue_monitor_pause_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
-            r.set("workers:scrapers:paused", "1")
+            r.set(REDIS_KEY_SCRAPERS_PAUSED, "1")
     else:
-        if r.exists("workers:scrapers:paused"):
+        if r.exists(REDIS_KEY_SCRAPERS_PAUSED):
             logger.info("queue_monitor_resume_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
-            r.delete("workers:scrapers:paused")
+            r.delete(REDIS_KEY_SCRAPERS_PAUSED)
+
 
 @celery.task(bind=True, name="tasks.send_daily_digest")
 def send_daily_digest(self):

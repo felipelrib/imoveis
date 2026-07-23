@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from src.core.exceptions import ConfigError
 from src.infra.config import AppConfig, get_config, load_config
@@ -151,8 +152,9 @@ def test_redis_url_with_password(tmp_path: Path):
 @pytest.mark.unit
 def test_missing_config_file_raises_config_error():
     """Loading from a non-existent path raises ConfigError."""
+    missing = Path("/nonexistent/path/app_config.yaml")
     with pytest.raises(ConfigError, match="Configuration file not found"):
-        load_config(Path("/nonexistent/path/app_config.yaml"))
+        load_config(missing)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +297,7 @@ def test_config_is_frozen(tmp_path: Path):
     cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
     cfg = load_config(cfg_file)
 
-    with pytest.raises(Exception):  # Pydantic raises ValidationError or AttributeError
+    with pytest.raises((ValidationError, AttributeError)):
         cfg.app.debug = True  # type: ignore[misc]
 
 
@@ -305,5 +307,5 @@ def test_database_config_is_frozen(tmp_path: Path):
     cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
     cfg = load_config(cfg_file)
 
-    with pytest.raises(Exception):
+    with pytest.raises((ValidationError, AttributeError)):
         cfg.database.host = "changed"  # type: ignore[misc]

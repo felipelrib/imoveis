@@ -13,10 +13,12 @@ class OLXCheckpoint(BaseModel):
     url_index: int = 0
     processed_ids: list[str] = []
 
+
 class QuintoAndarCheckpoint(BaseModel):
     min_price: float = 0.0
     max_price: float = 999999.0
     processed_ids: list[str] = []
+
 
 CHECKPOINT_MODELS = {
     "olx": OLXCheckpoint,

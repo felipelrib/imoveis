@@ -14,6 +14,8 @@ from infra.redis_client import get_redis
 logger = get_logger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
 
+REDIS_KEY_AI_PAUSED = "workers:ai:paused"
+
 
 # ---------------------------------------------------------------------------
 # Health / status aggregation
@@ -76,7 +78,7 @@ def _check_workers() -> dict:
 async def system_status() -> Dict[str, Any]:
     """Return health of all system components — polled by the GUI dashboard."""
     r = get_redis()
-    ai_paused = r.exists("workers:ai:paused") > 0
+    ai_paused = r.exists(REDIS_KEY_AI_PAUSED) > 0
     db_status, total_props, enriched = _check_db_and_counts()
 
     return {
@@ -111,62 +113,48 @@ async def ollama_status():
 @router.get("/pipeline", response_model=PipelineResponse)
 def system_pipeline() -> Dict[str, Any]:
     """Return live status of the ingestion pipeline (queues and active tasks)."""
+    r = get_redis()
+    return {
+        "queues": _pipeline_queue_lengths(r),
+        "scrapers_status": _scraper_pipeline_statuses(r),
+        "ai_metrics": _ai_pipeline_metrics(r.lrange("pipeline:ai:telemetry", 0, -1)),
+    }
+
+
+def _pipeline_queue_lengths(redis) -> dict:
+    return {"scrapers": redis.llen("scrapers"), "ai": redis.llen("ai")}
+
+
+def _scraper_pipeline_statuses(redis) -> dict:
     import json
 
-    r = get_redis()
+    statuses = {}
+    for platform in get_config().scraping.platforms:
+        raw = redis.get(f"pipeline:scraper:{platform}:status")
+        try:
+            statuses[platform] = json.loads(raw) if raw else {"status": "idle"}
+        except (TypeError, json.JSONDecodeError):
+            statuses[platform] = {"status": "idle"}
+    return statuses
 
-    # Celery default queue lengths in Redis
-    # Note: Using LLEN on the queue names returns the number of pending tasks
-    scrapers_queued = r.llen("scrapers")
-    ai_queued = r.llen("ai")
 
-    cfg = get_config()
-    scrapers_status = {}
-    for platform in cfg.scraping.platforms:
-        key = f"pipeline:scraper:{platform}:status"
-        raw = r.get(key)
-        if raw:
-            try:
-                scrapers_status[platform] = json.loads(raw)
-            except Exception:
-                scrapers_status[platform] = {"status": "idle"}
-        else:
-            scrapers_status[platform] = {"status": "idle"}
+def _ai_pipeline_metrics(telemetry: list) -> dict:
+    import json
+    import time
 
-    # AI Telemetry
-    ai_telemetry = r.lrange("pipeline:ai:telemetry", 0, -1)
-    ai_metrics = {
-        "throughput_per_min": 0,
-        "avg_duration_sec": 0,
-        "total_recorded": len(ai_telemetry),
-    }
-    if ai_telemetry:
-        import time
-
-        now = time.time()
-        durations = []
-        recent_count = 0
-        for item in ai_telemetry:
-            try:
-                data = json.loads(item)
-                durations.append(data["duration"])
-                if now - data["timestamp"] <= 300:  # Last 5 minutes
-                    recent_count += 1
-            except Exception:
-                pass
-
-        if durations:
-            ai_metrics["avg_duration_sec"] = round(sum(durations) / len(durations), 2)
-        # throughput = items in last 5 min / 5
-        ai_metrics["throughput_per_min"] = round(recent_count / 5.0, 1)
-
+    durations, recent_count = [], 0
+    now = time.time()
+    for item in telemetry:
+        try:
+            data = json.loads(item)
+            durations.append(data["duration"])
+            recent_count += now - data["timestamp"] <= 300
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
     return {
-        "queues": {
-            "scrapers": scrapers_queued,
-            "ai": ai_queued,
-        },
-        "scrapers_status": scrapers_status,
-        "ai_metrics": ai_metrics,
+        "throughput_per_min": round(recent_count / 5.0, 1),
+        "avg_duration_sec": round(sum(durations) / len(durations), 2) if durations else 0,
+        "total_recorded": len(telemetry),
     }
 
 

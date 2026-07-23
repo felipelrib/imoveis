@@ -22,6 +22,7 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from infra.redis_client import verify_redis_connection
@@ -95,7 +96,14 @@ class ScrapeRequest(BaseModel):
     scrape_type: str = "both"
 
 
-@app.post("/scrape", tags=["ingestion"])
+@app.post(
+    "/scrape",
+    tags=["ingestion"],
+    responses={
+        400: {"description": "Unknown platform"},
+        500: {"description": "Internal server error"},
+    },
+)
 @limiter.limit("10/minute")
 def trigger_scrape(request: Request, req: ScrapeRequest):
     try:

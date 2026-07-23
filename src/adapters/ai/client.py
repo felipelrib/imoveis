@@ -18,9 +18,24 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import aiohttp
+import anyio
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+_INVALID_JSON_RETRY_HINT = "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
+_MEDIA_TYPE_JPEG = "image/jpeg"
+_MEDIA_TYPE_BY_EXT = {
+    "jpg": _MEDIA_TYPE_JPEG,
+    "jpeg": _MEDIA_TYPE_JPEG,
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
+
+
+class AIClientError(RuntimeError):
+    """Raised when a local AI backend returns a non-success response."""
 
 
 class VisualResult(BaseModel):
@@ -36,6 +51,45 @@ class DealVerdictResult(BaseModel):
     """Result of deal verdict synthesis combining all scoring signals."""
     verdict: str = ""
     confidence: float = 0.0
+
+
+def _template_stat_part(stat_analysis: dict | None) -> str | None:
+    category = (stat_analysis or {}).get("category")
+    labels = {
+        "Highly Undervalued": "Altamente subvalorizado",
+        "Slightly Undervalued": "Ligeiramente subvalorizado",
+        "Average": "Preço dentro da média",
+        "Slightly Overvalued": "Ligeiramente acima da média",
+        "Highly Overvalued": "Altamente acima da média",
+    }
+    return labels.get(category, category) if category else None
+
+
+def _template_visual_part(visual: dict | None) -> str | None:
+    category = (visual or {}).get("category")
+    labels = {
+        "Pristine": "excelente estado",
+        "Good": "boa condição",
+        "Average": "estado razoável",
+        "Needs Renovation": "precisa de reforma",
+        "Poor": "estado precário",
+    }
+    return labels.get(category, category.lower()) if category else None
+
+
+def _template_sentiment_parts(sentiment: dict | None) -> list[str]:
+    if not sentiment:
+        return []
+    red_flags = sentiment.get("red_flags")
+    green_flags = sentiment.get("green_flags")
+    red_flags = red_flags if isinstance(red_flags, list) else []
+    green_flags = green_flags if isinstance(green_flags, list) else []
+    location_part = (
+        "sem alertas" if not red_flags
+        else "1 preocupação na localização" if len(red_flags) == 1
+        else f"{len(red_flags)} preocupações na localização"
+    )
+    return [location_part, *([f"{len(green_flags)} aspectos positivos"] if len(green_flags) >= 2 else [])]
 
 
 def template_deal_verdict(
@@ -61,48 +115,13 @@ def template_deal_verdict(
     ... )
     'Ligeiramente subvalorizado — boa condição, localização desejável, sem alertas'
     """
-    parts: list[str] = []
-
-    # --- Statistical component ---
-    if stat_analysis and stat_analysis.get("category"):
-        cat = stat_analysis["category"]
-        # Map English categories to PT-BR
-        stat_map = {
-            "Highly Undervalued": "Altamente subvalorizado",
-            "Slightly Undervalued": "Ligeiramente subvalorizado",
-            "Average": "Preço dentro da média",
-            "Slightly Overvalued": "Ligeiramente acima da média",
-            "Highly Overvalued": "Altamente acima da média",
-        }
-        parts.append(stat_map.get(cat, cat))
-
-    # --- Visual component ---
-    if visual and visual.get("category"):
-        vis_cat = visual["category"]
-        vis_map = {
-            "Pristine": "excelente estado",
-            "Good": "boa condição",
-            "Average": "estado razoável",
-            "Needs Renovation": "precisa de reforma",
-            "Poor": "estado precário",
-        }
-        vis_label = vis_map.get(vis_cat, vis_cat.lower())
-        parts.append(vis_label)
-
-    # --- Sentiment component ---
-    if sentiment:
-        red_flags = sentiment.get("red_flags", []) if isinstance(sentiment.get("red_flags"), list) else []
-        green_flags = sentiment.get("green_flags", []) if isinstance(sentiment.get("green_flags"), list) else []
-
-        if len(red_flags) == 0:
-            parts.append("sem alertas")
-        elif len(red_flags) == 1:
-            parts.append("1 preocupação na localização")
-        else:
-            parts.append(f"{len(red_flags)} preocupações na localização")
-
-        if len(green_flags) >= 2:
-            parts.append(f"{len(green_flags)} aspectos positivos")
+    del neighborhood_name  # The template intentionally remains neighborhood-agnostic.
+    parts = [
+        part
+        for part in (_template_stat_part(stat_analysis), _template_visual_part(visual))
+        if part
+    ]
+    parts.extend(_template_sentiment_parts(sentiment))
 
     if not parts:
         return "Sem dados suficientes para avaliação"
@@ -183,10 +202,16 @@ class LocalAIClient(ABC):
     async def embed(self, text: str) -> List[float]:
         """Return an embedding vector for ``text``."""
 
-    async def _ensure_session(self):
+    def _ensure_session(self) -> None:
         """Ensure HTTP session is initialized."""
         if self.session is None:
             self.session = aiohttp.ClientSession(timeout=self.timeout)
+
+    async def _read_image_b64(self, path: str) -> str:
+        """Read an image file asynchronously and return base64 text."""
+        async with await anyio.open_file(path, "rb") as image_file:
+            raw = await image_file.read()
+        return base64.b64encode(raw).decode("utf-8")
 
     @asynccontextmanager
     async def session_context(self):
@@ -239,7 +264,7 @@ class OllamaClient(LocalAIClient):
                 except json.JSONDecodeError:
                     if attempt == 2:
                         raise
-                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
+                    prompt += _INVALID_JSON_RETRY_HINT
         except Exception as exc:
             logger.warning("ollama_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -253,13 +278,13 @@ class OllamaClient(LocalAIClient):
             if self.session:
                 await self.session.close()
             logger.info("Closed Ollama client connection")
-        except Exception as e:
-            logger.error(f"Error closing Ollama client: {e}")
+        except Exception:
+            logger.exception("Error closing Ollama client")
 
     async def generate(self, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Generate text using Ollama."""
         try:
-            await self._ensure_session()
+            self._ensure_session()
 
             url = f"{self.base_url}/api/generate"
             data = {"model": model, "prompt": prompt, **kwargs}
@@ -267,25 +292,22 @@ class OllamaClient(LocalAIClient):
             async with self.session.post(url, json=data) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"Ollama API error: {response.status} - {error_text}")
-                    raise Exception(f"Ollama API error: {response.status}")
+                    logger.error("Ollama API error: %s - %s", response.status, error_text)
+                    raise AIClientError(f"Ollama API error: {response.status}")
 
                 result = await response.json()
                 return result
 
         except asyncio.TimeoutError:
-            logger.error("Timeout while calling Ollama API")
+            logger.exception("Timeout while calling Ollama API")
             raise
-        except Exception as e:
-            logger.error(f"Error calling Ollama API: {e}")
+        except Exception:
+            logger.exception("Error calling Ollama API")
             raise
 
     async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
         try:
-            images = []
-            for path in local_paths:
-                with open(path, "rb") as f:
-                    images.append(base64.b64encode(f.read()).decode("utf-8"))
+            images = [await self._read_image_b64(path) for path in local_paths]
 
             for attempt in range(3):
                 res = await self.generate(self.visual_model, prompt, images=images, stream=False, format="json")
@@ -302,9 +324,9 @@ class OllamaClient(LocalAIClient):
                 except json.JSONDecodeError:
                     if attempt == 2:
                         raise
-                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
-        except Exception as e:
-            logger.error(f"Error in analyze_visuals: {e}")
+                    prompt += _INVALID_JSON_RETRY_HINT
+        except Exception:
+            logger.exception("Error in analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
@@ -325,21 +347,21 @@ class OllamaClient(LocalAIClient):
                 except json.JSONDecodeError:
                     if attempt == 2:
                         raise
-                    full_prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
-        except Exception as e:
-            logger.error(f"Error in analyze_text: {e}")
+                    full_prompt += _INVALID_JSON_RETRY_HINT
+        except Exception:
+            logger.exception("Error in analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
     async def embed(self, text: str) -> List[float]:
         """Embed text via Ollama ``POST /api/embeddings``."""
-        await self._ensure_session()
+        self._ensure_session()
         url = f"{self.base_url}/api/embeddings"
         payload = {"model": self.embedding_model, "prompt": text}
         async with self.session.post(url, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
                 logger.error("Ollama embeddings error: %s - %s", response.status, error_text)
-                raise Exception(f"Ollama embeddings error: {response.status}")
+                raise AIClientError(f"Ollama embeddings error: {response.status}")
             result = await response.json()
         embedding = result.get("embedding")
         if not isinstance(embedding, list) or not embedding:
@@ -393,7 +415,7 @@ class LMStudioClient(LocalAIClient):
                 except json.JSONDecodeError:
                     if attempt == 2:
                         raise
-                    prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
+                    prompt += _INVALID_JSON_RETRY_HINT
         except Exception as exc:
             logger.warning("lmstudio_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -407,13 +429,13 @@ class LMStudioClient(LocalAIClient):
             if self.session:
                 await self.session.close()
             logger.info("Closed LM Studio client connection")
-        except Exception as e:
-            logger.error(f"Error closing LM Studio client: {e}")
+        except Exception:
+            logger.exception("Error closing LM Studio client")
 
     async def chat_completions(self, model: str, messages: list, **kwargs) -> Dict[str, Any]:
         """Get chat completions from LM Studio."""
         try:
-            await self._ensure_session()
+            self._ensure_session()
 
             url = f"{self.base_url}/v1/chat/completions"
             data = {"model": model, "messages": messages, **kwargs}
@@ -421,17 +443,17 @@ class LMStudioClient(LocalAIClient):
             async with self.session.post(url, json=data) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"LM Studio API error: {response.status} - {error_text}")
-                    raise Exception(f"LM Studio API error: {response.status}")
+                    logger.error("LM Studio API error: %s - %s", response.status, error_text)
+                    raise AIClientError(f"LM Studio API error: {response.status}")
 
                 result = await response.json()
                 return result
 
         except asyncio.TimeoutError:
-            logger.error("Timeout while calling LM Studio API")
+            logger.exception("Timeout while calling LM Studio API")
             raise
-        except Exception as e:
-            logger.error(f"Error calling LM Studio API: {e}")
+        except Exception:
+            logger.exception("Error calling LM Studio API")
             raise
 
     async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
@@ -441,18 +463,9 @@ class LMStudioClient(LocalAIClient):
             # Build message content with text prompt + base64 images
             content: list = [{"type": "text", "text": prompt}]
             for path in local_paths:
-                with open(path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-                # Determine media type from extension
+                b64 = await self._read_image_b64(path)
                 ext = path.rsplit(".", 1)[-1].lower() if "." in path else "jpeg"
-                media_map = {
-                    "jpg": "image/jpeg",
-                    "jpeg": "image/jpeg",
-                    "png": "image/png",
-                    "gif": "image/gif",
-                    "webp": "image/webp",
-                }
-                media_type = media_map.get(ext, "image/jpeg")
+                media_type = _MEDIA_TYPE_BY_EXT.get(ext, _MEDIA_TYPE_JPEG)
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:{media_type};base64,{b64}"},
@@ -480,9 +493,9 @@ class LMStudioClient(LocalAIClient):
                     if attempt == 2:
                         raise
                     if isinstance(content[0], dict) and content[0].get("type") == "text":
-                        content[0]["text"] += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
-        except Exception as e:
-            logger.error(f"Error in LMStudioClient.analyze_visuals: {e}")
+                        content[0]["text"] += _INVALID_JSON_RETRY_HINT
+        except Exception:
+            logger.exception("Error in LMStudioClient.analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
@@ -511,21 +524,21 @@ class LMStudioClient(LocalAIClient):
                 except json.JSONDecodeError:
                     if attempt == 2:
                         raise
-                    full_prompt += "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
-        except Exception as e:
-            logger.error(f"Error in LMStudioClient.analyze_text: {e}")
+                    full_prompt += _INVALID_JSON_RETRY_HINT
+        except Exception:
+            logger.exception("Error in LMStudioClient.analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
     async def embed(self, text: str) -> List[float]:
         """Embed text via LM Studio OpenAI-compatible ``POST /v1/embeddings``."""
-        await self._ensure_session()
+        self._ensure_session()
         url = f"{self.base_url}/v1/embeddings"
         payload = {"model": self.embedding_model, "input": text}
         async with self.session.post(url, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
                 logger.error("LM Studio embeddings error: %s - %s", response.status, error_text)
-                raise Exception(f"LM Studio embeddings error: {response.status}")
+                raise AIClientError(f"LM Studio embeddings error: {response.status}")
             result = await response.json()
         data = result.get("data") or []
         if not data or not isinstance(data[0].get("embedding"), list):
