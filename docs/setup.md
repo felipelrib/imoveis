@@ -102,6 +102,41 @@ ollama pull llama-3-2-vision  # Vision model (~11GB)
 3. Start local server (typically on `http://localhost:1234`)
 4. Update `configs/app_config.yaml` accordingly
 
+## Proxy rotation (scrapers)
+
+Scrapers use the global `proxy:` block in `configs/app_config.yaml` (FR-20). Credentials
+belong in env / local overrides — never commit real `user:pass` URLs.
+
+### Enable a pool
+
+```yaml
+proxy:
+  enabled: true
+  rotation_strategy: round_robin   # or random
+  url: null
+  pool:
+    - http://user:pass@proxy1.example:8080
+    - http://user:pass@proxy2.example:8080
+```
+
+Or a single proxy via `url` (leave `pool: []`). Restart Celery scraper workers so they
+reload AppConfig. On the next scrape you should see:
+
+- Structured log `scraper_proxy_mode` with `proxy_mode` (`pool` / `single`), `pool_size`,
+  and `proxy_host` (host:port only — no credentials).
+- Redis key `pipeline:scraper:<platform>:status` (also exposed via `GET /system/pipeline`)
+  with the same safe fields.
+
+Env override example: `IMOVEIS_PROXY__ENABLED=true`.
+
+### Disable (direct mode)
+
+Set `proxy.enabled: false` (or empty pool/url while disabled). Restart workers. The next
+scrape uses a direct connection — no code changes. Logs/status show `proxy_mode: direct`.
+
+Platform `extra.proxy` in scraping config, when set to a non-null URL, overrides the global
+pool for that platform only.
+
 ## Development
 
 ### Code Quality (pre-commit)

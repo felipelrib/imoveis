@@ -92,12 +92,19 @@ def _enqueue_post_scrape_jobs(candidate, result) -> None:
         embed_property.apply_async(args=[str(result.property_id)], queue="ai")
 
 
-def _write_scraper_status(r, status_key: str, processed: int, skipped: int, errors: int, status: str) -> None:
-    r.set(
-        status_key,
-        json.dumps({"processed": processed, "skipped": skipped, "errors": errors, "status": status}),
-        ex=3600,
-    )
+def _write_scraper_status(
+    r,
+    status_key: str,
+    processed: int,
+    skipped: int,
+    errors: int,
+    status: str,
+    proxy: dict | None = None,
+) -> None:
+    payload = {"processed": processed, "skipped": skipped, "errors": errors, "status": status}
+    if proxy:
+        payload.update(proxy)
+    r.set(status_key, json.dumps(payload), ex=3600)
 
 
 @celery.task(
@@ -143,6 +150,10 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         processed = skipped = errors = 0
         r = get_redis()
         status_key = f"pipeline:scraper:{platform_name}:status"
+        proxy_signal = getattr(scraper, "proxy_summary", None) or {}
+        _write_scraper_status(
+            r, status_key, processed, skipped, errors, "running", proxy=proxy_signal
+        )
 
         with scraper:
             for raw in scraper.fetch_pages(cp):
@@ -182,9 +193,13 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
                 # Persist checkpoint after every item so we can resume mid-run
                 store.set(platform_name, cp)
-                _write_scraper_status(r, status_key, processed, skipped, errors, "running")
+                _write_scraper_status(
+                    r, status_key, processed, skipped, errors, "running", proxy=proxy_signal
+                )
 
-        _write_scraper_status(r, status_key, processed, skipped, errors, "completed")
+        _write_scraper_status(
+            r, status_key, processed, skipped, errors, "completed", proxy=proxy_signal
+        )
 
         # Record last-run timestamp for schedule display
         import time as _ts

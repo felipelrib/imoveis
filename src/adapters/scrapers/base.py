@@ -24,6 +24,7 @@ class BaseScraper(ABC):
     def __init__(self, platform_name: str, config: dict):
         self.platform_name = platform_name
         self.config = config
+        self.proxy_summary: dict = {}
 
     def create_http_session(self) -> httpx.Client:
         """Build an HTTP client using global proxy config + optional override.
@@ -32,7 +33,9 @@ class BaseScraper(ABC):
         absent defers to ``AppConfig.proxy`` rotation.
         """
         override = (self.config.get("extra") or {}).get("proxy")
-        return create_scraper_http_client(platform_override=override)
+        client = create_scraper_http_client(platform_override=override)
+        self.proxy_summary = getattr(client, "imoveis_proxy_summary", {}) or {}
+        return client
 
     @abstractmethod
     def fetch_pages(self, checkpoint: dict) -> Generator:
