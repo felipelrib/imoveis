@@ -7,8 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Independent suites run in parallel. Merge still requires all required checks green;
+# there is no artificial "wait for lint before tests" chain.
 jobs:
-  # ---- Lint (fastest feedback) ----
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -28,9 +29,7 @@ jobs:
       - name: Run pre-commit (matches local hooks exactly)
         uses: pre-commit/action@v3.0.1
 
-  # ---- Unit tests (fast, no Docker) — runs in parallel with integration/contract ----
   unit:
-    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,9 +65,7 @@ jobs:
             -Dsonar.sources=src/
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-  # ---- Integration (needs PostGIS + Redis) — runs in parallel with unit ----
   integration:
-    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -116,9 +113,7 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-integration-key
 
-  # ---- Contract tests (API schema + DB schema) — runs in parallel with unit ----
   contract:
-    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -160,11 +155,7 @@ jobs:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- Scrapers: HTML cassettes + live dry-run (merge-blocking) ----
-  # If live HTML drifted, agents must refresh cassettes (see babysit-pr skill),
-  # not weaken this job.
   scrapers:
-    needs: lint
     runs-on: ubuntu-latest
     services:
       redis:
@@ -191,9 +182,8 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379/0
 
-  # ---- E2E (Playwright) — PR gate + post-merge smoke test ----
+  # Playwright uses page.route mocks — independent of backend test jobs
   e2e:
-    needs: [unit, integration]
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -212,9 +202,7 @@ jobs:
       - name: Run E2E tests
         run: npm run test:e2e --prefix frontend
 
-  # ---- Security scan (PR gate + post-merge) ----
   security-scan:
-    needs: integration
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
@@ -233,9 +221,7 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-  # ---- Docs deploy (only on push to main) ----
   docs:
-    needs: integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

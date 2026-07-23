@@ -54,12 +54,8 @@ worker.log
 .worktrees/
 .env.local
 
-# Cursor IDE — commit rules/skills; ignore local-only Cursor state
-.cursor/*
-!.cursor/rules/
-!.cursor/rules/**
-!.cursor/skills/
-!.cursor/skills/**
+# Cursor IDE / agent harness (local only — not committed)
+.cursor/
 
 # Legacy Cline local-only state (if present)
 .cline/memory/
