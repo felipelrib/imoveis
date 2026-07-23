@@ -20,7 +20,10 @@ Files touched:
 
 ```
 docs/features/25-linear-project-overview-hygiene.md | NEW — this feature doc
-scripts/agent/finish-feature.sh                     | merge PR + teardown after CI green
+scripts/agent/finish-feature.sh                     | merge PR + teardown; docs-only lighter gate
+scripts/agent/lib.sh                                | is_docs_only_vs_main + validate_docs_only
+.github/workflows/ci.yml                            | paths-ignore docs/planning prose
+.github/workflows/docs.yml                          | PR MkDocs validate (`docs` check) + Pages deploy
 ```
 
 Linear (outside git):
@@ -42,6 +45,7 @@ None.
 3. Confirm v0.5 lists planning track (BIN-31 children) and delivery epics BIN-19..23 with stories BIN-41..55.
 4. Confirm Future / Beyond MVP is described as a catch-all, not an active sprint.
 5. Confirm `docs/features/24-semantic-search-reconcile.md` (BIN-38) and this `25-*` doc both exist on `main` after merge.
+6. Docs-only path: a PR that only touches `docs/**` should run the `docs` check and skip full CI jobs.
 
 ## Notes / Follow-ups
 

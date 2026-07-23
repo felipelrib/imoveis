@@ -1,8 +1,26 @@
-name: Deploy Documentation
+name: Docs
+
+# PR: validate MkDocs build. Main push: validate + deploy GitHub Pages.
+# Full CI (ci.yml) skips when the PR only touches docs/planning markdown — see
+# paths-ignore there. This workflow is the merge gate for docs-only PRs.
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "_bmad-output/**"
+      - ".github/workflows/docs.yml"
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "_bmad-output/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  validate:
+    name: docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,17 +50,20 @@ jobs:
       - name: Build docs
         run: mkdocs build --strict
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
   deploy:
+    name: deploy-pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: validate
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

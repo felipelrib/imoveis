@@ -5,9 +5,14 @@
 # Validates the current feature branch, pushes it, and optionally opens a PR.
 # Run from INSIDE the feature workspace (primary solo branch or a worktree).
 #
-# With --pr: after CI is green, MERGES the PR into main, then cleans up the
-# workspace (worktree teardown --remove, or primary checkout → main).
+# With --pr: after required checks are green, MERGES the PR into main, then
+# cleans up the workspace (worktree teardown --remove, or primary → main).
 # Merge-ready is NOT finished — merged to main is finished.
+#
+# Docs-only branches (prose under docs/, *.md, _bmad-output/, etc.):
+#   - Local gate is mkdocs build --strict (not validate.sh all)
+#   - GitHub full CI is paths-ignored; Docs workflow (`docs` check) is the gate
+#   - If no checks attach but the PR is MERGEABLE, merge proceeds after a short wait
 #
 # Idle invariant: after a successful finish on the PRIMARY checkout, checks out
 # main so the next agent sees primary_is_idle and can use solo mode.
@@ -161,9 +166,22 @@ fi
 log "Syncing with latest main before validation..."
 git fetch origin --quiet 2>/dev/null || true
 
+DOCS_ONLY=false
+if is_docs_only_vs_main; then
+  DOCS_ONLY=true
+  ok "Detected docs-only change vs origin/main (heavy CI will be skipped by paths-ignore)"
+fi
+
 # --- Validation -------------------------------------------------------------
 if [ "$SKIP_VALIDATE" = true ]; then
   warn "Skipping validation (--skip-validate)"
+elif [ "$DOCS_ONLY" = true ]; then
+  if validate_docs_only; then
+    ok "DOCS VALIDATION PASSED"
+  else
+    warn "DOCS VALIDATION FAILED"
+    exit 1
+  fi
 else
   log "Running validation..."
   if bash "$HERE/validate.sh" all; then
@@ -173,6 +191,70 @@ else
     exit 1
   fi
 fi
+
+# Wait for PR checks. Docs-only: tolerate "no checks yet", prefer Docs workflow.
+wait_for_pr_checks() {
+  local attempts=0
+  local max_attempts=90   # ~15 min at 10s
+  local out rc
+
+  if [ "$DOCS_ONLY" = true ]; then
+    log "Docs-only PR — waiting for Docs workflow (full CI is path-ignored)..."
+  else
+    log "Waiting for CI checks to pass (this may take a few minutes)..."
+  fi
+
+  # Brief settle so GitHub can attach the pull_request workflow run
+  sleep 8
+
+  while [ "$attempts" -lt "$max_attempts" ]; do
+    attempts=$((attempts + 1))
+    out="$(gh pr checks 2>&1)" || true
+    rc=0
+    gh pr checks >/dev/null 2>&1 || rc=$?
+
+    if echo "$out" | grep -qiE 'no checks reported'; then
+      if [ "$DOCS_ONLY" = true ] && [ "$attempts" -ge 6 ]; then
+        # After ~1 min with no checks: ruleset does not require status checks —
+        # allow merge for docs-only if the PR is still mergeable.
+        local mergeable
+        mergeable="$(gh pr view --json mergeable -q .mergeable 2>/dev/null || echo UNKNOWN)"
+        if [ "$mergeable" = "MERGEABLE" ]; then
+          warn "No checks attached after wait — docs-only + MERGEABLE; proceeding to merge"
+          return 0
+        fi
+      fi
+      sleep 10
+      continue
+    fi
+
+    if echo "$out" | grep -qiE '\b(fail|failure|cancelled|timed out)\b'; then
+      printf '%s\n' "$out"
+      return 1
+    fi
+
+    # Any pending/queued → keep waiting
+    if echo "$out" | grep -qiE '\b(pending|queued|in_progress|expected)\b'; then
+      sleep 10
+      continue
+    fi
+
+    # All reported checks look done and gh pr checks exit 0
+    if [ "$rc" -eq 0 ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+
+    # Fallback: use --watch once checks exist
+    if gh pr checks --watch 2>/dev/null; then
+      return 0
+    fi
+    sleep 10
+  done
+
+  warn "Timed out waiting for PR checks"
+  return 1
+}
 
 # --- Open PR, wait for CI, merge (--pr mode) --------------------------------
 if [ "$PR_MODE" = true ]; then
@@ -208,14 +290,14 @@ if [ "$PR_MODE" = true ]; then
     fi
   fi
 
-  log "Waiting for CI checks to pass (this may take a few minutes)..."
-  if ! gh pr checks --watch "$BRANCH" 2>/dev/null; then
+  log "Waiting for required checks..."
+  if ! wait_for_pr_checks; then
     warn "CI checks failed or timed out."
     warn "Fix issues, push fixes, and re-run: bash scripts/agent/finish-feature.sh --pr"
     warn "If checks are still queued, babysit with: gh pr checks --watch"
     exit 1
   fi
-  ok "All CI checks passed"
+  ok "Required checks passed (or docs-only merge allowed)"
 
   if [ "$NO_MERGE" = true ]; then
     warn "Stopping after CI green (--no-merge). Merge manually, then cleanup workspace."

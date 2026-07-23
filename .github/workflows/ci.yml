@@ -3,12 +3,33 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    # Skip the heavy suite when the PR only touches docs/planning prose.
+    # Docs-only PRs are gated by the Docs workflow (`docs` check) instead.
+    paths-ignore:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "_bmad-output/**"
+      - "_bmad/**"
+      - ".agents/**"
+      - "*.md"
+      - "**/*.md"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "_bmad-output/**"
+      - "_bmad/**"
+      - ".agents/**"
+      - "*.md"
+      - "**/*.md"
   workflow_dispatch:
 
 # Independent suites run in parallel. Merge still requires all required checks green;
 # there is no artificial "wait for lint before tests" chain.
+# Note: paths-ignore does not apply to workflow_dispatch — manual runs always execute.
 jobs:
   lint:
     runs-on: ubuntu-latest
