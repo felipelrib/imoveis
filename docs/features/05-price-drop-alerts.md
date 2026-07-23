@@ -52,7 +52,7 @@ None.
 
 ### Tech Debt
 
-- **No frontend UI for viewing alerts** — Redis alerts are pushed but the frontend doesn't poll or display them.
+- ~~**No frontend UI for viewing alerts** — Redis alerts are pushed but the frontend doesn't poll or display them.~~ — FIXED
 - **No email/webhook notifier** — Only log and Redis channels exist. Real notifications (email, Telegram, webhook) are not implemented.
-- **Alerts fire during scrape transaction** — If the notifier fails, it could potentially delay the scrape commit.
-- **No debouncing** — Rapid consecutive scrapes could fire multiple alerts for the same price change.
+- ~~**Alerts fire during scrape transaction** — If the notifier fails, it could potentially delay the scrape commit.~~ — FIXED
+- ~~**No debouncing** — Rapid consecutive scrapes could fire multiple alerts for the same price change.~~ — FIXED

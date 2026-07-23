@@ -460,3 +460,35 @@ def evaluate_watchlist_alerts(self):
         
         session.commit()
         logger.info("watchlist_evaluation_complete", evaluated=len(rows))
+
+@celery.task(name="tasks.send_price_drop_alert")
+def send_price_drop_alert(alert_dict: dict):
+    from adapters.notify import get_notifiers
+    from adapters.notify.base import PriceDropAlert
+    from infra.redis_client import get_redis
+    import json
+
+    r = get_redis()
+    property_id = alert_dict.get("property_id")
+    
+    # Alert Debouncing (TD-05-D)
+    debounce_key = f"alerts:debounce:{property_id}"
+    if r.exists(debounce_key):
+        logger.info("alert_debounced", property_id=property_id)
+        return
+        
+    alert = PriceDropAlert(**alert_dict)
+    
+    # Store in Redis for frontend Alerts Panel (TD-05-B)
+    alert_list_key = "alerts:price_drops"
+    r.lpush(alert_list_key, json.dumps(alert_dict))
+    r.ltrim(alert_list_key, 0, 99) # Keep last 100 alerts
+    
+    for notifier in get_notifiers():
+        try:
+            notifier.send(alert)
+        except Exception as exc:
+            logger.error("notifier_error", notifier=type(notifier).__name__, error=str(exc))
+            
+    # Set debounce key to prevent spam
+    r.setex(debounce_key, 3600, "1")

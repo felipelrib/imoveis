@@ -1,4 +1,5 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
+import { useAlerts } from '../hooks/useAlerts.js'
 import { ensureOllama, recalculateScores, fetchPipeline } from '../api.js'
 import { useState, useEffect, useRef } from 'react'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -26,6 +27,7 @@ export default function Dashboard({ status, loading }) {
   const [ollamaLoading, setOllamaLoading] = useState(false)
   const [pipeline, setPipeline] = useState(null)
   const [throughputHistory, setThroughputHistory] = useState([])
+  const { alerts, loading: alertsLoading, setAlerts } = useAlerts()
   const showToast = useToast()
 
   const stats = status?.stats || {}
@@ -132,6 +134,34 @@ export default function Dashboard({ status, loading }) {
       )}
       {throughputHistory.length > 0 && throughputHistory.length < 2 && (
         <div className="chart-empty-state">Collecting pipeline data… charts appear after 2+ data points.</div>
+      )}
+
+      {/* Alerts row */}
+      {!alertsLoading && alerts.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'flex', justifyContent: 'space-between' }}>
+            <span>🚨 Price Drop Alerts</span>
+            <button 
+              className="btn btn-ghost" 
+              style={{ padding: '4px 8px', fontSize: 12, height: 'auto' }} 
+              onClick={() => setAlerts([])}
+            >
+              Dismiss All
+            </button>
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
+            {alerts.slice(0, 10).map((alert, idx) => (
+              <div key={idx} style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--accent-rose)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  📉 {alert.drop_pct?.toFixed(1)}% drop on {alert.platform}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  {alert.title} — Was: {alert.old_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} | Now: <span style={{ color: 'var(--accent-emerald)', fontWeight: 600 }}>{alert.new_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Stats row */}

@@ -358,21 +358,20 @@ def _check_watchlist_alerts(
         drop_pct = ((reference_price_float - float(new_price)) / reference_price_float) * 100.0
 
         if drop_pct >= min_drop_pct and not _prices_equal(row.last_notified_price, new_price):
-            # Fire alert
+            # Fire alert asynchronously via Celery
             try:
-                from adapters.notify import get_notifiers
-                from adapters.notify.base import PriceDropAlert
+                from adapters.queue.tasks import send_price_drop_alert
 
-                alert = PriceDropAlert(
-                    property_id=property_id,
-                    old_price=old_price,
-                    new_price=new_price,
-                    drop_pct=drop_pct,
-                    platform=platform,
-                    listing_type=listing_type,
-                )
-                for notifier in get_notifiers():
-                    notifier.send(alert)
+                alert_dict = {
+                    "property_id": property_id,
+                    "old_price": old_price,
+                    "new_price": new_price,
+                    "drop_pct": drop_pct,
+                    "platform": platform,
+                    "listing_type": listing_type,
+                    "title": "Property", # Fallback, should ideally fetch title
+                }
+                send_price_drop_alert.delay(alert_dict)
 
                 # Update last_notified_price
                 session.execute(

@@ -117,6 +117,16 @@ export async function updateSchedule(platform, intervalMinutes) {
 }
 
 // ---------------------------------------------------------------------------
+// Alerts API
+// ---------------------------------------------------------------------------
+
+export async function fetchAlerts() {
+  const r = await fetch(`${BASE}/system/alerts`)
+  if (!r.ok) throw new Error('Alerts fetch failed')
+  return r.json()
+}
+
+// ---------------------------------------------------------------------------
 // Watchlist API
 // ---------------------------------------------------------------------------
 

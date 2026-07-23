@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
 
@@ -155,3 +155,24 @@ def system_pipeline() -> Dict[str, Any]:
         "scrapers_status": scrapers_status,
         "ai_metrics": ai_metrics,
     }
+
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+@router.get("/alerts")
+def get_alerts() -> List[Dict[str, Any]]:
+    """Return the last 100 price drop alerts from Redis."""
+    import json
+    r = get_redis()
+    
+    raw_alerts = r.lrange("alerts:price_drops", 0, 99)
+    alerts = []
+    for raw in raw_alerts:
+        try:
+            alerts.append(json.loads(raw))
+        except Exception:
+            pass
+            
+    return alerts
