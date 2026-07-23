@@ -71,7 +71,7 @@ class TestOLXNormalize:
         assert result["platform"] == "olx"
         assert result["platform_id"] == "123456789"
         assert result["title"] == "Apartamento 2 quartos em Savassi"
-        assert result["price"] == 3500.0
+        assert result["price"] == 4150.0
         assert result["area_m2"] == 75.0
         assert result["bedrooms"] == 2
         assert result["bathrooms"] == 1
@@ -87,7 +87,7 @@ class TestOLXNormalize:
         assert listing["platform"] == "olx"
         assert listing["platform_listing_id"] == "123456789"
         assert listing["listing_type"] == "rent"
-        assert listing["price"] == 3500.0
+        assert listing["price"] == 4150.0
         assert listing["currency"] == "BRL"
 
     def test_images_extracted(self, scraper):

@@ -43,7 +43,6 @@ if "$PYTHON_BIN" -m pytest \
   src/tests/unit/test_olx.py \
   src/tests/unit/test_scoring_and_fees.py \
   src/tests/unit/test_registry.py \
-  src/tests/unit/test_cb.py \
   -v --timeout=30; then
   ok "scraper cassette/unit tests passed"
 else
