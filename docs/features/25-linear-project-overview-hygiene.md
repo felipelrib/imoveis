@@ -12,13 +12,15 @@ The Linear document **Imoveis — Project Overview & Sprint Guide** still listed
 - Mark v0.1–v0.4 as shipped history; put **v0.5 — BMad Planning & Next Phase** front-and-centre as the only active planning + delivery milestone.
 - Keep **Future / Beyond MVP** as an explicit parking lot for unprioritized ideas (not a delivery track).
 - Reinforce milestone descriptions in Linear so agents/humans do not reopen closed MVP milestones for new scope.
+- Numbered as `25-*` after merging `main` (BIN-38 claimed `24-semantic-search-reconcile.md`).
 
 ## Changes
 
 Files touched:
 
 ```
-docs/features/24-linear-project-overview-hygiene.md | NEW — this feature doc
+docs/features/25-linear-project-overview-hygiene.md | NEW — this feature doc
+scripts/agent/finish-feature.sh                     | merge PR + teardown after CI green
 ```
 
 Linear (outside git):
@@ -39,9 +41,9 @@ None.
 2. Confirm v0.1–v0.4 are labelled shipped, not backlog.
 3. Confirm v0.5 lists planning track (BIN-31 children) and delivery epics BIN-19..23 with stories BIN-41..55.
 4. Confirm Future / Beyond MVP is described as a catch-all, not an active sprint.
+5. Confirm `docs/features/24-semantic-search-reconcile.md` (BIN-38) and this `25-*` doc both exist on `main` after merge.
 
 ## Notes / Follow-ups
 
 - Overview is the source of truth in Linear; this feature doc only records that the hygiene pass happened.
-- After merge, mark BIN-39 Done in Linear (done as part of feature-pipeline close-out).
-- Related: BIN-31 (BMad adoption parent), BIN-38 (semantic-search reconciliation still backlog).
+- Related: BIN-31 (BMad adoption parent), BIN-38 (semantic-search reconcile — Done, owns feature `24`).
