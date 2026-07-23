@@ -1,7 +1,7 @@
 # ADR 0002: Cursor Single-Agent Development Workflow
 
-**Status:** Accepted  
-**Date:** 2026-07-23  
+**Status:** Accepted
+**Date:** 2026-07-23
 **Supersedes:** [ADR 0001 — Dual-Model Development](0001-dual-model-development.md)
 
 ## Decision
