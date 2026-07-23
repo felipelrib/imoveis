@@ -61,6 +61,6 @@ None.
 
 ## Notes / Follow-ups
 
-- Owner scoping ([BIN-45](https://linear.app/felipelrib/issue/BIN-45) / `docs/features/32-owner-scoped-favourites-searches-watchlist.md`): routes require `X-API-Key`; rows are scoped by `owner = Principal.id`.
+- Owner scoping ([BIN-45](https://linear.app/felipelrib/issue/BIN-45) / `docs/features/34-owner-scoped-favourites-searches-watchlist.md`): routes require `X-API-Key`; rows are scoped by `owner = Principal.id`.
 
 ### Fixed Tech Debt
