@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
-from api.auth import verify_api_key
+from api.auth import verify_admin_jwt
 from core.entities import ScoringWeights
 from infra.config import get_config
 from infra.db import SessionLocal
@@ -27,8 +27,22 @@ from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_admin_jwt)])
 
+
+# ---------------------------------------------------------------------------
+# Audit Log Helper
+# ---------------------------------------------------------------------------
+
+def log_audit_action(action: str, payload: dict = None):
+    from adapters.db.models import AdminAudit
+    with SessionLocal() as session:
+        try:
+            audit = AdminAudit(action=action, payload=payload or {})
+            session.add(audit)
+            session.commit()
+        except Exception as exc:
+            logger.error("admin_audit_log_failed", error=str(exc))
 
 # ---------------------------------------------------------------------------
 # Health
@@ -57,6 +71,7 @@ def pause_workers():
     r = get_redis()
     r.set("workers:ai:paused", "1")
     logger.info("ai_workers_paused")
+    log_audit_action("workers_pause")
     return {"paused": True}
 
 
@@ -65,6 +80,7 @@ def resume_workers():
     r = get_redis()
     r.delete("workers:ai:paused")
     logger.info("ai_workers_resumed")
+    log_audit_action("workers_resume")
     return {"paused": False}
 
 
@@ -82,6 +98,7 @@ def set_gpu_limit(payload: GPUScaleRequest):
     sem = GPUSemaphore()
     sem.scale(payload.limit)
     logger.info("gpu_limit_scaled", new_limit=payload.limit)
+    log_audit_action("gpu_scale", {"limit": payload.limit})
     return {"gpu_limit": payload.limit}
 
 
@@ -96,6 +113,7 @@ def set_scoring_weights(weights: ScoringWeights):
     r = get_redis()
     r.set("scoring:weights", json.dumps(weights.model_dump()))
     logger.info("scoring_weights_updated", **weights.model_dump())
+    log_audit_action("set_scoring_weights", weights.model_dump())
     return {"weights": weights.model_dump(), "status": "saved"}
 
 
@@ -115,10 +133,14 @@ def recalculate_scores(weights: Optional[ScoringWeights] = None):
             stat_rows = compute_neighborhood_stats(session)
             count = recalculate_all_combined_scores(session, weights)
             session.commit()
+            
+            payload = weights.model_dump() if weights else {}
+            log_audit_action("recalculate_scores", payload)
+            
             return {
                 "stat_rows_updated": stat_rows,
                 "combined_rows_updated": count,
-                "weights": weights.model_dump() if weights else "config_defaults",
+                "weights": payload or "config_defaults",
             }
         except Exception as exc:
             session.rollback()
@@ -197,6 +219,7 @@ def update_schedule(payload: ScheduleUpdateRequest):
         platform=payload.platform,
         interval_minutes=payload.interval_minutes,
     )
+    log_audit_action("update_schedule", {"platform": payload.platform, "interval_minutes": payload.interval_minutes})
     return {
         "platform": payload.platform,
         "interval_minutes": payload.interval_minutes,
@@ -238,4 +261,22 @@ def recompute_verdicts():
             raise HTTPException(status_code=500, detail=str(exc))
             
     logger.info("verdicts_recompute_queued", count=count)
+    log_audit_action("recompute_verdicts", {"queued": count})
     return {"queued_recomputations": count}
+
+
+@router.get("/audit")
+def get_audit_log():
+    from adapters.db.models import AdminAudit
+    with SessionLocal() as session:
+        from sqlalchemy import desc
+        logs = session.query(AdminAudit).order_by(desc(AdminAudit.performed_at)).limit(100).all()
+        return [
+            {
+                "id": str(log.id),
+                "action": log.action,
+                "payload": log.payload,
+                "performed_at": log.performed_at.isoformat() if log.performed_at else None,
+            }
+            for log in logs
+        ]

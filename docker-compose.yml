@@ -100,6 +100,7 @@ services:
     command: >
       celery -A adapters.queue.tasks beat
       --loglevel=info
+      --scheduler adapters.queue.redis_scheduler.RedisAwareScheduler
     environment:
       DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
       REDIS_URL: redis://redis:6379/0

@@ -109,8 +109,6 @@ curl -X POST http://localhost:8000/admin/schedule \
 - **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.
 
 ## Notes / Follow-ups
-- **Session-based Admin Auth**: Future iteration should replace reverse-proxy IP restrictions with a proper session-based login issuing short-lived JWT tokens.
-- **Dynamic Beat Schedule**: Explore implementing a `RedisAwareScheduler` for Celery beat to allow schedule changes without a beat restart.
-- **No audit log**: Admin actions (pause, scale, recalculate) are logged via structlog
-  but there is no persistent audit trail. Consider writing to a dedicated `admin_audit`
-  table for compliance.
+- ~~**Session-based Admin Auth**~~: FIXED (added POST /auth/admin/login and JWT verification, stored in sessionStorage).
+- ~~**Dynamic Beat Schedule**~~: FIXED (implemented RedisAwareScheduler for Celery beat to allow schedule changes without restart).
+- ~~**No audit log**~~: FIXED (created admin_audit table and /admin/audit endpoint to log admin actions).

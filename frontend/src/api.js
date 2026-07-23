@@ -2,10 +2,22 @@ const BASE = '/api'
 
 async function apiFetch(endpoint, options = {}) {
   const headers = { ...options.headers }
-  if (options.body && typeof options.body === 'object') {
-    headers['Content-Type'] = 'application/json'
-    options.body = JSON.stringify(options.body)
+  
+  // Attach JWT if available
+  const token = sessionStorage.getItem('auth_token')
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
   }
+
+  if (options.body && typeof options.body === 'object') {
+    if (options.body instanceof URLSearchParams) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    } else {
+      headers['Content-Type'] = 'application/json'
+      options.body = JSON.stringify(options.body)
+    }
+  }
+  
   const r = await fetch(`${BASE}${endpoint}`, { ...options, headers })
   if (!r.ok) {
     const err = await r.json().catch(() => ({}))
@@ -72,6 +84,25 @@ export async function fetchProperty(id) {
   return r.json()
 }
 
+export async function adminLogin(username, password) {
+  const params = new URLSearchParams()
+  params.append('username', username)
+  params.append('password', password)
+  
+  const r = await apiFetch('/auth/admin/login', {
+    method: 'POST',
+    body: params
+  })
+  if (r.access_token) {
+    sessionStorage.setItem('auth_token', r.access_token)
+  }
+  return r
+}
+
+export function adminLogout() {
+  sessionStorage.removeItem('auth_token')
+}
+
 export async function pauseWorkers() {
   return apiFetch('/admin/workers/pause', { method: 'POST' })
 }
@@ -131,37 +162,22 @@ export async function fetchAlerts() {
 // ---------------------------------------------------------------------------
 
 export async function fetchWatchlist() {
-  const r = await fetch(`${BASE}/watchlist`)
-  if (!r.ok) throw new Error('Watchlist fetch failed')
-  return r.json()
+  return apiFetch('/watchlist')
 }
 
 export async function addToWatchlist(propertyId, minDropPct = 5.0) {
-  const r = await fetch(`${BASE}/watchlist`, {
+  return apiFetch('/watchlist', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ property_id: propertyId, min_drop_pct: minDropPct }),
+    body: { property_id: propertyId, min_drop_pct: minDropPct }
   })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Add to watchlist failed')
-  }
-  return r.json()
 }
 
 export async function removeFromWatchlist(propertyId) {
-  const r = await fetch(`${BASE}/watchlist/${propertyId}`, { method: 'DELETE' })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Remove from watchlist failed')
-  }
-  return r.json()
+  return apiFetch(`/watchlist/${propertyId}`, { method: 'DELETE' })
 }
 
 export async function checkWatchlist(propertyId) {
-  const r = await fetch(`${BASE}/watchlist/check/${propertyId}`)
-  if (!r.ok) throw new Error('Watchlist check failed')
-  return r.json()
+  return apiFetch(`/watchlist/check/${propertyId}`)
 }
 
 // ---------------------------------------------------------------------------

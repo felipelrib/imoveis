@@ -230,6 +230,20 @@ class Favourite(Base):
     )
 
 
+class AdminAudit(Base):
+    """Log of actions performed by administrators."""
+    
+    __tablename__ = "admin_audit"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    action = Column(String, nullable=False)
+    payload = Column(sa.JSON, nullable=True)
+    performed_at = Column(DateTime, server_default=sa.text("now()"))
+
+
 # --- ORM Event Hooks ---
 
 import shutil
