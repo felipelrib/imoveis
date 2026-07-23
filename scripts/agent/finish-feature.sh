@@ -305,11 +305,15 @@ if [ "$PR_MODE" = true ]; then
   fi
 
   log "Merging PR into main (merge-ready is not finished)..."
-  if ! gh pr merge --merge --delete-branch 2>/dev/null; then
-    # Retry without delete-branch if repo setting / permissions block it
-    gh pr merge --merge || die "gh pr merge failed — resolve blockers and re-run"
-  fi
+  # Do NOT use gh --delete-branch: it tries to checkout main locally and can
+  # steal/switch the primary checkout when main is locked in another worktree.
+  gh pr merge --merge || die "gh pr merge failed — resolve blockers and re-run"
   ok "PR merged: $PR_URL"
+  if git push origin --delete "$BRANCH" 2>/dev/null; then
+    ok "Deleted remote branch $BRANCH"
+  else
+    warn "could not delete remote branch $BRANCH (may already be gone)"
+  fi
 
   cleanup_after_merge
   exit 0
