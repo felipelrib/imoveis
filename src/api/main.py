@@ -16,6 +16,7 @@ from api.properties import router as properties_router
 from api.saved_searches import router as saved_searches_router
 from api.system import router as system_router
 from api.watchlist import router as watchlist_router
+from api.auth import router as auth_router
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +56,7 @@ app.include_router(properties_router)
 app.include_router(saved_searches_router)
 app.include_router(system_router)
 app.include_router(watchlist_router)
+app.include_router(auth_router)
 
 
 @app.get("/", tags=["meta"])

@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from infra.db import SessionLocal
 from infra.logging import get_logger
+from api.auth import verify_jwt
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
@@ -31,14 +32,15 @@ class WatchlistItem(BaseModel):
 
 
 @router.get("")
-def list_watchlist() -> List[WatchlistItem]:
+def list_watchlist(user_id: str = Depends(verify_jwt)) -> List[WatchlistItem]:
     """Return all watched properties."""
     with SessionLocal() as session:
         rows = session.execute(
             text(
                 "SELECT id, property_id, min_drop_pct, user_id, last_notified_price, created_at "
-                "FROM watchlist ORDER BY created_at DESC"
-            )
+                "FROM watchlist WHERE user_id = :uid ORDER BY created_at DESC"
+            ),
+            {"uid": user_id}
         ).fetchall()
         return [
             WatchlistItem(
@@ -54,8 +56,9 @@ def list_watchlist() -> List[WatchlistItem]:
 
 
 @router.post("", status_code=201)
-def add_to_watchlist(req: WatchlistCreate) -> WatchlistItem:
+def add_to_watchlist(req: WatchlistCreate, user_id: str = Depends(verify_jwt)) -> WatchlistItem:
     """Add a property to the watchlist."""
+    req.user_id = user_id
     with SessionLocal() as session:
         try:
             # Verify property exists
@@ -101,13 +104,13 @@ def add_to_watchlist(req: WatchlistCreate) -> WatchlistItem:
 
 
 @router.delete("/{property_id}")
-def remove_from_watchlist(property_id: str) -> Dict[str, str]:
+def remove_from_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) -> Dict[str, str]:
     """Remove a property from the watchlist."""
     with SessionLocal() as session:
         try:
             result = session.execute(
-                text("DELETE FROM watchlist WHERE property_id = :pid"),
-                {"pid": property_id},
+                text("DELETE FROM watchlist WHERE property_id = :pid AND user_id = :uid"),
+                {"pid": property_id, "uid": user_id},
             )
             session.commit()
             if result.rowcount == 0:
@@ -122,12 +125,12 @@ def remove_from_watchlist(property_id: str) -> Dict[str, str]:
 
 
 @router.get("/check/{property_id}")
-def check_watchlist(property_id: str) -> Dict[str, Any]:
+def check_watchlist(property_id: str, user_id: str = Depends(verify_jwt)) -> Dict[str, Any]:
     """Check if a specific property is in the watchlist."""
     with SessionLocal() as session:
         row = session.execute(
-            text("SELECT id, min_drop_pct, user_id, last_notified_price FROM watchlist WHERE property_id = :pid"),
-            {"pid": property_id},
+            text("SELECT id, min_drop_pct, user_id, last_notified_price FROM watchlist WHERE property_id = :pid AND user_id = :uid"),
+            {"pid": property_id, "uid": user_id},
         ).fetchone()
         if row is None:
             return {"watched": False}

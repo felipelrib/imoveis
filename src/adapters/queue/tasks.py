@@ -529,3 +529,29 @@ def monitor_queues():
         if r.exists("workers:scrapers:paused"):
             logger.info("queue_monitor_resume_scrapers", ai_queue=ai_len, threshold=BATCH_THRESHOLD)
             r.delete("workers:scrapers:paused")
+
+@celery_app.task(bind=True)
+def send_daily_digest(self):
+    """Batch process queued email digest alerts and send them."""
+    r = get_redis()
+    alerts_json = r.lrange("alerts:email_digest", 0, -1)
+    if not alerts_json:
+        return {"sent": 0}
+        
+    r.delete("alerts:email_digest")
+    
+    import json
+    alerts = []
+    for item in alerts_json:
+        try:
+            alerts.append(json.loads(item))
+        except Exception:
+            pass
+            
+    if not alerts:
+        return {"sent": 0}
+        
+    from adapters.notify.email_notifier import EmailNotifier
+    notifier = EmailNotifier()
+    notifier.send_batch(alerts)
+    return {"sent": len(alerts)}

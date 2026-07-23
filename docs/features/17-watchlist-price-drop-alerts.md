@@ -88,10 +88,8 @@ None.
 
 ## Notes / Follow-ups
 
-- **Authentication needed**: Currently, `user_id` is an optional string parameter, but endpoints are public. Full JWT authentication should be implemented so users only see and manage their own watchlist.
-- **Batched emails**: If a user is watching 50 properties and prices drop overnight,
-  sending 50 emails is spammy. The `LogNotifier` processes individually, but `EmailNotifier`
-  would benefit from a daily digest mode.
+- ~~**Authentication needed**~~: FIXED (added JWT token check in `src/api/auth.py` and gated watchlist endpoints).
+- ~~**Batched emails**~~: FIXED (added `EmailNotifier` in digest mode, pushing to Redis and sending via daily Celery beat task).
 - **`DELETE /watchlist/{property_id}` — parameter semantics**: The path parameter is
   `property_id`, not the watchlist row's own `id`. This is consistent but non-RESTful.
   Document clearly in the OpenAPI schema.

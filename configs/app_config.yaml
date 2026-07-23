@@ -99,6 +99,13 @@ alerts:
   channels:
     - log                     # always log alerts
     - redis                   # push to Redis for frontend polling
+    - email                   # send email alerts
+  digest_mode: true           # if true, batch alerts into a daily email
+  digest_email: admin@example.com
+  smtp_host: localhost
+  smtp_port: 1025
+  smtp_user: ""
+  smtp_pass: ""
 
 # ---------------------------------------------------------------------------
 # Image Storage

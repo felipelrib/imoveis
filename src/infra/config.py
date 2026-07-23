@@ -179,6 +179,12 @@ class AlertsConfig(BaseModel, frozen=True):
     redis_ttl_seconds: int = 604800   # 7 days
     redis_max_items: int = 200
     min_drop_pct_default: float = 5.0
+    digest_mode: bool = False
+    digest_email: str = ""
+    smtp_host: str = "localhost"
+    smtp_port: int = 25
+    smtp_user: str = ""
+    smtp_pass: str = ""
 
 
 class AppConfig(BaseModel, frozen=True):

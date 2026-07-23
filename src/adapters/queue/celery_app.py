@@ -3,6 +3,7 @@ import os
 
 from celery import Celery
 from celery.signals import task_failure, task_revoked
+from celery.schedules import crontab
 
 from infra.config import get_config
 from infra.redis_client import get_redis
@@ -58,6 +59,12 @@ def build_beat_schedule() -> dict:
         "task": "tasks.monitor_queues",
         "schedule": 60.0,
     }
+
+    if getattr(get_config().alerts, "digest_mode", False):
+        schedule["send-daily-digest"] = {
+            "task": "tasks.send_daily_digest",
+            "schedule": crontab(hour=8, minute=0),
+        }
 
     return schedule
 
