@@ -31,6 +31,10 @@ CI suites (`lint`, `unit`, `integration`, `contract`, `scrapers`, `e2e`, `securi
 - Scraper HTML cassettes + merge-blocking live dry-run (`scrapers` job); agents refresh cassettes on HTML drift.
 - Harness wording iterates locally via `harness-retrospect` without forcing PRs.
 
+## Related
+
+Product planning / solutioning (PRD, architecture, epics) may use **BMad Method**; see [ADR 0003 — BMad Planning Bridge](0003-bmad-planning-bridge.md). That does **not** revive dual-model implementation — merge gates remain this ADR.
+
 ## Alternatives considered
 
 1. Dual-model Planner/Implementer in Cursor — rejected (redundant with Plan mode).

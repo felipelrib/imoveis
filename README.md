@@ -106,13 +106,21 @@ Full documentation is published via MkDocs Material:
 
 Preview docs locally: `pip install mkdocs-material && mkdocs serve`
 
+## Product planning (BMad Method)
+
+Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-started/) for PRD / architecture / epics. Planning artifacts land in `_bmad-output/`. Cursor skills are under `.agents/skills/` (e.g. `bmad-help`, `bmad-prd`).
+
+- Orientation: invoke **`bmad-help`** (see `_bmad-output/planning-artifacts/bmad-help-session.md`).
+- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` execute. Local skill: `.cursor/skills/imoveis-planning-bridge`.
+- Re-install / update: `npx bmad-method install --yes --modules bmm --tools cursor --action update`
+
 ## Development Workflow
 
 Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 
 **Feature / merge-bound work:**
 
-1. **Plan** — Cursor Plan mode for non-trivial work.
+1. **Plan** — Prefer BMad PRD/epics for product scope; Cursor Plan mode for ticket-level design.
 2. **Branch** — `bash scripts/agent/setup-branch.sh <feature-slug>`.
 3. **Implement** — TDD with conventional commits.
 4. **Validate** — `bash scripts/agent/validate.sh all`.

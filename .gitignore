@@ -66,3 +66,10 @@ worker.log
 
 # MkDocs build output
 site/
+
+# Playwright / frontend test artifacts
+frontend/test-results/
+
+# BMad personal overrides (team config stays in _bmad/config.toml)
+_bmad/config.user.toml
+_bmad/**/*.user.toml
