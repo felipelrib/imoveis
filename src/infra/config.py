@@ -171,6 +171,19 @@ class ScoringConfig(BaseModel, frozen=True):
     recalculate_on_enrichment: bool = True
 
 
+class TopDealsDigestConfig(BaseModel, frozen=True):
+    """Scheduled top-new-deals digest (BIN-52 / FR-21). Distinct from price-drop digest_mode."""
+
+    enabled: bool = False
+    limit: int = 10
+    min_combined_score: float = 0.0
+    lookback_hours: int = 168  # 7 days
+    crontab_hour: int = 8
+    crontab_minute: int = 0
+    crontab_day_of_week: str = "0"  # Sunday (Celery crontab)
+    redis_key: str = "alerts:top_deals_digest"
+
+
 class AlertsConfig(BaseModel, frozen=True):
     """Price-drop alert settings."""
 
@@ -186,6 +199,7 @@ class AlertsConfig(BaseModel, frozen=True):
     smtp_port: int = 25
     smtp_user: str = ""
     smtp_pass: str = ""
+    top_deals: TopDealsDigestConfig = Field(default_factory=TopDealsDigestConfig)
 
 
 class AuthConfig(BaseModel, frozen=True):

@@ -2,7 +2,7 @@ import json
 import smtplib
 from email.message import EmailMessage
 
-from adapters.notify.base import Notifier, PriceDropAlert
+from adapters.notify.base import Notifier, PriceDropAlert, TopDealsDigest
 from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
@@ -17,7 +17,7 @@ class EmailNotifier(Notifier):
 
     def send(self, alert: PriceDropAlert) -> None:
         if getattr(self.cfg, "digest_mode", False):
-            # push to redis list for digest
+            # push to redis list for price-drop digest (not top-deals)
             self.r.rpush("alerts:email_digest", json.dumps({
                 "property_id": alert.property_id,
                 "old_price": alert.old_price,
@@ -58,3 +58,47 @@ class EmailNotifier(Notifier):
             logger.info("email_alerts_sent", count=len(alerts))
         except Exception as e:
             logger.error("email_alerts_failed", error=str(e))
+
+    def send_digest(self, digest: TopDealsDigest) -> None:
+        """Send top-deals digest immediately via SMTP (never queues into alerts:email_digest)."""
+        if not digest.properties:
+            return
+
+        msg = EmailMessage()
+        msg["Subject"] = f"Top new deals ({len(digest.properties)} properties)"
+        msg["From"] = getattr(self.cfg, "smtp_user", "") or "noreply@imoveis.local"
+        msg["To"] = getattr(self.cfg, "digest_email", "admin@example.com") or "admin@example.com"
+
+        lines = [
+            f"Top new deals for principal {digest.principal_id}",
+            f"Generated: {digest.generated_at.isoformat()}",
+            f"Rule: {digest.rule}",
+            "",
+        ]
+        for prop in digest.properties:
+            title = prop.get("title") or prop.get("id")
+            score = prop.get("combined_score")
+            price = prop.get("price")
+            neighbourhood = prop.get("neighborhood_name") or "-"
+            lines.append(
+                f"- {title}: price={price}, score={score}, neighbourhood={neighbourhood}"
+            )
+        msg.set_content("\n".join(lines))
+
+        try:
+            with smtplib.SMTP(
+                getattr(self.cfg, "smtp_host", "localhost"),
+                getattr(self.cfg, "smtp_port", 25),
+            ) as server:
+                user = getattr(self.cfg, "smtp_user", "")
+                password = getattr(self.cfg, "smtp_pass", "")
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+            logger.info(
+                "top_deals_digest_email_sent",
+                principal_id=digest.principal_id,
+                count=len(digest.properties),
+            )
+        except Exception as e:
+            logger.error("top_deals_digest_email_failed", error=str(e))

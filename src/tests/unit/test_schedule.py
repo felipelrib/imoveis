@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -146,9 +147,45 @@ class TestBuildBeatSchedule:
         schedule = build_beat_schedule()
         assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}
 
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_top_deals_enabled_adds_beat_entry(self, mock_get_redis, mock_get_config):
+        """alerts.top_deals.enabled schedules send_top_deals_digest (not send_daily_digest)."""
+        from adapters.queue.celery_app import build_beat_schedule
 
-@pytest.mark.unit
-class TestCeleryConfiguration:
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals = SimpleNamespace(
+            enabled=True,
+            crontab_hour=9,
+            crontab_minute=15,
+            crontab_day_of_week="1",
+        )
+        cfg.scraping.platforms = {}
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock()
+
+        schedule = build_beat_schedule()
+
+        assert "send-top-deals-digest" in schedule
+        assert schedule["send-top-deals-digest"]["task"] == "tasks.send_top_deals_digest"
+        assert "send-daily-digest" not in schedule
+
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_top_deals_disabled_excluded(self, mock_get_redis, mock_get_config):
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals = SimpleNamespace(enabled=False)
+        cfg.scraping.platforms = {}
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock()
+
+        schedule = build_beat_schedule()
+        assert "send-top-deals-digest" not in schedule
+
     @patch("adapters.queue.celery_app.build_beat_schedule", return_value={"scheduled": {}})
     @patch("adapters.queue.celery_app.Celery")
     def test_make_celery_applies_broker_routes_and_schedule(self, celery_cls, build_schedule, monkeypatch):

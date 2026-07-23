@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 
-from adapters.notify.base import Notifier, PriceDropAlert
+from adapters.notify.base import Notifier, PriceDropAlert, TopDealsDigest
+from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
 
@@ -15,7 +16,7 @@ MAX_ALERTS = 200  # keep last N alerts
 
 
 class RedisNotifier(Notifier):
-    """Push price-drop alerts to a Redis list for frontend polling."""
+    """Push alerts to Redis lists for frontend polling."""
 
     def send(self, alert: PriceDropAlert) -> None:
         try:
@@ -38,3 +39,30 @@ class RedisNotifier(Notifier):
             )
         except Exception as exc:
             logger.error("redis_notifier_error", error=str(exc))
+
+    def send_digest(self, digest: TopDealsDigest) -> None:
+        try:
+            cfg = get_config()
+            key = cfg.alerts.top_deals.redis_key
+            max_items = cfg.alerts.redis_max_items
+            ttl = cfg.alerts.redis_ttl_seconds
+            r = get_redis()
+            payload = {
+                "type": "top_deals_digest",
+                "principal_id": digest.principal_id,
+                "generated_at": digest.generated_at.isoformat(),
+                "rule": digest.rule,
+                "count": len(digest.properties),
+                "properties": digest.properties,
+            }
+            r.lpush(key, json.dumps(payload, default=str))
+            r.ltrim(key, 0, max_items - 1)
+            r.expire(key, ttl)
+            logger.info(
+                "top_deals_digest_redis",
+                principal_id=digest.principal_id,
+                count=len(digest.properties),
+                redis_key=key,
+            )
+        except Exception as exc:
+            logger.error("redis_notifier_digest_error", error=str(exc))
