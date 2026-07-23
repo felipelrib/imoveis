@@ -88,7 +88,7 @@ None.
 
 ## Notes / Follow-ups
 
-- Owner scoping ([BIN-45](https://linear.app/felipelrib/issue/BIN-45) / `docs/features/32-owner-scoped-favourites-searches-watchlist.md`): `/watchlist` requires `X-API-Key` and scopes by `owner` (JWT `user_id` removed). Alert evaluation remains system-wide by `property_id`.
+- Owner scoping ([BIN-45](https://linear.app/felipelrib/issue/BIN-45) / `docs/features/34-owner-scoped-favourites-searches-watchlist.md`): `/watchlist` requires `X-API-Key` and scopes by `owner` (JWT `user_id` removed). Alert evaluation remains system-wide by `property_id`.
 
 - **`DELETE /watchlist/{property_id}` — parameter semantics**: The path parameter is
   `property_id`, not the watchlist row's own `id`. This is consistent but non-RESTful.
