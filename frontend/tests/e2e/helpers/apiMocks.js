@@ -412,3 +412,32 @@ export async function mockScrapeTrigger(page, response = { task_id: "task-abc" }
     })
   );
 }
+
+/**
+ * Mock GET /admin/health — accepts only the given X-API-Key (BIN-46 credential gate).
+ * @param {Page} page
+ * @param {object} [opts]
+ * @param {string} [opts.validKey]
+ * @param {string[]} [opts.capturedKeys] — push each request's X-API-Key when provided
+ */
+export async function mockAdminHealth(page, opts = {}) {
+  const validKey = opts.validKey ?? "e2e-test-api-key";
+  const capturedKeys = opts.capturedKeys;
+
+  await page.route("**/api/admin/health", (route) => {
+    const key = route.request().headers()["x-api-key"] || "";
+    if (capturedKeys) capturedKeys.push(key);
+    if (key && key === validKey) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "ok" }),
+      });
+    }
+    return route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Could not validate API Key" }),
+    });
+  });
+}

@@ -1,12 +1,45 @@
 const BASE = '/api'
 
+/** sessionStorage key for the paste-once API credential (never committed). */
+export const API_KEY_STORAGE = 'api_key'
+
+const AUTH_ERROR_MESSAGE = 'Invalid or missing API credential'
+
+export function getApiKey() {
+  return sessionStorage.getItem(API_KEY_STORAGE) || ''
+}
+
+export function setApiKey(key) {
+  const trimmed = String(key ?? '').trim()
+  if (trimmed) {
+    sessionStorage.setItem(API_KEY_STORAGE, trimmed)
+  } else {
+    sessionStorage.removeItem(API_KEY_STORAGE)
+  }
+}
+
+export function clearApiKey() {
+  sessionStorage.removeItem(API_KEY_STORAGE)
+}
+
+export function hasApiKey() {
+  return Boolean(getApiKey())
+}
+
+/**
+ * Validate the stored (or just-set) credential against /admin/health.
+ * @returns {Promise<{status: string}>}
+ */
+export async function validateApiCredential() {
+  return apiFetch('/admin/health')
+}
+
 async function apiFetch(endpoint, options = {}) {
   const headers = { ...options.headers }
 
-  // Attach JWT if available
-  const token = sessionStorage.getItem('auth_token')
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+  const apiKey = getApiKey()
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey
   }
 
   if (options.body && typeof options.body === 'object') {
@@ -20,6 +53,9 @@ async function apiFetch(endpoint, options = {}) {
 
   const r = await fetch(`${BASE}${endpoint}`, { ...options, headers })
   if (!r.ok) {
+    if (r.status === 401 || r.status === 403) {
+      throw new Error(AUTH_ERROR_MESSAGE)
+    }
     const err = await r.json().catch(() => ({}))
     throw new Error(err.detail || 'API request failed')
   }
@@ -94,25 +130,6 @@ export async function fetchPropertiesByIds(ids) {
   const r = await fetch(`${BASE}/properties/by-ids?${params}`)
   if (!r.ok) throw new Error('Properties batch fetch failed')
   return r.json()
-}
-
-export async function adminLogin(username, password) {
-  const params = new URLSearchParams()
-  params.append('username', username)
-  params.append('password', password)
-
-  const r = await apiFetch('/auth/admin/login', {
-    method: 'POST',
-    body: params
-  })
-  if (r.access_token) {
-    sessionStorage.setItem('auth_token', r.access_token)
-  }
-  return r
-}
-
-export function adminLogout() {
-  sessionStorage.removeItem('auth_token')
 }
 
 export async function pauseWorkers() {

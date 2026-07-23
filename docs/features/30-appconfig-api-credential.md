@@ -10,7 +10,7 @@ API credentials were read with ad-hoc `os.environ` in `auth.py`, `verify_api_key
 
 - Add frozen `AuthConfig` (`api_key`, `jwt_secret`, `principal_id`, `admin_user`, `admin_pass`) on `AppConfig`, with env wiring (`API_KEY`, `JWT_SECRET`, `ADMIN_*`, `IMOVEIS_AUTH__*`).
 - `verify_api_key` validates `X-API-Key` against AppConfig and returns `Principal(id=principal_id, method="api_key")`.
-- `/admin` uses `verify_admin_access`: valid API key **or** admin JWT, both mapping to the same `principal_id` (SPA JWT login kept until Story 2.2 / BIN-46).
+- `/admin` uses `verify_admin_access`: valid API key **or** admin JWT, both mapping to the same `principal_id`. The SPA now sends `X-API-Key` via the Story 2.2 / BIN-46 credential gate; JWT remains for non-SPA clients.
 - No `os.environ` / `os.getenv` remains in `api/auth.py`.
 - `validate.sh` defaults to `test-local-api-key` (not the forbidden `dev-secret-key` literal).
 
@@ -61,6 +61,6 @@ None.
 
 ## Notes / Follow-ups
 
-- Story 2.2 ([BIN-46](https://linear.app/felipelrib/issue/BIN-46)): frontend credential gate (sessionStorage / paste-once); SPA can drop admin JWT once the UI sends `X-API-Key`.
+- Story 2.2 ([BIN-46](https://linear.app/felipelrib/issue/BIN-46)): **done** — frontend credential gate (`docs/features/31-frontend-credential-gate.md`); SPA attaches `X-API-Key` from sessionStorage.
 - Story 2.3 ([BIN-45](https://linear.app/felipelrib/issue/BIN-45)): owner-scope favourites / saved searches / watchlist using `Principal.id`.
-- CORS `allow_headers` still lists `X-API-Key` (and not `Authorization`); Vite `/api` proxy continues to cover the admin JWT path for the SPA.
+- CORS `allow_headers` lists `X-API-Key`; admin JWT remains accepted at the edge for non-SPA clients.
