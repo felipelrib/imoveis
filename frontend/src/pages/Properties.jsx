@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
+import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -98,11 +98,45 @@ export default function Properties() {
   const [viewType, setViewType] = useState('grid')
   const [mapProperties, setMapProperties] = useState([])
   const [mapLoading, setMapLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, maxPrice,
     minBedrooms, minParking, minScore, neighborhood, isFurnished, acceptsPets, q,
   }
+
+  const buildListQueryFilters = useCallback(() => {
+    const isPriceDesc = sortBy === 'price_desc'
+    const actualSortBy = isPriceDesc ? 'price' : sortBy
+    const actualSortDir = sortBy === 'price' ? 'asc' : isPriceDesc ? 'desc' : sortDir
+    return {
+      sortBy: actualSortBy,
+      sortDir: actualSortDir,
+      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+      minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
+      minScore: minScore ? parseFloat(minScore) : undefined,
+      minParking: minParking ? parseInt(minParking) : undefined,
+      neighborhoodName: neighborhood || undefined,
+      listingType,
+      propertyType: propertyType || undefined,
+      isFurnished: isFurnished ? true : undefined,
+      acceptsPets: acceptsPets ? true : undefined,
+      q: q || undefined,
+    }
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets, q])
+
+  const handleExport = useCallback(async (format) => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportProperties({ format, ...buildListQueryFilters() })
+    } catch (err) {
+      console.error('Export failed:', err)
+      showToast('Export failed: ' + (err.message || 'unknown error'), { type: 'error' })
+    } finally {
+      setExporting(false)
+    }
+  }, [exporting, buildListQueryFilters, showToast])
 
   const handleBboxChange = useCallback(async (bboxStr) => {
     setMapLoading(true)
@@ -426,6 +460,26 @@ export default function Properties() {
               </div>
 
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  data-testid="export-csv"
+                  disabled={exporting}
+                  onClick={() => handleExport('csv')}
+                  title="Download filtered properties as CSV"
+                >
+                  {exporting ? 'Exporting…' : 'Export CSV'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  data-testid="export-json"
+                  disabled={exporting}
+                  onClick={() => handleExport('json')}
+                  title="Download filtered properties as JSON"
+                >
+                  {exporting ? 'Exporting…' : 'Export JSON'}
+                </button>
                 <div style={{ display: 'flex', border: '1px solid var(--border-subtle)', borderRadius: 6, overflow: 'hidden' }}>
                   <button
                     className={`btn btn-sm ${viewType === 'grid' ? '' : 'btn-ghost'}`}
