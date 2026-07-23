@@ -61,15 +61,6 @@ def compute_neighborhood_stats(
     )
 
     sql = text(f"""
-        WITH medians AS (
-            SELECT
-                COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') as n_key,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.price / NULLIF(p.area_m2, 0)) AS neighborhood_median
-            FROM properties p
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE p.area_m2 IS NOT NULL AND p.area_m2 > 0 AND p.active = true
-            GROUP BY 1
-        ),
         stats AS (
             SELECT
                 p.id                                                  AS property_id,
@@ -79,7 +70,13 @@ def compute_neighborhood_stats(
                     OVER (PARTITION BY
                         COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
                     ) AS neighborhood_mean,
-                m.neighborhood_median,
+                (
+                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p2.price / NULLIF(p2.area_m2, 0))
+                    FROM properties p2
+                    LEFT JOIN neighborhoods n2 ON n2.id = p2.neighborhood_id
+                    WHERE p2.area_m2 > 0 AND p2.active = true
+                      AND COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown') = COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
+                ) AS neighborhood_median,
                 STDDEV(p.price / NULLIF(p.area_m2, 0))
                     OVER (PARTITION BY
                         COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
@@ -91,7 +88,6 @@ def compute_neighborhood_stats(
                     )                                                 AS percentile_rank
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            LEFT JOIN medians m ON COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = m.n_key
             WHERE p.area_m2 IS NOT NULL
               AND p.area_m2 > 0
               AND p.active = true
@@ -226,6 +222,36 @@ def recalculate_all_combined_scores(
     return count
 
 
+def get_neighborhood_stats_cached(session: Session, n_key: str) -> dict:
+    import json
+    from infra.redis_client import get_redis
+    r = get_redis()
+    cache_key = f"n_stats:{n_key}"
+    cached = r.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    sql = text("""
+        SELECT 
+            AVG(p.price / NULLIF(p.area_m2, 0)) AS mean,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY p.price / NULLIF(p.area_m2, 0)) AS median,
+            STDDEV(p.price / NULLIF(p.area_m2, 0)) AS stddev,
+            COUNT(p.id) AS count
+        FROM properties p
+        LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+        WHERE p.area_m2 > 0 AND p.active = true 
+          AND COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') = :nkey
+    """)
+    row = session.execute(sql, {"nkey": n_key}).mappings().fetchone()
+    stats = {
+        "mean": float(row["mean"]) if row and row["mean"] else 0.0,
+        "median": float(row["median"]) if row and row["median"] else 0.0,
+        "stddev": float(row["stddev"]) if row and row["stddev"] else 0.0,
+        "count": int(row["count"]) if row and row["count"] else 0
+    }
+    r.setex(cache_key, 60, json.dumps(stats))
+    return stats
+
 def score_single_property(session: Session, property_id: str) -> None:
     """Recompute combined_score for a single property after AI enrichment.
 
@@ -248,9 +274,73 @@ def score_single_property(session: Session, property_id: str) -> None:
         n_key = n.name if n else "Unknown"
     else:
         n_key = (prop.props_json or {}).get("neighborhood", "Unknown")
-    compute_neighborhood_stats(session, neighborhood_key=n_key)
 
-    # Note: the single row's fallback code was removed because we now
-    # always group by n_key and compute neighborhood stats properly.
+    stats = get_neighborhood_stats_cached(session, n_key)
+    
+    if prop.area_m2 and prop.area_m2 > 0:
+        price_per_m2 = prop.price / prop.area_m2
+    else:
+        price_per_m2 = 0.0
+
+    if stats["stddev"] > 0:
+        z = (price_per_m2 - stats["mean"]) / stats["stddev"]
+    else:
+        z = 0.0
+        
+    stat_score = _sigmoid_undervalued(z)
+    
+    stat_category = "Average"
+    stat_reasoning = "Priced closely to the neighborhood average."
+    if z < -1.0:
+        stat_category = "Highly Undervalued"
+        stat_reasoning = "Significantly cheaper than similar properties in the area."
+    elif z < -0.2:
+        stat_category = "Slightly Undervalued"
+        stat_reasoning = "Priced slightly below the neighborhood average."
+    elif z > 1.0:
+        stat_category = "Highly Overvalued"
+        stat_reasoning = "Significantly more expensive than similar properties in the area."
+    elif z > 0.2:
+        stat_category = "Slightly Overvalued"
+        stat_reasoning = "Priced slightly above the neighborhood average."
+
+    stat_analysis = {"category": stat_category, "reasoning": stat_reasoning}
+
+    cfg = get_config()
+    weights = ScoringWeights(
+        stat_weight=cfg.scoring.stat_weight,
+        ai_weight=cfg.scoring.ai_weight,
+    )
+
+    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+    if ms is None:
+        ms = MetricsScoring(
+            property_id=property_id,
+            stat_score=stat_score,
+            ai_score=0.0,
+            combined_score=stat_score * weights.stat_weight,
+            price_per_m2=price_per_m2,
+            neighborhood_mean=stats["mean"],
+            neighborhood_median=stats["median"],
+            z_score=z,
+            percentile_rank=0.5, # Approximation
+            meta={"stat_analysis": stat_analysis},
+        )
+        session.add(ms)
+    else:
+        ms.stat_score = stat_score
+        ms.price_per_m2 = price_per_m2
+        ms.neighborhood_mean = stats["mean"]
+        ms.neighborhood_median = stats["median"]
+        ms.z_score = z
+        # Keep percentile_rank unchanged since it's hard to approximate accurately
+        ai = float(ms.ai_score or 0.0)
+        ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
+
+        meta = dict(ms.meta or {})
+        meta["stat_analysis"] = stat_analysis
+        ms.meta = meta
+        
+    session.flush()
 
     logger.info("single_property_scored", property_id=property_id)

@@ -48,6 +48,6 @@ None — uses PostgreSQL window functions and built-in Python `math`.
 
 ### Tech Debt
 
-- **`score_single_property` recomputes the ENTIRE neighbourhood** — For a neighbourhood with 10,000 properties, this is a heavy operation triggered after every AI enrichment. Should cache or batch.
-- **No index on `props_json->>'neighborhood'`** — The window function queries use this JSONB access path without a GIN or functional index, which will be slow at scale.
-- **Median computation repeated** — The median is computed in a separate CTE and then JOINed, which could be combined with the stats CTE.
+- ~~**`score_single_property` recomputes the ENTIRE neighbourhood** — For a neighbourhood with 10,000 properties, this is a heavy operation triggered after every AI enrichment. Should cache or batch.~~ — FIXED
+- ~~**No index on `props_json->>'neighborhood'`** — The window function queries use this JSONB access path without a GIN or functional index, which will be slow at scale.~~ — FIXED
+- ~~**Median computation repeated** — The median is computed in a separate CTE and then JOINed, which could be combined with the stats CTE.~~ — FIXED
