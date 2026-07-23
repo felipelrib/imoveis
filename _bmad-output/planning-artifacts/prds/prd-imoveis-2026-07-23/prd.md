@@ -230,13 +230,14 @@ FR-1 through FR-17 as implemented and documented in `docs/features/` (+ BIN-18 s
 
 ## 8. Non-Functional Requirements
 
-- **Local-first:** Core enrichment and storage run on operator hardware; no required cloud AI.
-- **Config discipline:** Runtime settings via `AppConfig` / `configs/app_config.yaml` (+ env), not scattered `os.getenv` in feature code.
-- **Security:** No hardcoded production secrets; forbid `imoveis_secret` / `dev-secret-key` in repo; admin routes require API key when configured.
-- **Resilience:** Circuit breakers and checkpoints keep scrapes operable under partial platform failure.
-- **Testability:** Merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security).
-- **Observability:** Pipeline telemetry and system health endpoints support unattended operation (UJ-3).
-- **i18n:** User-facing AI verdicts default to `pt-br`; planning docs in English.
+- **NFR-1 Local-first:** Core enrichment and storage run on operator hardware; no required cloud AI.
+- **NFR-2 Config discipline:** Runtime settings via `AppConfig` / `configs/app_config.yaml` (+ env), not scattered `os.getenv` in feature code.
+- **NFR-3 Security:** No hardcoded production secrets; forbid `imoveis_secret` / `dev-secret-key` in repo; admin routes require API key when configured.
+- **NFR-4 Resilience:** Circuit breakers and checkpoints keep scrapes operable under partial platform failure.
+- **NFR-5 Testability:** Merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security).
+- **NFR-6 Observability:** Pipeline telemetry and system health endpoints support unattended operation (UJ-3).
+- **NFR-7 i18n:** User-facing AI verdicts default to `pt-br`; planning docs in English.
+- **NFR-8 Single-operator privacy posture:** BH/MG geographic focus and single-tenant personalization until multi-city / multi-profile is explicitly productized.
 
 ## 9. Open Questions
 
