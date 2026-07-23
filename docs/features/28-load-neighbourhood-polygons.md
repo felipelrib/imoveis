@@ -26,7 +26,7 @@ Files touched:
  src/tests/fixtures/geo/bh_neighbourhoods_tiny.geojson              | NEW — tiny BH-bbox fixture
  src/tests/unit/test_neighbourhood_geojson.py                       | NEW — parse / MultiPolygon / errors
  src/tests/integration/test_neighbourhood_polygons.py               | NEW — SRID/valid/idempotent load
- docs/features/27-load-neighbourhood-polygons.md                    | NEW — this doc
+ docs/features/28-load-neighbourhood-polygons.md                    | NEW — this doc
  _bmad-output/implementation-artifacts/sprint-status.yaml           | Story 5.1 done; epic-5 in-progress
 ```
 

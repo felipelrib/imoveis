@@ -40,6 +40,83 @@ export const PROPERTIES_PAGE = {
   total: 1,
 };
 
+/** Five distinct properties for multi-select / compare limit e2e. */
+export const PROPERTIES_PAGE_FIVE = {
+  properties: [
+    { ...SAMPLE_PROPERTY, id: "1", title: "2BR Apartment Savassi" },
+    {
+      ...SAMPLE_PROPERTY,
+      id: "2",
+      title: "3BR House Lourdes",
+      address: "Rua da Bahia, 100, Lourdes",
+      price: 4200,
+      bedrooms: 3,
+      listings: [
+        {
+          platform: "quintoandar",
+          listing_type: "rent",
+          price: 4200,
+          url: "https://example.com/2",
+        },
+      ],
+    },
+    {
+      ...SAMPLE_PROPERTY,
+      id: "3",
+      title: "Studio Funcionarios",
+      address: "Av. Afonso Pena, 200, Funcionarios",
+      price: 2100,
+      bedrooms: 1,
+      area_m2: 40,
+      listings: [
+        {
+          platform: "olx",
+          listing_type: "rent",
+          price: 2100,
+          url: "https://example.com/3",
+        },
+      ],
+    },
+    {
+      ...SAMPLE_PROPERTY,
+      id: "4",
+      title: "Penthouse Santo Antonio",
+      address: "Rua Curitiba, 50, Santo Antonio",
+      price: 8900,
+      bedrooms: 4,
+      area_m2: 180,
+      listings: [
+        {
+          platform: "olx",
+          listing_type: "sale",
+          price: 890000,
+          url: "https://example.com/4",
+        },
+      ],
+    },
+    {
+      ...SAMPLE_PROPERTY,
+      id: "5",
+      title: "Loft Centro",
+      address: "Rua Rio de Janeiro, 10, Centro",
+      price: 2800,
+      bedrooms: 1,
+      area_m2: 55,
+      listings: [
+        {
+          platform: "quintoandar",
+          listing_type: "rent",
+          price: 2800,
+          url: "https://example.com/5",
+        },
+      ],
+    },
+  ],
+  page: 1,
+  page_size: 24,
+  total: 5,
+};
+
 export const SYSTEM_STATUS = {
   database: { status: "ok", detail: "Connected" },
   redis: { status: "ok" },
