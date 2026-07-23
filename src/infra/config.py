@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import yaml
@@ -203,6 +203,20 @@ class AuthConfig(BaseModel, frozen=True):
     admin_pass: str = "admin"
 
 
+class ProxyConfig(BaseModel, frozen=True):
+    """HTTP proxy pool settings for scrapers (AD-2 / FR-20).
+
+    Loaded from the ``proxy:`` block in ``app_config.yaml``. Credentials belong
+    in env / local overrides — never commit real proxy URLs with passwords in
+    sample config.
+    """
+
+    enabled: bool = False
+    url: str | None = None
+    rotation_strategy: Literal["round_robin", "random"] = "round_robin"
+    pool: list[str] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -224,6 +238,7 @@ class AppConfig(BaseModel, frozen=True):
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     image_storage_path: str = "data/images"
 
 

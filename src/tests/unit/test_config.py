@@ -352,3 +352,117 @@ def test_database_config_is_frozen(tmp_path: Path):
 
     with pytest.raises((ValidationError, AttributeError)):
         cfg.database.host = "changed"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Tests: proxy settings (BIN-47 / Story 3.1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_proxy_disabled_by_default(tmp_path: Path):
+    """Absent or disabled proxy block exposes defaults with empty pool."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    cfg = load_config(cfg_file)
+
+    assert cfg.proxy.enabled is False
+    assert cfg.proxy.url is None
+    assert cfg.proxy.rotation_strategy == "round_robin"
+    assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_proxy_disabled_explicit(tmp_path: Path):
+    """Explicit proxy.enabled: false keeps url/pool unset."""
+    yaml_content = MINIMAL_YAML + """\
+proxy:
+  enabled: false
+  url: null
+  rotation_strategy: round_robin
+  pool: []
+"""
+    cfg_file = _write_yaml(tmp_path, yaml_content)
+    cfg = load_config(cfg_file)
+
+    assert cfg.proxy.enabled is False
+    assert cfg.proxy.url is None
+    assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_proxy_single_url_mode(tmp_path: Path):
+    """Single-url mode: enabled with one url and empty pool."""
+    yaml_content = MINIMAL_YAML + """\
+proxy:
+  enabled: true
+  url: http://proxy.example:8080
+  rotation_strategy: round_robin
+  pool: []
+"""
+    cfg_file = _write_yaml(tmp_path, yaml_content)
+    cfg = load_config(cfg_file)
+
+    assert cfg.proxy.enabled is True
+    assert cfg.proxy.url == "http://proxy.example:8080"
+    assert cfg.proxy.rotation_strategy == "round_robin"
+    assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_proxy_pool_mode(tmp_path: Path):
+    """Pool mode: enabled with multiple URLs and random strategy."""
+    yaml_content = MINIMAL_YAML + """\
+proxy:
+  enabled: true
+  url: null
+  rotation_strategy: random
+  pool:
+    - http://proxy1.example:8080
+    - http://proxy2.example:8080
+"""
+    cfg_file = _write_yaml(tmp_path, yaml_content)
+    cfg = load_config(cfg_file)
+
+    assert cfg.proxy.enabled is True
+    assert cfg.proxy.url is None
+    assert cfg.proxy.rotation_strategy == "random"
+    assert cfg.proxy.pool == [
+        "http://proxy1.example:8080",
+        "http://proxy2.example:8080",
+    ]
+
+
+@pytest.mark.unit
+def test_proxy_from_default_app_config_yaml():
+    """Real configs/app_config.yaml loads proxy with enabled false."""
+    cfg = get_config()
+    assert cfg.proxy.enabled is False
+    assert cfg.proxy.url is None
+    assert cfg.proxy.rotation_strategy == "round_robin"
+    assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_proxy_invalid_rotation_strategy_raises(tmp_path: Path):
+    """Unknown rotation_strategy fails AppConfig validation."""
+    yaml_content = MINIMAL_YAML + """\
+proxy:
+  enabled: true
+  rotation_strategy: zigzag
+  pool: []
+"""
+    cfg_file = _write_yaml(tmp_path, yaml_content)
+
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(cfg_file)
+
+
+@pytest.mark.unit
+def test_proxy_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """IMOVEIS_PROXY__ENABLED overrides proxy.enabled."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("IMOVEIS_PROXY__ENABLED", "true")
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.proxy.enabled is True
