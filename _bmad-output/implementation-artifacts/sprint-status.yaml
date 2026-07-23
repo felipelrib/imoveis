@@ -1,5 +1,5 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-23T23:30:00-03:00
+# last_updated: 2026-07-23T23:35:00-03:00
 # project: Imoveis — Deal Tracker
 # project_key: NOKEY
 # tracking_system: file-system
@@ -45,7 +45,7 @@
 #   (keep AD-12 property projection before export/digest)
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-23T23:30:00-03:00
+last_updated: 2026-07-23T23:35:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -70,7 +70,7 @@ development_status:
   3-3-operator-enablement-observability: done
   epic-3-retrospective: optional
 
-  epic-4: in-progress
+  epic-4: done
   4-1-export-filtered-properties-api: done
   4-2-export-from-the-properties-ui: done
   4-3-scheduled-top-deals-digest: done
