@@ -62,9 +62,9 @@ def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSea
     """Return all saved searches ordered by most recent."""
     with SessionLocal() as session:
         offset = (page - 1) * page_size
-        
+
         total = session.execute(text("SELECT COUNT(*) FROM saved_searches")).scalar() or 0
-        
+
         rows = session.execute(
             text(
                 "SELECT id, name, filters, created_at "
@@ -73,7 +73,7 @@ def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSea
             ),
             {"limit": page_size, "offset": offset}
         ).fetchall()
-        
+
         items = [
             SavedSearchItem(
                 id=str(r[0]),
@@ -83,7 +83,7 @@ def list_saved_searches(page: int = 1, page_size: int = 50) -> PaginatedSavedSea
             )
             for r in rows
         ]
-        
+
         return PaginatedSavedSearchesResponse(
             items=items,
             total=total,
@@ -173,31 +173,31 @@ def update_saved_search(search_id: str, req: SavedSearchUpdate) -> SavedSearchIt
                 text("SELECT id, name, filters FROM saved_searches WHERE id = :sid"),
                 {"sid": search_id}
             ).fetchone()
-            
+
             if not existing:
                 raise HTTPException(status_code=404, detail="Saved search not found")
-                
+
             update_fields = []
             params = {"sid": search_id}
-            
+
             if req.name is not None:
                 update_fields.append("name = :name")
                 params["name"] = req.name
-                
+
             if req.filters is not None:
                 update_fields.append("filters = :filters")
                 params["filters"] = json.dumps(req.filters.model_dump(exclude_none=True))
-                
+
             if not update_fields:
                 # No updates requested, just return existing
                 return get_saved_search(search_id)
-                
+
             session.execute(
                 text(f"UPDATE saved_searches SET {', '.join(update_fields)} WHERE id = :sid"),
                 params
             )
             session.commit()
-            
+
             logger.info("saved_search_update", search_id=search_id)
             return get_saved_search(search_id)
         except HTTPException:

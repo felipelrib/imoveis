@@ -1,6 +1,8 @@
-from pydantic import BaseModel, ConfigDict
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict
+
 
 class PropertyListingModel(BaseModel):
     platform: str

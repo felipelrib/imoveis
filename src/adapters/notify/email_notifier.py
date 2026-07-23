@@ -1,5 +1,5 @@
-import smtplib
 import json
+import smtplib
 from email.message import EmailMessage
 
 from adapters.notify.base import Notifier, PriceDropAlert
@@ -14,7 +14,7 @@ class EmailNotifier(Notifier):
     def __init__(self):
         self.cfg = get_config().alerts
         self.r = get_redis()
-        
+
     def send(self, alert: PriceDropAlert) -> None:
         if getattr(self.cfg, "digest_mode", False):
             # push to redis list for digest
@@ -33,21 +33,21 @@ class EmailNotifier(Notifier):
     def send_batch(self, alerts: list) -> None:
         if not alerts:
             return
-            
+
         msg = EmailMessage()
         msg['Subject'] = f"Price Drop Alerts ({len(alerts)} properties)"
         msg['From'] = getattr(self.cfg, "smtp_user", "") or "noreply@imoveis.local"
         msg['To'] = getattr(self.cfg, "digest_email", "admin@example.com")
-        
+
         content = "Price Drop Alerts:\n\n"
         for a in alerts:
             if isinstance(a, PriceDropAlert):
                 content += f"- Property {a.property_id}: {a.old_price} -> {a.new_price} (-{a.drop_pct}%)\n"
             else:
                 content += f"- Property {a.get('property_id')}: {a.get('old_price')} -> {a.get('new_price')} (-{a.get('drop_pct')}%)\n"
-            
+
         msg.set_content(content)
-        
+
         try:
             with smtplib.SMTP(getattr(self.cfg, "smtp_host", "localhost"), getattr(self.cfg, "smtp_port", 25)) as server:
                 user = getattr(self.cfg, "smtp_user", "")

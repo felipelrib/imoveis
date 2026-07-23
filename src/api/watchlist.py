@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from api.auth import verify_jwt
 from infra.db import SessionLocal
 from infra.logging import get_logger
-from api.auth import verify_jwt
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
