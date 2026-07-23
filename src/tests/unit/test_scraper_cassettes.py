@@ -49,7 +49,7 @@ class TestQuintoAndarCassettes:
         assert result["area_m2"] == 38.0
         assert result["bedrooms"] == 1
         assert result["location"] == {"lat": -19.937, "lon": -43.938}
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(179.0)
         assert rent["raw_json"]["fees_bundled"] is True
 
@@ -57,7 +57,7 @@ class TestQuintoAndarCassettes:
         data = _load_next_data("quintoandar_detail.html")
         house = data["props"]["pageProps"]["initialState"]["houses"]["895549038"]
         result = qa_scraper.normalize(house)
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(120.0)
         assert rent["iptu"] == pytest.approx(59.0)
         assert rent["raw_json"].get("fees_bundled") is None

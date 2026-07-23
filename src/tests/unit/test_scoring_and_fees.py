@@ -38,7 +38,7 @@ def _qa_raw(**overrides):
 class TestQuintoAndarFees:
     def test_derives_bundled_fees_from_total_minus_base(self, qa_scraper):
         result = qa_scraper.normalize(_qa_raw())
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["price"] == 929
         assert rent["raw_json"]["partial_price"] == 750
         assert rent["condo_fee"] == pytest.approx(179.0)
@@ -49,7 +49,7 @@ class TestQuintoAndarFees:
         result = qa_scraper.normalize(
             _qa_raw(condoFee=120, iptu=59, condoIptu=None, totalCost=929)
         )
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(120.0)
         assert rent["iptu"] == pytest.approx(59.0)
         assert rent["raw_json"].get("fees_bundled") is None
@@ -58,7 +58,7 @@ class TestQuintoAndarFees:
         result = qa_scraper.normalize(
             _qa_raw(condoIptu=179, totalCost=929, rentPrice=750)
         )
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(179.0)
         assert rent["iptu"] is None
         assert rent["raw_json"]["fees_bundled"] is True
@@ -67,13 +67,13 @@ class TestQuintoAndarFees:
         result = qa_scraper.normalize(
             _qa_raw(rentPrice=900, totalCost=900, condoFee=None, iptu=None, condoIptu=None)
         )
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] is None
         assert rent["iptu"] is None
         assert rent["price"] == 900
 
     def test_equal_total_and_base_no_phantom_fees(self, qa_scraper):
         result = qa_scraper.normalize(_qa_raw(rentPrice=900, totalCost=900))
-        rent = next(l for l in result["listings"] if l["listing_type"] == "rent")
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] is None
         assert rent["iptu"] is None
