@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from api.auth import Principal, verify_api_key
 from infra.db import SessionLocal
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/favourites", tags=["favourites"])
+router = APIRouter(
+    prefix="/favourites",
+    tags=["favourites"],
+    dependencies=[Depends(verify_api_key)],
+)
+
+CurrentPrincipal = Annotated[Principal, Depends(verify_api_key)]
 
 _RESP_404 = {404: {"description": "Not found"}}
 _RESP_409 = {409: {"description": "Conflict"}}
@@ -50,12 +57,19 @@ class PaginatedFavouritesResponse(BaseModel):
 
 
 @router.get("")
-def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesResponse:
-    """Return all favourites with property details."""
+def list_favourites(
+    principal: CurrentPrincipal,
+    page: int = 1,
+    page_size: int = 50,
+) -> PaginatedFavouritesResponse:
+    """Return favourites for the authenticated principal."""
     with SessionLocal() as session:
         offset = (page - 1) * page_size
 
-        total = session.execute(text("SELECT COUNT(*) FROM favourites")).scalar() or 0
+        total = session.execute(
+            text("SELECT COUNT(*) FROM favourites WHERE owner = :owner"),
+            {"owner": principal.id},
+        ).scalar() or 0
 
         rows = session.execute(
             text(
@@ -66,10 +80,11 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
                 "JOIN properties p ON p.id = f.property_id "
                 "LEFT JOIN metrics_scoring ms ON ms.property_id = f.property_id "
                 "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
+                "WHERE f.owner = :owner "
                 "ORDER BY f.created_at DESC "
                 "LIMIT :limit OFFSET :offset"
             ),
-            {"limit": page_size, "offset": offset}
+            {"owner": principal.id, "limit": page_size, "offset": offset},
         ).fetchall()
 
         items = [
@@ -92,13 +107,13 @@ def list_favourites(page: int = 1, page_size: int = 50) -> PaginatedFavouritesRe
             items=items,
             total=total,
             page=page,
-            page_size=page_size
+            page_size=page_size,
         )
 
 
 @router.post("", status_code=201, responses={**_RESP_404, **_RESP_409, **_RESP_500})
-def add_favourite(req: FavouriteCreate) -> FavouriteItem:
-    """Add a property to favourites."""
+def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> FavouriteItem:
+    """Add a property to favourites for the authenticated principal."""
     import uuid
     from datetime import datetime, timezone
 
@@ -106,7 +121,6 @@ def add_favourite(req: FavouriteCreate) -> FavouriteItem:
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
         try:
-            # Verify property exists
             prop = session.execute(
                 text("SELECT id FROM properties WHERE id = :pid"),
                 {"pid": req.property_id},
@@ -116,17 +130,26 @@ def add_favourite(req: FavouriteCreate) -> FavouriteItem:
 
             result = session.execute(
                 text(
-                    "INSERT INTO favourites (id, property_id, created_at) "
-                    "VALUES (:id, :pid, :now) "
-                    "ON CONFLICT (property_id) DO NOTHING "
+                    "INSERT INTO favourites (id, property_id, owner, created_at) "
+                    "VALUES (:id, :pid, :owner, :now) "
+                    "ON CONFLICT (owner, property_id) DO NOTHING "
                     "RETURNING id"
                 ),
-                {"id": fav_id, "pid": req.property_id, "now": now},
+                {
+                    "id": fav_id,
+                    "pid": req.property_id,
+                    "owner": principal.id,
+                    "now": now,
+                },
             )
             if result.rowcount == 0:
                 raise HTTPException(status_code=409, detail="Property already favourited")
             session.commit()
-            logger.info("favourite_add", property_id=req.property_id)
+            logger.info(
+                "favourite_add",
+                property_id=req.property_id,
+                owner=principal.id,
+            )
             return FavouriteItem(
                 id=fav_id,
                 property_id=req.property_id,
@@ -140,18 +163,27 @@ def add_favourite(req: FavouriteCreate) -> FavouriteItem:
 
 
 @router.delete("/{property_id}", responses={**_RESP_404, **_RESP_500})
-def remove_favourite(property_id: str) -> Dict[str, str]:
-    """Remove a property from favourites."""
+def remove_favourite(
+    property_id: str, principal: CurrentPrincipal
+) -> Dict[str, str]:
+    """Remove a property from favourites for the authenticated principal."""
     with SessionLocal() as session:
         try:
             result = session.execute(
-                text("DELETE FROM favourites WHERE property_id = :pid"),
-                {"pid": property_id},
+                text(
+                    "DELETE FROM favourites "
+                    "WHERE property_id = :pid AND owner = :owner"
+                ),
+                {"pid": property_id, "owner": principal.id},
             )
             session.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Property not in favourites")
-            logger.info("favourite_remove", property_id=property_id)
+            logger.info(
+                "favourite_remove",
+                property_id=property_id,
+                owner=principal.id,
+            )
             return {"status": "removed", "property_id": property_id}
         except HTTPException:
             raise
@@ -161,12 +193,17 @@ def remove_favourite(property_id: str) -> Dict[str, str]:
 
 
 @router.get("/check/{property_id}")
-def check_favourite(property_id: str) -> Dict[str, Any]:
-    """Check if a specific property is favourited."""
+def check_favourite(
+    property_id: str, principal: CurrentPrincipal
+) -> Dict[str, Any]:
+    """Check if a specific property is favourited by the principal."""
     with SessionLocal() as session:
         row = session.execute(
-            text("SELECT id, created_at FROM favourites WHERE property_id = :pid"),
-            {"pid": property_id},
+            text(
+                "SELECT id, created_at FROM favourites "
+                "WHERE property_id = :pid AND owner = :owner"
+            ),
+            {"pid": property_id, "owner": principal.id},
         ).fetchone()
         if row is None:
             return {"favourited": False}

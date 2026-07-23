@@ -215,31 +215,18 @@ export async function checkWatchlist(propertyId) {
 
 export async function fetchSavedSearches(page = 1, pageSize = 50) {
   const params = new URLSearchParams({ page, page_size: pageSize })
-  const r = await fetch(`${BASE}/saved-searches?${params}`)
-  if (!r.ok) throw new Error('Saved searches fetch failed')
-  return r.json()
+  return apiFetch(`/saved-searches?${params}`)
 }
 
 export async function saveSearch(name, filters) {
-  const r = await fetch(`${BASE}/saved-searches`, {
+  return apiFetch('/saved-searches', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, filters }),
+    body: { name, filters },
   })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Save search failed')
-  }
-  return r.json()
 }
 
 export async function deleteSavedSearch(id) {
-  const r = await fetch(`${BASE}/saved-searches/${id}`, { method: 'DELETE' })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Delete saved search failed')
-  }
-  return r.json()
+  return apiFetch(`/saved-searches/${id}`, { method: 'DELETE' })
 }
 
 // ---------------------------------------------------------------------------
@@ -248,37 +235,22 @@ export async function deleteSavedSearch(id) {
 
 export async function fetchFavourites({ page = 1, pageSize = 50, sortBy = 'combined_score', sortDir = 'desc' } = {}) {
   const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_dir: sortDir })
-  const r = await fetch(`${BASE}/favourites?${params}`)
-  if (!r.ok) throw new Error('Favourites fetch failed')
-  return r.json()
+  return apiFetch(`/favourites?${params}`)
 }
 
 export async function addFavourite(propertyId) {
-  const r = await fetch(`${BASE}/favourites`, {
+  return apiFetch('/favourites', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ property_id: propertyId }),
+    body: { property_id: propertyId },
   })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Add favourite failed')
-  }
-  return r.json()
 }
 
 export async function removeFavourite(propertyId) {
-  const r = await fetch(`${BASE}/favourites/${propertyId}`, { method: 'DELETE' })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Remove favourite failed')
-  }
-  return r.json()
+  return apiFetch(`/favourites/${propertyId}`, { method: 'DELETE' })
 }
 
 export async function checkFavourite(propertyId) {
-  const r = await fetch(`${BASE}/favourites/check/${propertyId}`)
-  if (!r.ok) throw new Error('Check favourite failed')
-  return r.json()
+  return apiFetch(`/favourites/check/${propertyId}`)
 }
 
 // ---------------------------------------------------------------------------

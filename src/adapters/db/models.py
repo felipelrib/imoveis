@@ -192,13 +192,13 @@ class Watchlist(Base):
         nullable=False,
         index=True,
     )
-    user_id = Column(String, nullable=True)
+    owner = Column(String, nullable=True)  # Principal.id (AD-11)
     min_drop_pct = Column(Float, default=5.0, nullable=False)
     last_notified_price = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
     __table_args__ = (
-        sa.UniqueConstraint("property_id", name="uq_watchlist_property"),
+        sa.UniqueConstraint("owner", "property_id", name="uq_watchlist_owner_property"),
     )
 
 
@@ -213,7 +213,7 @@ class SavedSearch(Base):
     )
     name = Column(String, nullable=False)
     filters = Column(sa.JSON, nullable=False)
-    owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
+    owner = Column(String, nullable=True)  # Principal.id (AD-11)
     created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
 
@@ -232,11 +232,11 @@ class Favourite(Base):
         nullable=False,
         index=True,
     )
-    owner = Column(UUID(as_uuid=True), nullable=True)  # for future auth
+    owner = Column(String, nullable=True)  # Principal.id (AD-11)
     created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
     __table_args__ = (
-        sa.UniqueConstraint("property_id", name="uq_favourite_property"),
+        sa.UniqueConstraint("owner", "property_id", name="uq_favourite_owner_property"),
     )
 
 
