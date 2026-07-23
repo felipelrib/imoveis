@@ -28,6 +28,9 @@ jobs:
 
       - name: Run pre-commit (matches local hooks exactly)
         uses: pre-commit/action@v3.0.1
+        env:
+          # Hook only makes sense on local commits; CI checkout is often on main.
+          SKIP: no-commit-to-branch
 
   unit:
     runs-on: ubuntu-latest
@@ -214,6 +217,9 @@ jobs:
   security-scan:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -230,20 +236,4 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-  docs:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install MkDocs
-        run: pip install mkdocs-material
-
-      - name: Deploy docs
-        run: mkdocs gh-deploy --force
+  # MkDocs deploy lives in docs.yml (GitHub Pages). Do not duplicate here.
