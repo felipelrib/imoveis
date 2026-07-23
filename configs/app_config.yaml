@@ -68,6 +68,8 @@ ai:
   visual_weight: 0.6
   text_weight: 0.4
   max_images_per_property: 5
+  max_description_chars: 1000
+  output_language: "pt-br"
 
 # ---------------------------------------------------------------------------
 # GPU Resource Management

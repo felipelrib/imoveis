@@ -129,6 +129,8 @@ class AIConfig(BaseModel, frozen=True):
     visual_weight: float = 0.6
     text_weight: float = 0.4
     max_images_per_property: int = 5
+    max_description_chars: int = 1000
+    output_language: str = "pt-br"
 
 
 class PlatformConfig(BaseModel, frozen=True):

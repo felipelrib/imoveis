@@ -156,11 +156,14 @@ class LocalAIClient(ABC):
         """
         try:
             from adapters.ai.prompts import build_deal_verdict_prompt
+            from infra.config import get_config
+            cfg = get_config()
             prompt = build_deal_verdict_prompt(
                 stat_analysis=stat_analysis,
                 visual=visual,
                 sentiment=sentiment,
                 neighborhood_name=neighborhood_name,
+                output_language=cfg.ai.output_language,
             )
             # Subclasses override to call their specific LLM endpoint
             result = await self._llm_verdict(prompt)

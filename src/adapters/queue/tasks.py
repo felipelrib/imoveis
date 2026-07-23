@@ -273,11 +273,14 @@ def ai_enrich(
 
                 # --- Build prompts -------------------------------------------------
                 visual_prompt = build_visual_condition_prompt(len(paths))
-                sentiment_prompt = build_sentiment_prompt(description)
+                sentiment_prompt = build_sentiment_prompt(description, max_chars=cfg.ai.max_description_chars)
 
-                # --- AI inference --------------------------------------------------
-                v_res = await client.analyze_visuals(paths, visual_prompt)
-                s_res = await client.analyze_text(description, sentiment_prompt)
+                # --- AI inference (Parallelized) ---
+                import asyncio
+                v_res, s_res = await asyncio.gather(
+                    client.analyze_visuals(paths, visual_prompt),
+                    client.analyze_text(description, sentiment_prompt)
+                )
 
                 # Weighted blend: visual condition 60%, location sentiment 40%
                 a_score = v_res.condition_score * cfg.ai.visual_weight + s_res.sentiment_score * cfg.ai.text_weight

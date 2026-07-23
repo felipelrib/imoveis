@@ -70,14 +70,7 @@ None.
 
 ## Notes / Follow-ups
 
-- **Token usage limits**: The consolidated context length for the deal verdict can be
-  large if `description` is verbose. Prompt truncation might be needed if switching to
-  a model with a strict 4k context window (currently assumed 8k+ for Llama 3).
-- **Latency impact**: Adding a third sequential VLM call inside `ai_enrich` adds ~2-5s
-  to the task duration. Since they don't depend on each other, `analyze_visuals` and
-  `analyze_text` could be gathered concurrently using `asyncio.gather()`, with
-  `summarize_deal` waiting on their results.
-- **Language configuration**: The prompt forces a Portuguese (`pt-br`) output. This
-  should be moved to `app_config.yaml` to support multi-region scaling.
-- Future: `POST /admin/verdict/recompute` to regenerate all verdicts after prompt tuning
-  without re-running the full enrichment pipeline.
+- ~~**Token usage limits**~~ — FIXED (added config `ai.max_description_chars`)
+- ~~**Latency impact**~~ — FIXED (parallelized `analyze_visuals` and `analyze_text` with `asyncio.gather`)
+- ~~**Language configuration**~~ — FIXED (added config `ai.output_language`)
+- ~~Future: `POST /admin/verdict/recompute`~~ — FIXED (added endpoint)

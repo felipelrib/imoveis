@@ -86,7 +86,7 @@ Now analyze the provided photo(s) and return the JSON object.\
 # ---------------------------------------------------------------------------
 
 
-def build_sentiment_prompt(description: str) -> str:
+def build_sentiment_prompt(description: str, max_chars: int = 1000) -> str:
     """Return a prompt that asks the LLM to evaluate a property description.
 
     The model should identify positive and negative location/lifestyle
@@ -96,7 +96,10 @@ def build_sentiment_prompt(description: str) -> str:
     ----------
     description:
         The raw property listing description text.
+    max_chars:
+        Truncate description to this length.
     """
+    truncated_desc = description[:max_chars] if description else ""
     return f"""\
 You are a real-estate location and lifestyle evaluator.
 You will receive a property listing description in Portuguese (Brazil).
@@ -154,7 +157,7 @@ Where:
 Now analyze the following property description and return the JSON object.
 
 ---
-{description}\
+{truncated_desc}\
 """
 
 
@@ -168,6 +171,7 @@ def build_deal_verdict_prompt(
     visual: dict | None = None,
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
+    output_language: str = "pt-br",
 ) -> str:
     """Return a prompt that asks the LLM to produce a concise PT-BR deal verdict.
 
@@ -196,9 +200,9 @@ def build_deal_verdict_prompt(
     green_flags = (sentiment or {}).get("green_flags", [])
 
     red_flags_str = ", ".join(red_flags) if red_flags else "nenhum"
-    green_flags_str = ", ".join(green_flags) if green_flags else "nenhum"
+    green_flags_str = ", ".join(green_flags) if green_flags else "none"
 
-    return f"""You are a Brazilian real-estate deal evaluator.  Given three analysis signals for a property in {neighborhood_name or "N/A"}, write a SHORT 1-2 sentence verdict in Portuguese (Brazil) that fuses them into a single punchline.
+    return f"""You are a real-estate deal evaluator. Given three analysis signals for a property in {neighborhood_name or "N/A"}, write a SHORT 1-2 sentence verdict in {output_language} that fuses them into a single punchline.
 
 **Statistical Analysis**: {stat_cat}
 {stat_reason}
@@ -218,6 +222,6 @@ If signals conflict, mention the tension briefly.
 
 Return ONLY a JSON object — no markdown fences, no explanation:
 
-{{"verdict": "<PT-BR sentence>", "confidence": <float 0.0 to 1.0>}}
+{{"verdict": "<{output_language} sentence>", "confidence": <float 0.0 to 1.0>}}
 
 Now produce the verdict JSON object."""

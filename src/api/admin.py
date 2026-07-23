@@ -203,3 +203,39 @@ def update_schedule(payload: ScheduleUpdateRequest):
         "effective": "next_beat_restart",
         "workaround": "Restart Celery beat with: docker-compose restart celery-beat"
     }
+
+
+# ---------------------------------------------------------------------------
+# Deal Verdict Recomputation
+# ---------------------------------------------------------------------------
+
+@router.post("/verdict/recompute")
+def recompute_verdicts():
+    """Query properties where metrics_scoring.meta->'deal_verdict' IS NULL
+    and dispatch ai_enrich for each.
+    """
+    from adapters.queue.tasks import ai_enrich
+    from adapters.db.models import MetricsScoring, Property
+    from sqlalchemy import text
+    
+    count = 0
+    with SessionLocal() as session:
+        try:
+            # Find properties that need deal verdict recomputation
+            query = session.query(Property, MetricsScoring).join(
+                MetricsScoring, Property.id == MetricsScoring.property_id
+            ).filter(
+                text("metrics_scoring.meta->'deal_verdict' IS NULL")
+            )
+            
+            for prop, ms in query:
+                image_urls = prop.image_urls or []
+                description = prop.description or ""
+                ai_enrich.delay(str(prop.id), image_urls, description)
+                count += 1
+        except Exception as exc:
+            logger.error("verdict_recompute_failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
+            
+    logger.info("verdicts_recompute_queued", count=count)
+    return {"queued_recomputations": count}
