@@ -483,23 +483,109 @@ class TestOLXFetchLifecycle:
         assert result[0]["listId"] == 42
 
     def test_fetch_pages_obeys_checkpoint_type_and_stops_empty_page(self, scraper):
-        scraper._RENT_PATHS = ["rent"]
-        scraper._SALE_PATHS = ["sale"]
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = ["venda/apartamentos/estado-mg/bh"]
+        scraper._price_rent = (500, 15000)
         scraper._max_pages = 3
+        scraper._page_size_hint = 50
+        scraper._neighborhoods = []
         scraper._fetch_page_listings = MagicMock(
             side_effect=[[{"list_id": "first"}], [], [{"list_id": "unused"}], []]
         )
 
         listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
 
-        assert listings == [{"list_id": "first", "_olx_url": "https://www.olx.com.br/imoveis/rent?o=1"}]
+        assert len(listings) == 1
+        assert listings[0]["list_id"] == "first"
+        assert "ps=500" in listings[0]["_olx_url"]
+        assert "pe=15000" in listings[0]["_olx_url"]
         assert scraper._fetch_page_listings.call_count == 2
 
     def test_fetch_pages_uses_both_paths_for_invalid_checkpoint(self, scraper):
-        scraper._RENT_PATHS = ["rent"]
-        scraper._SALE_PATHS = ["sale"]
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = ["venda/apartamentos/estado-mg/bh"]
+        scraper._price_rent = (500, 15000)
+        scraper._price_sale = (100000, 5000000)
         scraper._max_pages = 1
+        scraper._neighborhoods = []
         scraper._fetch_page_listings = MagicMock(return_value=[])
 
         assert list(scraper.fetch_pages("not-a-checkpoint")) == []
         assert scraper._fetch_page_listings.call_count == 2
+
+    def test_fetch_pages_splits_price_when_saturated(self, scraper):
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = []
+        scraper._price_rent = (100, 200)
+        scraper._max_pages = 1
+        scraper._page_size_hint = 2
+        scraper._neighborhoods = []
+
+        def fake_fetch(url, page):
+            if "ps=100&pe=200" in url:
+                return [{"list_id": "a"}, {"list_id": "b"}]
+            if "ps=100&pe=150" in url:
+                return [{"list_id": "c"}]
+            if "ps=151&pe=200" in url:
+                return [{"list_id": "d"}]
+            return []
+
+        scraper._fetch_page_listings = MagicMock(side_effect=fake_fetch)
+        listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
+        ids = {item["list_id"] for item in listings}
+        assert ids == {"c", "d"}
+        assert "a" not in ids  # parent saturated window discarded
+
+    def test_fetch_pages_fans_out_neighborhoods_on_atomic_saturation(self, scraper):
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = []
+        scraper._price_rent = (100, 101)  # atomic — cannot bisect
+        scraper._max_pages = 1
+        scraper._page_size_hint = 2
+        scraper._neighborhoods = [
+            {"slug": "savassi", "zone": "centro-sul"},
+            {"slug": "castelo", "zone": "pampulha"},
+        ]
+
+        def fake_fetch(url, page):
+            if "/centro-sul/savassi" in url:
+                return [{"list_id": "s1"}]
+            if "/pampulha/castelo" in url:
+                return [{"list_id": "c1"}]
+            # City-wide saturated
+            if "ps=100&pe=101" in url and "/centro-sul/" not in url and "/pampulha/" not in url:
+                return [{"list_id": "city1"}, {"list_id": "city2"}]
+            return []
+
+        scraper._fetch_page_listings = MagicMock(side_effect=fake_fetch)
+        listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
+        ids = {item["list_id"] for item in listings}
+        assert ids == {"s1", "c1"}
+        urls = [c.args[0] for c in scraper._fetch_page_listings.call_args_list]
+        assert any("/centro-sul/savassi" in u for u in urls)
+        assert any("/pampulha/castelo" in u for u in urls)
+
+    def test_fetch_pages_dedupes_listing_ids(self, scraper):
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = []
+        scraper._price_rent = (500, 600)
+        scraper._max_pages = 2
+        scraper._page_size_hint = 50
+        scraper._neighborhoods = []
+        scraper._fetch_page_listings = MagicMock(
+            side_effect=[
+                [{"list_id": "dup"}, {"list_id": "a"}],
+                [{"list_id": "dup"}, {"list_id": "b"}],
+            ]
+        )
+        listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
+        assert [x["list_id"] for x in listings] == ["dup", "a", "b"]
+
+    def test_build_search_url_includes_price_and_geo(self, scraper):
+        url = scraper._build_search_url(
+            "aluguel/apartamentos/estado-mg/bh", 2, 1000, 2000, "centro-sul", "savassi"
+        )
+        assert url == (
+            "https://www.olx.com.br/imoveis/aluguel/apartamentos/estado-mg/bh/"
+            "centro-sul/savassi?ps=1000&pe=2000&o=2"
+        )

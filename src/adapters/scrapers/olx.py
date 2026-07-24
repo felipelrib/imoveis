@@ -9,6 +9,7 @@ page's initial state.
 
 from __future__ import annotations
 
+import collections
 import json
 import random
 import re
@@ -18,6 +19,7 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
@@ -27,10 +29,13 @@ logger = get_logger(__name__)
 
 _NON_DIGIT_RE = re.compile(r"[^\d]")
 
+# (category_path, min_p, max_p, zone|None, bairro|None)
+_OlxWindow = tuple[str, int, int, str | None, str | None]
+
 
 @ScraperRegistry.register("olx")
 class OLXScraper(BaseScraper):
-    """Scrapes properties from OLX Brazil using page iteration."""
+    """Scrapes properties from OLX Brazil using adaptive price/geo funneling."""
 
     _BASE_URL = "https://www.olx.com.br/imoveis"
 
@@ -40,19 +45,44 @@ class OLXScraper(BaseScraper):
         self._jitter_min = config.get("jitter_min", 2)
         self._jitter_max = config.get("jitter_max", 6)
         extra = config.get("extra") or {}
-        self._max_pages = extra.get("max_pages", 5)
-        region = extra.get("region", "mg")
-        city_slug = extra.get("city_slug", "belo-horizonte")
+        self._max_pages = int(extra.get("max_pages", 5))
+        self._page_size_hint = int(extra.get("page_size_hint", 50))
+        region = extra.get("region", "estado-mg")
+        city_slug = extra.get("city_slug", "belo-horizonte-e-regiao")
+        self._price_rent = self._parse_price_pair(extra.get("price_rent"), (500, 15000))
+        self._price_sale = self._parse_price_pair(extra.get("price_sale"), (100000, 5000000))
+        self._neighborhoods = self._parse_neighborhoods(extra.get("neighborhoods") or [])
+        # Category paths only (no -e-regiao duplicate); geo fan-out adds zone/bairro.
         self._RENT_PATHS = [
             f"aluguel/apartamentos/{region}/{city_slug}",
-            f"aluguel/apartamentos/{region}/{city_slug}-e-regiao",
             f"aluguel/casas/{region}/{city_slug}",
         ]
         self._SALE_PATHS = [
             f"venda/apartamentos/{region}/{city_slug}",
-            f"venda/apartamentos/{region}/{city_slug}-e-regiao",
             f"venda/casas/{region}/{city_slug}",
         ]
+
+    @staticmethod
+    def _parse_price_pair(value: Any, default: tuple[int, int]) -> tuple[int, int]:
+        if (
+            isinstance(value, (list, tuple))
+            and len(value) == 2
+            and all(isinstance(v, (int, float)) for v in value)
+        ):
+            return int(value[0]), int(value[1])
+        return default
+
+    @staticmethod
+    def _parse_neighborhoods(raw: list) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            slug = item.get("slug")
+            zone = item.get("zone")
+            if slug and zone:
+                out.append({"slug": str(slug), "zone": str(zone)})
+        return out
 
     def start(self) -> None:
         self.session = self.create_http_session()
@@ -95,36 +125,130 @@ class OLXScraper(BaseScraper):
         return response
 
     # ------------------------------------------------------------------
-    # fetch_pages — iterator over raw listing dicts
+    # fetch_pages — adaptive price / geo funnel
     # ------------------------------------------------------------------
 
     def fetch_pages(self, checkpoint: Any = None) -> Iterator[Dict[str, Any]]:
-        """Yield raw listing dicts from OLX search pages.
+        """Yield raw listing dicts via price-first BFS with geo fan-out.
 
-        Iterates over rent and sale paths, page by page, parsing the
-        ``__NEXT_DATA__`` embedded JSON.  Stops when no listings are found
-        or the configured page limit is reached.
+        City-wide windows paginate with ``ps``/``pe``. When a window hits
+        ``max_pages`` with a full last page, the price band is bisected; if
+        the band is atomic, configured neighborhoods are enqueued instead.
         """
         if not isinstance(checkpoint, dict):
             checkpoint = {}
 
-        scrape_type = checkpoint.get("scrape_type", "both")
+        queue: collections.deque[_OlxWindow] = collections.deque(
+            self._initial_windows(checkpoint)
+        )
+        visited: set[_OlxWindow] = set()
+        seen_ids: set[str] = set()
 
+        while queue:
+            window = queue.popleft()
+            if window in visited:
+                continue
+            visited.add(window)
+            path, min_p, max_p, zone, bairro = window
+            collected, saturated = self._fetch_window(path, min_p, max_p, zone, bairro)
+            if not collected and not saturated:
+                continue
+            if saturated:
+                halves = bisect_price(min_p, max_p)
+                if halves:
+                    (lo_a, hi_a), (lo_b, hi_b) = halves
+                    queue.append((path, lo_a, hi_a, zone, bairro))
+                    queue.append((path, lo_b, hi_b, zone, bairro))
+                    logger.info(
+                        "olx_splitting_price_window",
+                        path=path,
+                        min_p=min_p,
+                        max_p=max_p,
+                        zone=zone,
+                        bairro=bairro,
+                    )
+                    continue
+                if zone is None and self._neighborhoods:
+                    for nb in self._neighborhoods:
+                        queue.append((path, min_p, max_p, nb["zone"], nb["slug"]))
+                    logger.info(
+                        "olx_fanout_neighborhoods",
+                        path=path,
+                        min_p=min_p,
+                        max_p=max_p,
+                        count=len(self._neighborhoods),
+                    )
+                    continue
+                logger.warning(
+                    "olx_window_truncated",
+                    path=path,
+                    min_p=min_p,
+                    max_p=max_p,
+                    zone=zone,
+                    bairro=bairro,
+                    collected=len(collected),
+                )
+
+            for listing in unique_by(collected, listing_id_from_raw, seen=seen_ids):
+                yield listing
+
+    def _initial_windows(self, checkpoint: dict) -> list[_OlxWindow]:
+        scrape_type = checkpoint.get("scrape_type", "both")
         paths: list[str] = []
         if scrape_type in ("rent", "both"):
             paths.extend(self._RENT_PATHS)
         if scrape_type in ("sale", "both"):
             paths.extend(self._SALE_PATHS)
-
+        windows: list[_OlxWindow] = []
         for path in paths:
-            for page in range(1, self._max_pages + 1):
-                url = f"{self._BASE_URL}/{path}?o={page}"
-                listings = self._fetch_page_listings(url, page)
-                if not listings:
-                    break
-                for listing in listings:
-                    listing["_olx_url"] = url
-                    yield listing
+            min_p, max_p = self._price_band_for_path(path)
+            windows.append((path, min_p, max_p, None, None))
+        return windows
+
+    def _price_band_for_path(self, path: str) -> tuple[int, int]:
+        if path.startswith("aluguel"):
+            return self._price_rent
+        return self._price_sale
+
+    def _build_search_url(
+        self,
+        path: str,
+        page: int,
+        min_p: int,
+        max_p: int,
+        zone: str | None,
+        bairro: str | None,
+    ) -> str:
+        geo = f"{path}/{zone}/{bairro}" if zone and bairro else path
+        return f"{self._BASE_URL}/{geo}?ps={min_p}&pe={max_p}&o={page}"
+
+    def _fetch_window(
+        self,
+        path: str,
+        min_p: int,
+        max_p: int,
+        zone: str | None,
+        bairro: str | None,
+    ) -> tuple[list[dict], bool]:
+        """Return (listings, saturated). Saturated = hit max_pages with a full last page."""
+        collected: list[dict] = []
+        last_page_count = 0
+        pages_fetched = 0
+        for page in range(1, self._max_pages + 1):
+            url = self._build_search_url(path, page, min_p, max_p, zone, bairro)
+            listings = self._fetch_page_listings(url, page)
+            pages_fetched += 1
+            if not listings:
+                break
+            last_page_count = len(listings)
+            for listing in listings:
+                listing["_olx_url"] = url
+                collected.append(listing)
+        saturated = (
+            pages_fetched >= self._max_pages
+            and last_page_count >= self._page_size_hint
+        )
+        return collected, saturated
 
     def _fetch_page_listings(self, url: str, page: int) -> list[dict]:
         logger.info("olx_fetching_page", url=url, page=page)
