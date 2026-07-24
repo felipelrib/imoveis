@@ -231,6 +231,19 @@ class ProxyConfig(BaseModel, frozen=True):
     pool: list[str] = Field(default_factory=list)
 
 
+class DedupConfig(BaseModel, frozen=True):
+    """Deduplication thresholds loaded from the ``dedup:`` YAML block.
+
+    Consumed by ``tasks.scrape_listings`` when matching scraped candidates
+    against existing properties.
+    """
+
+    radius_m: float = 50.0
+    area_tolerance_m2: float = 2.0
+    text_similarity_threshold: float = 0.65
+    text_similarity_algorithm: str = "jaro_winkler"
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -253,6 +266,7 @@ class AppConfig(BaseModel, frozen=True):
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
     image_storage_path: str = "data/images"
 
 

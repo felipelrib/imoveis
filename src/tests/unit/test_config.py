@@ -443,6 +443,41 @@ def test_proxy_from_default_app_config_yaml():
 
 
 @pytest.mark.unit
+def test_dedup_from_default_app_config_yaml():
+    """Real configs/app_config.yaml loads dedup thresholds used by scrape_listings."""
+    cfg = get_config()
+    assert cfg.dedup.radius_m == 50.0
+    assert cfg.dedup.area_tolerance_m2 == 2.0
+    assert cfg.dedup.text_similarity_threshold == 0.65
+    assert cfg.dedup.text_similarity_algorithm == "jaro_winkler"
+
+
+@pytest.mark.unit
+def test_dedup_defaults_when_absent(tmp_path: Path):
+    """Missing dedup block still exposes DedupConfig defaults."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    cfg = load_config(cfg_file)
+    assert cfg.dedup.radius_m == 50.0
+    assert cfg.dedup.text_similarity_threshold == 0.65
+
+
+@pytest.mark.unit
+def test_dedup_yaml_overrides(tmp_path: Path):
+    yaml_content = MINIMAL_YAML + """\
+dedup:
+  radius_m: 25.0
+  area_tolerance_m2: 4.0
+  text_similarity_threshold: 0.8
+  text_similarity_algorithm: token_sort
+"""
+    cfg = load_config(_write_yaml(tmp_path, yaml_content))
+    assert cfg.dedup.radius_m == 25.0
+    assert cfg.dedup.area_tolerance_m2 == 4.0
+    assert cfg.dedup.text_similarity_threshold == 0.8
+    assert cfg.dedup.text_similarity_algorithm == "token_sort"
+
+
+@pytest.mark.unit
 def test_proxy_invalid_rotation_strategy_raises(tmp_path: Path):
     """Unknown rotation_strategy fails AppConfig validation."""
     yaml_content = MINIMAL_YAML + """\
