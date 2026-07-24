@@ -758,8 +758,8 @@ function getPlatformCount(listings) {
 }
 
 function formatListingType(type) {
-  if (type === 'rent') return 'ALUGUEL'
-  return 'VENDA'
+  if (type === 'rent') return 'RENT'
+  return 'SALE'
 }
 
 function listingTypeColor(type) {
@@ -855,7 +855,7 @@ function PropertyCard({
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {platformCount > 1 && (
               <span style={{ padding: '2px 6px', fontSize: 9, background: 'rgba(251,191,36,0.15)', color: '#fbbf24', borderRadius: 4, fontWeight: 700 }}>
-                {platformCount} plataformas
+                {platformCount} platforms
               </span>
             )}
             <div
@@ -892,7 +892,7 @@ function PropertyCard({
             </div>
           </div>
         </div>
-        <div className="property-title">{p.title || p.address || 'Sem título'}</div>
+        <div className="property-title">{p.title || p.address || 'Untitled'}</div>
         {p.deal_summary && (
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent, #6366f1)', marginTop: 6, lineHeight: 1.4 }}>
             💡 {p.deal_summary}

@@ -28,6 +28,13 @@ redis_url: redis://localhost:6379/0
 # Platform Scrapers
 # ---------------------------------------------------------------------------
 scraping:
+  # Reject listings whose city/state fall outside operator geo (BIN-68).
+  geo_allowlist:
+    enabled: true
+    cities:
+      - Belo Horizonte
+    states:
+      - MG
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil
@@ -166,7 +173,7 @@ ai:
   text_weight: 0.4
   max_images_per_property: 5
   max_description_chars: 1000
-  output_language: "pt-br"
+  output_language: "en"
 
 # ---------------------------------------------------------------------------
 # GPU Resource Management

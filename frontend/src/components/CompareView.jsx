@@ -249,7 +249,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                               <Legend wrapperStyle={{ fontSize: 10, color: 'var(--text-muted)' }} />
                               {lineKeys.map((key, i) => {
                                 const [type, platform] = key.split('|')
-                                const label = `${type === 'rent' ? 'Aluguel' : 'Venda'} (${platform})`
+                                const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${platform})`
                                 return (
                                   <Line
                                     key={key}

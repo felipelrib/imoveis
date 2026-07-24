@@ -182,7 +182,9 @@ LISTINGS_JSON_AGG = """
                 'is_furnished', pl.is_furnished,
                 'accepts_pets', pl.accepts_pets,
                 'condo_fee', pl.condo_fee,
-                'iptu', pl.iptu
+                'iptu', pl.iptu,
+                'base_price', pl.base_price,
+                'fees_bundled', (pl.raw_json->>'fees_bundled')::boolean
             )
         )
         FROM property_listings pl

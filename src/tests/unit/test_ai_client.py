@@ -555,7 +555,7 @@ class TestSummarizeAndSession:
         with patch("adapters.ai.prompts.build_deal_verdict_prompt", side_effect=RuntimeError("boom")):
             result = asyncio.run(client.summarize_deal(None, None, None, None))
         assert result.confidence == 0.0
-        assert "Sem dados" in result.verdict
+        assert "Not enough data" in result.verdict
 
     def test_session_context_sets_and_clears_session(self):
         client = OllamaClient()

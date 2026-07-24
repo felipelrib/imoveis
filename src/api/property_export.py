@@ -71,6 +71,7 @@ _PRIMARY_LISTING_COLUMNS: tuple[str, ...] = (
     "accepts_pets",
     "condo_fee",
     "iptu",
+    "base_price",
 )
 
 CSV_COLUMNS: tuple[str, ...] = (

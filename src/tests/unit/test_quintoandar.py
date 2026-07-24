@@ -224,3 +224,29 @@ class TestQuintoAndarNormalizeLocation:
         }
         result = s.normalize(raw)
         assert result["parking"] == 2
+        assert result["props_json"]["city"] == "BH"
+        assert result["listings"][0]["base_price"] == 2000.0
+
+    def test_pets_amenity_maps_to_accepts_pets(self):
+        s = _scraper()
+        raw = {
+            "id": 42,
+            "rentPrice": 3000,
+            "salePrice": 0,
+            "totalCost": 3500,
+            "area": 70,
+            "bedrooms": 2,
+            "bathrooms": 1,
+            "parkingSpots": 1,
+            "isFurnished": True,
+            "amenities": ["PODE_TER_ANIMAIS_DE_ESTIMACAO"],
+            "address": {"address": "Rua B", "city": "Belo Horizonte"},
+            "neighbourhood": "Savassi",
+            "photos": [],
+        }
+        result = s.normalize(raw)
+        assert result["listings"][0]["accepts_pets"] is True
+        assert result["listings"][0]["is_furnished"] is True
+        assert result["listings"][0]["base_price"] == 3000.0
+        assert result["props_json"]["city"] == "Belo Horizonte"
+        assert result["props_json"]["state"] == "MG"

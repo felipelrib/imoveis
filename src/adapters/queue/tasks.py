@@ -34,6 +34,7 @@ from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
+from core.geo_allowlist import passes_geo_allowlist
 from core.neighbourhood_assignment import assign_property_neighbourhood
 from infra.config import get_config
 from infra.db import SessionLocal
@@ -196,6 +197,23 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     continue
                 if outcome == "error":
                     errors += 1
+                    continue
+
+                geo = cfg.scraping.geo_allowlist
+                allowed, reject_reason = passes_geo_allowlist(
+                    candidate,
+                    cities=geo.cities,
+                    states=geo.states,
+                    enabled=geo.enabled,
+                )
+                if not allowed:
+                    logger.info(
+                        "scrape_geo_rejected",
+                        platform=platform_name,
+                        reason=reject_reason,
+                        address=getattr(candidate, "address", None),
+                    )
+                    skipped += 1
                     continue
 
                 try:

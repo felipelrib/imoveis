@@ -56,11 +56,11 @@ class DealVerdictResult(BaseModel):
 def _template_stat_part(stat_analysis: dict | None) -> str | None:
     category = (stat_analysis or {}).get("category")
     labels = {
-        "Highly Undervalued": "Altamente subvalorizado",
-        "Slightly Undervalued": "Ligeiramente subvalorizado",
-        "Average": "Preço dentro da média",
-        "Slightly Overvalued": "Ligeiramente acima da média",
-        "Highly Overvalued": "Altamente acima da média",
+        "Highly Undervalued": "Highly undervalued",
+        "Slightly Undervalued": "Slightly undervalued",
+        "Average": "Priced near the neighbourhood average",
+        "Slightly Overvalued": "Slightly above neighbourhood average",
+        "Highly Overvalued": "Highly above neighbourhood average",
     }
     return labels.get(category, category) if category else None
 
@@ -68,11 +68,11 @@ def _template_stat_part(stat_analysis: dict | None) -> str | None:
 def _template_visual_part(visual: dict | None) -> str | None:
     category = (visual or {}).get("category")
     labels = {
-        "Pristine": "excelente estado",
-        "Good": "boa condição",
-        "Average": "estado razoável",
-        "Needs Renovation": "precisa de reforma",
-        "Poor": "estado precário",
+        "Pristine": "excellent condition",
+        "Good": "good condition",
+        "Average": "average condition",
+        "Needs Renovation": "needs renovation",
+        "Poor": "poor condition",
     }
     return labels.get(category, category.lower()) if category else None
 
@@ -85,11 +85,14 @@ def _template_sentiment_parts(sentiment: dict | None) -> list[str]:
     red_flags = red_flags if isinstance(red_flags, list) else []
     green_flags = green_flags if isinstance(green_flags, list) else []
     location_part = (
-        "sem alertas" if not red_flags
-        else "1 preocupação na localização" if len(red_flags) == 1
-        else f"{len(red_flags)} preocupações na localização"
+        "no location alerts" if not red_flags
+        else "1 location concern" if len(red_flags) == 1
+        else f"{len(red_flags)} location concerns"
     )
-    return [location_part, *([f"{len(green_flags)} aspectos positivos"] if len(green_flags) >= 2 else [])]
+    return [
+        location_part,
+        *([f"{len(green_flags)} positive location signals"] if len(green_flags) >= 2 else []),
+    ]
 
 
 def template_deal_verdict(
@@ -98,7 +101,7 @@ def template_deal_verdict(
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
 ) -> str:
-    """Deterministic PT-BR deal verdict from the three scoring signals.
+    """Deterministic English deal verdict from the three scoring signals.
 
     Works without GPU/LLM.  Returns a concise sentence combining:
     - Statistical positioning relative to neighbourhood median
@@ -113,7 +116,7 @@ def template_deal_verdict(
     ...     sentiment={"category": "Highly Desirable", "reasoning": "...", "red_flags": []},
     ...     neighborhood_name="Savassi",
     ... )
-    'Ligeiramente subvalorizado — boa condição, localização desejável, sem alertas'
+    'Slightly undervalued — good condition, no location alerts'
     """
     del neighborhood_name  # The template intentionally remains neighborhood-agnostic.
     parts = [
@@ -124,7 +127,7 @@ def template_deal_verdict(
     parts.extend(_template_sentiment_parts(sentiment))
 
     if not parts:
-        return "Sem dados suficientes para avaliação"
+        return "Not enough data for a deal verdict"
 
     # Join with em-dash for first part, commas for rest
     if len(parts) == 1:

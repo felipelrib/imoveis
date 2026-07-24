@@ -153,7 +153,7 @@ flowchart TB
 | Concern | Convention |
 | --- | --- |
 | Naming | Packages under `src/` match roles above; scrapers register by platform slug; Celery queues `scrapers` / `ai` |
-| Data & formats | Property/Listing as AD-3; projections as AD-12; API errors non-blocking for UI toasts; AI verdicts default `pt-br` |
+| Data & formats | Property/Listing as AD-3; projections as AD-12; API errors non-blocking for UI toasts; AI verdicts default English (NFR-7; BIN-64) |
 | Geography | Product focus BH/MG until multi-city is explicitly productized; config may allow more, UX stays BH-first |
 | State & cross-cutting | Mutations per AD-3/10; config AD-2; auth AD-6/11; logging via `infra.logging`; FR-17 telemetry via `api` system/admin + existing metrics adapters — no second telemetry bus |
 | Tests / merge | Green agent gates (`validate.sh`, scraper live gate when scrapers change) before merge — process companion to design co-existence |

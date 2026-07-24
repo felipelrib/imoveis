@@ -59,7 +59,7 @@ FR-7: Configurable local AI backends — Operator can select Ollama/LM Studio an
 
 FR-8: Visual + text enrichment — System attaches visual condition and sentiment-style signals from local models. Realizes UJ-1.
 
-FR-9: Deal verdict — Each enriched Property presents a PT-BR deal verdict on the card/modal. Realizes UJ-1.
+FR-9: Deal verdict — Each enriched Property presents an English deal verdict on the card/modal. Realizes UJ-1. [Correct-course 2026-07-24 BIN-64.]
 
 FR-10: Statistical scoring — System computes neighbourhood-relative scores and a combined score for colouring. Realizes UJ-1.
 
@@ -105,7 +105,7 @@ NFR-5: Testability — Merge requires green CI (lint, unit, integration, contrac
 
 NFR-6: Observability — Pipeline telemetry and system health endpoints support unattended operation (UJ-3).
 
-NFR-7: i18n — User-facing AI verdicts default to `pt-br`; planning docs in English.
+NFR-7: i18n — User-facing product language (UI + AI) defaults to English; planning docs in English. Second locales deferred (BIN-63). Correct-course 2026-07-24 (BIN-64).
 
 NFR-8: Single-operator privacy posture — BH/MG geographic focus and single-tenant personalization until multi-city / multi-profile is explicitly productized. *(Aligned into PRD §8 during readiness.)*
 

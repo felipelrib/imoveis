@@ -309,6 +309,7 @@ class TestFlightAdsExtraction:
         result = scraper.normalize(SAMPLE_FLIGHT_AD)
         assert result["platform_id"] == "1490781405"
         assert result["price"] == 5502.0  # 5500 + condo 1 + iptu 1
+        assert result["listings"][0]["base_price"] == 5500.0
         assert result["area_m2"] == 120.0
         assert result["bedrooms"] == 2
         assert result["bathrooms"] == 2

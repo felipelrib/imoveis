@@ -245,12 +245,24 @@ class QuintoAndarScraper(BaseScraper):
         listings = self._listings(
             raw, rent_price, sale_price, condo_fee, iptu, fees_bundled, fees_note, partial
         )
+        amenities = (raw.get("amenities") or []) + (raw.get("installations") or [])
+        address_obj = raw.get("address") or {}
+        city = address_obj.get("city") if isinstance(address_obj, dict) else None
+        state = (
+            (address_obj.get("state") or address_obj.get("uf") or address_obj.get("region"))
+            if isinstance(address_obj, dict)
+            else None
+        )
+        if not state and "mg" in (self.city_slug or "").casefold():
+            state = "MG"
+        if not city:
+            city = "Belo Horizonte"
 
         # Build property candidate
         return {
             "platform": "quintoandar",
             "platform_id": str(raw.get("id", "")),
-            "title": raw.get("type", "Imóvel") + f" em {neighbourhood or 'Belo Horizonte'}",
+            "title": raw.get("type", "Property") + f" in {neighbourhood or 'Belo Horizonte'}",
             "description": raw.get("description", ""),
             "price": price,
             "area_m2": float(raw.get("area") or 0.0),
@@ -267,7 +279,9 @@ class QuintoAndarScraper(BaseScraper):
                 "fees_bundled": fees_bundled or None,
                 "isFurnished": raw.get("isFurnished"),
                 "neighborhood": neighbourhood,
-                "amenities": (raw.get("amenities") or []) + (raw.get("installations") or []),
+                "city": city,
+                "state": state,
+                "amenities": amenities,
                 "available_for_rent": is_rent,
                 "available_for_sale": is_sale,
             },
@@ -277,7 +291,7 @@ class QuintoAndarScraper(BaseScraper):
     @staticmethod
     def _format_address(address: dict, neighbourhood: str | None) -> str:
         parts = [address.get("address"), neighbourhood, address.get("city")]
-        return ", ".join(part for part in parts if part) or "Endereço não disponível"
+        return ", ".join(part for part in parts if part) or "Address unavailable"
 
     @staticmethod
     def _image_urls(photos: list) -> list[str]:
@@ -325,12 +339,19 @@ class QuintoAndarScraper(BaseScraper):
 
     @staticmethod
     def _listings(raw, rent, sale, condo, iptu, bundled, note, partial) -> list[dict]:
+        amenities = (raw.get("amenities") or []) + (raw.get("installations") or [])
+        accepts_pets = (
+            "PODE_TER_ANIMAIS_DE_ESTIMACAO" in amenities
+            or raw.get("acceptsPets") is True
+            or raw.get("petsAllowed") is True
+        )
         base = {
             "platform": "quintoandar",
             "platform_listing_id": str(raw.get("id", "")),
             "currency": "BRL",
             "url": f"https://www.quintoandar.com.br/imovel/{raw.get('id', '')}",
             "is_furnished": raw.get("isFurnished"),
+            "accepts_pets": accepts_pets if accepts_pets else None,
             "condo_fee": condo,
             "iptu": iptu,
         }
@@ -341,7 +362,14 @@ class QuintoAndarScraper(BaseScraper):
                 details["fees_bundled"] = True
             if note:
                 details["fees_note"] = note
-            return {**base, "listing_type": kind, "price": price, "raw_json": details}
+            base_price = float(partial_price) if kind == "rent" and partial_price else None
+            return {
+                **base,
+                "listing_type": kind,
+                "price": price,
+                "base_price": base_price,
+                "raw_json": details,
+            }
 
         return [
             listing(kind, price, source_price)

@@ -131,7 +131,7 @@ class AIConfig(BaseModel, frozen=True):
     text_weight: float = 0.4
     max_images_per_property: int = 5
     max_description_chars: int = 1000
-    output_language: str = "pt-br"
+    output_language: str = "en"
 
 
 class PlatformConfig(BaseModel, frozen=True):
@@ -148,12 +148,21 @@ class PlatformConfig(BaseModel, frozen=True):
     extra: dict[str, Any] = Field(default_factory=dict)  # platform-specific extras
 
 
+class GeoAllowlistConfig(BaseModel, frozen=True):
+    """Post-scrape city/state gate (BIN-68). Empty lists disable that axis."""
+
+    enabled: bool = True
+    cities: list[str] = Field(default_factory=lambda: ["Belo Horizonte"])
+    states: list[str] = Field(default_factory=lambda: ["MG"])
+
+
 class ScrapingConfig(BaseModel, frozen=True):
     """Web scraping defaults and per-platform overrides."""
 
     default_delay: float = 2.0
     user_agent: str = "imoveis-bot/0.1 (real-estate-research)"
     platforms: dict[str, PlatformConfig] = Field(default_factory=dict)
+    geo_allowlist: GeoAllowlistConfig = Field(default_factory=GeoAllowlistConfig)
 
 
 class FeaturesConfig(BaseModel, frozen=True):
