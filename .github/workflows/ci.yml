@@ -160,11 +160,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt alembic
 
+      - name: Run database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+
       - name: Run contract tests
         run: pytest src/tests/contract/ -v
         env:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
           REDIS_URL: redis://localhost:6379/0
+          API_KEY: test-contract-key
+          JWT_SECRET: test-contract-jwt-secret
 
   scrapers:
     runs-on: ubuntu-latest

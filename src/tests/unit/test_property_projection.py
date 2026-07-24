@@ -142,14 +142,14 @@ class TestMapPropertyProjection:
                 "visual": {
                     "features_detected": ["balcony"],
                     "issues_detected": [],
-                    "condition_score": 8,
+                    "condition_score": 0.75,
                     "category": "good",
                     "reasoning": "ok",
                 },
                 "sentiment": {
                     "green_flags": ["light"],
                     "red_flags": [],
-                    "sentiment_score": 7,
+                    "sentiment_score": 0.78,
                     "category": "positive",
                     "reasoning": "fine",
                 },
@@ -173,7 +173,18 @@ class TestMapPropertyProjection:
         assert mapped["price_per_m2"] == 50.0
         assert mapped["combined_score"] == 0.7
         assert mapped["ai_features"] == ["balcony"]
+        assert mapped["condition_score"] == 0.75
+        assert mapped["sentiment_score"] == 0.78
         assert len(mapped["listings"]) == 2
+
+    def test_list_item_validates_against_property_model_with_float_scores(self):
+        """Regression: AI scores are floats — PropertyModel must accept them (BIN-56)."""
+        from api.schemas import PropertyModel
+
+        mapped = map_property_list_item(self._row())
+        model = PropertyModel.model_validate(mapped)
+        assert model.condition_score == 0.75
+        assert model.sentiment_score == 0.78
 
     def test_detail_includes_primary_and_neighborhood_id(self):
         mapped = map_property_detail(self._row())
