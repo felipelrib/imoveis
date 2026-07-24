@@ -121,15 +121,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt alembic
 
-      - name: Run database migrations
-        run: alembic upgrade head
+      - name: Ensure isolated test database
+        run: bash scripts/agent/ensure-test-db.sh
         env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_PORT: "5432"
+          POSTGRES_HOST: localhost
+          POSTGRES_DB: realestate
+          POSTGRES_TEST_DB: realestate_test
 
       - name: Run integration tests
         run: pytest src/tests/integration/ -v
         env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-integration-key
           JWT_SECRET: test-integration-jwt-secret
@@ -160,15 +164,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt alembic
 
-      - name: Run database migrations
-        run: alembic upgrade head
+      - name: Ensure isolated test database
+        run: bash scripts/agent/ensure-test-db.sh
         env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_PORT: "5432"
+          POSTGRES_HOST: localhost
+          POSTGRES_DB: realestate
+          POSTGRES_TEST_DB: realestate_test
 
       - name: Run contract tests
         run: pytest src/tests/contract/ -v
         env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
           REDIS_URL: redis://localhost:6379/0
           API_KEY: test-contract-key
           JWT_SECRET: test-contract-jwt-secret

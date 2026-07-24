@@ -47,11 +47,22 @@ jobs:
       - name: Unit tests
         run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30
 
+      - name: Ensure isolated test database
+        run: bash scripts/agent/ensure-test-db.sh
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_PORT: "5432"
+          POSTGRES_HOST: localhost
+          POSTGRES_DB: realestate
+          POSTGRES_TEST_DB: realestate_test
+
       - name: Integration tests
         run: pytest src/tests/integration/ -v
         env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
+          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
           REDIS_URL: redis://localhost:6379/0
+          API_KEY: test-integration-key
+          JWT_SECRET: test-integration-jwt-secret
 
   # ---- Dependency audit ----
   dependency-audit:

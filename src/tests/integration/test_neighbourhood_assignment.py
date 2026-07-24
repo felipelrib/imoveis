@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from adapters.db.models import Base, Neighborhood, Property
+from adapters.db.models import Neighborhood, Property
 from core.neighbourhood_assignment import assign_property_neighbourhood
 from core.neighbourhood_geojson import load_neighbourhood_geojson
 
@@ -30,21 +27,9 @@ OUTSIDE = (-43.9300, -19.9100)
 
 
 @pytest.fixture(scope="function")
-def db_session():
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    yield session
-    session.close()
-    with engine.connect() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            conn.execute(table.delete())
-        conn.commit()
-    engine.dispose()
+def db_session(wipe_safe_db_session):
+    """DB session on the isolated test database (BIN-71)."""
+    yield wipe_safe_db_session
 
 
 def _fixture_a_id(session) -> object:

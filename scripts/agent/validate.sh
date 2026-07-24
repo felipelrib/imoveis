@@ -50,14 +50,21 @@ COMPOSE=(dc --env-file .env.local -p "$PROJ")
 [ -f "$REPO_ROOT/.env.local" ] || COMPOSE=(dc -p "$PROJ")
 
 # --- Auto-derive DATABASE_URL / REDIS_URL for host-side tests ----------------
-# Integration tests run pytest on the host but need to connect to Docker services.
-# Derive URLs from the worktree's port vars if the full URLs aren't already set.
+# Integration fixtures truncate all tables — never point host pytest at the
+# scraped primary DB (realestate). Use realestate_test on the same server.
 DB_USER="${POSTGRES_USER:-imoveis}"
 DB_PASS="${POSTGRES_PASSWORD:-imoveis_local_dev}"
+DB_HOST="${POSTGRES_HOST:-localhost}"
 DB_NAME="${POSTGRES_DB:-realestate}"
-if [ -z "${DATABASE_URL:-}" ] && [ -n "${POSTGRES_PORT:-}" ]; then
-  export DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:${POSTGRES_PORT}/${DB_NAME}"
-  log "Derived DATABASE_URL from POSTGRES_PORT"
+TEST_DB_NAME="${POSTGRES_TEST_DB:-realestate_test}"
+if [ -n "${POSTGRES_PORT:-}" ]; then
+  if [ -z "${TEST_DATABASE_URL:-}" ]; then
+    export TEST_DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${POSTGRES_PORT}/${TEST_DB_NAME}"
+  fi
+  # Host pytest (integration/contract) always uses the isolated test DB.
+  # Stale shell DATABASE_URL pointing at /realestate must not win.
+  export DATABASE_URL="$TEST_DATABASE_URL"
+  log "Host pytest DATABASE_URL → ${TEST_DB_NAME} (Compose scrapers keep ${DB_NAME})"
 fi
 if [ -z "${REDIS_URL:-}" ] && [ -n "${REDIS_PORT:-}" ]; then
   export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
@@ -118,9 +125,11 @@ run_unit() {
 run_integration() {
   log "Integration: ensuring services are up (Postgres + Redis)"
   "${COMPOSE[@]}" up -d postgres redis 2>/dev/null
-  log "Integration: applying migrations (alembic upgrade head)"
+  log "Integration: migrating app DB (Compose / ${DB_NAME})"
   "${COMPOSE[@]}" run --rm api python -m alembic upgrade head 2>/dev/null
-  log "Integration: pytest (real PostGIS + Redis)"
+  log "Integration: ensuring isolated test DB (${TEST_DB_NAME})"
+  bash "$HERE/ensure-test-db.sh" || { warn "ensure-test-db FAILED"; rc=1; return; }
+  log "Integration: pytest (real PostGIS + Redis) against ${TEST_DB_NAME}"
   if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
     "$PYTHON_BIN" -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
   else
@@ -129,19 +138,17 @@ run_integration() {
   fi
 }
 
-# ---- Alembic: ensure DB is migrated before checks ----
+# ---- Alembic: ensure app DB is migrated before checks ----
 run_alembic_migrate() {
-  if [ -z "${DATABASE_URL:-}" ]; then
-    warn "DATABASE_URL not set — skipping alembic migration"
-    return
-  fi
-  log "Alembic: upgrade head (via Docker)"
+  log "Alembic: upgrade head on app DB via Docker (Compose ${DB_NAME})"
   "${COMPOSE[@]}" run --rm api python -m alembic upgrade head 2>&1 && ok "alembic upgrade head passed" || { warn "alembic upgrade head FAILED"; rc=1; }
+  log "Alembic: ensure isolated test DB is migrated (${TEST_DB_NAME})"
+  bash "$HERE/ensure-test-db.sh" || { warn "ensure-test-db FAILED"; rc=1; }
 }
 
 # ---- Contract tests ----
 run_contract() {
-  log "Contract: pytest + alembic check"
+  log "Contract: pytest + alembic check (host pytest → ${TEST_DB_NAME})"
   if [ -d "$REPO_ROOT/src/tests/contract" ]; then
     if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
       "$PYTHON_BIN" -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
@@ -152,7 +159,7 @@ run_contract() {
   else
     warn "src/tests/contract/ directory not found — skip"
   fi
-  log "Contract: alembic schema check (via Docker)"
+  log "Contract: alembic schema check (via Docker / app DB)"
   # PostGIS system tables (tiger, topology, spatial_ref_sys) always appear as
   # "extra" in autogenerate, so alembic check always reports false positives.
   # This check is informational only — never fails the build for PostGIS projects.
