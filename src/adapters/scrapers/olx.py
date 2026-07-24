@@ -136,20 +136,30 @@ class OLXScraper(BaseScraper):
         if response.status_code != 200:
             logger.warning("olx_http_error", status_code=response.status_code, url=url)
             return []
-        script = BeautifulSoup(response.text, "html.parser").find("script", id="__NEXT_DATA__")
-        if not script or not script.string:
-            logger.warning("olx_no_next_data", url=url)
-            return []
-        try:
-            listings = self._extract_listings(json.loads(script.string))
-        except (json.JSONDecodeError, TypeError):
-            logger.exception("olx_json_parse_error", url=url)
-            return []
+        listings = self._parse_listings_html(response.text, url=url)
         if listings:
             logger.info("olx_page_listings", url=url, page=page, count=len(listings))
         else:
             logger.debug("olx_no_listings_in_page", url=url, page=page)
         return listings
+
+    def _parse_listings_html(self, html: str, url: str = "") -> list[dict]:
+        """Extract listing dicts from classic __NEXT_DATA__ or Flight RSC HTML."""
+        script = BeautifulSoup(html, "html.parser").find("script", id="__NEXT_DATA__")
+        if script and script.string:
+            try:
+                listings = self._extract_listings(json.loads(script.string))
+                if listings:
+                    return listings
+            except (json.JSONDecodeError, TypeError):
+                logger.exception("olx_json_parse_error", url=url)
+
+        listings = self._extract_flight_ads(html)
+        if listings:
+            return listings
+
+        logger.warning("olx_no_listing_payload", url=url)
+        return []
 
     def _extract_listings(self, data: dict) -> list[dict]:
         """Navigate the OLX page data tree to find listing objects."""
@@ -183,14 +193,125 @@ class OLXScraper(BaseScraper):
                     found = False
                     break
             if found and isinstance(obj, list):
-                return [x for x in obj if isinstance(x, dict)]
+                return self._filter_ad_dicts(obj)
 
         # Strategy 2: pageProps directly has ads/data list
         for key in ("ads", "listings", "data"):
             val = page_props.get(key)
             if isinstance(val, list):
-                return [x for x in val if isinstance(x, dict)]
+                return self._filter_ad_dicts(val)
 
+        return []
+
+    @staticmethod
+    def _filter_ad_dicts(items: list) -> list[dict]:
+        """Keep real listing objects; drop ad-slot / non-dict noise."""
+        out: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("advertisingId") and not (
+                item.get("listId") or item.get("list_id") or item.get("id")
+            ):
+                continue
+            if not (item.get("listId") or item.get("list_id") or item.get("id")):
+                continue
+            out.append(item)
+        return out
+
+    @staticmethod
+    def _unescape_js_string(value: str) -> str:
+        """Decode escapes used inside ``self.__next_f.push([1, \"...\"])`` payloads."""
+        out: list[str] = []
+        i = 0
+        while i < len(value):
+            ch = value[i]
+            if ch == "\\" and i + 1 < len(value):
+                nxt = value[i + 1]
+                if nxt == "n":
+                    out.append("\n")
+                    i += 2
+                elif nxt == "r":
+                    out.append("\r")
+                    i += 2
+                elif nxt == "t":
+                    out.append("\t")
+                    i += 2
+                elif nxt == '"':
+                    out.append('"')
+                    i += 2
+                elif nxt == "\\":
+                    out.append("\\")
+                    i += 2
+                elif nxt == "u" and i + 5 < len(value):
+                    try:
+                        out.append(chr(int(value[i + 2 : i + 6], 16)))
+                        i += 6
+                    except ValueError:
+                        out.append(nxt)
+                        i += 2
+                else:
+                    out.append(nxt)
+                    i += 2
+            else:
+                out.append(ch)
+                i += 1
+        return "".join(out)
+
+    @staticmethod
+    def _extract_json_array_after(haystack: str, marker: str) -> list | None:
+        """Return the JSON array that follows ``marker`` (e.g. ``\"ads\":``)."""
+        idx = haystack.find(marker)
+        if idx < 0:
+            return None
+        start = haystack.find("[", idx + len(marker))
+        if start < 0:
+            return None
+        depth = 0
+        in_string = False
+        escape = False
+        for pos in range(start, len(haystack)):
+            ch = haystack[pos]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(haystack[start : pos + 1])
+                    except json.JSONDecodeError:
+                        return None
+                    return parsed if isinstance(parsed, list) else None
+        return None
+
+    def _extract_flight_ads(self, html: str) -> list[dict]:
+        """Parse listing ads embedded in Next.js Flight (``__next_f.push``) payloads.
+
+        OLX listing pages no longer ship ``__NEXT_DATA__``; ads arrive as an
+        ``\"ads\":[...]`` array inside streamed RSC chunks.
+        """
+        push_re = re.compile(r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)')
+        for match in push_re.finditer(html):
+            raw = match.group(1)
+            if "listId" not in raw or ("ads" not in raw and "priceValue" not in raw):
+                continue
+            chunk = self._unescape_js_string(raw)
+            for marker in ('"ads":', '"ads" :'):
+                parsed = self._extract_json_array_after(chunk, marker)
+                if parsed:
+                    listings = self._filter_ad_dicts(parsed)
+                    if listings:
+                        return listings
         return []
 
     # ------------------------------------------------------------------
@@ -203,6 +324,7 @@ class OLXScraper(BaseScraper):
         # --- Platform ID ---
         platform_id = str(
             raw.get("list_id")
+            or raw.get("listId")
             or raw.get("id")
             or raw.get("ad_id")
             or ""
@@ -292,19 +414,26 @@ class OLXScraper(BaseScraper):
     @staticmethod
     def _parse_price(raw: dict) -> float:
         """Extract numeric price from OLX listing."""
-        direct = OLXScraper._positive_number(raw.get(key) for key in ("value", "price", "pricingInfos"))
+        direct = OLXScraper._positive_number(
+            raw.get(key) for key in ("value", "price", "pricingInfos")
+        )
         if direct is not None:
             return direct
         pricing_infos = raw.get("pricingInfos")
         if isinstance(pricing_infos, list) and pricing_infos and isinstance(pricing_infos[0], dict):
-            nested = OLXScraper._positive_number(pricing_infos[0].get(key) for key in ("value", "price"))
+            nested = OLXScraper._positive_number(
+                pricing_infos[0].get(key) for key in ("value", "price")
+            )
             if nested is not None:
                 return nested
-        for key in ("price_str", "value_str", "subject"):
+        for key in ("priceValue", "price", "price_str", "value_str", "subject"):
             parsed = OLXScraper._parse_brazilian_number(raw.get(key))
             if parsed is not None:
                 return parsed
-        raise ValueError(f"Could not parse price from OLX listing: {raw.get('list_id', raw.get('id', '?'))}")
+        raise ValueError(
+            "Could not parse price from OLX listing: "
+            f"{raw.get('listId', raw.get('list_id', raw.get('id', '?')))}"
+        )
 
     @staticmethod
     def _positive_number(values) -> float | None:
@@ -341,30 +470,58 @@ class OLXScraper(BaseScraper):
             return None, None
 
     @staticmethod
-    def _address_from_loc(loc: dict) -> str | None:
+    def _location_details(raw: dict) -> dict:
+        """Normalize location payload (dict, string label, or locationDetails)."""
+        details = raw.get("locationDetails")
+        if isinstance(details, dict):
+            return details
+        loc = raw.get("location")
+        if isinstance(loc, dict):
+            return loc
+        return {}
+
+    @staticmethod
+    def _address_from_loc(loc: dict, fallback_label: str | None = None) -> str | None:
         parts = []
         for key in ("address", "street"):
             if loc.get(key):
                 parts.append(loc[key])
                 break
-        neighborhood = loc.get("neighborhood") or loc.get("neighborhoodName")
+        neighborhood = (
+            loc.get("neighborhood")
+            or loc.get("neighborhoodName")
+            or loc.get("neighbourhood")
+        )
         if neighborhood:
             parts.append(neighborhood)
-        city = loc.get("city") or loc.get("cityName")
+        city = loc.get("city") or loc.get("cityName") or loc.get("municipality")
         if city:
             parts.append(city)
-        return ", ".join(parts) if parts else None
+        uf = loc.get("uf") or loc.get("state")
+        if uf and (not parts or uf not in str(parts[-1])):
+            parts.append(uf)
+        if parts:
+            return ", ".join(parts)
+        return fallback_label or None
 
     @staticmethod
     def _parse_location(raw: dict) -> tuple:
         """Return (location_dict, address_str)."""
-        loc = raw.get("location") or raw.get("region") or {}
+        loc = OLXScraper._location_details(raw)
         lat, lon = OLXScraper._coords_from_raw(raw)
         location_dict = None
-        if lat and lon and isinstance(loc, dict):
-            neighborhood = loc.get("neighborhood") or loc.get("neighborhoodName") or ""
+        neighborhood = (
+            loc.get("neighborhood")
+            or loc.get("neighborhoodName")
+            or loc.get("neighbourhood")
+            or ""
+        )
+        if lat and lon:
             location_dict = {"lat": lat, "lon": lon, "neighborhood": neighborhood}
-        address_str = OLXScraper._address_from_loc(loc) if isinstance(loc, dict) else None
+        elif neighborhood:
+            location_dict = {"neighborhood": neighborhood}
+        label = raw.get("location") if isinstance(raw.get("location"), str) else None
+        address_str = OLXScraper._address_from_loc(loc, fallback_label=label)
         return location_dict, address_str
 
     @staticmethod
@@ -381,6 +538,7 @@ class OLXScraper(BaseScraper):
                     or img.get("url")
                     or img.get("path")
                     or img.get("original")
+                    or img.get("originalWebp")
                 )
                 if url:
                     urls.append(url)
@@ -393,10 +551,11 @@ class OLXScraper(BaseScraper):
             prop_map = {}
             for p in raw_props:
                 if isinstance(p, dict):
-                    label = (p.get("label") or p.get("name") or "").lower()
                     value = p.get("value") or p.get("text") or ""
-                    if label:
-                        prop_map[label] = value
+                    for key in (p.get("label"), p.get("name")):
+                        label = (key or "").lower()
+                        if label and value != "":
+                            prop_map[label] = value
             return prop_map
         if isinstance(raw_props, dict):
             return {k.lower(): v for k, v in raw_props.items()}
@@ -408,10 +567,14 @@ class OLXScraper(BaseScraper):
             val = prop_map.get(key)
             if not val:
                 continue
+            parsed = OLXScraper._parse_brazilian_number(str(val))
+            if parsed is not None:
+                props[dest] = parsed
+                break
             try:
                 props[dest] = float(re.sub(r"[^\d.]", "", str(val)).replace(",", "."))
             except (ValueError, TypeError):
-                pass
+                continue
             break
 
     @staticmethod
@@ -421,9 +584,12 @@ class OLXScraper(BaseScraper):
             if not val:
                 continue
             try:
-                props[dest] = int(_NON_DIGIT_RE.sub("", str(val)))
+                digits = _NON_DIGIT_RE.sub("", str(val))
+                if not digits:
+                    continue
+                props[dest] = int(digits)
             except (ValueError, TypeError):
-                pass
+                continue
             break
 
     @staticmethod
@@ -431,7 +597,8 @@ class OLXScraper(BaseScraper):
         for key in keys:
             val = prop_map.get(key)
             if val:
-                props[dest] = "sim" in str(val).lower()
+                lowered = str(val).lower()
+                props[dest] = "sim" in lowered or "permit" in lowered
                 break
 
     @staticmethod
@@ -439,26 +606,64 @@ class OLXScraper(BaseScraper):
         """Extract property attributes from OLX listing."""
         props = {}
         prop_map = OLXScraper._prop_map_from_raw(raw)
-        OLXScraper._set_float_prop(props, prop_map, ("área", "area", "area_total", "area_util"), "area_m2")
-        OLXScraper._set_int_prop(props, prop_map, ("quartos", "dormitórios", "bedrooms"), "bedrooms")
+        OLXScraper._set_float_prop(
+            props,
+            prop_map,
+            ("área", "área construída", "area", "area_total", "area_util", "size"),
+            "area_m2",
+        )
+        OLXScraper._set_int_prop(
+            props,
+            prop_map,
+            ("quartos", "dormitórios", "bedrooms", "rooms"),
+            "bedrooms",
+        )
         OLXScraper._set_int_prop(props, prop_map, ("banheiros", "bathrooms"), "bathrooms")
-        OLXScraper._set_int_prop(props, prop_map, ("vagas", "garagem", "parking", "parking_spaces"), "parking")
-        OLXScraper._set_float_prop(props, prop_map, ("condo", "condomínio", "taxa de condomínio"), "condo_fee")
-        OLXScraper._set_bool_prop(props, prop_map, ("aceita animais", "aceita_animais", "pets"), "accepts_pets")
+        OLXScraper._set_int_prop(
+            props,
+            prop_map,
+            (
+                "vagas",
+                "vagas na garagem",
+                "garagem",
+                "parking",
+                "parking_spaces",
+                "garage_spaces",
+            ),
+            "parking",
+        )
+        OLXScraper._set_float_prop(
+            props,
+            prop_map,
+            ("condo", "condomínio", "condominio", "taxa de condomínio"),
+            "condo_fee",
+        )
+        OLXScraper._set_float_prop(props, prop_map, ("iptu",), "iptu")
+        OLXScraper._set_bool_prop(
+            props,
+            prop_map,
+            ("aceita animais", "aceita_animais", "pets", "re_complex_features"),
+            "accepts_pets",
+        )
         OLXScraper._set_bool_prop(props, prop_map, ("mobiliado", "furnished"), "is_furnished")
         return props
 
     @staticmethod
     def _detect_listing_type(raw: dict) -> str:
         """Detect if this is a rent or sale listing."""
-        # Check URL path for rent/sale indicators
-        url = raw.get("url") or raw.get("_olx_url") or ""
-        if "aluguel" in url.lower():
+        url = (raw.get("url") or raw.get("_olx_url") or "").lower()
+        if "aluguel" in url or "/alugar" in url:
             return "rent"
-        if "venda" in url.lower():
+        if "venda" in url:
             return "sale"
 
-        # Check pricingInfos
+        prop_map = OLXScraper._prop_map_from_raw(raw)
+        tipo = str(prop_map.get("tipo") or prop_map.get("real_estate_type") or "").lower()
+        if "aluguel" in tipo or "alugar" in tipo:
+            return "rent"
+        if "venda" in tipo or "vender" in tipo:
+            return "sale"
+
         pricing = raw.get("pricingInfos") or []
         if isinstance(pricing, list) and pricing:
             first = pricing[0]
@@ -468,13 +673,19 @@ class OLXScraper(BaseScraper):
                     return "rent"
                 return "sale"
 
-        # Default: assume rent
         return "rent"
 
     @staticmethod
     def _neighborhood_from_raw(raw: dict) -> str | None:
         """Best-effort neighborhood extraction."""
-        loc = raw.get("location") or {}
+        details = OLXScraper._location_details(raw)
+        if details:
+            return (
+                details.get("neighborhood")
+                or details.get("neighborhoodName")
+                or details.get("neighbourhood")
+            )
+        loc = raw.get("location")
         if isinstance(loc, dict):
             return loc.get("neighborhood") or loc.get("neighborhoodName")
         return None

@@ -147,3 +147,22 @@ class TestQuintoAndarNormalizeLocation:
         with patch.object(QuintoAndarScraper, "_prices_and_fees", return_value=(2000.0, 0.0, 0.0, 0.0, False, None, 0.0)):
             result = s.normalize(raw)
         assert result["location"] == {"lat": -19.9, "lon": -43.9}
+
+    def test_parking_spots_field_preferred(self):
+        """Live QuintoAndar search JSON renamed parkingSpaces → parkingSpots."""
+        s = _scraper()
+        raw = {
+            "id": 99,
+            "rentPrice": 2000,
+            "salePrice": 0,
+            "totalCost": 2000,
+            "area": 50,
+            "bedrooms": 2,
+            "bathrooms": 1,
+            "parkingSpots": 2,
+            "address": {"address": "Rua A", "city": "BH"},
+            "neighbourhood": "Centro",
+            "photos": [],
+        }
+        result = s.normalize(raw)
+        assert result["parking"] == 2

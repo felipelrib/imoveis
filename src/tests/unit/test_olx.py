@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -237,10 +238,85 @@ class TestExtractListings:
         result = scraper._extract_listings(data)
         assert len(result) == 1
 
+    def test_skips_advertising_slots_without_list_id(self, scraper):
+        data = {
+            "props": {
+                "pageProps": {
+                    "ads": [
+                        {"advertisingId": "banner-1"},
+                        SAMPLE_OLX_LISTING,
+                    ]
+                }
+            }
+        }
+        result = scraper._extract_listings(data)
+        assert len(result) == 1
+        assert result[0]["list_id"] == "123456789"
+
 
 # ---------------------------------------------------------------------------
-# _detect_listing_type() tests
+# Flight / RSC HTML extraction
 # ---------------------------------------------------------------------------
+
+
+SAMPLE_FLIGHT_AD = {
+    "listId": 1490781405,
+    "subject": "Sobrado para alugar 2 quartos Santos",
+    "priceValue": "R$ 5.500",
+    "price": "R$ 5.500",
+    "url": "https://sp.olx.com.br/baixada-santista/imoveis/sobrado-1490781405",
+    "location": "Santos -  SP",
+    "locationDetails": {
+        "municipality": "Santos",
+        "neighbourhood": "Ponta da Praia",
+        "uf": "SP",
+    },
+    "images": [{"original": "https://img.olx.com.br/a.jpg"}],
+    "properties": [
+        {"name": "size", "value": "120m²", "label": "Área construída"},
+        {"name": "rooms", "value": "2", "label": "Quartos"},
+        {"name": "bathrooms", "value": "2", "label": "Banheiros"},
+        {"name": "garage_spaces", "value": "1", "label": "Vagas na garagem"},
+        {"name": "condominio", "value": "R$ 1", "label": "Condomínio"},
+        {"name": "iptu", "value": "R$ 1", "label": "IPTU"},
+        {
+            "name": "real_estate_type",
+            "value": "Aluguel - casa em rua pública",
+            "label": "Tipo",
+        },
+    ],
+}
+
+
+class TestFlightAdsExtraction:
+    def test_extract_flight_ads_from_next_f_payload(self, scraper):
+        ads_json = json.dumps([SAMPLE_FLIGHT_AD, {"advertisingId": "x"}])
+        inner = '{"ads":' + ads_json + "}"
+        escaped_inner = inner.replace("\\", "\\\\").replace('"', '\\"')
+        html = f'<script>self.__next_f.push([1,"{escaped_inner}"])</script>'
+        result = scraper._extract_flight_ads(html)
+        assert len(result) == 1
+        assert result[0]["listId"] == 1490781405
+
+    def test_parse_listings_html_falls_back_to_flight(self, scraper):
+        inner = '{"ads":' + json.dumps([SAMPLE_FLIGHT_AD]) + "}"
+        escaped_inner = inner.replace("\\", "\\\\").replace('"', '\\"')
+        html = f"<html><script>self.__next_f.push([1,\"{escaped_inner}\"])</script></html>"
+        result = scraper._parse_listings_html(html, url="https://example.test")
+        assert len(result) == 1
+
+    def test_normalize_flight_ad_shape(self, scraper):
+        result = scraper.normalize(SAMPLE_FLIGHT_AD)
+        assert result["platform_id"] == "1490781405"
+        assert result["price"] == 5502.0  # 5500 + condo 1 + iptu 1
+        assert result["area_m2"] == 120.0
+        assert result["bedrooms"] == 2
+        assert result["bathrooms"] == 2
+        assert result["parking"] == 1
+        assert result["props_json"]["neighborhood"] == "Ponta da Praia"
+        assert "Santos" in (result["address"] or "")
+        assert result["listings"][0]["listing_type"] == "rent"
+        assert result["image_urls"] == ["https://img.olx.com.br/a.jpg"]
 
 
 class TestDetectListingType:
@@ -392,6 +468,18 @@ class TestOLXFetchLifecycle:
         )
 
         assert scraper._fetch_page_listings("https://example.test", 1) == [{"list_id": "1"}]
+
+    def test_fetch_page_extracts_listings_from_flight_html(self, scraper):
+        ad = {"listId": 42, "subject": "Casa", "priceValue": "R$ 1.000"}
+        inner = '{"ads":' + json.dumps([ad]) + "}"
+        escaped = inner.replace("\\", "\\\\").replace('"', '\\"')
+        html = f'<script>self.__next_f.push([1,"{escaped}"])</script>'
+        scraper._throttled_request = MagicMock(
+            return_value=MagicMock(status_code=200, text=html)
+        )
+        result = scraper._fetch_page_listings("https://example.test", 1)
+        assert len(result) == 1
+        assert result[0]["listId"] == 42
 
     def test_fetch_pages_obeys_checkpoint_type_and_stops_empty_page(self, scraper):
         scraper._RENT_PATHS = ["rent"]

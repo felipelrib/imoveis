@@ -153,7 +153,7 @@ class QuintoAndarScraper(BaseScraper):
             "area_m2": float(raw.get("area") or 0.0),
             "bedrooms": int(raw.get("bedrooms") or 0),
             "bathrooms": int(raw.get("bathrooms") or 0),
-            "parking": int(raw.get("parkingSpaces") or 0),
+            "parking": int(raw.get("parkingSpots") or raw.get("parkingSpaces") or 0),
             "location": location_dict,
             "address": address_str,
             "image_urls": image_urls,
