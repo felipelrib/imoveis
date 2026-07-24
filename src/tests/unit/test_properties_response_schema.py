@@ -129,7 +129,18 @@ class TestListPropertiesEndpointSchema:
             SimpleNamespace(mappings=lambda: SimpleNamespace(fetchall=lambda: [row])),
         ]
 
-        with patch("api.properties.SessionLocal", return_value=session):
+        def _bypass_rate_limit(self, request, endpoint, *args, **kwargs):
+            request.state.view_rate_limit = []
+
+        # Unit CI has no Redis; bypass slowapi storage while still running
+        # FastAPI response_model validation on the real route.
+        with (
+            patch("api.properties.SessionLocal", return_value=session),
+            patch(
+                "slowapi.extension.Limiter._check_request_limit",
+                _bypass_rate_limit,
+            ),
+        ):
             client = TestClient(app, raise_server_exceptions=True)
             response = client.get("/properties?page=1&page_size=1")
 
