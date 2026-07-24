@@ -54,3 +54,4 @@ Manual:
 - **BUG (Medium)**: OLX intermittently returns Cloudflare 403 from datacenter IPs; enable `proxy:` pool when available (BIN-47/48 path) rather than treating as a parse bug.
 - QuintoAndar search cards often omit `location` lat/lon now — geo fuzzy dedupe skips those rows until a detail fetch is added.
 - OLX region URL filters sometimes surface national ads in HTML; revisit path/slug config if BH purity matters.
+- Live dry-run (`scripts/dev/test_scraper_dryrun.py`) only covers QuintoAndar **normalize**, not `scrape_listings` / `cfg.dedup`. Regression gates for config+task wiring and OLX Flight HTML live in unit CI — see `docs/features/40-scraper-regression-gates.md`.

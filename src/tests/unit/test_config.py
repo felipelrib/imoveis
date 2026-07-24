@@ -477,6 +477,64 @@ dedup:
     assert cfg.dedup.text_similarity_algorithm == "token_sort"
 
 
+# Critical YAML sections that scrape_listings / workers consume. If a section is
+# present in app_config.yaml but missing from AppConfig.model_fields, Pydantic
+# silently drops it and tasks blow up at runtime (see DedupConfig regression).
+_CRITICAL_APP_CONFIG_SECTIONS = (
+    "dedup",
+    "proxy",
+    "scraping",
+    "scoring",
+    "alerts",
+    "auth",
+    "ai",
+    "database",
+)
+
+
+@pytest.mark.unit
+def test_critical_yaml_sections_are_appconfig_fields():
+    """YAML critical sections must be declared on AppConfig (no silent drop)."""
+    import yaml
+
+    from src.infra.config import AppConfig
+
+    repo_root = Path(__file__).resolve().parents[3]
+    raw = yaml.safe_load((repo_root / "configs" / "app_config.yaml").read_text(encoding="utf-8"))
+    assert isinstance(raw, dict)
+    model_fields = set(AppConfig.model_fields)
+    missing = [s for s in _CRITICAL_APP_CONFIG_SECTIONS if s in raw and s not in model_fields]
+    assert missing == [], (
+        f"app_config.yaml has sections not on AppConfig (would be silently ignored): {missing}"
+    )
+    for section in _CRITICAL_APP_CONFIG_SECTIONS:
+        assert section in model_fields, f"AppConfig missing required field {section!r}"
+
+
+@pytest.mark.unit
+def test_scrape_listings_dedup_leaves_on_real_config():
+    """scrape_listings reads these DedupConfig leaves — they must exist on get_config()."""
+    cfg = get_config()
+    assert isinstance(cfg.dedup.radius_m, float)
+    assert isinstance(cfg.dedup.area_tolerance_m2, float)
+    assert isinstance(cfg.dedup.text_similarity_threshold, float)
+    assert isinstance(cfg.dedup.text_similarity_algorithm, str)
+    assert cfg.dedup.text_similarity_algorithm
+
+
+@pytest.mark.unit
+def test_critical_section_helper_flags_missing_model_field():
+    """Document the silent-drop failure mode: YAML key absent from model_fields."""
+    pretend_yaml_keys = {"dedup", "proxy", "scraping"}
+    pretend_model_fields = {"proxy", "scraping"}  # dedup dropped from model
+    missing = [
+        s
+        for s in _CRITICAL_APP_CONFIG_SECTIONS
+        if s in pretend_yaml_keys and s not in pretend_model_fields
+    ]
+    assert missing == ["dedup"]
+
+
 @pytest.mark.unit
 def test_proxy_invalid_rotation_strategy_raises(tmp_path: Path):
     """Unknown rotation_strategy fails AppConfig validation."""

@@ -79,3 +79,23 @@ class TestOLXCassettes:
         assert result["bedrooms"] == 2
         assert result["area_m2"] == 75.0
         assert result["location"] == {"lat": -19.9320, "lon": -43.9380}
+
+    def test_flight_search_cassette_extracts_and_normalizes(self, olx_scraper):
+        """OLX listing pages ship Flight RSC ads (no __NEXT_DATA__)."""
+        html = (FIXTURES / "olx_search_flight.html").read_text(encoding="utf-8")
+        assert "__NEXT_DATA__" not in html
+        listings = olx_scraper._parse_listings_html(html, url="https://example.test/flight")
+        assert len(listings) == 1
+        assert listings[0]["listId"] == 1490781405
+
+        result = olx_scraper.normalize(listings[0])
+        assert result["platform"] == "olx"
+        assert result["platform_id"] == "1490781405"
+        assert result["title"] == "Apartamento 2 quartos em Savassi"
+        assert result["price"] == 4150.0  # 3500 + condo 650
+        assert result["bedrooms"] == 2
+        assert result["area_m2"] == 75.0
+        assert result["parking"] == 1
+        assert result["props_json"]["neighborhood"] == "Savassi"
+        assert result["listings"][0]["listing_type"] == "rent"
+        assert result["image_urls"] == ["https://img.olx.com.br/img1.jpg"]
