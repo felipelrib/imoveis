@@ -86,6 +86,9 @@ class TestBuildBeatSchedule:
         assert "scrape-quintoandar" not in schedule
         assert "evaluate-watchlist-alerts" in schedule
         assert "monitor-queues" in schedule
+        assert "snapshot-pipeline-metrics" in schedule
+        assert schedule["snapshot-pipeline-metrics"]["task"] == "tasks.snapshot_pipeline_metrics"
+        assert schedule["snapshot-pipeline-metrics"]["schedule"] == 30.0
 
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
@@ -145,7 +148,11 @@ class TestBuildBeatSchedule:
         mock_get_redis.return_value = redis_inst
 
         schedule = build_beat_schedule()
-        assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}
+        assert set(schedule) == {
+            "evaluate-watchlist-alerts",
+            "monitor-queues",
+            "snapshot-pipeline-metrics",
+        }
 
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
@@ -298,4 +305,8 @@ class TestTaskSignals:
         from adapters.queue.celery_app import build_beat_schedule
 
         schedule = build_beat_schedule()
-        assert set(schedule) == {"evaluate-watchlist-alerts", "monitor-queues"}
+        assert set(schedule) == {
+            "evaluate-watchlist-alerts",
+            "monitor-queues",
+            "snapshot-pipeline-metrics",
+        }

@@ -145,3 +145,10 @@ alerts:
 # Image Storage
 # ---------------------------------------------------------------------------
 image_storage_path: data/images
+
+# ---------------------------------------------------------------------------
+# Pipeline metrics snapshots (Dashboard history — BIN-61)
+# ---------------------------------------------------------------------------
+pipeline_metrics:
+  snapshot_interval_sec: 30   # Celery beat interval for writing snapshots
+  retention_days: 7           # prune snapshots older than this

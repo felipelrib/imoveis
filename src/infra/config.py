@@ -244,6 +244,13 @@ class DedupConfig(BaseModel, frozen=True):
     text_similarity_algorithm: str = "jaro_winkler"
 
 
+class PipelineMetricsConfig(BaseModel, frozen=True):
+    """Server-side pipeline metric snapshots for Dashboard history (BIN-61)."""
+
+    snapshot_interval_sec: float = 30.0
+    retention_days: int = 7
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -267,6 +274,7 @@ class AppConfig(BaseModel, frozen=True):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
+    pipeline_metrics: PipelineMetricsConfig = Field(default_factory=PipelineMetricsConfig)
     image_storage_path: str = "data/images"
 
 

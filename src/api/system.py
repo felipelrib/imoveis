@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends
 
 from api.auth import verify_admin_access
-from api.schemas import PipelineResponse, SystemStatusResponse
+from api.schemas import PipelineHistoryResponse, PipelineResponse, SystemStatusResponse
 from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
@@ -181,6 +181,36 @@ def system_pipeline() -> Dict[str, Any]:
         "ai_metrics": _ai_pipeline_metrics(r.lrange("pipeline:ai:telemetry", 0, -1)),
         "recent_scrape_runs": _recent_scrape_runs(r),
     }
+
+
+@router.get("/pipeline/history", response_model=PipelineHistoryResponse)
+def system_pipeline_history(minutes: int = 60) -> Dict[str, Any]:
+    """Return persisted pipeline metric snapshots for Dashboard charts (BIN-61)."""
+    from datetime import datetime, timedelta, timezone
+
+    from adapters.metrics.pipeline_snapshots import list_snapshots_since
+    from infra.db import SessionLocal
+
+    window = max(1, min(int(minutes or 60), 60 * 24 * 7))
+    since = datetime.now(timezone.utc) - timedelta(minutes=window)
+    with SessionLocal() as session:
+        rows = list_snapshots_since(session, since)
+    points = []
+    for row in rows:
+        ts = row.ts
+        if ts is not None and getattr(ts, "tzinfo", None) is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        points.append(
+            {
+                "ts": ts.isoformat() if ts is not None else "",
+                "total_properties": row.total_properties,
+                "enriched_properties": row.enriched_properties,
+                "scraper_queue": int(row.scraper_queue or 0),
+                "ai_queue": int(row.ai_queue or 0),
+                "throughput_per_min": float(row.throughput_per_min or 0.0),
+            }
+        )
+    return {"points": points}
 
 
 def _pipeline_queue_lengths(redis) -> dict:

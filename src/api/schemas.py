@@ -146,3 +146,16 @@ class PipelineResponse(BaseModel):
     scrapers_status: Dict[str, Any]
     ai_metrics: Dict[str, Any]
     recent_scrape_runs: List[Dict[str, Any]] = []
+
+
+class PipelineHistoryPoint(BaseModel):
+    ts: str
+    total_properties: Optional[int] = None
+    enriched_properties: Optional[int] = None
+    scraper_queue: int
+    ai_queue: int
+    throughput_per_min: float
+
+
+class PipelineHistoryResponse(BaseModel):
+    points: List[PipelineHistoryPoint]
