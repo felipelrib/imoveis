@@ -47,8 +47,9 @@ class PropertyModel(BaseModel):
     ai_issues: List[str] = []
     ai_green_flags: List[str] = []
     ai_red_flags: List[str] = []
-    condition_score: Optional[int] = None
-    sentiment_score: Optional[int] = None
+    # AI domain scores are floats in [0.0, 1.0] (see VisualResult / SentimentResult).
+    condition_score: Optional[float] = None
+    sentiment_score: Optional[float] = None
     stat_category: Optional[str] = None
     stat_reasoning: Optional[str] = None
     deal_summary: Optional[str] = None
