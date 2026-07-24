@@ -28,13 +28,13 @@ from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
 from adapters.metrics.scoring import score_single_property
 from adapters.queue.celery_app import make_celery
-from core.geo_allowlist import passes_geo_allowlist
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
+from core.geo_allowlist import passes_geo_allowlist
 from core.neighbourhood_assignment import assign_property_neighbourhood
 from infra.config import get_config
 from infra.db import SessionLocal
