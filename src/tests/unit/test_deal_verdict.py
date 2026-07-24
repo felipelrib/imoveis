@@ -1,4 +1,4 @@
-"""Tests for AI client — deal verdict template and synthesis."""
+"""English deal verdict template tests (BIN-69 / NFR-7)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,10 @@ import pytest
 
 from adapters.ai.client import DealVerdictResult, OllamaClient, template_deal_verdict
 
-# ---------------------------------------------------------------------------
-# template_deal_verdict — deterministic path
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.unit
 class TestTemplateDealVerdict:
-    """Unit tests for the deterministic PT-BR verdict template."""
+    """Unit tests for the deterministic English verdict template."""
 
     def test_full_signals(self):
         result = template_deal_verdict(
@@ -23,9 +19,9 @@ class TestTemplateDealVerdict:
                        "green_flags": ["close to metro"], "red_flags": []},
             neighborhood_name="Savassi",
         )
-        assert "Ligeiramente subvalorizado" in result
-        assert "boa condição" in result
-        assert "sem alertas" in result
+        assert "Slightly undervalued" in result
+        assert "good condition" in result
+        assert "no location alerts" in result
 
     def test_stat_only(self):
         result = template_deal_verdict(
@@ -33,7 +29,7 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment=None,
         )
-        assert result == "Altamente subvalorizado"
+        assert result == "Highly undervalued"
 
     def test_visual_only(self):
         result = template_deal_verdict(
@@ -41,7 +37,7 @@ class TestTemplateDealVerdict:
             visual={"category": "Needs Renovation", "reasoning": "..."},
             sentiment=None,
         )
-        assert result == "precisa de reforma"
+        assert result == "needs renovation"
 
     def test_sentiment_with_red_flags(self):
         result = template_deal_verdict(
@@ -49,7 +45,7 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": ["noisy avenue", "no parking"], "green_flags": []},
         )
-        assert "2 preocupações" in result
+        assert "2 location concerns" in result
 
     def test_sentiment_single_red_flag(self):
         result = template_deal_verdict(
@@ -57,9 +53,8 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": ["noise"], "green_flags": ["metro nearby"]},
         )
-        assert "1 preocupação" in result
-        assert "1 aspecto positivo" not in result  # green_flags < 2
-        assert "1 aspectos positivos" not in result
+        assert "1 location concern" in result
+        assert "positive location signals" not in result
 
     def test_sentiment_many_green_flags(self):
         result = template_deal_verdict(
@@ -67,12 +62,12 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": [], "green_flags": ["metro", "park", "school"]},
         )
-        assert "3 aspectos positivos" in result
-        assert "sem alertas" in result
+        assert "3 positive location signals" in result
+        assert "no location alerts" in result
 
     def test_no_signals(self):
         result = template_deal_verdict()
-        assert result == "Sem dados suficientes para avaliação"
+        assert result == "Not enough data for a deal verdict"
 
     def test_empty_dicts(self):
         result = template_deal_verdict(
@@ -80,36 +75,31 @@ class TestTemplateDealVerdict:
             visual={},
             sentiment={},
         )
-        assert result == "Sem dados suficientes para avaliação"
+        assert result == "Not enough data for a deal verdict"
 
     def test_overvalued_category(self):
         result = template_deal_verdict(
             stat_analysis={"category": "Highly Overvalued", "reasoning": "Above median"},
         )
-        assert result == "Altamente acima da média"
+        assert result == "Highly above neighbourhood average"
 
     def test_pristine_condition(self):
         result = template_deal_verdict(
             visual={"category": "Pristine", "reasoning": "Fully renovated"},
         )
-        assert result == "excelente estado"
+        assert result == "excellent condition"
 
     def test_poor_condition(self):
         result = template_deal_verdict(
             visual={"category": "Poor", "reasoning": "Major issues"},
         )
-        assert result == "estado precário"
+        assert result == "poor condition"
 
     def test_average_condition(self):
         result = template_deal_verdict(
             visual={"category": "Average", "reasoning": "Fair condition"},
         )
-        assert result == "estado razoável"
-
-
-# ---------------------------------------------------------------------------
-# DealVerdictResult model
-# ---------------------------------------------------------------------------
+        assert result == "average condition"
 
 
 @pytest.mark.unit
@@ -129,11 +119,6 @@ class TestDealVerdictResult:
         assert r.verdict == "test"
 
 
-# ---------------------------------------------------------------------------
-# summarize_deal — mocked client tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.unit
 class TestSummarizeDeal:
     """Tests for the summarize_deal method with mocked LLM."""
@@ -150,14 +135,13 @@ class TestSummarizeDeal:
         client.visual_model = "llava"
         client.text_model = "llama3"
 
-        # Mock _llm_verdict to return a canned result
         async def mock_llm(prompt):
             return DealVerdictResult(verdict="Mocked verdict from LLM", confidence=0.9)
 
         client._llm_verdict = mock_llm
 
         cfg = MagicMock()
-        cfg.ai.output_language = "pt-br"
+        cfg.ai.output_language = "en"
         monkeypatch.setattr("infra.config.get_config", lambda: cfg)
 
         result = await client.summarize_deal(
@@ -178,7 +162,6 @@ class TestSummarizeDeal:
         client.visual_model = "llava"
         client.text_model = "llama3"
 
-        # Mock _llm_verdict to raise
         async def mock_llm_error(prompt):
             raise ConnectionError("LLM unavailable")
 
@@ -189,14 +172,8 @@ class TestSummarizeDeal:
             visual={"category": "Good", "reasoning": "..."},
             sentiment={"red_flags": [], "green_flags": []},
         )
-        # Should fall back to template
-        assert "Ligeiramente subvalorizado" in result.verdict
+        assert "Slightly undervalued" in result.verdict
         assert result.confidence == 0.0
-
-
-# ---------------------------------------------------------------------------
-# build_deal_verdict_prompt
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
@@ -222,4 +199,4 @@ class TestBuildDealVerdictPrompt:
         from adapters.ai.prompts import build_deal_verdict_prompt
 
         prompt = build_deal_verdict_prompt()
-        assert "N/A" in prompt  # default values
+        assert "N/A" in prompt

@@ -354,6 +354,7 @@ class OLXScraper(BaseScraper):
         listing_type = self._detect_listing_type(raw)
 
         # Calculate full rent price for rentals
+        base_price = price
         if listing_type == "rent":
             price = price + float(props.get("condo_fee") or 0.0) + float(props.get("iptu") or 0.0)
 
@@ -372,6 +373,7 @@ class OLXScraper(BaseScraper):
                 "accepts_pets": props.get("accepts_pets"),
                 "condo_fee": props.get("condo_fee"),
                 "iptu": props.get("iptu"),
+                "base_price": base_price if listing_type == "rent" else None,
             }
         )
 
@@ -381,6 +383,10 @@ class OLXScraper(BaseScraper):
             if isinstance(location_dict, dict)
             else None
         ) or self._neighborhood_from_raw(raw)
+
+        loc_details = self._location_details(raw)
+        city = loc_details.get("city") or loc_details.get("cityName") or loc_details.get("municipality")
+        state = loc_details.get("uf") or loc_details.get("state")
 
         return {
             "platform": "olx",
@@ -399,6 +405,8 @@ class OLXScraper(BaseScraper):
             "image_urls": image_urls,
             "props_json": {
                 "neighborhood": neighborhood,
+                "city": city,
+                "state": state,
                 "available_for_rent": listing_type == "rent",
                 "available_for_sale": listing_type == "sale",
                 "isFurnished": props.get("is_furnished"),

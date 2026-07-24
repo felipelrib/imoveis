@@ -162,6 +162,7 @@ class PropertyListing(Base):
     accepts_pets = Column(Boolean)
     condo_fee = Column(Float)
     iptu = Column(Float)
+    base_price = Column(Float)  # rent before condo/IPTU when known (BIN-67)
     raw_json = Column(JSON)
     first_seen = Column(DateTime, server_default=sa.text(SQL_NOW))
     last_seen = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))

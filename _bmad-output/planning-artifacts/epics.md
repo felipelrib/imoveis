@@ -38,7 +38,7 @@ FR-5: System records price intervals when a Listing price changes and exposes hi
 FR-6: User can see rent/sale prices per platform on cards/modal.
 FR-7: Operator can select Ollama/LM Studio and model names via YAML.
 FR-8: System attaches visual condition and sentiment-style signals from local models.
-FR-9: Each enriched Property presents a PT-BR deal verdict on the card/modal.
+FR-9: Each enriched Property presents an English deal verdict on the card/modal. [Correct-course 2026-07-24 BIN-64; was PT-BR.]
 FR-10: System computes neighbourhood-relative scores and a combined score for colouring.
 FR-11: Re-scrapes of unchanged Listings do not re-enqueue expensive AI tasks.
 FR-12: User can filter the property grid by neighbourhood, price, score, listing type, etc., with non-blocking errors/toasts.
@@ -62,7 +62,7 @@ NFR-3: Security — no hardcoded production secrets; forbid imoveis_secret / dev
 NFR-4: Resilience — circuit breakers and checkpoints keep scrapes operable under partial platform failure.
 NFR-5: Testability — merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security) via scripts/agent gates.
 NFR-6: Observability — pipeline telemetry and system health endpoints support unattended operation.
-NFR-7: i18n — user-facing AI verdicts default to pt-br; planning docs in English.
+NFR-7: i18n — user-facing product language (UI + AI) defaults to English; planning docs in English. Second locales (e.g. pt-br) deferred to AI translation epic (BIN-63). Correct-course 2026-07-24 (BIN-64).
 NFR-8: Single-operator privacy posture — BH/MG geographic focus until multi-city is explicitly productized.
 
 ### Additional Requirements

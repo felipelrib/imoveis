@@ -409,7 +409,8 @@ def _upsert_listings(
                     "UPDATE property_listings "
                     "SET price = :price, currency = :currency, url = :url, "
                     "is_furnished = :is_furnished, accepts_pets = :accepts_pets, "
-                    "condo_fee = :condo_fee, iptu = :iptu, raw_json = :raw_json, "
+                    "condo_fee = :condo_fee, iptu = :iptu, base_price = :base_price, "
+                    "raw_json = :raw_json, "
                     "last_seen = :now, active = true "
                     "WHERE id = :id"
                 ),
@@ -421,6 +422,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
+                    "base_price": listing.get("base_price"),
                     "raw_json": json.dumps(listing.get("raw_json") or {}),
                     "now": now,
                     "id": str(check.id),
@@ -444,10 +446,10 @@ def _upsert_listings(
                     "INSERT INTO property_listings "
                     "(id, property_id, platform, platform_listing_id, listing_type, "
                     "price, currency, url, is_furnished, accepts_pets, condo_fee, iptu, "
-                    "raw_json, first_seen, last_seen, active) "
+                    "base_price, raw_json, first_seen, last_seen, active) "
                     "VALUES (:id, :pid, :platform, :plid, :lt, "
                     ":price, :currency, :url, :is_furnished, :accepts_pets, :condo_fee, :iptu, "
-                    ":raw_json, :now, :now, true)"
+                    ":base_price, :raw_json, :now, :now, true)"
                 ),
                 {
                     "id": listing_id,
@@ -462,6 +464,7 @@ def _upsert_listings(
                     "accepts_pets": listing.get("accepts_pets"),
                     "condo_fee": listing.get("condo_fee"),
                     "iptu": listing.get("iptu"),
+                    "base_price": listing.get("base_price"),
                     "raw_json": json.dumps(listing.get("raw_json") or {}),
                     "now": now,
                 },

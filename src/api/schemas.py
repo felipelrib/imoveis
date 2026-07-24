@@ -14,6 +14,8 @@ class PropertyListingModel(BaseModel):
     accepts_pets: Optional[bool] = None
     condo_fee: Optional[float] = None
     iptu: Optional[float] = None
+    base_price: Optional[float] = None
+    fees_bundled: Optional[bool] = None
 
 
 class PropertyModel(BaseModel):

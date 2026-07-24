@@ -96,7 +96,7 @@ export default function PropertyModal({ id, onClose }) {
               {loading ? '…' : `R$ ${p?.price?.toLocaleString('pt-BR') || '—'}`}
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
-              {loading ? '' : (p?.title || p?.address || 'Sem título')}
+              {loading ? '' : (p?.title || p?.address || 'Untitled')}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -149,7 +149,7 @@ export default function PropertyModal({ id, onClose }) {
                   className="btn btn-ghost btn-sm"
                   style={{ fontSize: 13 }}
                 >
-                  🔗 {l.platform} ({l.listing_type === 'rent' ? 'Aluguel' : 'Venda'}) - R$ {l.price?.toLocaleString('pt-BR')}
+                  🔗 {l.platform} ({l.listing_type === 'rent' ? 'Rent' : 'Sale'}) - R$ {l.price?.toLocaleString('pt-BR')}
                 </a>
               )
             })}
@@ -161,7 +161,7 @@ export default function PropertyModal({ id, onClose }) {
                 className="btn btn-ghost btn-sm"
                 style={{ fontSize: 13 }}
               >
-                🔗 Ver Original
+                🔗 View original
               </a>
             )}
             <button className="modal-close" onClick={onClose} aria-label="Close modal">✕</button>
@@ -237,14 +237,15 @@ export default function PropertyModal({ id, onClose }) {
                   if (!groups[key]) groups[key] = []
                   groups[key].push(l)
                 }
-                const typeLabel = (t) => t === 'rent' ? 'Aluguel' : 'Venda'
+                const typeLabel = (t) => t === 'rent' ? 'Rent' : 'Sale'
                 const typeColor = (t) => t === 'rent'
                   ? { bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)', header: '#818cf8' }
                   : { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', header: '#34d399' }
+                const money = (v) => (v != null && v !== 0 ? `R$ ${Number(v).toLocaleString('pt-BR')}` : '—')
                 return (
-                  <div style={{ marginBottom: 20 }}>
+                  <div style={{ marginBottom: 20 }} data-testid="listings-by-platform">
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                      📋 Listings by Platform
+                      Listings by Platform
                     </div>
                     {Object.entries(groups).map(([type, listings]) => {
                       const colors = typeColor(type)
@@ -260,33 +261,36 @@ export default function PropertyModal({ id, onClose }) {
                                 <tr>
                                   <th>Platform</th>
                                   <th>Price</th>
+                                  <th>Base</th>
                                   <th>Condo</th>
                                   <th>IPTU</th>
-                                  <th>Furnished</th>
-                                  <th>Pets</th>
                                   <th></th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {listings.sort((a, b) => (a.price || Infinity) - (b.price || Infinity)).map((l, i) => {
+                                {listings.sort((a, b) => (a.price || Infinity) - (b.price || Infinity)).map((l) => {
                                   const isBest = l.price !== null && l.price !== undefined && l.price === minPrice
                                   return (
-                                    <tr key={`${l.platform}-${l.platform_id}`} className={isBest ? 'best-price' : ''}>
-                                      <td style={{ fontWeight: 600 }}>{l.platform}</td>
-                                      <td style={{ fontWeight: isBest ? 800 : 400, color: isBest ? '#34d399' : 'inherit' }}>
-                                        {isBest && '★ '}{l.price ? `R$ ${l.price.toLocaleString('pt-BR')}` : '—'}
+                                    <tr key={`${l.platform}-${l.platform_listing_id || l.platform_id}`} className={isBest ? 'best-price' : ''}>
+                                      <td style={{ fontWeight: 600 }}>
+                                        {l.platform}
+                                        {l.fees_bundled ? (
+                                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }} title="Condo/IPTU bundled or derived">bundled fees</span>
+                                        ) : null}
                                       </td>
-                                      <td>{l.condo_fee ? `R$ ${l.condo_fee.toLocaleString('pt-BR')}` : '—'}</td>
-                                      <td>{l.iptu ? `R$ ${l.iptu.toLocaleString('pt-BR')}` : '—'}</td>
-                                      <td>{l.furnished ? '✔' : '—'}</td>
-                                      <td>{l.pets_allowed ? '✔' : '—'}</td>
+                                      <td style={{ fontWeight: isBest ? 800 : 400, color: isBest ? '#34d399' : 'inherit' }}>
+                                        {isBest && '★ '}{money(l.price)}
+                                      </td>
+                                      <td>{money(l.base_price)}</td>
+                                      <td>{money(l.condo_fee)}</td>
+                                      <td>{money(l.iptu)}</td>
                                       <td>
                                         {sanitizeListingUrl(l.url) ? (
                                           <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title="Open on platform">
                                             →
                                           </a>
                                         ) : (
-                                          <span className="listing-link-unavailable" title="Link indisponível">✕</span>
+                                          <span className="listing-link-unavailable" title="Link unavailable">✕</span>
                                         )}
                                       </td>
                                     </tr>
@@ -294,6 +298,37 @@ export default function PropertyModal({ id, onClose }) {
                                 })}
                               </tbody>
                             </table>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 4px 0' }} data-testid={`listing-attrs-${type}`}>
+                            {listings.map((l) => {
+                              const chips = []
+                              if (l.is_furnished === true) chips.push('Furnished')
+                              else if (l.is_furnished === false) chips.push('Unfurnished')
+                              if (l.accepts_pets === true) chips.push('Pets OK')
+                              else if (l.accepts_pets === false) chips.push('No pets')
+                              if (!chips.length) return null
+                              return (
+                                <div key={`attrs-${l.platform}-${l.platform_listing_id}`} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                  <span style={{ fontWeight: 600, marginRight: 6 }}>{l.platform}:</span>
+                                  {chips.map((c) => (
+                                    <span
+                                      key={c}
+                                      data-testid={`attr-chip-${c.toLowerCase().replace(/\s+/g, '-')}`}
+                                      style={{
+                                        display: 'inline-block',
+                                        marginRight: 6,
+                                        padding: '2px 8px',
+                                        borderRadius: 999,
+                                        border: '1px solid var(--border-subtle)',
+                                        background: 'var(--bg-card)',
+                                      }}
+                                    >
+                                      {c}
+                                    </span>
+                                  ))}
+                                </div>
+                              )
+                            })}
                           </div>
                         </div>
                       )
@@ -331,7 +366,7 @@ export default function PropertyModal({ id, onClose }) {
                   borderRadius: 12,
                 }}>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
-                    💡 Veredicto do Deal
+                    💡 Deal verdict
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.5, background: 'linear-gradient(135deg, #6366f1, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                     {p.deal_summary}
@@ -444,7 +479,7 @@ export default function PropertyModal({ id, onClose }) {
                           <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
                           {lineKeys.map((key, i) => {
                             const [type, platform] = key.split('|')
-                            const label = `${type === 'rent' ? 'Aluguel' : 'Venda'} (${platform})`
+                            const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${platform})`
                             return (
                               <Line key={key} type="monotone" dataKey={key} stroke={colors[i % colors.length]}
                                 strokeWidth={2} dot={{ r: 3 }} name={label} connectNulls={false} />

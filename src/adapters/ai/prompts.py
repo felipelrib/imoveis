@@ -171,12 +171,13 @@ def build_deal_verdict_prompt(
     visual: dict | None = None,
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
-    output_language: str = "pt-br",
+    output_language: str = "en",
 ) -> str:
-    """Return a prompt that asks the LLM to produce a concise PT-BR deal verdict.
+    """Return a prompt that asks the LLM to produce a concise deal verdict.
 
     Combines the three scoring signals into a single natural-language sentence
     that serves as the property's "deal verdict" — the product's punchline.
+    Default language is English (NFR-7 / BIN-64); override via ``output_language``.
 
     Parameters
     ----------

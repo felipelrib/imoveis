@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS property_listings (
     accepts_pets BOOLEAN,
     condo_fee REAL,
     iptu REAL,
+    base_price REAL,
     raw_json TEXT,
     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -249,3 +250,15 @@ class TestUpsertListings:
         assert row.condo_fee == pytest.approx(800.0)
         assert row.iptu == pytest.approx(150.0)
         assert row.is_furnished == 1
+
+    def test_base_price_persisted(self, db_session, sample_property):
+        """base_price (BIN-67) is stored on upsert."""
+        _upsert_listings(
+            db_session,
+            sample_property.id,
+            [_make_listing(base_price=2200.0, price=2850.0)],
+        )
+        db_session.commit()
+        row = db_session.execute(text("SELECT base_price, price FROM property_listings")).one()
+        assert row.base_price == pytest.approx(2200.0)
+        assert row.price == pytest.approx(2850.0)
