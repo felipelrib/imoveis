@@ -21,6 +21,8 @@ Multiple Cursor agents may work on **different features in parallel**. Isolation
 
 **Worktree location:** sibling directories `../<repo>-wt-<slug>` (not nested `.worktrees/`, which was root-owned and confused small agents). Port registry: `.agent-workspaces/registry.tsv` on the primary. Each worktree gets `.env.local` with unique ports + `COMPOSE_PROJECT_NAME`; start stack with `run-services.sh`.
 
+**Postgres persistence:** scraped data should live on the **primary** Compose project (`COMPOSE_PROJECT_NAME=imoveis`). `teardown.sh` keeps volumes for that project unless `--volumes` is passed; worktree projects still drop their private volumes by default. Prefer `./scripts/stop.sh` / `./scripts/clean.sh` (no `--volumes`) over volume-wiping flags for routine stops.
+
 After creating a worktree, agents must **`move_agent_to_root`** (or `cd`) into that path before editing.
 
 This does **not** revive ADR 0001 dual-model Planner/Implementer. Each agent is still a single Plan→Implement session; parallelism is across *tasks*, not within one task.

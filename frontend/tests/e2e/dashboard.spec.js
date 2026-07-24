@@ -20,6 +20,27 @@ test.describe("Dashboard page", () => {
     await expect(page.locator("text=Redis").first()).toBeVisible();
     await expect(page.locator("text=PostgreSQL")).toBeVisible();
   });
+
+  test("shows em dash for property counts when database is unhealthy (BIN-60)", async ({
+    page,
+  }) => {
+    await installCommonMocks(page, {
+      status: {
+        database: { status: "error", detail: "connection refused" },
+        redis: { status: "ok" },
+        ollama: { status: "ok", models: ["llava"] },
+        workers: { status: "ok" },
+        ai_workers_paused: false,
+        stats: { total_properties: null, enriched_properties: null },
+      },
+    });
+    await page.goto("/");
+    const totalCard = page.locator(".stat-card").filter({ hasText: "Total Properties" });
+    await expect(totalCard.locator(".stat-value")).toHaveText("—");
+    await expect(totalCard.locator(".stat-sub")).toHaveText("database unavailable");
+    // Must not flash a false empty database.
+    await expect(totalCard.locator(".stat-value")).not.toHaveText("0");
+  });
 });
 
 test.describe("Properties critical path", () => {
