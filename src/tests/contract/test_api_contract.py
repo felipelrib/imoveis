@@ -143,6 +143,23 @@ class TestNeighborhoodsEndpoint:
             assert "count" in item
             assert isinstance(item["name"], str)
             assert isinstance(item["count"], int)
+            # city may be null for legacy rows without city metadata
+            assert "city" in item
+
+
+class TestCitiesEndpoint:
+    def test_cities_returns_list(self, client):
+        """GET /properties/cities must return a list of city objects (BIN-70)."""
+        response = client.get("/properties/cities")
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties/cities")
+        data = response.json()
+        assert isinstance(data, list)
+        for item in data:
+            assert isinstance(item, dict)
+            assert "name" in item
+            assert "count" in item
+            assert isinstance(item["name"], str)
+            assert isinstance(item["count"], int)
 
 
 class TestPropertyModelAiScoreContract:

@@ -19,6 +19,7 @@ from api.property_projection import (
     map_property_list_item,
 )
 from api.schemas import (
+    CityModel,
     NeighborhoodModel,
     PaginatedPropertiesResponse,
     PriceHistoryModel,
@@ -50,6 +51,7 @@ class PropertyListFilters(BaseModel):
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
+    city_name: Optional[str] = None
     listing_type: Optional[str] = Field(None, pattern="^(rent|sale|both)$")
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
@@ -70,6 +72,7 @@ class PropertyExportFilters(BaseModel):
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
+    city_name: Optional[str] = None
     listing_type: Optional[str] = Field(None, pattern="^(rent|sale|both)$")
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
@@ -120,6 +123,23 @@ def _append_neighborhood_filters(
     filters.append(f"({' OR '.join(nbr_filters)})")
 
 
+def _append_city_filters(
+    filters: list[str],
+    params: Dict[str, Any],
+    city_name: str,
+) -> None:
+    names = [n.strip() for n in city_name.split(",") if n.strip()]
+    if not names:
+        return
+    city_filters = []
+    for i, name in enumerate(names):
+        city_filters.append(
+            f"(COALESCE(n.city, p.props_json->>'city') ILIKE :city_{i})"
+        )
+        params[f"city_{i}"] = f"%{name}%"
+    filters.append(f"({' OR '.join(city_filters)})")
+
+
 def _append_bbox_filter(filters: list[str], params: Dict[str, Any], bbox: str) -> None:
     try:
         parts = [float(x.strip()) for x in bbox.split(",")]
@@ -163,6 +183,8 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         params["min_parking"] = filters_in.min_parking
     if filters_in.neighborhood_name:
         _append_neighborhood_filters(filters, params, filters_in.neighborhood_name)
+    if filters_in.city_name:
+        _append_city_filters(filters, params, filters_in.city_name)
     if filters_in.min_score is not None:
         filters.append("COALESCE(ms.combined_score, 0) >= :min_score")
         params["min_score"] = filters_in.min_score
@@ -256,11 +278,33 @@ def list_neighborhoods() -> List[Dict[str, Any]]:
     with SessionLocal() as session:
         rows = session.execute(text("""
             SELECT COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') AS name,
+                   COUNT(p.id) AS property_count,
+                   COALESCE(n.city, p.props_json->>'city') AS city
+            FROM properties p
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE p.active = true
+            GROUP BY COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown'),
+                     COALESCE(n.city, p.props_json->>'city')
+            ORDER BY city NULLS LAST, name
+        """)).fetchall()
+        return [
+            {"name": r[0], "count": r[1], "city": r[2]}
+            for r in rows
+            if r[0]
+        ]
+
+
+@router.get("/cities", response_model=List[CityModel])
+def list_cities() -> List[Dict[str, Any]]:
+    """Return distinct cities with property counts for the city filter."""
+    with SessionLocal() as session:
+        rows = session.execute(text("""
+            SELECT COALESCE(n.city, p.props_json->>'city', 'Unknown') AS name,
                    COUNT(p.id) AS property_count
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.active = true
-            GROUP BY COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')
+            GROUP BY COALESCE(n.city, p.props_json->>'city', 'Unknown')
             ORDER BY name
         """)).fetchall()
         return [{"name": r[0], "count": r[1]} for r in rows if r[0]]

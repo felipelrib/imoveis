@@ -29,12 +29,16 @@ redis_url: redis://localhost:6379/0
 # ---------------------------------------------------------------------------
 scraping:
   # Reject listings whose city/state fall outside operator geo (BIN-68).
+  # Missing city is rejected; keep-list: BH / São Paulo / Campinas.
   geo_allowlist:
     enabled: true
     cities:
       - Belo Horizonte
+      - São Paulo
+      - Campinas
     states:
       - MG
+      - SP
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil

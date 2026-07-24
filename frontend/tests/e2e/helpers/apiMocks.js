@@ -297,7 +297,23 @@ export async function installCommonMocks(page, opts = {}) {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([{ name: "Savassi", count: 1 }]),
+      body: JSON.stringify([
+        { name: "Savassi", count: 1, city: "Belo Horizonte" },
+        { name: "Pinheiros", count: 2, city: "São Paulo" },
+        { name: "Cambuí", count: 1, city: "Campinas" },
+      ]),
+    })
+  );
+
+  await page.route("**/api/properties/cities", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { name: "Belo Horizonte", count: 10 },
+        { name: "São Paulo", count: 5 },
+        { name: "Campinas", count: 3 },
+      ]),
     })
   );
 }

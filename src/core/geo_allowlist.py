@@ -1,8 +1,8 @@
-"""Operator geo allowlist for scrape ingest (BIN-68).
+"""Operator geo allowlist for scrape ingest (BIN-68 / city filter).
 
 Rejects candidates whose city/state fall outside the configured scrape geo
-(default: Belo Horizonte / MG). Missing city/state does not reject — only
-explicit out-of-allowlist values do.
+(default: Belo Horizonte, São Paulo, Campinas / MG+SP). Missing city rejects
+(``city_missing``); missing state alone does not reject when city is allowed.
 """
 
 from __future__ import annotations
@@ -62,6 +62,13 @@ def extract_city_state(candidate: Any) -> tuple[Optional[str], Optional[str]]:
     m = re.search(r",\s*([^,]+),\s*([A-Za-z]{2})\s*$", address)
     if m:
         return m.group(1).strip(), m.group(2).strip().upper()
+    # ", City" without UF (QuintoAndar often omits state in address).
+    m = re.search(r",\s*([^,]+)\s*$", address)
+    if m:
+        token = m.group(1).strip()
+        if len(token) == 2 and token.isalpha():
+            return None, token.upper()
+        return token, None
     return None, None
 
 
@@ -74,9 +81,9 @@ def passes_geo_allowlist(
 ) -> tuple[bool, Optional[str]]:
     """Return (ok, reject_reason). When disabled, always allows.
 
-    Reject when an extracted city is outside ``cities`` or an extracted state
-    is outside ``states``. Unknown city/state → allow (avoid dropping incomplete
-    but otherwise valid BH payloads).
+    Reject when city is missing, an extracted city is outside ``cities``, or an
+    extracted state is outside ``states``. Missing state alone is allowed when
+    the city is present and allowed.
     """
     if not enabled:
         return True, None
@@ -87,7 +94,9 @@ def passes_geo_allowlist(
         return True, None
 
     city, state = extract_city_state(candidate)
-    if city and allowed_cities and _canonical_city(city) not in allowed_cities:
+    if not city:
+        return False, "city_missing"
+    if allowed_cities and _canonical_city(city) not in allowed_cities:
         return False, f"city_not_allowed:{city}"
     if state and allowed_states and _fold(state) not in allowed_states:
         return False, f"state_not_allowed:{state}"
