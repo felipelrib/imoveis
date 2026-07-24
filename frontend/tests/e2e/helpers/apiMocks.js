@@ -237,6 +237,14 @@ export async function installCommonMocks(page, opts = {}) {
     })
   );
 
+  await page.route("**/api/system/pipeline/history**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ points: [] }),
+    })
+  );
+
   await page.route("**/api/**/schedule**", (route) =>
     route.fulfill({
       status: 200,

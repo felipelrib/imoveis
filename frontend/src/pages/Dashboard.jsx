@@ -1,12 +1,24 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useAlerts } from '../hooks/useAlerts.js'
-import { ensureOllama, recalculateScores, fetchPipeline } from '../api.js'
+import { ensureOllama, recalculateScores, fetchPipeline, fetchPipelineHistory } from '../api.js'
 import { useState, useEffect, useRef } from 'react'
 import { useToast } from '../components/ToastProvider.jsx'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   BarChart, Bar, Legend
 } from 'recharts'
+
+const HISTORY_MAX_POINTS = 120
+
+function toHistoryPoint(tsLabel, throughput, scraperQueue, aiQueue) {
+  return { time: tsLabel, throughput, scraperQueue, aiQueue }
+}
+
+function formatTsLabel(isoOrDate) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
 
 const SERVICES = [
   { key: 'database', icon: '🗄️', label: 'PostgreSQL',  sub: (s) => s?.database?.status === 'ok' ? 'Connected' : s?.database?.detail || 'Offline' },
@@ -35,29 +47,61 @@ export default function Dashboard({ status, loading }) {
 
   const stats = status?.stats || {}
   const dbOk = status?.database?.status === 'ok'
+  const historyLoaded = useRef(false)
 
-  // Poll pipeline telemetry for chart data
+  // Load persisted history once, then poll live tip
   useEffect(() => {
     let cancelled = false
+    const loadHistory = async () => {
+      try {
+        const hist = await fetchPipelineHistory(60)
+        if (cancelled || historyLoaded.current) return
+        const points = (hist.points || []).map((p) =>
+          toHistoryPoint(
+            formatTsLabel(p.ts),
+            p.throughput_per_min || 0,
+            p.scraper_queue || 0,
+            p.ai_queue || 0,
+          )
+        )
+        if (points.length) {
+          setThroughputHistory(points.slice(-HISTORY_MAX_POINTS))
+        }
+        historyLoaded.current = true
+      } catch {
+        historyLoaded.current = true
+      }
+    }
     const poll = async () => {
       try {
         const data = await fetchPipeline()
         if (cancelled) return
         setPipeline(data)
-        const now = new Date()
-        const timeLabel = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        setThroughputHistory(prev => {
-          const next = [...prev, { time: timeLabel, throughput: data.ai_metrics?.throughput_per_min || 0, scraperQueue: data.queues?.scrapers || 0, aiQueue: data.queues?.ai || 0 }]
-          // Keep last 20 data points
-          return next.slice(-20)
+        const timeLabel = formatTsLabel(new Date())
+        setThroughputHistory((prev) => {
+          const next = [
+            ...prev,
+            toHistoryPoint(
+              timeLabel,
+              data.ai_metrics?.throughput_per_min || 0,
+              data.queues?.scrapers || 0,
+              data.queues?.ai || 0,
+            ),
+          ]
+          return next.slice(-HISTORY_MAX_POINTS)
         })
       } catch {
         // silently ignore — pipeline data is non-critical
       }
     }
-    poll()
+    loadHistory().then(() => {
+      if (!cancelled) poll()
+    })
     const id = setInterval(poll, 8000)
-    return () => { cancelled = true; clearInterval(id) }
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
   }, [])
 
   const handleEnsureOllama = async () => {

@@ -29,6 +29,7 @@ def build_beat_schedule() -> dict:
     digest_mode = False
     top_deals_enabled = False
     top_deals_cfg = None
+    cfg = None
     try:
         cfg = get_config()
         r = get_redis()
@@ -70,6 +71,22 @@ def build_beat_schedule() -> dict:
         "task": "tasks.monitor_queues",
         "schedule": 60.0,
     }
+
+    # Pipeline metric snapshots (Dashboard history). Interval from YAML; default 30s.
+    snapshot_interval = 30.0
+    try:
+        pipeline_cfg = getattr(cfg, "pipeline_metrics", None) if cfg is not None else None
+        if pipeline_cfg is not None:
+            raw_interval = getattr(pipeline_cfg, "snapshot_interval_sec", 30)
+            if isinstance(raw_interval, (int, float)) and not isinstance(raw_interval, bool):
+                snapshot_interval = float(raw_interval)
+    except (TypeError, ValueError):
+        snapshot_interval = 30.0
+    if snapshot_interval > 0:
+        schedule["snapshot-pipeline-metrics"] = {
+            "task": "tasks.snapshot_pipeline_metrics",
+            "schedule": snapshot_interval,
+        }
 
     if digest_mode:
         schedule["send-daily-digest"] = {

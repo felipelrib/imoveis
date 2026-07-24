@@ -670,6 +670,23 @@ def monitor_queues():
             r.delete(REDIS_KEY_SCRAPERS_PAUSED)
 
 
+@celery.task(name="tasks.snapshot_pipeline_metrics")
+def snapshot_pipeline_metrics():
+    """Persist a pipeline metrics snapshot and prune past retention (BIN-61)."""
+    from adapters.metrics.pipeline_snapshots import snapshot_and_prune
+    from infra.config import get_config
+    from infra.db import SessionLocal
+
+    retention = 7
+    try:
+        retention = int(get_config().pipeline_metrics.retention_days)
+    except Exception:
+        retention = 7
+
+    with SessionLocal() as session:
+        return snapshot_and_prune(session, retention_days=retention)
+
+
 @celery.task(bind=True, name="tasks.send_daily_digest")
 def send_daily_digest(self):
     """Batch process queued email digest alerts and send them."""

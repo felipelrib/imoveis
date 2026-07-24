@@ -74,6 +74,12 @@ export async function fetchPipeline() {
   return r.json()
 }
 
+export async function fetchPipelineHistory(minutes = 60) {
+  const r = await fetch(`${BASE}/system/pipeline/history?minutes=${minutes}`)
+  if (!r.ok) throw new Error('Pipeline history fetch failed')
+  return r.json()
+}
+
 export async function fetchPlatforms() {
   const r = await fetch(`${BASE}/platforms`)
   if (!r.ok) throw new Error('Platforms fetch failed')

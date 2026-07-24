@@ -41,6 +41,40 @@ test.describe("Dashboard page", () => {
     // Must not flash a false empty database.
     await expect(totalCard.locator(".stat-value")).not.toHaveText("0");
   });
+
+  test("loads pipeline history into charts on mount (BIN-61)", async ({ page }) => {
+    await installCommonMocks(page);
+    const ts = new Date().toISOString();
+    await page.route("**/api/system/pipeline/history**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          points: [
+            {
+              ts,
+              total_properties: 10,
+              enriched_properties: 1,
+              scraper_queue: 2,
+              ai_queue: 3,
+              throughput_per_min: 1.5,
+            },
+            {
+              ts,
+              total_properties: 11,
+              enriched_properties: 2,
+              scraper_queue: 1,
+              ai_queue: 4,
+              throughput_per_min: 2.0,
+            },
+          ],
+        }),
+      })
+    );
+    await page.goto("/");
+    await expect(page.getByText(/AI Throughput/i)).toBeVisible();
+    await expect(page.locator(".recharts-responsive-container").first()).toBeVisible();
+  });
 });
 
 test.describe("Properties critical path", () => {

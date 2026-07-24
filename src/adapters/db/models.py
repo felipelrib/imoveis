@@ -254,6 +254,23 @@ class AdminAudit(Base):
     performed_at = Column(DateTime, server_default=sa.text(SQL_NOW))
 
 
+class PipelineMetricSnapshot(Base):
+    """Periodic pipeline telemetry row for Dashboard history (BIN-61)."""
+
+    __tablename__ = "pipeline_metric_snapshots"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
+    )
+    ts = Column(DateTime(timezone=True), nullable=False, server_default=sa.text(SQL_NOW), index=True)
+    total_properties = Column(Integer, nullable=True)
+    enriched_properties = Column(Integer, nullable=True)
+    scraper_queue = Column(Integer, nullable=False, server_default="0")
+    ai_queue = Column(Integer, nullable=False, server_default="0")
+    throughput_per_min = Column(Float, nullable=False, server_default="0")
+
+
 # --- ORM Event Hooks ---
 
 import shutil  # noqa: E402

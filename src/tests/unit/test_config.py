@@ -489,6 +489,7 @@ _CRITICAL_APP_CONFIG_SECTIONS = (
     "auth",
     "ai",
     "database",
+    "pipeline_metrics",
 )
 
 
