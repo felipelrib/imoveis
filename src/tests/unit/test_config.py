@@ -443,6 +443,16 @@ def test_proxy_from_default_app_config_yaml():
 
 
 @pytest.mark.unit
+def test_ai_stack_from_default_app_config_yaml():
+    """Real configs/app_config.yaml uses qwen2.5vl + bge-m3 + num_ctx (BIN-73)."""
+    cfg = get_config()
+    assert cfg.ai.visual_model == "qwen2.5vl:7b"
+    assert cfg.ai.text_model == "qwen2.5vl:7b"
+    assert cfg.ai.embedding_model == "bge-m3"
+    assert cfg.ai.num_ctx == 8192
+
+
+@pytest.mark.unit
 def test_dedup_from_default_app_config_yaml():
     """Real configs/app_config.yaml loads dedup thresholds used by scrape_listings."""
     cfg = get_config()

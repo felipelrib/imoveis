@@ -148,7 +148,7 @@ services:
   ollama_init:
     image: curlimages/curl:latest
     restart: "no"
-    command: ["sh", "-c", "curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"llama3\"}' && curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"llava\"}'"]
+    command: ["sh", "-c", "curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"qwen2.5vl:7b\"}' && curl -sS -X POST http://host.docker.internal:11434/api/pull -d '{\"name\": \"bge-m3\"}'"]
 
 volumes:
   postgres_data:

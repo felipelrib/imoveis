@@ -168,11 +168,15 @@ ai:
   backend: ollama             # ollama | lmstudio
   ollama_url: http://localhost:11434
   lmstudio_url: http://localhost:1234
-  visual_model: llava          # model for image analysis (VLM)
-  text_model: llama3           # model for text/sentiment analysis
-  embedding_model: nomic-embed-text  # model for semantic search embeddings
+  # Single generative VLM for photos + text JSON (sentiment, OLX location, verdict)
+  visual_model: qwen2.5vl:7b
+  text_model: qwen2.5vl:7b
+  embedding_model: bge-m3     # multilingual 1024-d (requires properties.embedding vector(1024))
   timeout: 120
-  max_tokens: 1024
+  max_tokens: 1024            # Ollama num_predict
+  # Context window for generate calls. 8192 fits listing prompts + a few images on
+  # ~15–17GB free VRAM with qwen2.5vl:7b; raise to 16384 only if you have headroom.
+  num_ctx: 8192
   visual_weight: 0.6
   text_weight: 0.4
   max_images_per_property: 5

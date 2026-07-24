@@ -244,14 +244,27 @@ class OllamaClient(LocalAIClient):
         self,
         base_url: str = "http://localhost:11434",
         timeout: int = 30,
-        visual_model: str = "llava",
-        text_model: str = "llama3",
-        embedding_model: str = "nomic-embed-text",
+        visual_model: str = "qwen2.5vl:7b",
+        text_model: str = "qwen2.5vl:7b",
+        embedding_model: str = "bge-m3",
+        num_ctx: int = 8192,
+        max_tokens: int = 1024,
     ):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
         self.embedding_model = embedding_model
+        self.num_ctx = num_ctx
+        self.max_tokens = max_tokens
+
+    def _ollama_options(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge caller options with configured num_ctx / num_predict."""
+        options = dict(kwargs.pop("options", None) or {})
+        if self.num_ctx and "num_ctx" not in options:
+            options["num_ctx"] = int(self.num_ctx)
+        if self.max_tokens and "num_predict" not in options:
+            options["num_predict"] = int(self.max_tokens)
+        return options
 
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call Ollama for deal verdict synthesis."""
@@ -290,7 +303,10 @@ class OllamaClient(LocalAIClient):
             self._ensure_session()
 
             url = f"{self.base_url}/api/generate"
+            options = self._ollama_options(kwargs)
             data = {"model": model, "prompt": prompt, **kwargs}
+            if options:
+                data["options"] = options
 
             async with self.session.post(url, json=data) as response:
                 if response.status != 200:
@@ -389,14 +405,18 @@ class LMStudioClient(LocalAIClient):
         self,
         base_url: str = "http://localhost:1234",
         timeout: int = 30,
-        visual_model: str = "llava",
-        text_model: str = "llama3",
-        embedding_model: str = "nomic-embed-text",
+        visual_model: str = "qwen2.5vl:7b",
+        text_model: str = "qwen2.5vl:7b",
+        embedding_model: str = "bge-m3",
+        num_ctx: int = 8192,
+        max_tokens: int = 1024,
     ):
         super().__init__(base_url, timeout)
         self.visual_model = visual_model
         self.text_model = text_model
         self.embedding_model = embedding_model
+        self.num_ctx = num_ctx
+        self.max_tokens = max_tokens
 
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call LM Studio for deal verdict synthesis."""
@@ -567,6 +587,8 @@ def create_ai_client() -> LocalAIClient:
             visual_model=cfg.ai.visual_model,
             text_model=cfg.ai.text_model,
             embedding_model=cfg.ai.embedding_model,
+            num_ctx=cfg.ai.num_ctx,
+            max_tokens=cfg.ai.max_tokens,
         )
     else:
         # Default to Ollama
@@ -576,4 +598,6 @@ def create_ai_client() -> LocalAIClient:
             visual_model=cfg.ai.visual_model,
             text_model=cfg.ai.text_model,
             embedding_model=cfg.ai.embedding_model,
+            num_ctx=cfg.ai.num_ctx,
+            max_tokens=cfg.ai.max_tokens,
         )
