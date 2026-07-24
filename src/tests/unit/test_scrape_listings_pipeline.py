@@ -81,7 +81,14 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
             return_value=DedupeMatchResult(property_id="prop-1", action="created"),
         ) as match_fn,
         patch.object(tasks_mod, "assign_property_neighbourhood") as assign_fn,
+        patch.object(tasks_mod, "assign_property_neighbourhood_by_name") as assign_by_name,
         patch.object(tasks_mod, "_enqueue_post_scrape_jobs") as enqueue_fn,
+        patch.object(tasks_mod, "sync_ai_extract", return_value=None),
+        patch.object(
+            tasks_mod,
+            "load_neighborhood_names",
+            return_value=["Savassi", "Itapoã"],
+        ),
     ):
         store_cls.return_value.get.return_value = {}
         registry.get.return_value = scraper
@@ -94,7 +101,9 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
     assert kwargs["algorithm"] == real_cfg.dedup.text_similarity_algorithm
     assert kwargs["radius_m"] == real_cfg.dedup.radius_m
     assert kwargs["area_tol"] == real_cfg.dedup.area_tolerance_m2
-    assign_fn.assert_called_once_with(session, "prop-1")
+    # Candidate has no lat/lon → name-based neighbourhood assign.
+    assign_by_name.assert_called_once()
+    assign_fn.assert_not_called()
     enqueue_fn.assert_called_once()
 
     status_writes = [
