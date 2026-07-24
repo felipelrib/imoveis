@@ -272,8 +272,12 @@ def recompute_verdicts():
 
 
 @router.post("/embeddings/backfill", responses=_RESP_500)
-def backfill_embeddings():
-    """Enqueue embed_property for active properties missing an embedding."""
+def backfill_embeddings(force: bool = False):
+    """Enqueue embed_property for active properties missing an embedding.
+
+    Pass ``force=true`` to clear all embeddings first (e.g. after changing
+    embedding model / dimension), then queue a full re-embed.
+    """
     from sqlalchemy import text
 
     from adapters.queue.tasks import embed_property
@@ -281,6 +285,9 @@ def backfill_embeddings():
     count = 0
     with SessionLocal() as session:
         try:
+            if force:
+                session.execute(text("UPDATE properties SET embedding = NULL"))
+                session.commit()
             rows = session.execute(
                 text(
                     "SELECT id FROM properties "
@@ -295,9 +302,9 @@ def backfill_embeddings():
             logger.error("embeddings_backfill_failed", error=str(exc))
             raise HTTPException(status_code=500, detail=str(exc))
 
-    logger.info("embeddings_backfill_queued", count=count)
-    log_audit_action("embeddings_backfill", {"queued": count})
-    return {"queued_embeddings": count}
+    logger.info("embeddings_backfill_queued", count=count, force=force)
+    log_audit_action("embeddings_backfill", {"queued": count, "force": force})
+    return {"queued_embeddings": count, "force": force}
 
 
 @router.get("/audit")

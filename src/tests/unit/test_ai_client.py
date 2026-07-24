@@ -71,8 +71,10 @@ class TestOllamaClientModels:
 
     def test_default_models(self):
         client = OllamaClient(base_url="http://localhost:11434")
-        assert client.visual_model == "llava"
-        assert client.text_model == "llama3"
+        assert client.visual_model == "qwen2.5vl:7b"
+        assert client.text_model == "qwen2.5vl:7b"
+        assert client.embedding_model == "bge-m3"
+        assert client.num_ctx == 8192
 
     def test_custom_models(self):
         client = OllamaClient(
@@ -128,6 +130,33 @@ class TestOllamaClientModels:
         result = asyncio.run(_run())
         assert result.sentiment_score == 0.70
 
+    def test_generate_includes_num_ctx_and_num_predict(self):
+        """Ollama generate payload must carry configured context / predict limits."""
+        client = OllamaClient(
+            base_url="http://localhost:11434",
+            num_ctx=8192,
+            max_tokens=1024,
+        )
+        mock_session = MagicMock()
+
+        async def _run():
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={"response": "{}"})
+            mock_session.post = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_resp),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            client.session = mock_session
+            return await client.generate("qwen2.5vl:7b", "hello", stream=False, format="json")
+
+        asyncio.run(_run())
+        payload = mock_session.post.call_args[1]["json"]
+        assert payload["options"]["num_ctx"] == 8192
+        assert payload["options"]["num_predict"] == 1024
+
 
 # ---------------------------------------------------------------------------
 # LMStudioClient
@@ -145,8 +174,8 @@ class TestLMStudioClient:
 
     def test_default_models(self):
         client = LMStudioClient()
-        assert client.visual_model == "llava"
-        assert client.text_model == "llama3"
+        assert client.visual_model == "qwen2.5vl:7b"
+        assert client.text_model == "qwen2.5vl:7b"
 
     def test_custom_models(self):
         client = LMStudioClient(visual_model="my-vlm", text_model="my-text")
@@ -257,6 +286,8 @@ class TestCreateAIClient:
         mock_cfg.ai.text_model = "mistral"
         mock_cfg.ai.embedding_model = "nomic-embed-text"
         mock_cfg.ai.timeout = 60
+        mock_cfg.ai.num_ctx = 8192
+        mock_cfg.ai.max_tokens = 1024
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()
@@ -265,6 +296,7 @@ class TestCreateAIClient:
         assert client.visual_model == "bakllava"
         assert client.text_model == "mistral"
         assert client.embedding_model == "nomic-embed-text"
+        assert client.num_ctx == 8192
         assert client.timeout.total == 60
 
     @patch("infra.config.get_config")
@@ -278,6 +310,8 @@ class TestCreateAIClient:
         mock_cfg.ai.text_model = "my-text"
         mock_cfg.ai.embedding_model = "text-embedding-nomic"
         mock_cfg.ai.timeout = 90
+        mock_cfg.ai.num_ctx = 4096
+        mock_cfg.ai.max_tokens = 512
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()
@@ -286,6 +320,7 @@ class TestCreateAIClient:
         assert client.visual_model == "my-vlm"
         assert client.text_model == "my-text"
         assert client.embedding_model == "text-embedding-nomic"
+        assert client.num_ctx == 4096
         assert client.timeout.total == 90
 
     @patch("infra.config.get_config")
@@ -299,6 +334,8 @@ class TestCreateAIClient:
         mock_cfg.ai.text_model = "llama3"
         mock_cfg.ai.embedding_model = "nomic-embed-text"
         mock_cfg.ai.timeout = 30
+        mock_cfg.ai.num_ctx = 8192
+        mock_cfg.ai.max_tokens = 1024
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()

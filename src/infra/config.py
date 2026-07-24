@@ -122,11 +122,12 @@ class AIConfig(BaseModel, frozen=True):
     backend: str = "ollama"  # ollama | lmstudio
     ollama_url: str = "http://localhost:11434"
     lmstudio_url: str = "http://localhost:1234"
-    visual_model: str = "llava"
-    text_model: str = "llama3"
-    embedding_model: str = "nomic-embed-text"
+    visual_model: str = "qwen2.5vl:7b"
+    text_model: str = "qwen2.5vl:7b"
+    embedding_model: str = "bge-m3"
     timeout: int = 120
     max_tokens: int = 1024
+    num_ctx: int = 8192
     visual_weight: float = 0.6
     text_weight: float = 0.4
     max_images_per_property: int = 5
@@ -395,6 +396,12 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     if ai_embedding_model:
         data.setdefault("ai", {})
         data["ai"]["embedding_model"] = ai_embedding_model
+
+    # 3.3 AI_NUM_CTX → ai.num_ctx
+    ai_num_ctx = os.environ.get("AI_NUM_CTX")
+    if ai_num_ctx:
+        data.setdefault("ai", {})
+        data["ai"]["num_ctx"] = int(ai_num_ctx)
 
     # 3.5. OLLAMA_HOST → ai.ollama_url
     ollama_host = os.environ.get("OLLAMA_HOST")

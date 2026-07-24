@@ -225,11 +225,15 @@ jobs:
       - name: Install frontend deps
         run: npm ci --prefix frontend
 
+      # Must use frontend's @playwright/test so browser revision matches npm test:e2e
+      # (root `npx playwright` pulls latest and installs the wrong chromium build).
       - name: Install Playwright
+        working-directory: frontend
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        run: npm run test:e2e --prefix frontend
+        working-directory: frontend
+        run: npm run test:e2e
 
   security-scan:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

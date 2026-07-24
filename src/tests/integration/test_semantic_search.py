@@ -44,7 +44,7 @@ def client():
 
 @pytest.fixture
 def seeded_embeddings():
-    """Insert two properties with known 768-d embeddings, clean up after."""
+    """Insert two properties with known 1024-d embeddings, clean up after."""
     if not _db_ready():
         pytest.skip("Postgres with pgvector not available")
 
@@ -52,8 +52,8 @@ def seeded_embeddings():
 
     id_near = str(uuid.uuid4())
     id_far = str(uuid.uuid4())
-    near = [1.0] + [0.0] * 767
-    far = [0.0, 1.0] + [0.0] * 766
+    near = [1.0] + [0.0] * 1023
+    far = [0.0, 1.0] + [0.0] * 1022
     near_lit = "[" + ",".join(str(x) for x in near) + "]"
     far_lit = "[" + ",".join(str(x) for x in far) + "]"
 

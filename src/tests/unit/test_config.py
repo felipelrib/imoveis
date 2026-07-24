@@ -114,7 +114,10 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.database.password == "testpass"
     assert cfg.redis.host == "localhost"
     assert cfg.redis.port == 6379
-    assert cfg.ai.visual_model == "llava"
+    assert cfg.ai.visual_model == "qwen2.5vl:7b"
+    assert cfg.ai.text_model == "qwen2.5vl:7b"
+    assert cfg.ai.embedding_model == "bge-m3"
+    assert cfg.ai.num_ctx == 8192
     assert cfg.gpu.enabled is True
     assert cfg.features.property_enrichment is False
 
@@ -440,6 +443,16 @@ def test_proxy_from_default_app_config_yaml():
     assert cfg.proxy.url is None
     assert cfg.proxy.rotation_strategy == "round_robin"
     assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_ai_stack_from_default_app_config_yaml():
+    """Real configs/app_config.yaml uses qwen2.5vl + bge-m3 + num_ctx (BIN-73)."""
+    cfg = get_config()
+    assert cfg.ai.visual_model == "qwen2.5vl:7b"
+    assert cfg.ai.text_model == "qwen2.5vl:7b"
+    assert cfg.ai.embedding_model == "bge-m3"
+    assert cfg.ai.num_ctx == 8192
 
 
 @pytest.mark.unit

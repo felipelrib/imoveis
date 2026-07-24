@@ -95,8 +95,8 @@ class Property(Base):
     last_updated = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
     active = Column(Boolean, server_default=sa.text("true"))
     neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
-    # nomic-embed-text (Ollama) produces 768-d vectors for semantic search
-    embedding = Column(Vector(768), nullable=True)
+    # nomic-embed-text was 768-d; bge-m3 (default) produces 1024-d vectors
+    embedding = Column(Vector(1024), nullable=True)
 
 
 class MetricsScoring(Base):
