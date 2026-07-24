@@ -19,10 +19,10 @@ One command to get everything running:
 
 This will:
 1. Create `.env.local` from the template (if missing)
-2. Build Docker images (postgres, redis, api, workers)
-3. Start the full stack with health checks
-4. Run Alembic database migrations
-5. Install frontend dependencies
+2. Install frontend dependencies
+3. Build Docker images (postgres, redis, api, workers)
+4. Start the full stack with health checks (API + background Vite on :5173)
+5. Run Alembic database migrations
 
 ### Local API key (required for the SPA)
 
@@ -36,13 +36,13 @@ and the **same** value pasted into the sidebar **API credential** field (session
    API_KEY=local-dev-api-key
    ```
 
-2. Restart so Compose injects it into the API container:
+2. Restart so Compose injects it into the API container **and** backgrounds Vite:
 
    ```bash
    ./scripts/restart.sh
    ```
 
-3. Open the frontend → paste `local-dev-api-key` into **API credential** → **Save**.
+3. Open http://localhost:5173 → paste `local-dev-api-key` into **API credential** → **Save**.
 
 ```bash
 curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
@@ -52,11 +52,11 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 
 | Script | What it does |
 |--------|-------------|
-| `./scripts/start.sh` | Start the stack (builds if needed, runs migrations) |
-| `./scripts/stop.sh` | Stop containers (volumes preserved for fast restart) |
-| `./scripts/restart.sh` | Stop + start (`--build` to rebuild images) |
+| `./scripts/start.sh` | Start stack + background Vite on :5173 (migrations included) |
+| `./scripts/stop.sh` | Stop containers and the background Vite process |
+| `./scripts/restart.sh` | Stop + start (`--build` rebuilds images; Vite comes back up) |
 | `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
-| `./scripts/dev.sh` | Start backend + frontend dev server (hot-reload) |
+| `./scripts/dev.sh` | Same stack, but Vite in the foreground (Ctrl+C stops UI only) |
 | `./scripts/clean.sh` | Tear down + remove volumes (`--all` also removes images) |
 
 Start specific services only:
@@ -194,17 +194,20 @@ pre-commit run --all-files
 
 ### Frontend Development
 
-`./scripts/dev.sh` is the usual local-run command: backend containers + Vite hot-reload.
-Ctrl+C stops only the frontend; use `./scripts/stop.sh` to stop containers.
+`./scripts/start.sh` and `./scripts/restart.sh` bring up backend containers **and** a
+background Vite on http://localhost:5173 (logs: `.run/frontend.log`).
+`./scripts/dev.sh` is the same stack with Vite attached to your terminal (hot-reload
+logs visible; Ctrl+C stops only the UI — use `./scripts/stop.sh` for containers).
 
 ```bash
-./scripts/dev.sh  # Starts backend stack + frontend dev server
+./scripts/start.sh   # Detached: API + workers + Vite on :5173
+./scripts/dev.sh     # Foreground Vite (stops any background Vite first)
 ```
 
-Or start them separately:
+Or start Vite yourself after the backend:
 ```bash
-./scripts/start.sh                    # Backend containers
-cd frontend && npm run dev            # Frontend dev server (port 5173)
+./scripts/start.sh --no-frontend      # Backend containers only
+cd frontend && npm run dev            # Frontend on FRONTEND_PORT (default 5173)
 ```
 
 Remember to set `API_KEY` in `.env.local` and paste it in the UI (see above).

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# start.sh [service ...]
+# start.sh [--no-frontend] [service ...]
 #
 # Start the development stack. With no arguments, starts the full stack
-# (postgres, redis, api, workers) and runs migrations. Pass specific service
+# (postgres, redis, api, workers), runs migrations, and backgrounds the
+# Vite frontend on FRONTEND_PORT (default 5173). Pass specific service
 # names to start only part of it (e.g. `./scripts/start.sh postgres redis`).
+#
+# --no-frontend  Skip Vite (used by dev.sh, which runs it in the foreground).
 #
 # Uses .env.local if present (for worktree-isolated ports), otherwise falls
 # back to default ports (5432, 6379, 8000, 5173).
@@ -23,13 +26,24 @@ if [ -f "$REPO_ROOT/.env.local" ]; then
 fi
 
 API_PORT="${API_PORT:-8000}"
+START_FRONTEND=1
+SERVICES=()
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-frontend) START_FRONTEND=0 ;;
+    # restart.sh may forward --build; start always rebuilds via `up --build`.
+    --build) ;;
+    *) SERVICES+=("$arg") ;;
+  esac
+done
 
 log "Starting stack (project '$COMPOSE_PROJECT_NAME')"
 
-if [ $# -eq 0 ]; then
+if [ ${#SERVICES[@]} -eq 0 ]; then
   compose_cmd up -d --build
 else
-  compose_cmd up -d --build "$@"
+  compose_cmd up -d --build "${SERVICES[@]}"
 fi
 
 # Wait for postgres health
@@ -69,4 +83,19 @@ if compose_cmd ps --services 2>/dev/null | grep -qx api; then
   done
 fi
 
-ok "Stack is up. API: http://localhost:$API_PORT | Frontend: http://localhost:${FRONTEND_PORT:-5173}"
+# Full-stack start only — not when targeting individual compose services.
+if [ "$START_FRONTEND" -eq 1 ] && [ ${#SERVICES[@]} -eq 0 ]; then
+  start_frontend_dev
+fi
+
+FRONTEND_URL="http://localhost:${FRONTEND_PORT:-5173}"
+if is_frontend_running; then
+  ok "Stack is up. API: http://localhost:$API_PORT | Frontend: $FRONTEND_URL"
+else
+  ok "Stack is up. API: http://localhost:$API_PORT"
+  if [ "$START_FRONTEND" -eq 1 ] && [ ${#SERVICES[@]} -eq 0 ]; then
+    warn "Frontend not running — try: ./scripts/dev.sh  (or check .run/frontend.log)"
+  else
+    log "Frontend skipped. Day-to-day UI: ./scripts/dev.sh → $FRONTEND_URL"
+  fi
+fi

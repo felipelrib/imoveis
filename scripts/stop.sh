@@ -17,6 +17,8 @@ if [ -f "$REPO_ROOT/.env.local" ]; then
   set -a; source "$REPO_ROOT/.env.local"; set +a
 fi
 
+stop_frontend_dev
+
 if [ "${1:-}" = "--volumes" ]; then
   log "Stopping stack and removing volumes..."
   compose_cmd down -v
