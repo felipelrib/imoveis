@@ -35,7 +35,17 @@ from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
 from core.geo_allowlist import passes_geo_allowlist
-from core.neighbourhood_assignment import assign_property_neighbourhood
+from core.neighbourhood_assignment import (
+    assign_property_neighbourhood,
+    assign_property_neighbourhood_by_name,
+    load_neighborhood_names,
+)
+from core.olx_location import (
+    apply_reconcile_to_candidate,
+    humanize_neighborhood_slugs,
+    reconcile_olx_location,
+    sync_ai_extract,
+)
 from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -140,6 +150,59 @@ def _write_scraper_status(
     r.set(status_key, json.dumps(payload), ex=3600)
 
 
+def _olx_neighborhood_catalog(
+    session,
+    cities: list[str],
+    scraper_config: dict,
+) -> list[str]:
+    """Merge DB neighbourhood names with OLX YAML slugs for AI/heuristic catalog."""
+    names = list(load_neighborhood_names(session, cities))
+    # Always include common BH barrios that titles mention but polygons may lack.
+    extras = ["Itapoã", "Itapoa", "São Tomáz", "Sao Tomaz", "Ponta da Praia"]
+    extra = scraper_config.get("extra") or {}
+    slugs = [
+        item.get("slug")
+        for item in (extra.get("neighborhoods") or [])
+        if isinstance(item, dict) and item.get("slug")
+    ]
+    names.extend(humanize_neighborhood_slugs(slugs))
+    names.extend(extras)
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in names:
+        key = n.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
+
+
+def _reconcile_olx_candidate(
+    candidate: PropertyCandidate,
+    *,
+    allowed_cities: list[str],
+    allowed_states: list[str],
+    known_neighborhoods: list[str],
+) -> tuple[PropertyCandidate, str]:
+    """Run OLX location reconcile; return (candidate, action)."""
+    props = candidate.props_json or {}
+    result = reconcile_olx_location(
+        title=candidate.title,
+        description=candidate.description,
+        scraped_city=props.get("city"),
+        scraped_neighborhood=props.get("neighborhood"),
+        scraped_state=props.get("state"),
+        scraped_address=candidate.address,
+        allowed_cities=allowed_cities,
+        allowed_states=allowed_states,
+        known_neighborhoods=known_neighborhoods,
+        ai_extract=sync_ai_extract,
+    )
+    apply_reconcile_to_candidate(candidate, result)
+    return candidate, result.action
+
+
 @celery.task(
     name="tasks.scrape_listings",
     bind=True,
@@ -187,6 +250,13 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             r, status_key, processed, skipped, errors, "running", proxy=proxy_signal
         )
 
+        geo = cfg.scraping.geo_allowlist
+        olx_neighborhood_catalog: list[str] | None = None
+        if platform_name == "olx":
+            olx_neighborhood_catalog = _olx_neighborhood_catalog(
+                session, geo.cities, scraper_config
+            )
+
         with scraper:
             for raw in scraper.fetch_pages(cp):
                 candidate, outcome = _normalize_scrape_item(scraper, raw, platform_name)
@@ -199,7 +269,34 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     errors += 1
                     continue
 
-                geo = cfg.scraping.geo_allowlist
+                if platform_name == "olx" and olx_neighborhood_catalog is not None:
+                    candidate, loc_action = _reconcile_olx_candidate(
+                        candidate,
+                        allowed_cities=geo.cities,
+                        allowed_states=geo.states,
+                        known_neighborhoods=olx_neighborhood_catalog,
+                    )
+                    if loc_action == "out_of_geo":
+                        logger.info(
+                            "olx_location_out_of_geo",
+                            platform=platform_name,
+                            platform_id=candidate.platform_id,
+                            city=(candidate.props_json or {}).get("city"),
+                            address=candidate.address,
+                        )
+                        skipped += 1
+                        continue
+                    if loc_action == "corrected":
+                        logger.info(
+                            "olx_location_corrected",
+                            platform=platform_name,
+                            platform_id=candidate.platform_id,
+                            neighborhood=(candidate.props_json or {}).get(
+                                "neighborhood"
+                            ),
+                            address=candidate.address,
+                        )
+
                 allowed, reject_reason = passes_geo_allowlist(
                     candidate,
                     cities=geo.cities,
@@ -227,7 +324,16 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     )
                     # AD-10 geo stage: assign neighbourhood before AI enqueue
                     if result.action != "noop":
-                        assign_property_neighbourhood(session, result.property_id)
+                        props = candidate.props_json or {}
+                        if candidate.location is None and props.get("neighborhood"):
+                            assign_property_neighbourhood_by_name(
+                                session,
+                                result.property_id,
+                                name=props.get("neighborhood"),
+                                city=props.get("city"),
+                            )
+                        else:
+                            assign_property_neighbourhood(session, result.property_id)
                     session.commit()
                     _enqueue_post_scrape_jobs(candidate, result)
                     processed += 1

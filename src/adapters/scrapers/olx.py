@@ -241,8 +241,11 @@ class OLXScraper(BaseScraper):
             if not listings:
                 break
             last_page_count = len(listings)
+            window_type = self._listing_type_from_category_path(path)
             for listing in listings:
                 listing["_olx_url"] = url
+                if window_type:
+                    listing["_olx_listing_type"] = window_type
                 collected.append(listing)
         saturated = (
             pages_fetched >= self._max_pages
@@ -781,13 +784,31 @@ class OLXScraper(BaseScraper):
         return props
 
     @staticmethod
-    def _detect_listing_type(raw: dict) -> str:
-        """Detect if this is a rent or sale listing."""
-        url = (raw.get("url") or raw.get("_olx_url") or "").lower()
-        if "aluguel" in url or "/alugar" in url:
+    def _listing_type_from_category_path(path: str) -> str | None:
+        """Map search category path (or URL) to rent/sale via path segments."""
+        lowered = (path or "").lower()
+        if "/aluguel/" in lowered or lowered.startswith("aluguel/") or "/alugar/" in lowered:
             return "rent"
-        if "venda" in url:
+        if "/venda/" in lowered or lowered.startswith("venda/"):
             return "sale"
+        return None
+
+    @staticmethod
+    def _detect_listing_type(raw: dict) -> str:
+        """Detect if this is a rent or sale listing.
+
+        Prefer the search-window stamp (``_olx_listing_type``) because modern
+        detail URLs often omit ``/venda/`` or ``/aluguel/``. Path-segment checks
+        avoid false positives from zone slugs like ``venda-nova``.
+        """
+        stamped = raw.get("_olx_listing_type")
+        if stamped in ("rent", "sale"):
+            return stamped
+
+        for key in ("url", "_olx_url"):
+            from_path = OLXScraper._listing_type_from_category_path(str(raw.get(key) or ""))
+            if from_path:
+                return from_path
 
         prop_map = OLXScraper._prop_map_from_raw(raw)
         tipo = str(prop_map.get("tipo") or prop_map.get("real_estate_type") or "").lower()
@@ -805,7 +826,7 @@ class OLXScraper(BaseScraper):
                     return "rent"
                 return "sale"
 
-        return "rent"
+        return "sale"
 
     @staticmethod
     def _neighborhood_from_raw(raw: dict) -> str | None:

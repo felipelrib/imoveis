@@ -322,12 +322,58 @@ class TestFlightAdsExtraction:
 
 class TestDetectListingType:
     def test_rent_from_url(self):
-        raw = {"_olx_url": "https://www.olx.com.br/imovel/aluguel/apartamentos/mg/bh/123"}
+        raw = {"_olx_url": "https://www.olx.com.br/imoveis/aluguel/apartamentos/mg/bh/123"}
         assert OLXScraper._detect_listing_type(raw) == "rent"
 
     def test_sale_from_url(self):
-        raw = {"_olx_url": "https://www.olx.com.br/imovel/venda/apartamentos/mg/bh/123"}
+        raw = {"_olx_url": "https://www.olx.com.br/imoveis/venda/apartamentos/mg/bh/123"}
         assert OLXScraper._detect_listing_type(raw) == "sale"
+
+    def test_stamp_wins_over_categoryless_detail_url_sale(self):
+        """Flight/detail URLs often omit /venda/; search-window stamp is ground truth."""
+        raw = {
+            "url": "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/vendo-casa-1520811952",
+            "_olx_url": (
+                "https://www.olx.com.br/imoveis/venda/casas/estado-mg/"
+                "belo-horizonte-e-regiao?ps=100000&pe=500000"
+            ),
+            "_olx_listing_type": "sale",
+        }
+        assert OLXScraper._detect_listing_type(raw) == "sale"
+
+    def test_stamp_wins_over_categoryless_detail_url_rent(self):
+        raw = {
+            "url": "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/apto-centro-1490781405",
+            "_olx_url": (
+                "https://www.olx.com.br/imoveis/aluguel/apartamentos/estado-mg/"
+                "belo-horizonte-e-regiao?ps=500&pe=15000"
+            ),
+            "_olx_listing_type": "rent",
+        }
+        assert OLXScraper._detect_listing_type(raw) == "rent"
+
+    def test_fallback_to_search_url_when_detail_has_no_category(self):
+        raw = {
+            "url": "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/cobertura-no-itapoa-1517127300",
+            "_olx_url": (
+                "https://www.olx.com.br/imoveis/venda/apartamentos/estado-mg/"
+                "belo-horizonte-e-regiao"
+            ),
+        }
+        assert OLXScraper._detect_listing_type(raw) == "sale"
+
+    def test_venda_nova_zone_slug_alone_is_not_sale(self):
+        """Bare 'venda' substring must not match zone slug venda-nova."""
+        raw = {
+            "url": (
+                "https://www.olx.com.br/imoveis/estado-mg/belo-horizonte-e-regiao/"
+                "venda-nova/planalto/apartamento-123"
+            ),
+        }
+        assert OLXScraper._detect_listing_type(raw) == "sale"  # default when unknown
+        # With rent stamp, zone name must not override:
+        raw["_olx_listing_type"] = "rent"
+        assert OLXScraper._detect_listing_type(raw) == "rent"
 
     def test_rent_from_pricing(self):
         raw = {"pricingInfos": [{"period": "monthly"}]}
@@ -337,9 +383,9 @@ class TestDetectListingType:
         raw = {"pricingInfos": [{"period": ""}]}
         assert OLXScraper._detect_listing_type(raw) == "sale"
 
-    def test_default_rent(self):
+    def test_default_sale(self):
         raw = {}
-        assert OLXScraper._detect_listing_type(raw) == "rent"
+        assert OLXScraper._detect_listing_type(raw) == "sale"
 
 
 # ---------------------------------------------------------------------------

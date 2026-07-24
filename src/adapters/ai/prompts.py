@@ -162,6 +162,74 @@ Now analyze the following property description and return the JSON object.
 
 
 # ---------------------------------------------------------------------------
+# OLX property location extraction (seller vs listing text)
+# ---------------------------------------------------------------------------
+
+
+def build_olx_location_prompt(
+    *,
+    title: str,
+    description: str,
+    scraped_city: str | None,
+    scraped_neighborhood: str | None,
+    scraped_state: str | None,
+    scraped_address: str | None,
+    allowed_cities: list[str] | tuple[str, ...] = (),
+    known_neighborhoods: list[str] | tuple[str, ...] = (),
+    max_chars: int = 1200,
+) -> str:
+    """Ask the LLM for the *property* city/neighborhood (not the seller).
+
+    OLX ``locationDetails`` often mirrors the seller or metro region. Title and
+    description usually name the real place (e.g. ``Cobertura no Itapoã``).
+    """
+    cities = ", ".join(allowed_cities) if allowed_cities else "Belo Horizonte, São Paulo, Campinas"
+    # Cap catalog size so the prompt stays within small local-model context.
+    catalog = list(known_neighborhoods)[:120]
+    neighborhoods = ", ".join(catalog) if catalog else "(none provided)"
+    body = (description or "")[:max_chars]
+    return f"""\
+You extract the PROPERTY location from a Brazilian OLX real-estate listing.
+Ignore the seller's home city when the title/description name a different place.
+Neighbourhood names (e.g. Itapoã, Savassi) are NOT cities — map them to the
+correct allowed city when possible.
+
+Allowed cities (operator geo): {cities}
+Known neighbourhoods (prefer these spellings when matching): {neighborhoods}
+
+Scraped OLX location fields (often seller/region — may be wrong):
+- city: {scraped_city or ""}
+- neighbourhood: {scraped_neighborhood or ""}
+- state: {scraped_state or ""}
+- address: {scraped_address or ""}
+
+Listing title: {title or ""}
+Listing description:
+{body}
+
+Return ONLY a JSON object — no markdown, no extra text:
+{{"city": <string or null>, "state": <UF string or null>, "neighborhood": <string or null>, "confidence": <float 0.0 to 1.0>, "reason": <short string>}}
+
+Rules:
+- city must be the property city. If outside the allowed cities, still return it
+  (the caller will reject out-of-geo rows).
+- neighborhood must be the property neighbourhood when stated (e.g. Itapoã).
+- Prefer catalogue spellings when the text clearly refers to a known neighbourhood.
+- confidence: 1.0 = explicit in title, ~0.6 = inferred, 0.0 = unknown.
+
+### Examples
+
+Title "Cobertura no Itapoã", scraped city Belo Horizonte / São Tomáz:
+{{"city": "Belo Horizonte", "state": "MG", "neighborhood": "Itapoã", "confidence": 0.9, "reason": "Title names Itapoã neighbourhood in BH"}}
+
+Title "Vendo casa em Cabo Frio - RJ", scraped city Belo Horizonte:
+{{"city": "Cabo Frio", "state": "RJ", "neighborhood": null, "confidence": 0.95, "reason": "Title explicitly places property in Cabo Frio"}}
+
+Now return the JSON object for the listing above.\
+"""
+
+
+# ---------------------------------------------------------------------------
 # Deal Verdict Synthesis
 # ---------------------------------------------------------------------------
 

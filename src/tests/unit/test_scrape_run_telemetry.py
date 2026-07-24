@@ -133,7 +133,10 @@ def test_scrape_listings_records_completed_telemetry():
             return_value=DedupeMatchResult(property_id="prop-1", action="created"),
         ),
         patch.object(tasks_mod, "assign_property_neighbourhood"),
+        patch.object(tasks_mod, "assign_property_neighbourhood_by_name"),
         patch.object(tasks_mod, "_enqueue_post_scrape_jobs"),
+        patch.object(tasks_mod, "sync_ai_extract", return_value=None),
+        patch.object(tasks_mod, "load_neighborhood_names", return_value=["Savassi"]),
     ):
         store_cls.return_value.get.return_value = {}
         registry.get.return_value = scraper

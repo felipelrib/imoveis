@@ -82,3 +82,28 @@ class TestAssignPropertyNeighbourhoodUnit:
                         if "neighbourhood_assignment" in alias.name:
                             offenders.append(str(path))
         assert offenders == []
+
+
+class TestAssignPropertyNeighbourhoodByName:
+    def test_matches_folded_name(self):
+        from core.neighbourhood_assignment import assign_property_neighbourhood_by_name
+
+        prop_id = uuid4()
+        nb_id = uuid4()
+        prop = MagicMock()
+        prop.id = prop_id
+        prop.neighborhood_id = None
+
+        session = MagicMock()
+        session.get.return_value = prop
+        row = MagicMock()
+        row.id = nb_id
+        row.name = "Itapoã"
+        row.city = "Belo Horizonte"
+        session.execute.return_value.fetchall.return_value = [row]
+
+        result = assign_property_neighbourhood_by_name(
+            session, prop_id, name="Itapoa", city="Belo Horizonte"
+        )
+        assert result == nb_id
+        assert prop.neighborhood_id == nb_id

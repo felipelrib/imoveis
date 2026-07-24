@@ -2,7 +2,11 @@
 
 from .client import LMStudioClient, LocalAIClient, OllamaClient, create_ai_client
 from .image_store import ImageStore
-from .prompts import build_sentiment_prompt, build_visual_condition_prompt
+from .prompts import (
+    build_olx_location_prompt,
+    build_sentiment_prompt,
+    build_visual_condition_prompt,
+)
 
 __all__ = [
     "LocalAIClient",
@@ -11,5 +15,6 @@ __all__ = [
     "create_ai_client",
     "build_visual_condition_prompt",
     "build_sentiment_prompt",
+    "build_olx_location_prompt",
     "ImageStore",
 ]
