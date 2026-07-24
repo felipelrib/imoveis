@@ -56,7 +56,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       # Point Ollama to host machine (Ollama runs on Windows host, not in Docker)
       OLLAMA_HOST: http://host.docker.internal:11434
-      API_KEY: ${API_KEY:-}
+      # Fail loud if API_KEY is missing — bare `docker compose up` without
+      # --env-file .env.local used to blank this and SPA admin calls returned 403.
+      API_KEY: ${API_KEY:?API_KEY must be set — use scripts/start.sh or docker compose --env-file .env.local}
       JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       postgres:

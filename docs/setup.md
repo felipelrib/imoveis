@@ -30,6 +30,11 @@ Favourites, watchlist, saved searches, and admin routes require `API_KEY` on the
 and the **same** value pasted into the sidebar **API credential** field (sessionStorage →
 `X-API-Key`). Missing/mismatched keys show up as **401/403** in the browser network tab.
 
+Compose **requires** `API_KEY` at interpolate time (`:?`). Always start via `./scripts/start.sh`,
+`./scripts/restart.sh`, or `docker compose --env-file .env.local …`. A bare
+`docker compose up` without the env file fails instead of serving admin routes with an
+empty key (which caused SPA `403 Admin API key not configured`).
+
 1. Ensure `.env.local` includes a local-only key (the template ships with one):
 
    ```env

@@ -245,6 +245,14 @@ export async function installCommonMocks(page, opts = {}) {
     })
   );
 
+  await page.route("**/api/system/ollama/ensure", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "already_running", models: [] }),
+    })
+  );
+
   await page.route("**/api/alerts**", (route) =>
     route.fulfill({
       status: 200,
@@ -508,6 +516,38 @@ export async function mockAdminHealth(page, opts = {}) {
       status: 403,
       contentType: "application/json",
       body: JSON.stringify({ detail: "Could not validate API Key" }),
+    });
+  });
+}
+
+/**
+ * Mock GET /admin/schedule and capture X-API-Key headers (BIN-59).
+ * @param {Page} page
+ * @param {object} [opts]
+ * @param {string[]} [opts.capturedKeys]
+ * @param {object} [opts.body]
+ */
+export async function mockAdminSchedule(page, opts = {}) {
+  const capturedKeys = opts.capturedKeys;
+  const body = opts.body ?? {
+    schedules: [
+      {
+        platform: "olx",
+        interval_minutes: 60,
+        last_run: null,
+        next_run: null,
+        estimated: false,
+      },
+    ],
+  };
+
+  await page.route("**/api/admin/schedule**", (route) => {
+    const key = route.request().headers()["x-api-key"] || "";
+    if (capturedKeys) capturedKeys.push(key);
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
     });
   });
 }

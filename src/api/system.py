@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import shutil
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from api.auth import verify_admin_access
 from api.schemas import PipelineResponse, SystemStatusResponse
 from infra.config import get_config
 from infra.logging import get_logger
@@ -103,6 +106,59 @@ async def system_status() -> Dict[str, Any]:
 async def ollama_status():
     """Check ollama connectivity."""
     return await _check_ollama()
+
+
+@router.post("/ollama/ensure", dependencies=[Depends(verify_admin_access)])
+async def ollama_ensure():
+    """Ensure Ollama is reachable; optionally start a local ``ollama serve``.
+
+    Ollama normally runs on the host (Docker uses ``host.docker.internal``).
+    Starting ``ollama serve`` inside the API container cannot start the host
+    daemon — we only attempt a local subprocess when the binary is on PATH.
+    """
+    probe = await _check_ollama()
+    if probe.get("status") == "ok":
+        return {
+            "status": "already_running",
+            "models": probe.get("models") or [],
+        }
+
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        detail = (
+            f"Ollama not reachable at {get_config().ai.ollama_url}; "
+            "start it on the host (Ollama runs outside Docker)."
+        )
+        logger.warning("ollama_ensure_failed", reason="no_binary", detail=detail)
+        return {"status": "error", "detail": detail}
+
+    try:
+        await asyncio.create_subprocess_exec(
+            ollama_bin,
+            "serve",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        detail = f"Failed to start ollama serve: {exc}"
+        logger.warning("ollama_ensure_failed", reason="popen_error", detail=detail)
+        return {"status": "error", "detail": detail}
+
+    # Brief wait for the local server to bind before re-probing.
+    await asyncio.sleep(1.5)
+    probe = await _check_ollama()
+    if probe.get("status") == "ok":
+        logger.info("ollama_ensure_started")
+        return {"status": "started", "models": probe.get("models") or []}
+
+    detail = (
+        f"Started local ollama serve but still not reachable at "
+        f"{get_config().ai.ollama_url}: {probe.get('detail', 'unknown')}. "
+        "If the API runs in Docker, start Ollama on the host instead."
+    )
+    logger.warning("ollama_ensure_failed", reason="still_unreachable", detail=detail)
+    return {"status": "error", "detail": detail}
 
 
 # ---------------------------------------------------------------------------
