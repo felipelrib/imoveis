@@ -1,7 +1,7 @@
 """Add base_price to property_listings (BIN-67).
 
-Revision ID: a1b2c3d4e5f6
-Revises: f9a0b1c2d3e4
+Revision ID: b7c8d9e0f1a2
+Revises: a2b3c4d5e6f7
 Create Date: 2026-07-24 08:00:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "a1b2c3d4e5f6"
-down_revision = "f9a0b1c2d3e4"
+revision = "b7c8d9e0f1a2"
+down_revision = "a2b3c4d5e6f7"
 branch_labels = None
 depends_on = None
 
