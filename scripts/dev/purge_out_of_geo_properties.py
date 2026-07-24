@@ -27,11 +27,12 @@ _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _REPO)
 sys.path.insert(0, os.path.join(_REPO, "src"))
 
+from sqlalchemy import text  # noqa: E402
+
 from adapters.db.models import Property  # noqa: E402
 from core.geo_allowlist import passes_geo_allowlist  # noqa: E402
 from infra.config import get_config  # noqa: E402
 from infra.db import SessionLocal  # noqa: E402
-from sqlalchemy import text  # noqa: E402
 
 
 def _reject_reason(prop: Property, cities: list[str], states: list[str]) -> str | None:
