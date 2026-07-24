@@ -145,3 +145,4 @@ class PipelineResponse(BaseModel):
     queues: Dict[str, int]
     scrapers_status: Dict[str, Any]
     ai_metrics: Dict[str, Any]
+    recent_scrape_runs: List[Dict[str, Any]] = []

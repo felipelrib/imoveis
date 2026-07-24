@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import uuid
 from typing import List, Optional
 
 from pydantic import ValidationError
@@ -42,6 +44,8 @@ logger = get_logger(__name__)
 
 REDIS_KEY_SCRAPERS_PAUSED = "workers:scrapers:paused"
 REDIS_KEY_AI_PAUSED = "workers:ai:paused"
+REDIS_KEY_SCRAPER_TELEMETRY = "pipeline:scraper:telemetry"
+SCRAPER_TELEMETRY_MAX = 100
 
 celery = make_celery()
 
@@ -49,6 +53,34 @@ celery = make_celery()
 # ---------------------------------------------------------------------------
 # Scrape task
 # ---------------------------------------------------------------------------
+
+
+def _record_scrape_run(
+    r,
+    *,
+    platform: str,
+    processed: int,
+    skipped: int,
+    errors: int,
+    status: str,
+    run_id: str | None = None,
+) -> str:
+    """Persist a durable scrape-run summary for the Activity Log (newest first)."""
+    rid = run_id or str(uuid.uuid4())
+    payload = {
+        "run_id": rid,
+        "platform": platform,
+        "processed": int(processed),
+        "skipped": int(skipped),
+        "errors": int(errors),
+        "status": status,
+        "timestamp": time.time(),
+    }
+    with r.pipeline() as pipe:
+        pipe.lpush(REDIS_KEY_SCRAPER_TELEMETRY, json.dumps(payload))
+        pipe.ltrim(REDIS_KEY_SCRAPER_TELEMETRY, 0, SCRAPER_TELEMETRY_MAX - 1)
+        pipe.execute()
+    return rid
 
 
 def _normalize_scrape_item(scraper, raw, platform_name: str):
@@ -132,6 +164,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
     session = SessionLocal()
     r = get_redis()
+    processed = skipped = errors = 0
 
     # Check paused flag (TD-06-A)
     if r.exists(REDIS_KEY_SCRAPERS_PAUSED):
@@ -147,8 +180,6 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         scraper = ScraperRegistry.get(platform_name, scraper_config)
         scraper.start()
 
-        processed = skipped = errors = 0
-        r = get_redis()
         status_key = f"pipeline:scraper:{platform_name}:status"
         proxy_signal = getattr(scraper, "proxy_summary", None) or {}
         _write_scraper_status(
@@ -202,11 +233,9 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         )
 
         # Record last-run timestamp for schedule display
-        import time as _ts
-
         r.set(
             f"pipeline:scraper:{platform_name}:last_run",
-            str(int(_ts.time())),
+            str(int(time.time())),
             ex=86400 * 7,  # keep for 7 days
         )
 
@@ -217,6 +246,14 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             skipped=skipped,
             errors=errors,
         )
+        _record_scrape_run(
+            r,
+            platform=platform_name,
+            processed=processed,
+            skipped=skipped,
+            errors=errors,
+            status="completed",
+        )
     except Exception as exc:
         logger.error("scrape_task_error", error=str(exc))
         # Persist checkpoint before retry so we resume from last page
@@ -225,6 +262,17 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             session.commit()
         except Exception as cp_exc:
             logger.error("checkpoint_save_failed_in_error_handler", error=str(cp_exc))
+        try:
+            _record_scrape_run(
+                r,
+                platform=platform_name,
+                processed=processed,
+                skipped=skipped,
+                errors=errors,
+                status="failed",
+            )
+        except Exception as tel_exc:
+            logger.error("scrape_telemetry_record_failed", error=str(tel_exc))
         raise
     finally:
         session.close()
