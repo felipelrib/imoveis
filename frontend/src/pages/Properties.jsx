@@ -758,8 +758,8 @@ function getPlatformCount(listings) {
 }
 
 function formatListingType(type) {
-  if (type === 'rent') return 'ALUGUEL'
-  return 'VENDA'
+  if (type === 'rent') return 'RENT'
+  return 'SALE'
 }
 
 function listingTypeColor(type) {
