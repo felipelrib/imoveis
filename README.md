@@ -76,18 +76,23 @@ Add a local-only key to `.env.local` (never commit real secrets):
 API_KEY=local-dev-api-key
 ```
 
-Restart so the API container picks it up:
+Restart so the API container picks it up (also starts Vite on :5173):
 
 ```bash
 ./scripts/restart.sh
 ```
 
+Open http://localhost:5173 — or use `./scripts/dev.sh` if you want Vite logs in the terminal.
+
 ### 3. Run day-to-day
 
-**Yes — `./scripts/dev.sh` is the right script** for local UI work: it starts the backend stack, then the Vite frontend with hot-reload.
+`./scripts/start.sh` / `./scripts/restart.sh` start the backend **and** background Vite.
+Use `./scripts/dev.sh` when you want the Vite process attached to your terminal (hot-reload logs; Ctrl+C stops only the UI).
 
 ```bash
-./scripts/dev.sh
+./scripts/start.sh   # Detached stack + Vite
+# or
+./scripts/dev.sh     # Same stack, Vite in the foreground
 ```
 
 Then open:
@@ -114,14 +119,14 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 
 | Script               | What it does                                          |
 |----------------------|-------------------------------------------------------|
-| `./scripts/start.sh` | Start the stack (builds if needed, runs migrations)   |
-| `./scripts/stop.sh`  | Stop containers (volumes preserved)                   |
+| `./scripts/start.sh` | Start stack + background Vite on :5173 (migrations)   |
+| `./scripts/stop.sh`  | Stop containers and background Vite                   |
 | `./scripts/restart.sh`| Stop + start (`--build` to rebuild images)           |
 | `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`)    |
-| `./scripts/dev.sh`   | **Typical local run:** backend + Vite hot-reload      |
+| `./scripts/dev.sh`   | Same stack, Vite in the foreground (Ctrl+C = UI only) |
 | `./scripts/clean.sh` | Tear down + remove volumes (`--all` removes images)   |
 
-Backend-only (no Vite): `./scripts/start.sh`. Stop everything: `./scripts/stop.sh`.
+Backend-only (no Vite): `./scripts/start.sh --no-frontend`. Stop everything: `./scripts/stop.sh`.
 
 ## Configuration
 

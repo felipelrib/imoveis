@@ -30,6 +30,8 @@ for arg in "$@"; do
   esac
 done
 
+stop_frontend_dev
+
 if [ "$REMOVE_IMAGES" = true ]; then
   if [ ! -t 0 ]; then
     warn "--all requires an interactive terminal (TTY). Skipping image removal."
