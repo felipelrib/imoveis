@@ -10,8 +10,8 @@ Ingesting real-estate listings from multiple platforms (OLX, QuintoAndar) requir
 
 - **Registry pattern** (`ScraperRegistry`): Scrapers self-register via `@ScraperRegistry.register("name")` decorator at import time; callers use `ScraperRegistry.get(name, config)` to obtain instances.
 - **Abstract base** (`BaseScraper`): Defines `fetch_pages(checkpoint)`, `normalize(raw)`, `start()`, and `close()` as the contract. Each scraper is checkpoint-aware and idempotent.
-- **QuintoAndar scraper**: Parses `__NEXT_DATA__` JSON from server-rendered pages. Uses a **sliding price window** strategy to bypass QuintoAndar's 12-result pagination cap — recursively splits price ranges when ≥12 results are found.
-- **OLX scraper**: Also parses `__NEXT_DATA__`, iterating over predefined rent/sale URL paths with page-based pagination (`?o=N`). Supports configurable `max_pages`.
+- **QuintoAndar scraper**: Parses `__NEXT_DATA__` JSON from server-rendered pages. Uses a **sliding price window** strategy to bypass QuintoAndar's 12-result pagination cap — recursively splits price ranges when ≥12 results are found, then fans out to curated neighborhoods when a band is atomic and still full (see `docs/features/47-scraper-adaptive-funneling.md`).
+- **OLX scraper**: Parses `__NEXT_DATA__` / Flight ads with **adaptive `ps`/`pe` price windows** and neighborhood fan-out on saturation (replaces city-only `max_pages` hard stop). Configurable `max_pages` applies per window.
 - **Redis-backed circuit breaker**: Both scrapers use `RedisCircuitBreaker` to track consecutive failures and halt scraping when a platform is returning 5xx/429 errors (threshold: 5 failures, cooldown: 120s).
 - **Checkpoint store**: Uses a `platform_checkpoints` DB table to persist scrape state, allowing resumption after crashes.
 - **Rate limiting via jitter**: Each scraper sleeps a random interval (configurable `jitter_min`/`jitter_max`) between requests.

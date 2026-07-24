@@ -57,10 +57,26 @@ class TestQuintoAndarLifecycle:
 @pytest.mark.unit
 class TestQuintoAndarFetch:
     def test_initial_price_windows(self):
-        assert QuintoAndarScraper._initial_price_windows({"scrape_type": "rent"})[0][0] == "alugar"
-        assert QuintoAndarScraper._initial_price_windows({"scrape_type": "sale"})[0][0] == "comprar"
-        both = QuintoAndarScraper._initial_price_windows(None)
+        s = _scraper()
+        assert s._initial_price_windows({"scrape_type": "rent"})[0][0] == "alugar"
+        assert s._initial_price_windows({"scrape_type": "sale"})[0][0] == "comprar"
+        both = s._initial_price_windows(None)
         assert {w[0] for w in both} == {"alugar", "comprar"}
+        assert all(w[3] is None for w in both)
+
+    def test_initial_price_windows_from_config(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {
+                "extra": {
+                    "city_slug": "belo-horizonte-mg-brasil",
+                    "price_rent": [100, 200],
+                    "price_sale": [1000, 2000],
+                }
+            },
+        )
+        rent = s._initial_price_windows({"scrape_type": "rent"})[0]
+        assert rent == ("alugar", 100, 200, None)
 
     def test_split_window(self):
         q: deque = deque()
@@ -68,6 +84,13 @@ class TestQuintoAndarFetch:
         assert QuintoAndarScraper._split_window(q, "alugar", 100, 200, houses) is True
         assert len(q) == 2
         assert QuintoAndarScraper._split_window(q, "alugar", 100, 100, houses) is False
+
+    def test_window_url_city_and_neighborhood(self):
+        s = _scraper()
+        city = s._window_url("alugar", 500, 1000, None)
+        assert city.endswith("/belo-horizonte-mg-brasil/de-500-a-1000-reais")
+        nb = s._window_url("alugar", 500, 1000, "savassi")
+        assert "/savassi-belo-horizonte-mg-brasil/de-500-a-1000-reais" in nb
 
     def test_fetch_window_houses_http_error(self):
         s = _scraper()
@@ -97,11 +120,46 @@ class TestQuintoAndarFetch:
             {"a": {"id": "a"}},
             {},
         ])
-        with patch.object(QuintoAndarScraper, "_initial_price_windows", return_value=[("alugar", 1, 2), ("alugar", 1, 2)]):
-            with patch.object(QuintoAndarScraper, "_split_window", return_value=False):
-                items = list(s.fetch_pages({"scrape_type": "rent"}))
+        with patch.object(
+            QuintoAndarScraper,
+            "_initial_price_windows",
+            return_value=[("alugar", 1, 2, None), ("alugar", 1, 2, None)],
+        ):
+            items = list(s.fetch_pages({"scrape_type": "rent"}))
         assert len(items) == 1
         assert items[0]["price_query_min"] == 1
+
+    def test_fetch_pages_fans_out_neighborhoods_on_atomic_saturation(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {
+                "extra": {
+                    "city_slug": "belo-horizonte-mg-brasil",
+                    "neighborhoods": [{"slug": "savassi"}, {"slug": "lourdes"}],
+                }
+            },
+        )
+
+        def fake_houses(url, action, min_p, max_p):
+            if "savassi-" in url:
+                return {"1": {"id": "s1"}}
+            if "lourdes-" in url:
+                return {"2": {"id": "l1"}}
+            # City-wide atomic band returns a full page
+            return {str(i): {"id": f"c{i}"} for i in range(12)}
+
+        s._fetch_window_houses = MagicMock(side_effect=fake_houses)
+        with patch.object(
+            QuintoAndarScraper,
+            "_initial_price_windows",
+            return_value=[("alugar", 100, 100, None)],
+        ):
+            items = list(s.fetch_pages({"scrape_type": "rent"}))
+        ids = {item["id"] for item in items}
+        assert ids == {"s1", "l1"}
+        urls = [c.args[0] for c in s._fetch_window_houses.call_args_list]
+        assert any("savassi-belo-horizonte-mg-brasil" in u for u in urls)
+        assert any("lourdes-belo-horizonte-mg-brasil" in u for u in urls)
 
 
 @pytest.mark.unit
