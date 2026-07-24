@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 from geoalchemy2.shape import to_shape
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
-from adapters.db.models import Base, Neighborhood
+from adapters.db.models import Neighborhood
 from core.neighbourhood_geojson import load_neighbourhood_geojson, parse_feature_collection
 
 FIXTURE = (
@@ -23,21 +21,9 @@ FIXTURE = (
 
 
 @pytest.fixture(scope="function")
-def db_session():
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    yield session
-    session.close()
-    with engine.connect() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            conn.execute(table.delete())
-        conn.commit()
-    engine.dispose()
+def db_session(wipe_safe_db_session):
+    """DB session on the isolated test database (BIN-71)."""
+    yield wipe_safe_db_session
 
 
 @pytest.mark.integration

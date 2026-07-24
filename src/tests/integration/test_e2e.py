@@ -10,11 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 # Assuming project is added to PYTHONPATH or run from project root
-from adapters.db.models import Base, MetricsScoring, PriceHistory, Property
+from adapters.db.models import MetricsScoring, PriceHistory, Property
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.base import BaseScraper
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
@@ -28,27 +26,9 @@ from core.entities import PropertyCandidate
 
 
 @pytest.fixture(scope="function")
-def test_db():
-    """Connect to the test database and provide a session.
-
-    DATABASE_URL must be set by the test runner (validate.sh guarantees this).
-    Truncates all tables after each test for isolation.
-    """
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    yield session
-    session.close()
-    # Truncate all tables for test isolation
-    with engine.connect() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            conn.execute(table.delete())
-        conn.commit()
-    engine.dispose()
+def test_db(wipe_safe_db_session):
+    """DB session on the isolated test database (BIN-71)."""
+    yield wipe_safe_db_session
 
 
 @pytest.fixture(scope="function")

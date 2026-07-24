@@ -10,38 +10,16 @@ Run with: pytest src/tests/integration/test_listings_e2e.py -v
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from adapters.db.models import Base, PropertyListing
+from adapters.db.models import PropertyListing
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 
 
 @pytest.fixture()
-def session():
-    """Connect to the test database and provide a session.
-
-    DATABASE_URL must be set by the test runner (validate.sh guarantees this).
-    Truncates all tables after each test for isolation.
-    """
-    import os
-
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.skip("DATABASE_URL not set — integrate with validate.sh or set manually")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
-    # Truncate all tables for test isolation
-    with engine.connect() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            conn.execute(table.delete())
-        conn.commit()
-    engine.dispose()
+def session(wipe_safe_db_session):
+    """DB session on the isolated test database (BIN-71)."""
+    yield wipe_safe_db_session
 
 
 def _make_candidate(**overrides) -> PropertyCandidate:
