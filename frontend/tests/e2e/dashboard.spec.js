@@ -5,6 +5,7 @@ import {
   PROPERTIES_PAGE,
   SAMPLE_PROPERTY,
   installCommonMocks,
+  mockAdminHealth,
   mockPlatforms,
   mockPropertiesList,
   mockPropertyDetail,
@@ -91,5 +92,54 @@ test.describe("Scraper control critical path", () => {
     await expect(page.getByText(/Scraper enqueued|Task enqueued|Enqueuing/i).first()).toBeVisible({
       timeout: 10000,
     });
+  });
+
+  test("skips schedule poll without credential and attaches key when set", async ({ page }) => {
+    /** @type {string[]} */
+    const scheduleKeys = [];
+    /** @type {string[]} */
+    const scheduleUrls = [];
+
+    await installCommonMocks(page);
+    await mockPlatforms(page);
+    await mockAdminHealth(page, { validKey: "e2e-test-api-key" });
+
+    await page.route("**/api/admin/schedule**", async (route) => {
+      scheduleUrls.push(route.request().url());
+      const key = route.request().headers()["x-api-key"] || "";
+      scheduleKeys.push(key);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schedules: [
+            {
+              platform: "olx",
+              interval_minutes: 60,
+              last_run: null,
+              next_run: null,
+              estimated: false,
+            },
+          ],
+        }),
+      });
+    });
+
+    // Clear credential once (do not use addInitScript — it re-runs on every nav).
+    await page.goto("/");
+    await page.evaluate(() => sessionStorage.clear());
+
+    await page.goto("/scraper");
+    await expect(page.getByText("Paste API credential to load schedules.")).toBeVisible();
+    await expect.poll(() => scheduleUrls.length, { timeout: 2000 }).toBe(0);
+
+    await page.getByTestId("credential-input").fill("e2e-test-api-key");
+    await page.getByTestId("credential-save").click();
+    await expect(page.getByTestId("credential-status")).toHaveText("set");
+
+    // Remount scraper so the schedule effect runs with the stored key.
+    await page.goto("/scraper");
+    await expect.poll(() => scheduleKeys.some((k) => k === "e2e-test-api-key")).toBeTruthy();
+    await expect(page.getByText(/Interval:/i).first()).toBeVisible();
   });
 });

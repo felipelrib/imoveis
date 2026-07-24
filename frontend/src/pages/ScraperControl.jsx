@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline, fetchSchedule, updateSchedule } from '../api.js'
+import {
+  fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline,
+  fetchSchedule, updateSchedule, hasApiKey,
+} from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useToast } from '../components/ToastProvider.jsx'
 
@@ -52,6 +55,8 @@ export default function ScraperControl() {
   const [editingPlatform, setEditingPlatform] = useState(null)
   const [editInterval, setEditInterval] = useState('')
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [scheduleAuthNeeded, setScheduleAuthNeeded] = useState(() => !hasApiKey())
+  const scheduleAuthToastShown = useRef(false)
 
   // Logs state initialized from localStorage
   const [logs, setLogs] = useState(() => {
@@ -120,19 +125,39 @@ export default function ScraperControl() {
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
-  // Poll schedule status
+  // Poll schedule status — only when an API credential is present (admin-gated).
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
+      if (!hasApiKey()) {
+        if (!cancelled) {
+          setScheduleAuthNeeded(true)
+          setSchedules([])
+        }
+        return
+      }
       try {
         const s = await fetchSchedule()
-        if (!cancelled && s?.schedules) setSchedules(s.schedules)
-      } catch (e) { /* ignore */ }
+        if (cancelled) return
+        setScheduleAuthNeeded(false)
+        scheduleAuthToastShown.current = false
+        if (s?.schedules) setSchedules(s.schedules)
+      } catch (e) {
+        if (cancelled) return
+        setScheduleAuthNeeded(true)
+        if (!scheduleAuthToastShown.current) {
+          scheduleAuthToastShown.current = true
+          showToast(
+            e.message || 'Invalid or missing API credential — paste it in the sidebar to load schedules',
+            { type: 'error' },
+          )
+        }
+      }
     }
     poll()
     const id = setInterval(poll, 15000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [])
+  }, [showToast])
 
   // Save logs to localStorage on change (capped at 200)
   useEffect(() => {
@@ -210,8 +235,11 @@ export default function ScraperControl() {
       setEditingPlatform(null)
       setEditInterval('')
       // Refresh schedules
-      const s = await fetchSchedule()
-      if (s?.schedules) setSchedules(s.schedules)
+      if (hasApiKey()) {
+        const s = await fetchSchedule()
+        if (s?.schedules) setSchedules(s.schedules)
+        setScheduleAuthNeeded(false)
+      }
     } catch (e) {
       addLog('error', `[${ts()}] ✖ ${e.message}`)
       showToast('Schedule update failed: ' + e.message, { type: 'error' })
@@ -388,7 +416,11 @@ export default function ScraperControl() {
       {/* ── Scheduled Runs ── */}
       <div className="card">
         <div className="panel-section-title">🕐 Scheduled Runs</div>
-        {schedules.length === 0 ? (
+        {scheduleAuthNeeded ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            Paste API credential to load schedules.
+          </div>
+        ) : schedules.length === 0 ? (
           <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>
             No platforms configured for scheduling.
           </div>

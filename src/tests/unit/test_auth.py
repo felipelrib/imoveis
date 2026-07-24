@@ -83,6 +83,34 @@ def test_admin_rejects_when_api_key_not_configured(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.unit
+def test_admin_schedule_403_when_api_key_not_configured(monkeypatch: pytest.MonkeyPatch):
+    """BIN-59: empty server API_KEY + client X-API-Key → 403 on schedule."""
+    cfg = MagicMock()
+    cfg.auth = _auth_config(api_key="")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/admin/schedule", headers={"X-API-Key": "local-dev-api-key"})
+    assert response.status_code == 403
+    assert "not configured" in response.json()["detail"].lower()
+
+
+@pytest.mark.unit
+def test_admin_recalculate_403_when_api_key_not_configured(monkeypatch: pytest.MonkeyPatch):
+    """BIN-59: empty server API_KEY + client X-API-Key → 403 on recalculate."""
+    cfg = MagicMock()
+    cfg.auth = _auth_config(api_key="")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/admin/scoring/recalculate",
+        headers={"X-API-Key": "local-dev-api-key"},
+        json={},
+    )
+    assert response.status_code == 403
+    assert "not configured" in response.json()["detail"].lower()
+
+
+@pytest.mark.unit
 def test_verify_api_key_returns_stable_principal(monkeypatch: pytest.MonkeyPatch):
     from api.auth import verify_api_key
 
