@@ -41,6 +41,7 @@ class PropertyModel(BaseModel):
     neighborhood_mean: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
+    city: Optional[str] = None
     parking: Optional[int] = None
     description: Optional[str] = None
     available_for_rent: bool = False
@@ -120,6 +121,7 @@ class PropertyDetailModel(BaseModel):
     neighborhood_median: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
+    city: Optional[str] = None
     location: Dict[str, Any]
     listings: List[PropertyListingModel] = []
     primary_listing: Optional[PropertyListingModel] = None

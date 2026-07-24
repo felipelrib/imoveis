@@ -20,8 +20,10 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
-# (action, min_p, max_p, neighborhood_slug|None)
-_QaWindow = tuple[str, int, int, str | None]
+# (action, min_p, max_p, neighborhood_slug|None, house_type|None)
+_QaWindow = tuple[str, int, int, str | None, str | None]
+
+_HOUSE_TYPES = ("apartamento", "casa")
 
 
 @ScraperRegistry.register("quintoandar")
@@ -97,15 +99,15 @@ class QuintoAndarScraper(BaseScraper):
         return response
 
     def fetch_pages(self, checkpoint: Any = None) -> Iterator[Dict[str, Any]]:
-        """Fetch properties using price windows, with neighborhood fan-out on saturation."""
+        """Fetch properties using price / neighborhood / house-type funneling."""
         queue: collections.deque[_QaWindow] = collections.deque(
             self._initial_price_windows(checkpoint)
         )
         visited_urls: set[str] = set()
         seen_ids: set[str] = set()
         while queue:
-            action, min_p, max_p, nb_slug = queue.popleft()
-            url = self._window_url(action, min_p, max_p, nb_slug)
+            action, min_p, max_p, nb_slug, house_type = queue.popleft()
+            url = self._window_url(action, min_p, max_p, nb_slug, house_type)
             if url in visited_urls:
                 continue
             visited_urls.add(url)
@@ -113,17 +115,32 @@ class QuintoAndarScraper(BaseScraper):
             if not valid_houses:
                 continue
             if len(valid_houses) >= 12:
-                if self._enqueue_price_split(queue, action, min_p, max_p, nb_slug):
+                if self._enqueue_price_split(
+                    queue, action, min_p, max_p, nb_slug, house_type
+                ):
                     continue
                 if nb_slug is None and self._neighborhoods:
                     for slug in self._neighborhoods:
-                        queue.append((action, min_p, max_p, slug))
+                        queue.append((action, min_p, max_p, slug, house_type))
                     logger.info(
                         "quintoandar_fanout_neighborhoods",
                         action=action,
                         min_p=min_p,
                         max_p=max_p,
                         count=len(self._neighborhoods),
+                        house_type=house_type,
+                    )
+                    continue
+                if house_type is None:
+                    for htype in _HOUSE_TYPES:
+                        queue.append((action, min_p, max_p, nb_slug, htype))
+                    logger.info(
+                        "quintoandar_fanout_house_types",
+                        action=action,
+                        min_p=min_p,
+                        max_p=max_p,
+                        neighborhood=nb_slug,
+                        types=list(_HOUSE_TYPES),
                     )
                     continue
                 logger.warning(
@@ -132,6 +149,7 @@ class QuintoAndarScraper(BaseScraper):
                     min_p=min_p,
                     max_p=max_p,
                     neighborhood=nb_slug,
+                    house_type=house_type,
                     houses_found=len(valid_houses),
                 )
             for house_data in unique_by(
@@ -142,12 +160,18 @@ class QuintoAndarScraper(BaseScraper):
                 yield house_data
 
     def _window_url(
-        self, action: str, min_p: int, max_p: int, nb_slug: str | None
+        self,
+        action: str,
+        min_p: int,
+        max_p: int,
+        nb_slug: str | None,
+        house_type: str | None = None,
     ) -> str:
         slug = f"{nb_slug}-{self.city_slug}" if nb_slug else self.city_slug
+        type_seg = f"/{house_type}" if house_type else ""
         return (
             f"https://www.quintoandar.com.br/{action}/imovel/"
-            f"{slug}/de-{min_p}-a-{max_p}-reais"
+            f"{slug}{type_seg}/de-{min_p}-a-{max_p}-reais"
         )
 
     def _initial_price_windows(self, checkpoint: Any) -> list[_QaWindow]:
@@ -160,7 +184,7 @@ class QuintoAndarScraper(BaseScraper):
         rent_actions = ["alugar"] if scrape_type in ("rent", "both") else []
         sale_actions = ["comprar"] if scrape_type in ("sale", "both") else []
         actions = rent_actions + sale_actions
-        return [(action, *windows[action], None) for action in actions]
+        return [(action, *windows[action], None, None) for action in actions]
 
     def _fetch_window_houses(self, url: str, action: str, min_p: int, max_p: int) -> dict:
         logger.info(
@@ -201,6 +225,7 @@ class QuintoAndarScraper(BaseScraper):
         min_p: int,
         max_p: int,
         nb_slug: str | None,
+        house_type: str | None = None,
     ) -> bool:
         halves = bisect_price(min_p, max_p)
         if halves is None:
@@ -208,8 +233,8 @@ class QuintoAndarScraper(BaseScraper):
         (lo_a, hi_a), (lo_b, hi_b) = halves
         queue.extend(
             (
-                (action, lo_a, hi_a, nb_slug),
-                (action, lo_b, hi_b, nb_slug),
+                (action, lo_a, hi_a, nb_slug, house_type),
+                (action, lo_b, hi_b, nb_slug, house_type),
             )
         )
         logger.info(
@@ -218,6 +243,7 @@ class QuintoAndarScraper(BaseScraper):
             max_p=max_p,
             mid=hi_a,
             neighborhood=nb_slug,
+            house_type=house_type,
         )
         return True
 
@@ -226,7 +252,9 @@ class QuintoAndarScraper(BaseScraper):
     def _split_window(queue, action: str, min_p: int, max_p: int, houses: dict) -> bool:
         if len(houses) < 12:
             return False
-        return QuintoAndarScraper._enqueue_price_split(queue, action, min_p, max_p, None)
+        return QuintoAndarScraper._enqueue_price_split(
+            queue, action, min_p, max_p, None, None
+        )
 
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """Convert QuintoAndar JSON into our internal PropertyCandidate format."""

@@ -432,6 +432,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
                 ms.neighborhood_mean, ms.neighborhood_median, ms.meta,
                 p.neighborhood_id,
                 n.name AS neighborhood_name,
+                COALESCE(n.city, p.props_json->>'city') AS city,
                 ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat,
                 {_LISTINGS_JSON_AGG}
             FROM properties p
