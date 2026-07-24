@@ -118,6 +118,7 @@ def system_pipeline() -> Dict[str, Any]:
         "queues": _pipeline_queue_lengths(r),
         "scrapers_status": _scraper_pipeline_statuses(r),
         "ai_metrics": _ai_pipeline_metrics(r.lrange("pipeline:ai:telemetry", 0, -1)),
+        "recent_scrape_runs": _recent_scrape_runs(r),
     }
 
 
@@ -136,6 +137,21 @@ def _scraper_pipeline_statuses(redis) -> dict:
         except (TypeError, json.JSONDecodeError):
             statuses[platform] = {"status": "idle"}
     return statuses
+
+
+def _recent_scrape_runs(redis) -> list:
+    """Newest-first scrape run summaries from Redis telemetry."""
+    import json
+
+    runs = []
+    for item in redis.lrange("pipeline:scraper:telemetry", 0, -1) or []:
+        try:
+            data = json.loads(item)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("run_id"):
+            runs.append(data)
+    return runs
 
 
 def _ai_pipeline_metrics(telemetry: list) -> dict:

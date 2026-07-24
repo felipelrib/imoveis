@@ -7,6 +7,26 @@ function ts() {
   return new Date().toLocaleTimeString('pt-BR')
 }
 
+const SEEN_RUN_IDS_KEY = 'scraperLogSeenRunIds'
+const SEEN_RUN_IDS_MAX = 200
+/** Only surface recent runs on first load so Redis history does not flood the log. */
+const SCRAPE_RUN_LOG_MAX_AGE_SEC = 3600
+
+function loadSeenRunIds() {
+  try {
+    const raw = localStorage.getItem(SEEN_RUN_IDS_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(parsed) ? parsed : [])
+  } catch (e) {
+    return new Set()
+  }
+}
+
+function persistSeenRunIds(seen) {
+  const ids = [...seen].slice(-SEEN_RUN_IDS_MAX)
+  localStorage.setItem(SEEN_RUN_IDS_KEY, JSON.stringify(ids))
+}
+
 export default function ScraperControl() {
   const { status, loading: statusLoading } = useSystemStatus(5000)
   const [platforms, setPlatforms] = useState([])
@@ -16,13 +36,15 @@ export default function ScraperControl() {
   const [taskId, setTaskId] = useState(null)
   const [workerPaused, setWorkerPaused] = useState(false)
   const logRef = useRef(null)
+  const seenRunIdsRef = useRef(null)
   const showToast = useToast()
 
   // Pipeline tracking state
   const [pipeline, setPipeline] = useState({
     queues: { scrapers: 0, ai: 0 },
     scrapers_status: {},
-    ai_metrics: { throughput_per_min: 0, avg_duration_sec: 0, total_recorded: 0 }
+    ai_metrics: { throughput_per_min: 0, avg_duration_sec: 0, total_recorded: 0 },
+    recent_scrape_runs: [],
   })
 
   // Schedule state
@@ -40,13 +62,57 @@ export default function ScraperControl() {
     return [{ type: 'info', text: `[${ts()}] System ready. Select a platform and click Run Scraper.` }]
   })
 
+  if (seenRunIdsRef.current === null) {
+    seenRunIdsRef.current = loadSeenRunIds()
+  }
+
+  const addLog = (type, text) => setLogs(prev => [...prev.slice(-199), { type, text }])
+
+  const rememberRunId = (runId) => {
+    const seen = seenRunIdsRef.current
+    if (seen.has(runId)) return false
+    seen.add(runId)
+    persistSeenRunIds(seen)
+    return true
+  }
+
+  const logScrapeRun = (run) => {
+    const platform = run.platform || 'unknown'
+    const processed = run.processed ?? 0
+    const skipped = run.skipped ?? 0
+    const errors = run.errors ?? 0
+    const counts = `${processed} processed, ${skipped} skipped, ${errors} failed`
+    if (run.status === 'failed') {
+      addLog('error', `[${ts()}] ✖ ${platform} scrape failed — ${counts}`)
+    } else if (errors > 0) {
+      addLog('warn', `[${ts()}] ⚠ ${platform} scrape finished — ${counts}`)
+    } else {
+      addLog('success', `[${ts()}] ✔ ${platform} scrape finished — ${counts}`)
+    }
+    setTaskId(null)
+    setScraping(false)
+  }
+
   // Poll pipeline status
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
       try {
         const p = await fetchPipeline()
-        if (!cancelled) setPipeline(p)
+        if (cancelled) return
+        setPipeline(p)
+        const runs = Array.isArray(p?.recent_scrape_runs) ? p.recent_scrape_runs : []
+        const nowSec = Date.now() / 1000
+        // Newest-first from API; process oldest-first so log order matches wall clock.
+        for (const run of [...runs].reverse()) {
+          const runId = run?.run_id
+          if (!runId) continue
+          const isNew = rememberRunId(runId)
+          if (!isNew) continue
+          const age = nowSec - (Number(run.timestamp) || 0)
+          if (age > SCRAPE_RUN_LOG_MAX_AGE_SEC) continue
+          logScrapeRun(run)
+        }
       } catch (e) { /* ignore polling errors */ }
     }
     poll()
@@ -89,8 +155,6 @@ export default function ScraperControl() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
-
-  const addLog = (type, text) => setLogs(prev => [...prev.slice(-199), { type, text }])
 
   const handleScrape = async () => {
     if (!selectedPlatform) return
