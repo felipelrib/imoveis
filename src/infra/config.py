@@ -152,8 +152,10 @@ class GeoAllowlistConfig(BaseModel, frozen=True):
     """Post-scrape city/state gate (BIN-68). Empty lists disable that axis."""
 
     enabled: bool = True
-    cities: list[str] = Field(default_factory=lambda: ["Belo Horizonte"])
-    states: list[str] = Field(default_factory=lambda: ["MG"])
+    cities: list[str] = Field(
+        default_factory=lambda: ["Belo Horizonte", "São Paulo", "Campinas"]
+    )
+    states: list[str] = Field(default_factory=lambda: ["MG", "SP"])
 
 
 class ScrapingConfig(BaseModel, frozen=True):

@@ -113,6 +113,7 @@ function buildPropertyFilterParams({
   minBedrooms,
   minParking,
   neighborhoodName,
+  cityName,
   listingType,
   propertyType,
   isFurnished,
@@ -134,6 +135,7 @@ function buildPropertyFilterParams({
   if (minBedrooms != null) params.set('min_bedrooms', minBedrooms)
   if (minParking != null) params.set('min_parking', minParking)
   if (neighborhoodName) params.set('neighborhood_name', neighborhoodName)
+  if (cityName) params.set('city_name', cityName)
   if (listingType && listingType !== 'both') params.set('listing_type', listingType)
   if (propertyType) params.set('property_type', propertyType)
   if (isFurnished) params.set('is_furnished', 'true')
@@ -156,11 +158,11 @@ function triggerBrowserDownload(blob, filename) {
 }
 
 export async function fetchProperties({
-  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, minParking, neighborhoodName, listingType, propertyType, isFurnished, acceptsPets, sortBy = 'combined_score', sortDir = 'desc', bbox, q,
+  page = 1, pageSize = 24, platform, minScore, maxPrice, minBedrooms, minParking, neighborhoodName, cityName, listingType, propertyType, isFurnished, acceptsPets, sortBy = 'combined_score', sortDir = 'desc', bbox, q,
 } = {}) {
   const params = buildPropertyFilterParams({
     page, pageSize, platform, minScore, maxPrice, minBedrooms, minParking,
-    neighborhoodName, listingType, propertyType, isFurnished, acceptsPets,
+    neighborhoodName, cityName, listingType, propertyType, isFurnished, acceptsPets,
     sortBy, sortDir, bbox, q, includePagination: true,
   })
 
@@ -185,6 +187,7 @@ export async function exportProperties({
   minBedrooms,
   minParking,
   neighborhoodName,
+  cityName,
   listingType,
   propertyType,
   isFurnished,
@@ -200,7 +203,7 @@ export async function exportProperties({
 
   const params = buildPropertyFilterParams({
     platform, minScore, maxPrice, minBedrooms, minParking,
-    neighborhoodName, listingType, propertyType, isFurnished, acceptsPets,
+    neighborhoodName, cityName, listingType, propertyType, isFurnished, acceptsPets,
     sortBy, sortDir, bbox, q, includePagination: false,
   })
   params.set('format', format)
@@ -391,6 +394,12 @@ export async function checkFavourite(propertyId) {
 export async function fetchNeighborhoods() {
   const r = await fetch(`${BASE}/properties/neighborhoods`)
   if (!r.ok) throw new Error('Neighborhoods fetch failed')
+  return r.json()
+}
+
+export async function fetchCities() {
+  const r = await fetch(`${BASE}/properties/cities`)
+  if (!r.ok) throw new Error('Cities fetch failed')
   return r.json()
 }
 

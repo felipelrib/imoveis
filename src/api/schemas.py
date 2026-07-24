@@ -87,6 +87,12 @@ class PropertyExportResponse(BaseModel):
 class NeighborhoodModel(BaseModel):
     name: str
     count: int
+    city: Optional[str] = None
+
+
+class CityModel(BaseModel):
+    name: str
+    count: int
 
 
 class PropertyDetailModel(BaseModel):

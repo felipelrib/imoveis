@@ -1,4 +1,4 @@
-"""Unit tests for geo allowlist (BIN-68)."""
+"""Unit tests for geo allowlist (BIN-68 / BIN-70)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ import pytest
 
 from core.entities import PropertyCandidate
 from core.geo_allowlist import extract_city_state, passes_geo_allowlist
+
+_KEEP_CITIES = ["Belo Horizonte", "São Paulo", "Campinas"]
+_KEEP_STATES = ["MG", "SP"]
 
 
 @pytest.mark.unit
@@ -21,7 +24,7 @@ class TestGeoAllowlist:
             props_json={"city": "Porto Alegre", "state": "RS"},
         )
         ok, reason = passes_geo_allowlist(
-            cand, cities=["Belo Horizonte"], states=["MG"], enabled=True
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
         )
         assert ok is False
         assert reason and "city_not_allowed" in reason
@@ -35,7 +38,33 @@ class TestGeoAllowlist:
             props_json={"city": "Belo Horizonte", "state": "MG"},
         )
         ok, reason = passes_geo_allowlist(
-            cand, cities=["Belo Horizonte"], states=["MG"], enabled=True
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
+        )
+        assert ok is True
+        assert reason is None
+
+    def test_allows_sao_paulo(self):
+        cand = PropertyCandidate(
+            platform="olx",
+            platform_id="sp-1",
+            price=4000.0,
+            props_json={"city": "São Paulo", "state": "SP"},
+        )
+        ok, reason = passes_geo_allowlist(
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
+        )
+        assert ok is True
+        assert reason is None
+
+    def test_allows_campinas(self):
+        cand = PropertyCandidate(
+            platform="olx",
+            platform_id="cps-1",
+            price=2500.0,
+            props_json={"city": "Campinas", "state": "SP"},
+        )
+        ok, reason = passes_geo_allowlist(
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
         )
         assert ok is True
         assert reason is None
@@ -50,7 +79,7 @@ class TestGeoAllowlist:
         )
         assert ok is True
 
-    def test_unknown_city_allowed(self):
+    def test_unknown_city_rejected(self):
         cand = PropertyCandidate(
             platform="olx",
             platform_id="unk-1",
@@ -58,10 +87,11 @@ class TestGeoAllowlist:
             address="Some street",
             props_json={},
         )
-        ok, _ = passes_geo_allowlist(
-            cand, cities=["Belo Horizonte"], states=["MG"], enabled=True
+        ok, reason = passes_geo_allowlist(
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
         )
-        assert ok is True
+        assert ok is False
+        assert reason == "city_missing"
 
     def test_disabled_allows_all(self):
         cand = PropertyCandidate(
@@ -71,7 +101,7 @@ class TestGeoAllowlist:
             props_json={"city": "Porto Alegre", "state": "RS"},
         )
         ok, _ = passes_geo_allowlist(
-            cand, cities=["Belo Horizonte"], states=["MG"], enabled=False
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=False
         )
         assert ok is True
 
@@ -81,7 +111,7 @@ class TestGeoAllowlist:
             address=None,
         )
         ok, _ = passes_geo_allowlist(
-            cand, cities=["Belo Horizonte"], states=["MG"], enabled=True
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
         )
         assert ok is True
 
@@ -93,3 +123,28 @@ class TestGeoAllowlist:
         city, state = extract_city_state(cand)
         assert city == "Porto Alegre"
         assert state == "RS"
+
+    def test_extract_city_without_uf(self):
+        cand = SimpleNamespace(
+            props_json={},
+            address="Rua Alvarenga Peixoto, Lourdes, Belo Horizonte",
+        )
+        city, state = extract_city_state(cand)
+        assert city == "Belo Horizonte"
+        assert state is None
+        ok, reason = passes_geo_allowlist(
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
+        )
+        assert ok is True
+        assert reason is None
+
+    def test_extract_state_only_tail_is_city_missing(self):
+        cand = SimpleNamespace(props_json={}, address="Tramandaí, RS")
+        city, state = extract_city_state(cand)
+        assert city is None
+        assert state == "RS"
+        ok, reason = passes_geo_allowlist(
+            cand, cities=_KEEP_CITIES, states=_KEEP_STATES, enabled=True
+        )
+        assert ok is False
+        assert reason == "city_missing"

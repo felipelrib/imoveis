@@ -426,6 +426,122 @@ body {
 .form-select:focus, .form-input:focus { border-color: var(--accent); }
 .form-select option { background: var(--bg-surface); }
 
+/* ── Searchable multi-select (antd-style) ─────────────────────── */
+.sms {
+  position: relative;
+  width: 100%;
+  min-width: 200px;
+}
+.sms-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+.sms-control:hover { border-color: var(--border-glow); }
+.sms-control--open { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(99,102,241,0.35); }
+.sms-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.sms-placeholder { color: var(--text-muted); }
+.sms-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(99,102,241,0.2);
+  border: 1px solid rgba(99,102,241,0.35);
+  font-size: 12px;
+  color: var(--text-primary);
+  max-width: 100%;
+}
+.sms-tag-remove {
+  cursor: pointer;
+  opacity: 0.75;
+  line-height: 1;
+  font-size: 14px;
+}
+.sms-tag-remove:hover { opacity: 1; color: var(--accent-rose, #f43f5e); }
+.sms-chevron { color: var(--text-muted); flex-shrink: 0; }
+.sms-dropdown {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.sms-search-wrap { padding: 8px; border-bottom: 1px solid var(--border-subtle); }
+.sms-search {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+}
+.sms-search:focus { border-color: var(--accent); }
+.sms-options { max-height: 240px; overflow-y: auto; padding: 4px 0; }
+.sms-group-label {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.sms-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.sms-option:hover { background: rgba(255,255,255,0.06); }
+.sms-option--selected {
+  background: rgba(99,102,241,0.35);
+  color: #fff;
+}
+.sms-option--selected:hover { background: rgba(99,102,241,0.45); }
+.sms-check { font-weight: 700; }
+.sms-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* ── Grid toolbar ────────────────────────────────────────────── */
 .toolbar {
   display: flex;

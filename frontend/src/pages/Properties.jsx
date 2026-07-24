@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods } from '../api.js'
+import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods, fetchCities } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
+import SearchableMultiSelect from '../components/SearchableMultiSelect.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
@@ -24,6 +25,7 @@ const DEFAULT_FILTERS = {
   minParking: '',
   minScore: '',
   neighborhood: '',
+  city: '',
   isFurnished: false,
   acceptsPets: false,
   q: '',
@@ -43,6 +45,7 @@ export default function Properties() {
   const [minParking, setMinParking] = useState(DEFAULT_FILTERS.minParking)
   const [minScore, setMinScore] = useState(DEFAULT_FILTERS.minScore)
   const [neighborhood, setNeighborhood] = useState(DEFAULT_FILTERS.neighborhood)
+  const [city, setCity] = useState(DEFAULT_FILTERS.city)
   const [isFurnished, setIsFurnished] = useState(DEFAULT_FILTERS.isFurnished)
   const [acceptsPets, setAcceptsPets] = useState(DEFAULT_FILTERS.acceptsPets)
   const [q, setQ] = useState(DEFAULT_FILTERS.q)
@@ -90,9 +93,11 @@ export default function Properties() {
   const [viewMode, setViewMode] = useState('all')
   const [favouritesData, setFavouritesData] = useState({ items: [], total: 0 })
 
-  // Dynamic neighborhoods from backend
+  // Dynamic neighborhoods / cities from backend
   const [neighborhoods, setNeighborhoods] = useState([])
   const [neighborhoodsLoading, setNeighborhoodsLoading] = useState(false)
+  const [cities, setCities] = useState([])
+  const [citiesLoading, setCitiesLoading] = useState(false)
 
   // View mode: 'grid' | 'map'
   const [viewType, setViewType] = useState('grid')
@@ -102,7 +107,7 @@ export default function Properties() {
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, maxPrice,
-    minBedrooms, minParking, minScore, neighborhood, isFurnished, acceptsPets, q,
+    minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
   }
 
   const buildListQueryFilters = useCallback(() => {
@@ -117,13 +122,14 @@ export default function Properties() {
       minScore: minScore ? parseFloat(minScore) : undefined,
       minParking: minParking ? parseInt(minParking) : undefined,
       neighborhoodName: neighborhood || undefined,
+      cityName: city || undefined,
       listingType,
       propertyType: propertyType || undefined,
       isFurnished: isFurnished ? true : undefined,
       acceptsPets: acceptsPets ? true : undefined,
       q: q || undefined,
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, isFurnished, acceptsPets, q])
 
   const handleExport = useCallback(async (format) => {
     if (exporting) return
@@ -151,6 +157,7 @@ export default function Properties() {
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
         neighborhoodName: neighborhood || undefined,
+        cityName: city || undefined,
         listingType: listingType,
         propertyType: propertyType || undefined,
         isFurnished: isFurnished ? true : undefined,
@@ -164,7 +171,7 @@ export default function Properties() {
     } finally {
       setMapLoading(false)
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, listingType, propertyType, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, isFurnished, acceptsPets, q])
 
   const applyFilters = useCallback((filters) => {
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
@@ -176,6 +183,7 @@ export default function Properties() {
     if (filters.minParking !== undefined) setMinParking(filters.minParking)
     if (filters.minScore !== undefined) setMinScore(filters.minScore)
     if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood)
+    if (filters.city !== undefined) setCity(filters.city)
     if (filters.isFurnished !== undefined) setIsFurnished(filters.isFurnished)
     if (filters.acceptsPets !== undefined) setAcceptsPets(filters.acceptsPets)
     if (filters.q !== undefined) {
@@ -220,6 +228,7 @@ export default function Properties() {
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
         neighborhoodName: neighborhood || undefined,
+        cityName: city || undefined,
         listingType: listingType,
         propertyType: propertyType || undefined,
         isFurnished: isFurnished ? true : undefined,
@@ -247,12 +256,17 @@ export default function Properties() {
     fetchFavourites({ page: 1, pageSize: 1000 })
       .then(res => setFavouriteIds(new Set((res.items || []).map(f => f.property_id))))
       .catch(() => {})
-    // Fetch dynamic neighborhoods
+    // Fetch dynamic neighborhoods / cities
     setNeighborhoodsLoading(true)
     fetchNeighborhoods()
       .then(setNeighborhoods)
       .catch(() => {})
       .finally(() => setNeighborhoodsLoading(false))
+    setCitiesLoading(true)
+    fetchCities()
+      .then(setCities)
+      .catch(() => {})
+      .finally(() => setCitiesLoading(false))
   }, [])
 
   const toggleWatchlist = useCallback(async (e, propertyId) => {
@@ -293,7 +307,7 @@ export default function Properties() {
       load(1)
       setPage(1)
     }
-  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, viewMode, q])
+  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
@@ -550,27 +564,45 @@ export default function Properties() {
                 </div>
                 <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '200px' }}>
                   <label className="form-label" style={{ marginBottom: 0 }}>
+                    Cities
+                    {citiesLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Loading…</span>}
+                  </label>
+                  <SearchableMultiSelect
+                    data-testid="city-filter"
+                    placeholder="Select cities…"
+                    searchPlaceholder="Search cities…"
+                    loading={citiesLoading}
+                    value={city ? city.split(',') : []}
+                    onChange={(vals) => setCity(vals.join(','))}
+                    options={cities.map((c) => ({
+                      value: c.name,
+                      label: `${c.name} (${c.count})`,
+                    }))}
+                  />
+                </div>
+                <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '220px' }}>
+                  <label className="form-label" style={{ marginBottom: 0 }}>
                     Neighborhoods
                     {neighborhoodsLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Loading…</span>}
                   </label>
-                  <select
-                    multiple
-                    className="form-select"
-                    style={{ height: '100px' }}
+                  <SearchableMultiSelect
+                    data-testid="neighborhood-filter"
+                    placeholder="Select neighborhoods…"
+                    searchPlaceholder="Search neighborhoods…"
+                    loading={neighborhoodsLoading}
+                    groupByCity
                     value={neighborhood ? neighborhood.split(',') : []}
-                    onChange={e => { const opts = Array.from(e.target.selectedOptions).map(o => o.value); setNeighborhood(opts.join(',')) }}
-                  >
-                    {neighborhoods.length > 0
-                      ? neighborhoods.map(n => (
-                          <option key={n.name} value={n.name}>{n.name} ({n.count})</option>
-                        ))
-                      : <option value="" disabled>No data available</option>
-                    }
-                  </select>
+                    onChange={(vals) => setNeighborhood(vals.join(','))}
+                    options={neighborhoods.map((n) => ({
+                      value: n.name,
+                      label: `${n.name} (${n.count})`,
+                      group: n.city || null,
+                    }))}
+                  />
                 </div>
                 <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => {
                   setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
-                  setNeighborhood(''); setPropertyType(''); setListingType('both');
+                  setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
                   setIsFurnished(false); setAcceptsPets(false);
                   setQ(''); setQDraft('');
                 }}>✕ Clear All</button>
