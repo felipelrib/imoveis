@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
-import subprocess
-import time
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
@@ -134,10 +133,11 @@ async def ollama_ensure():
         return {"status": "error", "detail": detail}
 
     try:
-        subprocess.Popen(  # noqa: S603 — fixed argv, no shell
-            [ollama_bin, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        await asyncio.create_subprocess_exec(
+            ollama_bin,
+            "serve",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
             start_new_session=True,
         )
     except OSError as exc:
@@ -146,7 +146,7 @@ async def ollama_ensure():
         return {"status": "error", "detail": detail}
 
     # Brief wait for the local server to bind before re-probing.
-    time.sleep(1.5)
+    await asyncio.sleep(1.5)
     probe = await _check_ollama()
     if probe.get("status") == "ok":
         logger.info("ollama_ensure_started")

@@ -96,11 +96,14 @@ def test_ollama_ensure_started_after_local_popen(client_with_auth):
     async def _probe():
         return probes.pop(0)
 
+    async def _fake_create(*_args, **_kwargs):
+        return MagicMock()
+
     with (
         patch("api.system._check_ollama", side_effect=_probe),
         patch("api.system.shutil.which", return_value="/usr/bin/ollama"),
-        patch("api.system.subprocess.Popen") as popen,
-        patch("api.system.time.sleep"),
+        patch("api.system.asyncio.create_subprocess_exec", side_effect=_fake_create) as create,
+        patch("api.system.asyncio.sleep", new_callable=AsyncMock),
     ):
         response = client.post(
             "/system/ollama/ensure",
@@ -108,4 +111,4 @@ def test_ollama_ensure_started_after_local_popen(client_with_auth):
         )
     assert response.status_code == 200
     assert response.json()["status"] == "started"
-    popen.assert_called_once()
+    create.assert_awaited()
