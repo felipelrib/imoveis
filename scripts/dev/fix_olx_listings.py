@@ -202,6 +202,9 @@ def _apply_location(
     )
     if result.action in ("unchanged", "ai_failed"):
         return result.action
+    # out_of_geo: caller deletes the row — do not dirty the ORM instance.
+    if result.action == "out_of_geo":
+        return result.action
     if not apply:
         return result.action
 
@@ -255,11 +258,11 @@ def _find_duplicate(
         other_city = (row.props_json or {}).get("city") if isinstance(row.props_json, dict) else None
         if city and other_city and _fold(city) != _fold(other_city):
             continue
-        area_close = (
-            not (prop.area_m2 and row.area_m2)
-            or abs(float(prop.area_m2) - float(row.area_m2)) <= area_tol
-        )
-        if not area_close:
+        area_a = float(prop.area_m2) if prop.area_m2 else None
+        area_b = float(row.area_m2) if row.area_m2 else None
+        if not area_a or not area_b:
+            continue  # missing/zero area → too many false positives
+        if abs(area_a - area_b) > area_tol:
             continue
         if text_similarity(prop.title or "", row.title or "") >= text_threshold:
             return row.id
@@ -297,6 +300,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-ai",
         action="store_true",
         help="Heuristic-only location reconcile (no Ollama).",
+    )
+    parser.add_argument(
+        "--no-merge",
+        action="store_true",
+        help="Skip fuzzy duplicate merges (recommended: template OLX titles false-positive heavily).",
     )
     parser.add_argument(
         "--limit",
@@ -360,18 +368,19 @@ def main(argv: list[str] | None = None) -> int:
                 counts["purged_out_of_geo"] += 1
                 continue
 
-            dup = _find_duplicate(
-                session,
-                prop,
-                text_threshold=text_threshold,
-                area_tol=area_tol,
-            )
-            if dup is not None:
-                counts["merged_dupes"] += 1
-                merge_orphans.append((dup, prop))
-                continue
+            if not args.no_merge:
+                dup = _find_duplicate(
+                    session,
+                    prop,
+                    text_threshold=text_threshold,
+                    area_tol=area_tol,
+                )
+                if dup is not None:
+                    counts["merged_dupes"] += 1
+                    merge_orphans.append((dup, prop))
+                    continue
 
-            if loc_action == "unchanged" and counts["type_fixed"] == 0:
+            if loc_action == "unchanged":
                 counts["unchanged"] += 1
 
         for reason, count in sorted(counts.items()):
@@ -389,21 +398,35 @@ def main(argv: list[str] | None = None) -> int:
             _merge_into(session, keeper_id, orphan)
             _delete_image_dirs([orphan.id])
 
-        if purge_ids:
-            chunk = 500
-            deleted = 0
-            for i in range(0, len(purge_ids), chunk):
-                batch = purge_ids[i : i + chunk]
-                result = session.execute(
-                    text("DELETE FROM properties WHERE id = ANY(:ids)"),
-                    {"ids": batch},
-                )
-                deleted += result.rowcount or 0
-            _delete_image_dirs(purge_ids)
-            print(f"Purged {deleted} out-of-geo properties.")
+        purge_set = set(purge_ids)
+        # Expunge anything tied to purge targets so CASCADE delete cannot
+        # race pending UPDATEs (StaleDataError on properties / listings).
+        for obj in list(session.identity_map.values()):
+            if isinstance(obj, Property) and obj.id in purge_set:
+                session.expunge(obj)
+            elif isinstance(obj, PropertyListing) and obj.property_id in purge_set:
+                session.expunge(obj)
 
         session.commit()
-        print("Applied.")
+        print("Applied type/location updates.")
+
+        if purge_ids:
+            with SessionLocal() as purge_session:
+                chunk = 500
+                deleted = 0
+                for i in range(0, len(purge_ids), chunk):
+                    batch = purge_ids[i : i + chunk]
+                    result = purge_session.execute(
+                        text("DELETE FROM properties WHERE id = ANY(:ids)"),
+                        {"ids": batch},
+                    )
+                    deleted += result.rowcount or 0
+                purge_session.commit()
+            images_removed = _delete_image_dirs(purge_ids)
+            print(
+                f"Purged {deleted} out-of-geo properties "
+                f"(image dirs removed: {images_removed})."
+            )
     return 0
 
 
