@@ -38,6 +38,45 @@ scraping:
       jitter_max: 7           # maximum delay between requests (seconds)
       extra:
         city_slug: belo-horizonte-mg-brasil
+        price_rent: [500, 15000]
+        price_sale: [100000, 5000000]
+        # Fan-out only when a price band is atomic and still ≥12 results
+        neighborhoods:
+          - { slug: savassi }
+          - { slug: lourdes }
+          - { slug: funcionarios }
+          - { slug: centro }
+          - { slug: santo-agostinho }
+          - { slug: serra }
+          - { slug: sion }
+          - { slug: cruzeiro }
+          - { slug: anchieta }
+          - { slug: belvedere }
+          - { slug: santo-antonio }
+          - { slug: carmo }
+          - { slug: santa-efigenia }
+          - { slug: floresta }
+          - { slug: santa-tereza }
+          - { slug: buritis }
+          - { slug: gutierrez }
+          - { slug: prado }
+          - { slug: barro-preto }
+          - { slug: castelo }
+          - { slug: ouro-preto }
+          - { slug: bandeirantes }
+          - { slug: sao-luiz }
+          - { slug: caicaras }
+          - { slug: carlos-prates }
+          - { slug: planalto }
+          - { slug: cidade-nova }
+          - { slug: venda-nova }
+          - { slug: barreiro }
+          - { slug: nova-suissa }
+          - { slug: calafate }
+          - { slug: mangabeiras }
+          - { slug: luxemburgo }
+          - { slug: santo-andre }
+          - { slug: bonfim }
         # null → use global proxy: block; non-null URL → fixed override (no rotation)
         proxy: null
     olx:
@@ -49,8 +88,49 @@ scraping:
       jitter_max: 6
       extra:
         max_pages: 5
-        region: mg
-        city_slug: belo-horizonte
+        page_size_hint: 50
+        region: estado-mg
+        city_slug: belo-horizonte-e-regiao
+        price_rent: [500, 15000]
+        price_sale: [100000, 5000000]
+        # Fan-out only when a price band is atomic and still saturates max_pages
+        neighborhoods:
+          - { slug: savassi, zone: centro-sul }
+          - { slug: lourdes, zone: centro-sul }
+          - { slug: funcionarios, zone: centro-sul }
+          - { slug: centro, zone: centro-sul }
+          - { slug: santo-agostinho, zone: centro-sul }
+          - { slug: serra, zone: centro-sul }
+          - { slug: sion, zone: centro-sul }
+          - { slug: cruzeiro, zone: centro-sul }
+          - { slug: anchieta, zone: centro-sul }
+          - { slug: belvedere, zone: centro-sul }
+          - { slug: santo-antonio, zone: centro-sul }
+          - { slug: carmo, zone: centro-sul }
+          - { slug: mangabeiras, zone: centro-sul }
+          - { slug: luxemburgo, zone: centro-sul }
+          - { slug: santa-efigenia, zone: zona-leste }
+          - { slug: floresta, zone: zona-leste }
+          - { slug: santa-tereza, zone: zona-leste }
+          - { slug: horto, zone: zona-leste }
+          - { slug: buritis, zone: oeste }
+          - { slug: gutierrez, zone: oeste }
+          - { slug: prado, zone: oeste }
+          - { slug: barro-preto, zone: oeste }
+          - { slug: nova-suissa, zone: oeste }
+          - { slug: calafate, zone: oeste }
+          - { slug: castelo, zone: pampulha }
+          - { slug: ouro-preto, zone: pampulha }
+          - { slug: bandeirantes, zone: pampulha }
+          - { slug: sao-luiz, zone: pampulha }
+          - { slug: caicaras, zone: noroeste }
+          - { slug: carlos-prates, zone: noroeste }
+          - { slug: bonfim, zone: noroeste }
+          - { slug: santo-andre, zone: noroeste }
+          - { slug: planalto, zone: venda-nova }
+          - { slug: cidade-nova, zone: nordeste }
+          - { slug: venda-nova, zone: venda-nova }
+          - { slug: barreiro, zone: barreiro }
         # null → use global proxy: block; non-null URL → fixed override (no rotation)
         proxy: null
 
