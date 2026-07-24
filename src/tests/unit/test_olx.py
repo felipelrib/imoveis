@@ -582,6 +582,38 @@ class TestOLXFetchLifecycle:
         assert ids == {"c", "d"}
         assert "a" not in ids  # parent saturated window discarded
 
+    def test_fetch_pages_splits_when_max_pages_partial_last_page(self, scraper):
+        """Hitting max_pages with a non-empty partial last page must saturate.
+
+        Regression for the ~200 cliff: last page under page_size_hint used to
+        skip price/neighborhood fan-out and yield a truncated city window.
+        """
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = []
+        scraper._price_rent = (100, 200)
+        scraper._max_pages = 2
+        scraper._page_size_hint = 50
+        scraper._neighborhoods = []
+
+        def fake_fetch(url, page):
+            if "ps=100&pe=200" in url:
+                # Two pages of content; last page well under page_size_hint
+                if page == 1:
+                    return [{"list_id": f"p1-{i}"} for i in range(50)]
+                if page == 2:
+                    return [{"list_id": f"p2-{i}"} for i in range(40)]
+            if "ps=100&pe=150" in url:
+                return [{"list_id": "c"}]
+            if "ps=151&pe=200" in url:
+                return [{"list_id": "d"}]
+            return []
+
+        scraper._fetch_page_listings = MagicMock(side_effect=fake_fetch)
+        listings = list(scraper.fetch_pages({"scrape_type": "rent"}))
+        ids = {item["list_id"] for item in listings}
+        assert ids == {"c", "d"}
+        assert not any(x.startswith("p1-") or x.startswith("p2-") for x in ids)
+
     def test_fetch_pages_fans_out_neighborhoods_on_atomic_saturation(self, scraper):
         scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
         scraper._SALE_PATHS = []

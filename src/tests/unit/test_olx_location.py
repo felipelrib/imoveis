@@ -13,7 +13,7 @@ from core.olx_location import (
 
 ALLOWED = ["Belo Horizonte", "São Paulo", "Campinas"]
 STATES = ["MG", "SP"]
-NEIGHBORHOODS = ["Itapoã", "Savassi", "São Tomáz", "Lourdes", "Pampulha"]
+NEIGHBORHOODS = ["Itapoã", "Savassi", "São Tomáz", "Lourdes", "Pampulha", "Sion"]
 
 
 @pytest.mark.unit
@@ -56,6 +56,19 @@ class TestSuspectLocationMismatch:
         )
         assert suspected is False
 
+    def test_sao_paulo_as_neighborhood_with_sion_title(self):
+        suspected, city, nb, reason = suspect_location_mismatch(
+            title="Cobertura Duplex 5 quartos Sion",
+            description="",
+            scraped_city="São Paulo",
+            scraped_neighborhood="São Paulo",
+            allowed_cities=ALLOWED,
+            known_neighborhoods=NEIGHBORHOODS,
+        )
+        assert suspected is True
+        assert reason == "neighborhood_is_city"
+        assert nb == "Sion"
+
 
 @pytest.mark.unit
 class TestReconcileOlxLocation:
@@ -77,6 +90,24 @@ class TestReconcileOlxLocation:
         assert result.city == "Belo Horizonte"
         assert result.clear_coords is True
         assert "Itapoã" in (result.address or "")
+
+    def test_sao_paulo_neighborhood_sion_title_becomes_bh(self):
+        result = reconcile_olx_location(
+            title="Apartamento 4 quartos Sion",
+            description="",
+            scraped_city="São Paulo",
+            scraped_neighborhood="São Paulo",
+            scraped_state="MG",
+            scraped_address="São Paulo, SP",
+            allowed_cities=ALLOWED,
+            allowed_states=STATES,
+            known_neighborhoods=NEIGHBORHOODS,
+            ai_extract=None,
+        )
+        assert result.action == "corrected"
+        assert result.neighborhood == "Sion"
+        assert result.city == "Belo Horizonte"
+        assert result.reason == "neighborhood_is_city"
 
     def test_out_of_geo_cabo_frio_with_ai(self):
         def fake_ai(_prompt: str):

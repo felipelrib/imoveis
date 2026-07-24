@@ -247,10 +247,15 @@ class OLXScraper(BaseScraper):
                 if window_type:
                     listing["_olx_listing_type"] = window_type
                 collected.append(listing)
-        saturated = (
-            pages_fetched >= self._max_pages
-            and last_page_count >= self._page_size_hint
-        )
+        # Hit the page ceiling with a near-full last page → more inventory likely.
+        # Requiring an exact page_size_hint missed common partial last pages (~40/50)
+        # and stopped city windows near ~200 without fan-out. Keep a strict
+        # threshold for tiny test hints (<10) so atomic children still yield.
+        if self._page_size_hint >= 10:
+            full_enough = max(1, int(self._page_size_hint * 0.7))
+        else:
+            full_enough = self._page_size_hint
+        saturated = pages_fetched >= self._max_pages and last_page_count >= full_enough
         return collected, saturated
 
     def _fetch_page_listings(self, url: str, page: int) -> list[dict]:

@@ -31,8 +31,12 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
     await expect(page.getByTestId("neighborhood-filter-dropdown")).toHaveCount(0);
     await page.getByTestId("neighborhood-filter-trigger").click();
     await expect(page.getByTestId("neighborhood-filter-dropdown")).toBeVisible();
-    await expect(page.getByText("Belo Horizonte")).toBeVisible();
-    await expect(page.getByText("São Paulo")).toBeVisible();
+    await expect(
+      page.getByTestId("neighborhood-filter-dropdown").getByText("Belo Horizonte"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("neighborhood-filter-dropdown").getByText("São Paulo"),
+    ).toBeVisible();
 
     await page.getByTestId("neighborhood-filter-search").fill("Pinheiros");
     await expect(page.getByRole("option", { name: /Pinheiros/i })).toBeVisible();
@@ -41,7 +45,10 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
 
     await page.getByTestId("city-filter-trigger").click();
     await expect(page.getByTestId("city-filter-dropdown")).toBeVisible();
-    await page.getByRole("option", { name: /São Paulo/i }).click();
+    await page
+      .getByTestId("city-filter-dropdown")
+      .getByRole("option", { name: /São Paulo/i })
+      .click();
 
     await expect
       .poll(() =>

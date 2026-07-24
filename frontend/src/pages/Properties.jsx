@@ -20,6 +20,7 @@ const DEFAULT_FILTERS = {
   sortDir: 'desc',
   listingType: 'both',
   propertyType: '',
+  platform: '',
   maxPrice: '',
   minBedrooms: '',
   minParking: '',
@@ -40,6 +41,7 @@ export default function Properties() {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [listingType, setListingType] = useState(DEFAULT_FILTERS.listingType)
   const [propertyType, setPropertyType] = useState(DEFAULT_FILTERS.propertyType)
+  const [platform, setPlatform] = useState(DEFAULT_FILTERS.platform)
   const [maxPrice, setMaxPrice] = useState(DEFAULT_FILTERS.maxPrice)
   const [minBedrooms, setMinBedrooms] = useState(DEFAULT_FILTERS.minBedrooms)
   const [minParking, setMinParking] = useState(DEFAULT_FILTERS.minParking)
@@ -106,7 +108,7 @@ export default function Properties() {
   const [exporting, setExporting] = useState(false)
 
   const currentFilters = {
-    sortBy, sortDir, listingType, propertyType, maxPrice,
+    sortBy, sortDir, listingType, propertyType, platform, maxPrice,
     minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
   }
 
@@ -125,11 +127,12 @@ export default function Properties() {
       cityName: city || undefined,
       listingType,
       propertyType: propertyType || undefined,
+      platform: platform || undefined,
       isFurnished: isFurnished ? true : undefined,
       acceptsPets: acceptsPets ? true : undefined,
       q: q || undefined,
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
   const handleExport = useCallback(async (format) => {
     if (exporting) return
@@ -160,6 +163,7 @@ export default function Properties() {
         cityName: city || undefined,
         listingType: listingType,
         propertyType: propertyType || undefined,
+        platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
         bbox: bboxStr,
@@ -171,13 +175,14 @@ export default function Properties() {
     } finally {
       setMapLoading(false)
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
   const applyFilters = useCallback((filters) => {
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
     if (filters.sortDir !== undefined) setSortDir(filters.sortDir)
     if (filters.listingType !== undefined) setListingType(filters.listingType)
     if (filters.propertyType !== undefined) setPropertyType(filters.propertyType)
+    if (filters.platform !== undefined) setPlatform(filters.platform)
     if (filters.maxPrice !== undefined) setMaxPrice(filters.maxPrice)
     if (filters.minBedrooms !== undefined) setMinBedrooms(filters.minBedrooms)
     if (filters.minParking !== undefined) setMinParking(filters.minParking)
@@ -231,6 +236,7 @@ export default function Properties() {
         cityName: city || undefined,
         listingType: listingType,
         propertyType: propertyType || undefined,
+        platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
         q: q || undefined,
@@ -307,7 +313,7 @@ export default function Properties() {
       load(1)
       setPage(1)
     }
-  }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
+  }, [sortBy, listingType, propertyType, platform, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
@@ -466,6 +472,21 @@ export default function Properties() {
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Source</label>
+                <select
+                  className="form-select"
+                  style={{ width: 130 }}
+                  value={platform}
+                  onChange={e => setPlatform(e.target.value)}
+                  data-testid="platform-filter"
+                >
+                  <option value="">Any</option>
+                  <option value="olx">OLX</option>
+                  <option value="quintoandar">QuintoAndar</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                 <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Type</label>
                 <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)}>
                   <option value="">Any</option>
@@ -603,6 +624,7 @@ export default function Properties() {
                 <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => {
                   setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
                   setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
+                  setPlatform('');
                   setIsFurnished(false); setAcceptsPets(false);
                   setQ(''); setQDraft('');
                 }}>✕ Clear All</button>
@@ -654,7 +676,8 @@ export default function Properties() {
                 Object.values(currentFilters).some(v => v && v !== 'combined_score' && v !== 'desc' && v !== 'both')
                   ? <button className="btn btn-ghost" onClick={() => {
                       setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
-                      setNeighborhood(''); setPropertyType(''); setListingType('both');
+                      setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
+                      setPlatform('');
                       setIsFurnished(false); setAcceptsPets(false);
                     }}>✕ Clear Filters</button>
                   : <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>
@@ -799,6 +822,13 @@ function listingTypeColor(type) {
   return { bg: 'rgba(16,185,129,0.2)', color: '#34d399' }
 }
 
+function formatLocationLabel(neighborhoodName, city) {
+  const nb = (neighborhoodName || '').trim()
+  const c = (city || '').trim()
+  if (nb && c && nb.toLowerCase() !== c.toLowerCase()) return `${nb}, ${c}`
+  return nb || c || ''
+}
+
 function PropertyCard({
   property: p,
   onClick,
@@ -815,6 +845,7 @@ function PropertyCard({
   const groupKeys = Object.keys(groups)
   const platformCount = getPlatformCount(listings)
   const hasListings = listings.length > 0
+  const locationLabel = formatLocationLabel(p.neighborhood_name, p.city)
 
   return (
     <div
@@ -937,7 +968,7 @@ function PropertyCard({
           {p.parking != null   && <span className="property-attr">🚗 {p.parking}</span>}
           {p.area_m2 != null   && <span className="property-attr">📐 {p.area_m2}m²</span>}
           {p.price_per_m2      && <span className="property-attr" style={{ color: 'var(--text-muted)' }}>R${Math.round(p.price_per_m2)}/m²</span>}
-          {p.neighborhood_name && <span className="property-attr" style={{ color: 'var(--text-muted)' }}>📍 {p.neighborhood_name}</span>}
+          {locationLabel && <span className="property-attr" style={{ color: 'var(--text-muted)' }} data-testid="property-location">📍 {locationLabel}</span>}
         </div>
 
         {p.description && (

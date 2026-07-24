@@ -96,6 +96,7 @@ class TestNeighborhoodFields:
         assert neighborhood_fields(row) == {
             "neighborhood_id": "nbr-1",
             "neighborhood_name": "Savassi",
+            "city": None,
         }
 
     def test_name_falls_back_to_props_json(self):
@@ -107,6 +108,33 @@ class TestNeighborhoodFields:
         fields = neighborhood_fields(row)
         assert fields["neighborhood_id"] is None
         assert fields["neighborhood_name"] == "Lourdes"
+
+    def test_humanizes_slug_and_projects_city(self):
+        from api.property_projection import format_location_label
+
+        row = {
+            "neighborhood_id": None,
+            "neighborhood_name": None,
+            "city": "Belo Horizonte",
+            "props_json": {"neighborhood": "sion", "city": "Belo Horizonte"},
+        }
+        fields = neighborhood_fields(row)
+        assert fields["neighborhood_name"] == "Sion"
+        assert fields["city"] == "Belo Horizonte"
+        assert format_location_label(fields["neighborhood_name"], fields["city"]) == (
+            "Sion, Belo Horizonte"
+        )
+
+    def test_drops_city_as_neighborhood(self):
+        row = {
+            "neighborhood_id": None,
+            "neighborhood_name": "São Paulo",
+            "city": "São Paulo",
+            "props_json": {},
+        }
+        fields = neighborhood_fields(row)
+        assert fields["neighborhood_name"] is None
+        assert fields["city"] == "São Paulo"
 
 
 class TestMapPropertyProjection:

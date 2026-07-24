@@ -21,7 +21,19 @@ _LOC_PHRASE_RE = re.compile(
 
 
 def _slug_to_label(slug: str) -> str:
-    return slug.replace("-", " ").replace("_", " ").strip()
+    return slug.replace("-", " ").replace("_", " ").strip().title()
+
+
+def _neighborhood_looks_like_city(
+    neighborhood: str | None, allowed_cities: Sequence[str]
+) -> bool:
+    """True when ``neighborhood`` is actually an allowlisted city name."""
+    if not neighborhood or not str(neighborhood).strip():
+        return False
+    nb_canon = _canonical_city(neighborhood)
+    if not nb_canon:
+        return False
+    return any(_canonical_city(c) == nb_canon for c in allowed_cities if c)
 
 
 @dataclass(frozen=True)
@@ -81,6 +93,7 @@ def suspect_location_mismatch(
     scraped_city_f = _canonical_city(scraped_city) if scraped_city else ""
     scraped_nb_f = _fold(scraped_neighborhood) if scraped_neighborhood else ""
     allowed_f = {_canonical_city(c) for c in allowed_cities if c}
+    nb_is_city = _neighborhood_looks_like_city(scraped_neighborhood, allowed_cities)
 
     hinted_city: Optional[str] = None
     hinted_nb: Optional[str] = None
@@ -90,7 +103,7 @@ def suspect_location_mismatch(
         folded = _fold(name)
         if len(folded) < 4:
             continue
-        if folded in _fold(blob) and folded != scraped_nb_f:
+        if folded in _fold(blob) and (folded != scraped_nb_f or nb_is_city):
             hinted_nb = name
             break
 
@@ -99,7 +112,7 @@ def suspect_location_mismatch(
         if city_hit and _canonical_city(city_hit) != scraped_city_f:
             hinted_city = city_hit
         nb_hit = _best_catalog_match(phrase, known_neighborhoods)
-        if nb_hit and _fold(nb_hit) != scraped_nb_f:
+        if nb_hit and (_fold(nb_hit) != scraped_nb_f or nb_is_city):
             hinted_nb = hinted_nb or nb_hit
         # Phrase that looks like a city but is not allowlisted → out-of-geo hint.
         if not city_hit and not nb_hit:
@@ -107,6 +120,15 @@ def suspect_location_mismatch(
             if scraped_city_f and _fold(phrase) != scraped_city_f and _fold(phrase) not in allowed_f:
                 if len(_fold(phrase)) >= 5 and not hinted_city:
                     hinted_city = phrase.strip()
+
+    if nb_is_city:
+        # Seller/region put a city name in the neighborhood field.
+        if not hinted_city and scraped_neighborhood:
+            if scraped_city_f and scraped_city_f != _canonical_city(scraped_neighborhood):
+                hinted_city = scraped_city
+            else:
+                hinted_city = scraped_neighborhood
+        return True, hinted_city, hinted_nb, "neighborhood_is_city"
 
     if not scraped_neighborhood:
         if hinted_nb or hinted_city:
@@ -213,12 +235,23 @@ def reconcile_olx_location(
         except (TypeError, ValueError):
             confidence = 0.0
         reason = str(data.get("reason") or reason)
-    elif suspected and (hinted_city or hinted_nb):
+    elif suspected and (hinted_city or hinted_nb or reason == "neighborhood_is_city"):
         # Heuristic-only correction when AI is unavailable.
         if hinted_city:
             city = hinted_city
         if hinted_nb:
             neighborhood = hinted_nb
+        elif reason == "neighborhood_is_city":
+            # Drop city-as-neighborhood noise until a real bairro is known.
+            neighborhood = None
+        # Seller put a metro city in neighborhood; MG scrapes → prefer BH.
+        if reason == "neighborhood_is_city" and hinted_nb:
+            state_f = _fold(state or scraped_state or "")
+            if state_f in ("mg", "minas gerais"):
+                for c in allowed_cities:
+                    if _canonical_city(c) == _canonical_city("Belo Horizonte"):
+                        city = c
+                        break
         confidence = 0.55
     elif not suspected:
         return OlxLocationResult(
@@ -308,6 +341,8 @@ def apply_reconcile_to_candidate(candidate: Any, result: OlxLocationResult) -> A
         props["state"] = result.state
     if result.neighborhood:
         props["neighborhood"] = result.neighborhood
+    elif result.action == "corrected" and result.reason == "neighborhood_is_city":
+        props.pop("neighborhood", None)
     props["olx_location_corrected"] = True
     if result.reason:
         props["olx_location_reason"] = result.reason

@@ -19,6 +19,7 @@ export const SAMPLE_PROPERTY = {
   ai_score: 0.75,
   price_per_m2: 46.67,
   neighborhood_name: "Savassi",
+  city: "Belo Horizonte",
   deal_summary: null,
   image_urls: [],
   primary_listing: {
