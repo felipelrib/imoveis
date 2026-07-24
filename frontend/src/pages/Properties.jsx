@@ -295,8 +295,11 @@ export default function Properties() {
     }
   }, [sortBy, listingType, propertyType, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, viewMode, q])
 
+  // Always load on page change — including returning to page 1 via pagination (BIN-57).
+  // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
+  // page 1 when setPage(1) runs after visiting page 2+, which is intentional and correct.
   useEffect(() => {
-    if (page !== 1 && viewMode === 'all') load(page)
+    if (viewMode === 'all') load(page)
   }, [page])
 
   const handleViewModeChange = (mode) => {
