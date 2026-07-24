@@ -55,10 +55,39 @@ For a detailed architecture breakdown, see [Architecture](docs/architecture.md).
 
 ## Quick Start
 
+### 1. First-time setup
+
 ```bash
 git clone https://github.com/felipelrib/imoveis.git
 cd imoveis
 ./scripts/setup.sh
+```
+
+This creates `.env.local` (if missing), builds/starts Docker services, runs migrations, and installs frontend deps.
+
+### 2. Set a local API key (required for the SPA)
+
+Protected routes (favourites, watchlist, saved searches, admin) need an `API_KEY` on the API **and** the same value in the UI. Without it, those requests return **401/403**.
+
+Add a local-only key to `.env.local` (never commit real secrets):
+
+```bash
+# .env.local
+API_KEY=local-dev-api-key
+```
+
+Restart so the API container picks it up:
+
+```bash
+./scripts/restart.sh
+```
+
+### 3. Run day-to-day
+
+**Yes — `./scripts/dev.sh` is the right script** for local UI work: it starts the backend stack, then the Vite frontend with hot-reload.
+
+```bash
+./scripts/dev.sh
 ```
 
 Then open:
@@ -69,6 +98,18 @@ Then open:
 | API           | http://localhost:8000         |
 | API Docs      | http://localhost:8000/docs    |
 
+### 4. Paste the key in the UI
+
+In the sidebar, find **API credential** → paste the same value as `API_KEY` (e.g. `local-dev-api-key`) → **Save**.
+
+That stores it in `sessionStorage` for the browser tab and sends it as `X-API-Key`. Status should show **set**. Clear/re-paste after closing the tab if needed.
+
+**curl example:**
+
+```bash
+curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
+```
+
 ## Day-to-Day Commands
 
 | Script               | What it does                                          |
@@ -77,18 +118,23 @@ Then open:
 | `./scripts/stop.sh`  | Stop containers (volumes preserved)                   |
 | `./scripts/restart.sh`| Stop + start (`--build` to rebuild images)           |
 | `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`)    |
-| `./scripts/dev.sh`   | Start backend + frontend dev server (hot-reload)      |
+| `./scripts/dev.sh`   | **Typical local run:** backend + Vite hot-reload      |
 | `./scripts/clean.sh` | Tear down + remove volumes (`--all` removes images)   |
+
+Backend-only (no Vite): `./scripts/start.sh`. Stop everything: `./scripts/stop.sh`.
 
 ## Configuration
 
-All settings live in [`configs/app_config.yaml`](configs/app_config.yaml). Environment variable overrides:
+All settings live in [`configs/app_config.yaml`](configs/app_config.yaml). Common env overrides (put durable local values in `.env.local`):
 
 ```bash
+API_KEY=local-dev-api-key          # required for SPA personalization + admin
 export DATABASE_URL=postgresql://user:pass@localhost:5432/realestate_dev
 export REDIS_URL=redis://localhost:6379/0
 export OLLAMA_BASE_URL=http://localhost:11434
 ```
+
+`docker-compose.yml` passes `API_KEY` / `JWT_SECRET` into the API container from the host env / `.env.local`.
 
 See the full [Setup Guide](docs/setup.md) for manual installation, AI model setup, and production deployment.
 
