@@ -24,6 +24,30 @@ This will:
 4. Run Alembic database migrations
 5. Install frontend dependencies
 
+### Local API key (required for the SPA)
+
+Favourites, watchlist, saved searches, and admin routes require `API_KEY` on the API
+and the **same** value pasted into the sidebar **API credential** field (sessionStorage →
+`X-API-Key`). Missing/mismatched keys show up as **401/403** in the browser network tab.
+
+1. Ensure `.env.local` includes a local-only key (the template ships with one):
+
+   ```env
+   API_KEY=local-dev-api-key
+   ```
+
+2. Restart so Compose injects it into the API container:
+
+   ```bash
+   ./scripts/restart.sh
+   ```
+
+3. Open the frontend → paste `local-dev-api-key` into **API credential** → **Save**.
+
+```bash
+curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
+```
+
 ## Day-to-Day Commands
 
 | Script | What it does |
@@ -170,6 +194,9 @@ pre-commit run --all-files
 
 ### Frontend Development
 
+`./scripts/dev.sh` is the usual local-run command: backend containers + Vite hot-reload.
+Ctrl+C stops only the frontend; use `./scripts/stop.sh` to stop containers.
+
 ```bash
 ./scripts/dev.sh  # Starts backend stack + frontend dev server
 ```
@@ -179,6 +206,8 @@ Or start them separately:
 ./scripts/start.sh                    # Backend containers
 cd frontend && npm run dev            # Frontend dev server (port 5173)
 ```
+
+Remember to set `API_KEY` in `.env.local` and paste it in the UI (see above).
 
 ## Production Deployment
 
