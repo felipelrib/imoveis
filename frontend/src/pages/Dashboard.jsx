@@ -34,6 +34,7 @@ export default function Dashboard({ status, loading }) {
   const showToast = useToast()
 
   const stats = status?.stats || {}
+  const dbOk = status?.database?.status === 'ok'
 
   // Poll pipeline telemetry for chart data
   useEffect(() => {
@@ -168,13 +169,25 @@ export default function Dashboard({ status, loading }) {
         </>
       )}
 
-      {/* Stats row */}
+      {/* Stats row — never show 0 when DB is unhealthy (BIN-60 false-zero) */}
       <div className="stats-grid">
-        <StatCard label="Total Properties" value={loading ? '…' : (stats.total_properties ?? 0).toLocaleString()} sub="in database" />
-        <StatCard label="AI Enriched" value={loading ? '…' : (stats.enriched_properties ?? 0).toLocaleString()} sub="VLM analysed" />
+        <StatCard
+          label="Total Properties"
+          value={formatPropertyCount(loading, dbOk, stats.total_properties)}
+          sub={dbOk ? 'in database' : 'database unavailable'}
+        />
+        <StatCard
+          label="AI Enriched"
+          value={formatPropertyCount(loading, dbOk, stats.enriched_properties)}
+          sub={dbOk ? 'VLM analysed' : 'database unavailable'}
+        />
         <StatCard
           label="Enrichment Rate"
-          value={loading || !stats.total_properties ? '—' : `${Math.round((stats.enriched_properties / stats.total_properties) * 100)}%`}
+          value={
+            loading || !dbOk || !stats.total_properties
+              ? '—'
+              : `${Math.round((stats.enriched_properties / stats.total_properties) * 100)}%`
+          }
           sub="of total scraped"
         />
         <StatCard
@@ -240,6 +253,12 @@ export default function Dashboard({ status, loading }) {
       )}
     </div>
   )
+}
+
+function formatPropertyCount(loading, dbOk, value) {
+  if (loading) return '…'
+  if (!dbOk || value == null) return '—'
+  return Number(value).toLocaleString()
 }
 
 function StatCard({ label, value, sub }) {

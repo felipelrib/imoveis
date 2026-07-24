@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends
 
@@ -25,7 +25,12 @@ REDIS_KEY_AI_PAUSED = "workers:ai:paused"
 # ---------------------------------------------------------------------------
 
 
-def _check_db_and_counts() -> tuple[dict, int, int]:
+def _check_db_and_counts() -> Tuple[dict, Optional[int], Optional[int]]:
+    """Return DB health plus property counts.
+
+    On failure, counts are ``None`` (not 0) so the UI does not flash a false
+    empty database when connectivity blips.
+    """
     try:
         import sqlalchemy
 
@@ -41,7 +46,7 @@ def _check_db_and_counts() -> tuple[dict, int, int]:
             ).scalar()
         return {"status": "ok"}, (total or 0), (enriched or 0)
     except Exception as exc:
-        return {"status": "error", "detail": str(exc)}, 0, 0
+        return {"status": "error", "detail": str(exc)}, None, None
 
 
 def _check_redis() -> dict:

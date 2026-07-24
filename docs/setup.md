@@ -62,7 +62,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/restart.sh` | Stop + start (`--build` rebuilds images; Vite comes back up) |
 | `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
 | `./scripts/dev.sh` | Same stack, but Vite in the foreground (Ctrl+C stops UI only) |
-| `./scripts/clean.sh` | Tear down + remove volumes (`--all` also removes images) |
+| `./scripts/clean.sh` | Stop stack; keeps volumes by default (`--volumes` wipes DB; `--all` nuclear) |
 
 Start specific services only:
 
