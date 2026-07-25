@@ -77,3 +77,13 @@ class TestQuintoAndarFees:
         rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] is None
         assert rent["iptu"] is None
+
+
+class TestQuintoAndarPropertyType:
+    def test_normalizes_portuguese_type_to_canonical(self, qa_scraper):
+        result = qa_scraper.normalize(_qa_raw(type="Apartamento"))
+        assert result["props_json"]["type"] == "apartment"
+
+    def test_normalizes_casa_condominio(self, qa_scraper):
+        result = qa_scraper.normalize(_qa_raw(type="CasaCondominio"))
+        assert result["props_json"]["type"] == "condo_house"

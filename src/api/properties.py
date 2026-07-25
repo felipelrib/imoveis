@@ -196,8 +196,13 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
             filters.append(f"(p.props_json->>{col!r})::boolean = true")
 
     if filters_in.property_type:
-        filters.append("p.props_json->>'type' ILIKE :property_type")
-        params["property_type"] = f"%{filters_in.property_type}%"
+        from core.property_type import match_values_for_filter
+
+        type_values = match_values_for_filter(filters_in.property_type)
+        placeholders = ", ".join(f":pt{i}" for i in range(len(type_values)))
+        filters.append(f"LOWER(p.props_json->>'type') IN ({placeholders})")
+        for i, value in enumerate(type_values):
+            params[f"pt{i}"] = value
 
     if filters_in.is_furnished is not None:
         filters.append("(p.props_json->>'isFurnished')::boolean = :is_furnished")

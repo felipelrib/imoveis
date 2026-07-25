@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
 import { fetchPropertiesByIds, fetchPriceHistory } from '../api.js'
+import { formatPlatform } from '../labels.js'
 
 function formatPrice(value) {
   if (value == null || Number.isNaN(Number(value))) return '—'
@@ -59,7 +60,7 @@ const ATTR_ROWS = [
   { key: 'title', label: 'Title', get: (p) => p.title || '—' },
   { key: 'address', label: 'Address', get: (p) => p.address || '—' },
   { key: 'neighborhood', label: 'Neighbourhood', get: (p) => p.neighborhood_name || '—' },
-  { key: 'platform', label: 'Platform', get: (p) => p.platform || p.primary_listing?.platform || '—' },
+  { key: 'platform', label: 'Platform', get: (p) => formatPlatform(p.platform || p.primary_listing?.platform) },
   {
     key: 'listing_type',
     label: 'Listing type',
@@ -249,7 +250,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                               <Legend wrapperStyle={{ fontSize: 10, color: 'var(--text-muted)' }} />
                               {lineKeys.map((key, i) => {
                                 const [type, platform] = key.split('|')
-                                const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${platform})`
+                                const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${formatPlatform(platform)})`
                                 return (
                                   <Line
                                     key={key}

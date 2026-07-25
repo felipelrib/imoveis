@@ -103,6 +103,32 @@ class TestOLXNormalize:
         result = scraper.normalize(SAMPLE_OLX_LISTING)
         assert result["props_json"]["neighborhood"] == "Savassi"
 
+    def test_property_type_from_url_path(self, scraper):
+        """OLX persists canonical EN type from category URL (BIN-75)."""
+        result = scraper.normalize(SAMPLE_OLX_LISTING)
+        assert result["props_json"]["type"] == "apartment"
+
+    def test_property_type_from_window_stamp(self, scraper):
+        raw = {
+            "list_id": "501",
+            "subject": "Imóvel amplo",
+            "value": 2000.0,
+            "_olx_property_type": "house",
+            "url": "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/imovel-501",
+        }
+        result = scraper.normalize(raw)
+        assert result["props_json"]["type"] == "house"
+
+    def test_property_type_from_casas_path(self, scraper):
+        raw = {
+            "list_id": "502",
+            "subject": "Linda residência",
+            "value": 450000.0,
+            "url": "https://www.olx.com.br/imovel/venda/casas/mg/bh/502",
+        }
+        result = scraper.normalize(raw)
+        assert result["props_json"]["type"] == "house"
+
     def test_missing_listing_id_raises(self, scraper):
         with pytest.raises(ValueError, match="missing id"):
             scraper.normalize({"subject": "test", "value": 1000})

@@ -6,6 +6,7 @@ import SearchableMultiSelect from '../components/SearchableMultiSelect.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
+import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', label: '⭐ Best Score' },
@@ -481,19 +482,18 @@ export default function Properties() {
                   data-testid="platform-filter"
                 >
                   <option value="">Any</option>
-                  <option value="olx">OLX</option>
-                  <option value="quintoandar">QuintoAndar</option>
+                  <option value="olx">{formatPlatform('olx')}</option>
+                  <option value="quintoandar">{formatPlatform('quintoandar')}</option>
                 </select>
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                 <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Type</label>
-                <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)}>
+                <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)} data-testid="property-type-filter">
                   <option value="">Any</option>
-                  <option value="Apartamento">Apartamento</option>
-                  <option value="Casa">Casa</option>
-                  <option value="CasaCondominio">Casa em Condomínio</option>
-                  <option value="Studio">Studio</option>
+                  {PROPERTY_TYPE_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -898,7 +898,7 @@ function PropertyCard({
                         {formatListingType(type)}
                       </span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        {best.platform}
+                        {formatPlatform(best.platform)}
                       </span>
                       {groups[type].length > 1 && (
                         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>

@@ -3,6 +3,7 @@ import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, che
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from 'recharts'
+import { formatPlatform } from '../labels.js'
 
 /**
  * Returns the URL only if it starts with https:// and matches a known platform host.
@@ -149,7 +150,7 @@ export default function PropertyModal({ id, onClose }) {
                   className="btn btn-ghost btn-sm"
                   style={{ fontSize: 13 }}
                 >
-                  🔗 {l.platform} ({l.listing_type === 'rent' ? 'Rent' : 'Sale'}) - R$ {l.price?.toLocaleString('pt-BR')}
+                  🔗 {formatPlatform(l.platform)} ({l.listing_type === 'rent' ? 'Rent' : 'Sale'}) - R$ {l.price?.toLocaleString('pt-BR')}
                 </a>
               )
             })}
@@ -210,7 +211,7 @@ export default function PropertyModal({ id, onClose }) {
 
               <div style={{ marginBottom: 20 }}>
                 {[
-                  ['Platform', p.platform],
+                  ['Platform', formatPlatform(p.platform)],
                   ['Address', p.address],
                   ['Neighbourhood', p.neighborhood_name],
                   ['Area', p.area_m2 ? `${p.area_m2} m²` : '—'],
@@ -273,7 +274,7 @@ export default function PropertyModal({ id, onClose }) {
                                   return (
                                     <tr key={`${l.platform}-${l.platform_listing_id || l.platform_id}`} className={isBest ? 'best-price' : ''}>
                                       <td style={{ fontWeight: 600 }}>
-                                        {l.platform}
+                                        {formatPlatform(l.platform)}
                                         {l.fees_bundled ? (
                                           <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }} title="Condo/IPTU bundled or derived">bundled fees</span>
                                         ) : null}
@@ -309,7 +310,7 @@ export default function PropertyModal({ id, onClose }) {
                               if (!chips.length) return null
                               return (
                                 <div key={`attrs-${l.platform}-${l.platform_listing_id}`} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                                  <span style={{ fontWeight: 600, marginRight: 6 }}>{l.platform}:</span>
+                                  <span style={{ fontWeight: 600, marginRight: 6 }}>{formatPlatform(l.platform)}:</span>
                                   {chips.map((c) => (
                                     <span
                                       key={c}
@@ -479,7 +480,7 @@ export default function PropertyModal({ id, onClose }) {
                           <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
                           {lineKeys.map((key, i) => {
                             const [type, platform] = key.split('|')
-                            const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${platform})`
+                            const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${formatPlatform(platform)})`
                             return (
                               <Line key={key} type="monotone" dataKey={key} stroke={colors[i % colors.length]}
                                 strokeWidth={2} dot={{ r: 3 }} name={label} connectNulls={false} />
