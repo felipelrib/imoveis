@@ -242,10 +242,13 @@ class OLXScraper(BaseScraper):
                 break
             last_page_count = len(listings)
             window_type = self._listing_type_from_category_path(path)
+            window_property_type = self._property_type_from_category_path(path)
             for listing in listings:
                 listing["_olx_url"] = url
                 if window_type:
                     listing["_olx_listing_type"] = window_type
+                if window_property_type:
+                    listing["_olx_property_type"] = window_property_type
                 collected.append(listing)
         # Hit the page ceiling with a near-full last page → more inventory likely.
         # Requiring an exact page_size_hint missed common partial last pages (~40/50)
@@ -536,6 +539,7 @@ class OLXScraper(BaseScraper):
             "address": address_str,
             "image_urls": image_urls,
             "props_json": {
+                "type": self._detect_property_type(raw),
                 "neighborhood": neighborhood,
                 "city": city,
                 "state": state,
@@ -797,6 +801,54 @@ class OLXScraper(BaseScraper):
         if "/venda/" in lowered or lowered.startswith("venda/"):
             return "sale"
         return None
+
+    @staticmethod
+    def _property_type_from_category_path(path: str) -> str | None:
+        """Map search category path (or URL) to canonical house type via path segments."""
+        from core.property_type import normalize_property_type
+
+        lowered = (path or "").lower()
+        # Prefer path segments so zone slugs like ``venda-nova`` are ignored.
+        for segment in ("apartamentos", "casas", "kitnets", "kitnet"):
+            if f"/{segment}/" in lowered or lowered.startswith(f"{segment}/"):
+                return normalize_property_type(segment)
+            # Trailing segment without slash (e.g. stamped short path).
+            if lowered.endswith(f"/{segment}") or lowered == segment:
+                return normalize_property_type(segment)
+        return None
+
+    @staticmethod
+    def _detect_property_type(raw: dict) -> str | None:
+        """Resolve canonical property type for OLX (stamp → URL → prop labels)."""
+        from core.property_type import normalize_property_type
+
+        stamped = raw.get("_olx_property_type")
+        if stamped:
+            return normalize_property_type(str(stamped)) or stamped
+
+        for key in ("url", "_olx_url"):
+            from_path = OLXScraper._property_type_from_category_path(str(raw.get(key) or ""))
+            if from_path:
+                return from_path
+
+        prop_map = OLXScraper._prop_map_from_raw(raw)
+        for key in (
+            "categoria",
+            "category",
+            "tipo do imóvel",
+            "tipo_do_imovel",
+            "tipo do imovel",
+            "real_estate_type",
+            "property_type",
+        ):
+            canonical = normalize_property_type(prop_map.get(key))
+            if canonical:
+                return canonical
+
+        # Title heuristics as last resort (e.g. "Apartamento 2 quartos…").
+        from core.property_type import infer_property_type_from_text
+
+        return infer_property_type_from_text(str(raw.get("subject") or raw.get("title") or ""))
 
     @staticmethod
     def _detect_listing_type(raw: dict) -> str:

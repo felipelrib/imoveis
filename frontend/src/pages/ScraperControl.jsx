@@ -5,6 +5,7 @@ import {
 } from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useToast } from '../components/ToastProvider.jsx'
+import { formatPlatform } from '../labels.js'
 
 function ts() {
   return new Date().toLocaleTimeString('pt-BR')
@@ -82,7 +83,7 @@ export default function ScraperControl() {
   }
 
   const logScrapeRun = (run) => {
-    const platform = run.platform || 'unknown'
+    const platform = formatPlatform(run.platform || 'unknown')
     const processed = run.processed ?? 0
     const skipped = run.skipped ?? 0
     const errors = run.errors ?? 0
@@ -184,7 +185,7 @@ export default function ScraperControl() {
   const handleScrape = async () => {
     if (!selectedPlatform) return
     setScraping(true)
-    addLog('info', `[${ts()}] Triggering scraper for platform: ${selectedPlatform} (Type: ${scrapeType})`)
+    addLog('info', `[${ts()}] Triggering scraper for platform: ${formatPlatform(selectedPlatform)} (Type: ${scrapeType})`)
     try {
       const r = await triggerScrape(selectedPlatform, {}, scrapeType)
       setTaskId(r.task_id)
@@ -230,8 +231,8 @@ export default function ScraperControl() {
     setSavingSchedule(true)
     try {
       await updateSchedule(platform, minutes)
-      addLog('success', `[${ts()}] ✔ Schedule updated: ${platform} → every ${minutes === 0 ? 'manual only' : minutes + ' min'} (restart beat to apply)`)
-      showToast(`Schedule updated: ${platform}`, { type: 'success' })
+      addLog('success', `[${ts()}] ✔ Schedule updated: ${formatPlatform(platform)} → every ${minutes === 0 ? 'manual only' : minutes + ' min'} (restart beat to apply)`)
+      showToast(`Schedule updated: ${formatPlatform(platform)}`, { type: 'success' })
       setEditingPlatform(null)
       setEditInterval('')
       // Refresh schedules
@@ -283,12 +284,13 @@ export default function ScraperControl() {
                 className="form-select"
                 value={selectedPlatform}
                 onChange={e => setSelectedPlatform(e.target.value)}
+                data-testid="scraper-platform-select"
               >
                 {platforms.length === 0
                   ? <option value="">Loading platforms…</option>
                   : platforms.map(p => (
                       <option key={p.name} value={p.name} disabled={!p.enabled}>
-                        {p.name} {!p.enabled ? '(disabled)' : ''} {p.rate_limit ? `— ${p.rate_limit} req/min` : ''}
+                        {formatPlatform(p.name)} {!p.enabled ? '(disabled)' : ''} {p.rate_limit ? `— ${p.rate_limit} req/min` : ''}
                       </option>
                     ))
                 }
@@ -333,7 +335,7 @@ export default function ScraperControl() {
                   {activeScrapers.map(([plat, s]) => (
                     <div key={plat} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
-                      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{plat}</span>
+                      <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatPlatform(plat)}</span>
                       <span style={{ color: 'var(--text-muted)' }}>— {s.processed} processed, {s.skipped} skipped, {s.errors} err</span>
                     </div>
                   ))}
@@ -429,7 +431,7 @@ export default function ScraperControl() {
             {schedules.map(s => (
               <div key={s.platform} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
                 <div style={{ minWidth: 100 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>{s.platform}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{formatPlatform(s.platform)}</div>
                 </div>
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 16, fontSize: 12 }}>
                   <div>

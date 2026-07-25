@@ -26,6 +26,12 @@ _QaWindow = tuple[str, int, int, str | None, str | None]
 _HOUSE_TYPES = ("apartamento", "casa")
 
 
+def _normalize_qa_property_type(raw_type: Any) -> str | None:
+    from core.property_type import normalize_property_type
+
+    return normalize_property_type(str(raw_type) if raw_type is not None else None)
+
+
 @ScraperRegistry.register("quintoandar")
 class QuintoAndarScraper(BaseScraper):
     """Scrapes properties from QuintoAndar using price + neighborhood funneling."""
@@ -301,7 +307,7 @@ class QuintoAndarScraper(BaseScraper):
             "address": address_str,
             "image_urls": image_urls,
             "props_json": {
-                "type": raw.get("type"),
+                "type": _normalize_qa_property_type(raw.get("type")),
                 "condo_fee": condo_fee,
                 "iptu": iptu,
                 "fees_bundled": fees_bundled or None,

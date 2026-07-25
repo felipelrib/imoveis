@@ -7,6 +7,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   BarChart, Bar, Legend
 } from 'recharts'
+import { formatPlatform } from '../labels.js'
 
 const HISTORY_MAX_POINTS = 120
 
@@ -223,7 +224,7 @@ export default function Dashboard({ status, loading }) {
             {alerts.slice(0, 10).map((alert, idx) => (
               <div key={idx} style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--accent-rose)' }}>
                 <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  📉 {alert.drop_pct?.toFixed(1)}% drop on {alert.platform}
+                  📉 {alert.drop_pct?.toFixed(1)}% drop on {formatPlatform(alert.platform)}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                   {alert.title} — Was: {alert.old_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} | Now: <span style={{ color: 'var(--accent-emerald)', fontWeight: 600 }}>{alert.new_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
