@@ -8,7 +8,11 @@
 #   Primary project (COMPOSE_PROJECT_NAME=imoveis): volumes are KEPT unless
 #   --volumes is passed (scraped data lives on the primary stack).
 #   Worktree / non-primary projects: volumes are removed by default so
-#   isolation does not leave orphan stacks; pass nothing extra.
+#   isolation does not leave orphan stacks; pass nothing extra. Worktree
+#   stacks also use `down --rmi local` to drop Compose-built images.
+#
+# Always runs docker-cleanup.sh afterward (stopped containers + dangling
+# images + build cache; never named volumes).
 #
 # With --remove, also removes a linked git worktree and its registry entry.
 # Run from INSIDE the worktree (or any checkout with .env.local).
@@ -49,18 +53,25 @@ if [ -f "$REPO_ROOT/.env.local" ]; then
     WIPE_VOLUMES=1
   fi
 
+  # Worktree stacks: also drop Compose-built local images. Primary: keep tagged
+  # images so the shared stack can come back up without a full rebuild; dangling
+  # leftovers are still pruned via docker-cleanup.sh below.
   if [ "$WIPE_VOLUMES" -eq 1 ]; then
-    log "Tearing down containers + volumes for project '$PROJ'"
-    dc --env-file .env.local -p "$PROJ" down -v --remove-orphans || warn "compose down had issues"
-    ok "containers + volumes removed"
+    log "Tearing down containers + volumes + local images for project '$PROJ'"
+    dc --env-file .env.local -p "$PROJ" down -v --rmi local --remove-orphans || warn "compose down had issues"
+    ok "containers + volumes + local images removed"
   else
-    log "Tearing down containers for primary project '$PROJ' (volumes preserved)"
+    log "Tearing down containers for primary project '$PROJ' (volumes + tagged images preserved)"
     dc --env-file .env.local -p "$PROJ" down --remove-orphans || warn "compose down had issues"
     ok "containers removed (volumes preserved — pass --volumes to wipe Postgres/Redis)"
   fi
 else
   warn "no .env.local — nothing to tear down here"
 fi
+
+# Always prune stopped leftovers / dangling images after compose down (never volumes).
+bash "$HERE/docker-cleanup.sh" || warn "docker-cleanup.sh had issues"
+
 
 if [ "$REMOVE" -eq 1 ]; then
   BRANCH="$(current_branch)"

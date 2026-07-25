@@ -63,6 +63,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
 | `./scripts/dev.sh` | Same stack, but Vite in the foreground (Ctrl+C stops UI only) |
 | `./scripts/clean.sh` | Stop stack; keeps volumes by default (`--volumes` wipes DB; `--all` nuclear) |
+| `bash scripts/agent/docker-cleanup.sh` | After wrap-up: prune stopped containers, dangling images, build cache (never volumes) |
 
 Start specific services only:
 

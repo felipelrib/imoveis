@@ -125,6 +125,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`)    |
 | `./scripts/dev.sh`   | Same stack, Vite in the foreground (Ctrl+C = UI only) |
 | `./scripts/clean.sh` | Stop stack; keeps volumes by default (`--volumes` / `--all` wipe data) |
+| `bash scripts/agent/docker-cleanup.sh` | Prune stopped containers + dangling images + build cache (never volumes) |
 
 Backend-only (no Vite): `./scripts/start.sh --no-frontend`. Stop everything: `./scripts/stop.sh`.
 
@@ -176,8 +177,8 @@ Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 2. **Workspace** — `bash scripts/agent/setup-workspace.sh <feature-slug>` (solo on idle primary, or sibling worktree if primary is busy). See [ADR 0004](docs/adr/0004-parallel-agent-workspaces.md).
 3. **Implement** — TDD with conventional commits.
 4. **Validate** — `bash scripts/agent/validate.sh all`.
-5. **PR** — `bash scripts/agent/finish-feature.sh --pr` (returns primary to `main` when finishing solo).
-6. **Babysit** — Watch CI until green.
+5. **PR** — `bash scripts/agent/finish-feature.sh --pr` (returns primary to `main` when finishing solo; prunes temp Docker containers/images via `docker-cleanup.sh`).
+6. **Babysit** — Watch CI until green, then merge + cleanup (include Docker temps if finishing manually).
 7. **Linear Done** + numbered `docs/features/` doc.
 8. **Harness retrospect** — update local Cursor rules/skills if the session exposed a gap.
 
