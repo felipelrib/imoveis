@@ -281,6 +281,10 @@ export async function recalculateScores(weights = null) {
   })
 }
 
+export async function enrichMissing() {
+  return apiFetch('/admin/enrichment/missing', { method: 'POST' })
+}
+
 export async function scaleGPU(limit) {
   return apiFetch('/admin/gpu/scale', {
     method: 'POST',

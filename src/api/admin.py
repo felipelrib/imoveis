@@ -234,6 +234,71 @@ def update_schedule(payload: ScheduleUpdateRequest):
 
 
 # ---------------------------------------------------------------------------
+# AI enrichment backfill
+# ---------------------------------------------------------------------------
+
+
+@router.post("/enrichment/missing", responses=_RESP_500)
+def enrich_missing():
+    """Enqueue ``ai_enrich`` for active properties that are not yet AI-enriched.
+
+    Matches Dashboard "AI Enriched" semantics (``metrics_scoring.ai_score > 0``):
+    properties with no scoring row, or ``ai_score`` NULL/0, are candidates.
+    Only rows with at least one image URL are queued — same gate as post-scrape
+    enqueue in ``_enqueue_post_scrape_jobs``.
+    """
+    from sqlalchemy import or_
+
+    from adapters.db.models import MetricsScoring, Property
+    from adapters.queue.tasks import ai_enrich
+
+    queued = 0
+    skipped_no_images = 0
+    with SessionLocal() as session:
+        try:
+            query = (
+                session.query(Property)
+                .outerjoin(MetricsScoring, Property.id == MetricsScoring.property_id)
+                .filter(Property.active.is_(True))
+                .filter(
+                    or_(
+                        MetricsScoring.id.is_(None),
+                        MetricsScoring.ai_score.is_(None),
+                        MetricsScoring.ai_score == 0,
+                    )
+                )
+            )
+            for prop in query:
+                image_urls = prop.image_urls if isinstance(prop.image_urls, list) else []
+                if not image_urls:
+                    skipped_no_images += 1
+                    continue
+                description = prop.description or ""
+                ai_enrich.apply_async(
+                    args=[str(prop.id), image_urls, description],
+                    queue="ai",
+                )
+                queued += 1
+        except Exception as exc:
+            logger.error("enrich_missing_failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    logger.info(
+        "enrich_missing_queued",
+        queued=queued,
+        skipped_no_images=skipped_no_images,
+    )
+    log_audit_action(
+        "enrich_missing",
+        {"queued": queued, "skipped_no_images": skipped_no_images},
+    )
+    return {
+        "queued_enrichments": queued,
+        "skipped_no_images": skipped_no_images,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Deal Verdict Recomputation
 # ---------------------------------------------------------------------------
 

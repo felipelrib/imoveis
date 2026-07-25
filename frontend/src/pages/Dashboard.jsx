@@ -1,6 +1,6 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useAlerts } from '../hooks/useAlerts.js'
-import { ensureOllama, recalculateScores, fetchPipeline, fetchPipelineHistory } from '../api.js'
+import { ensureOllama, recalculateScores, enrichMissing, fetchPipeline, fetchPipelineHistory } from '../api.js'
 import { useState, useEffect, useRef } from 'react'
 import { useToast } from '../components/ToastProvider.jsx'
 import {
@@ -39,6 +39,8 @@ function svcStatus(key, s) {
 export default function Dashboard({ status, loading }) {
   const [recalculating, setRecalculating] = useState(false)
   const [recalcResult, setRecalcResult] = useState(null)
+  const [enriching, setEnriching] = useState(false)
+  const [enrichResult, setEnrichResult] = useState(null)
   const [ollamaLoading, setOllamaLoading] = useState(false)
   const [pipeline, setPipeline] = useState(null)
   const [throughputHistory, setThroughputHistory] = useState([])
@@ -128,6 +130,25 @@ export default function Dashboard({ status, loading }) {
       showToast('Recalculation failed: ' + e.message, { type: 'error' })
     } finally {
       setRecalculating(false)
+    }
+  }
+
+  const handleEnrichMissing = async () => {
+    setEnriching(true)
+    setEnrichResult(null)
+    try {
+      const r = await enrichMissing()
+      const skipped = r.skipped_no_images || 0
+      const msg = skipped
+        ? `✔ Queued ${r.queued_enrichments} for enrichment (${skipped} skipped — no images)`
+        : `✔ Queued ${r.queued_enrichments} for enrichment`
+      setEnrichResult(msg)
+      showToast(`Queued ${r.queued_enrichments} properties for AI enrichment`, { type: 'success' })
+    } catch (e) {
+      setEnrichResult('✖ Error: ' + e.message)
+      showToast('Enrich missing failed: ' + e.message, { type: 'error' })
+    } finally {
+      setEnriching(false)
     }
   }
 
@@ -273,10 +294,30 @@ export default function Dashboard({ status, loading }) {
         <button className="btn btn-ghost" onClick={handleRecalculate} disabled={recalculating}>
           {recalculating ? <span className="spinner" /> : '📊'} Recalculate All Scores
         </button>
+        <button
+          className="btn btn-ghost"
+          onClick={handleEnrichMissing}
+          disabled={enriching}
+          data-testid="enrich-missing"
+        >
+          {enriching ? <span className="spinner" /> : '✨'} Enrich Missing
+        </button>
       </div>
-      {recalcResult && (
-        <div style={{ marginBottom: 24, padding: '10px 16px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', fontSize: 13, color: recalcResult.startsWith('✔') ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
-          {recalcResult}
+      {(recalcResult || enrichResult) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+          {recalcResult && (
+            <div style={{ padding: '10px 16px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', fontSize: 13, color: recalcResult.startsWith('✔') ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
+              {recalcResult}
+            </div>
+          )}
+          {enrichResult && (
+            <div
+              data-testid="enrich-missing-result"
+              style={{ padding: '10px 16px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', fontSize: 13, color: enrichResult.startsWith('✔') ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}
+            >
+              {enrichResult}
+            </div>
+          )}
         </div>
       )}
 
