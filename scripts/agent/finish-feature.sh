@@ -6,7 +6,8 @@
 # Run from INSIDE the feature workspace (primary solo branch or a worktree).
 #
 # With --pr: after required checks are green, SQUASH-MERGES the PR into main, then
-# cleans up the workspace (worktree teardown --remove, or primary → main).
+# cleans up the workspace (worktree teardown --remove, or primary → main) and
+# runs docker-cleanup.sh (stopped containers + dangling images; never volumes).
 # Merge-ready is NOT finished — squash-merged to main is finished.
 #
 # Docs-only branches (prose under docs/, *.md, _bmad-output/, etc.):
@@ -84,11 +85,14 @@ cleanup_after_merge() {
   fi
   if in_linked_worktree; then
     log "Merged from worktree — tearing down worktree (teardown.sh --remove)..."
-    # teardown cds to PRIMARY_ROOT and removes this worktree; run in subshell-safe path
+    # teardown cds to PRIMARY_ROOT and removes this worktree; run in subshell-safe path.
+    # teardown also runs docker-cleanup.sh (temp containers/images; never volumes).
     bash "$HERE/teardown.sh" --remove || warn "teardown.sh --remove failed — remove worktree manually"
     return 0
   fi
   return_primary_to_idle
+  # Primary finish does not compose-down the shared stack; still prune temps.
+  bash "$HERE/docker-cleanup.sh" || warn "docker-cleanup.sh had issues"
 }
 
 # --- Resolve the feature branch ---------------------------------------------
@@ -155,6 +159,7 @@ if [ "$DRY_RUN" = true ]; then
     else
       log "  4. Merge PR into main"
       log "  5. Cleanup workspace (teardown --remove if worktree, else checkout main)"
+      log "  6. docker-cleanup.sh (temp containers/images; volumes preserved)"
     fi
   else
     log "  3. Return primary to main (unless worktree / --keep-branch)"
