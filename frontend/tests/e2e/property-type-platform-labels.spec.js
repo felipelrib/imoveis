@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 import {
   PROPERTIES_PAGE,
   installCommonMocks,
+  mockPlatforms,
 } from "./helpers/apiMocks.js";
 
 test.describe("Property type filter + platform labels (BIN-75)", () => {
@@ -53,6 +54,7 @@ test.describe("Property type filter + platform labels (BIN-75)", () => {
 
   test("scraper control platform select shows display labels", async ({ page }) => {
     await installCommonMocks(page);
+    await mockPlatforms(page);
     await page.goto("/scraper");
     const select = page.getByTestId("scraper-platform-select");
     await expect(select.locator("option[value='olx']")).toHaveText(/OLX/);
