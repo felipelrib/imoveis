@@ -42,6 +42,25 @@ test.describe("Dashboard page", () => {
     await expect(totalCard.locator(".stat-value")).not.toHaveText("0");
   });
 
+  test("queues enrich-missing from Quick Actions", async ({ page }) => {
+    await installCommonMocks(page);
+    let enrichCalled = false;
+    await page.route("**/api/admin/enrichment/missing", async (route) => {
+      enrichCalled = route.request().method() === "POST";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ queued_enrichments: 3, skipped_no_images: 1 }),
+      });
+    });
+    await page.goto("/");
+    await page.getByTestId("enrich-missing").click();
+    await expect(page.getByTestId("enrich-missing-result")).toContainText(
+      "Queued 3 for enrichment"
+    );
+    await expect.poll(() => enrichCalled).toBeTruthy();
+  });
+
   test("loads pipeline history into charts on mount (BIN-61)", async ({ page }) => {
     await installCommonMocks(page);
     const ts = new Date().toISOString();

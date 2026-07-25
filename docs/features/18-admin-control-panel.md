@@ -45,6 +45,12 @@ with neither credential receive 401.
 - `POST /admin/scoring/weights` — persists new weights to `scoring:weights` Redis key
   for fast retrieval without a config reload.
 
+### AI enrichment backfill
+
+- `POST /admin/enrichment/missing` — enqueue `ai_enrich` for active properties that are
+  not yet enriched (`ai_score` missing/0), with at least one image URL. Dashboard Quick
+  Action: **Enrich Missing**. See `docs/features/54-enrich-missing.md`.
+
 ### Schedule Management
 
 - `GET /admin/schedule` — returns per-platform `{interval_minutes, last_run, next_run}`
