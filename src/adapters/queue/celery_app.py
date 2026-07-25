@@ -133,12 +133,18 @@ def make_celery() -> Celery:
     celery_app.conf.task_default_retry_delay = 30
     celery_app.conf.task_default_max_retries = 3
 
-    # Task routes (TD-06-C)
+    # Task routes (TD-06-C). Workers only consume `scrapers` and `ai` — anything
+    # left on the default `celery` queue never runs (BIN-76: empty Dashboard history).
     celery_app.conf.task_routes = {
         'tasks.scrape_listings': {'queue': 'scrapers'},
         'tasks.ai_enrich': {'queue': 'ai'},
         'tasks.embed_property': {'queue': 'ai'},
         'tasks.send_price_drop_alert': {'queue': 'scrapers'},
+        'tasks.snapshot_pipeline_metrics': {'queue': 'scrapers'},
+        'tasks.monitor_queues': {'queue': 'scrapers'},
+        'tasks.evaluate_watchlist_alerts': {'queue': 'scrapers'},
+        'tasks.send_daily_digest': {'queue': 'scrapers'},
+        'tasks.send_top_deals_digest': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config

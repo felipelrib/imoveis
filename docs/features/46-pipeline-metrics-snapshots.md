@@ -56,3 +56,6 @@ Manual:
 
 - Related: BIN-60 (false-zero property counts / volume footguns).
 - v1 uses plain Postgres rows (no Timescale/Prometheus).
+- **BUG (High)**: BIN-76 — beat enqueued snapshots on default `celery` while
+  workers only consumed `scrapers`/`ai`, so history stayed empty until routes
+  were fixed (`docs/features/55-dashboard-pipeline-history-queue-route.md`).
