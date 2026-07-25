@@ -222,6 +222,12 @@ class TestBuildBeatSchedule:
         assert app.conf.task_default_retry_delay == 30
         assert app.conf.task_default_max_retries == 3
         assert app.conf.task_routes["tasks.ai_enrich"] == {"queue": "ai"}
+        # BIN-76: beat maintenance must hit a queue workers consume (not default celery).
+        assert app.conf.task_routes["tasks.snapshot_pipeline_metrics"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.monitor_queues"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.evaluate_watchlist_alerts"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.send_daily_digest"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.send_top_deals_digest"] == {"queue": "scrapers"}
         assert app.conf.beat_schedule == {"scheduled": {}}
         build_schedule.assert_called_once()
 
@@ -235,6 +241,30 @@ class TestBuildBeatSchedule:
         make_celery()
 
         assert celery_cls.return_value.conf.update.call_args.kwargs["broker_url"] == "redis://localhost:6379/0"
+
+    @patch("adapters.queue.celery_app.build_beat_schedule", return_value={})
+    @patch("adapters.queue.celery_app.Celery")
+    def test_beat_maintenance_tasks_routed_to_scrapers_queue(self, celery_cls, _build_schedule, monkeypatch):
+        """Regression BIN-76: unrouted beat tasks pile up on default `celery` (no consumer)."""
+        from adapters.queue.celery_app import make_celery
+
+        monkeypatch.setenv("REDIS_URL", "redis://broker:6379/9")
+        app = MagicMock()
+        celery_cls.return_value = app
+
+        make_celery()
+        routes = app.conf.task_routes
+
+        for task_name in (
+            "tasks.snapshot_pipeline_metrics",
+            "tasks.monitor_queues",
+            "tasks.evaluate_watchlist_alerts",
+            "tasks.send_daily_digest",
+            "tasks.send_top_deals_digest",
+        ):
+            assert routes.get(task_name) == {"queue": "scrapers"}, (
+                f"{task_name} must route to scrapers — workers do not consume default celery"
+            )
 
 
 @pytest.mark.unit
