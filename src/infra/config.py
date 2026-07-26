@@ -174,6 +174,21 @@ class PhotoGateConfig(BaseModel, frozen=True):
     min_photos: int | None = None
 
 
+class AvailabilityRecheckConfig(BaseModel, frozen=True):
+    """Periodic URL recheck to soft-deactivate dead listings (BIN-80).
+
+    Rows stay in the DB for history/stats; Properties API only surfaces
+    ``active=true`` listings. Property rows flip inactive only when no active
+    listings remain.
+    """
+
+    enabled: bool = True
+    interval_minutes: int = 360
+    batch_size: int = 50
+    stale_after_hours: int = 24
+    request_timeout_sec: float = 20.0
+
+
 class ScrapingConfig(BaseModel, frozen=True):
     """Web scraping defaults and per-platform overrides."""
 
@@ -182,6 +197,9 @@ class ScrapingConfig(BaseModel, frozen=True):
     platforms: dict[str, PlatformConfig] = Field(default_factory=dict)
     geo_allowlist: GeoAllowlistConfig = Field(default_factory=GeoAllowlistConfig)
     photo_gate: PhotoGateConfig = Field(default_factory=PhotoGateConfig)
+    availability_recheck: AvailabilityRecheckConfig = Field(
+        default_factory=AvailabilityRecheckConfig
+    )
 
 
 class FeaturesConfig(BaseModel, frozen=True):

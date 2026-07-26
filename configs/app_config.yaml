@@ -47,6 +47,13 @@ scraping:
     floor_min: 8          # whole-home coverage (rooms + wet areas + common spaces)
     coverage_ratio: 1.0   # require a full VLM image budget worth of photos
     min_photos: null      # set to an int to force a fixed threshold
+  # Soft-deactivate listings whose source URLs went dark (BIN-80). Never deletes.
+  availability_recheck:
+    enabled: true
+    interval_minutes: 360   # Celery beat cadence
+    batch_size: 50          # listings per run (oldest last_seen first)
+    stale_after_hours: 24   # skip listings seen more recently than this
+    request_timeout_sec: 20
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil

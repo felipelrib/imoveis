@@ -104,6 +104,22 @@ def build_beat_schedule() -> dict:
             ),
         }
 
+    # Soft-deactivate dead source URLs (BIN-80). Explicit ``is True`` so MagicMock
+    # stubs in unit tests do not accidentally enable the job.
+    recheck_cfg = None
+    try:
+        scraping = getattr(cfg, "scraping", None) if cfg is not None else None
+        recheck_cfg = getattr(scraping, "availability_recheck", None) if scraping else None
+    except Exception:
+        recheck_cfg = None
+    if recheck_cfg is not None and getattr(recheck_cfg, "enabled", False) is True:
+        interval_min = int(getattr(recheck_cfg, "interval_minutes", 360) or 0)
+        if interval_min > 0:
+            schedule["recheck-listing-availability"] = {
+                "task": "tasks.recheck_listing_availability",
+                "schedule": interval_min * 60,
+            }
+
     return schedule
 
 
@@ -145,6 +161,7 @@ def make_celery() -> Celery:
         'tasks.evaluate_watchlist_alerts': {'queue': 'scrapers'},
         'tasks.send_daily_digest': {'queue': 'scrapers'},
         'tasks.send_top_deals_digest': {'queue': 'scrapers'},
+        'tasks.recheck_listing_availability': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config

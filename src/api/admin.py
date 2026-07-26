@@ -313,6 +313,27 @@ def enrich_missing():
     }
 
 
+@router.post("/availability/recheck", responses=_RESP_500)
+def enqueue_availability_recheck(batch_size: Optional[int] = None):
+    """Enqueue one batch of listing URL rechecks (BIN-80)."""
+    from adapters.queue.tasks import recheck_listing_availability
+
+    cfg = get_config().scraping.availability_recheck
+    if not cfg.enabled:
+        raise HTTPException(status_code=400, detail="availability_recheck is disabled")
+
+    limit = int(batch_size) if batch_size is not None else int(cfg.batch_size)
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="batch_size must be 1..500")
+
+    async_result = recheck_listing_availability.apply_async(
+        kwargs={"batch_size": limit},
+        queue="scrapers",
+    )
+    log_audit_action("availability_recheck", {"batch_size": limit, "task_id": async_result.id})
+    return {"queued": True, "task_id": async_result.id, "batch_size": limit}
+
+
 # ---------------------------------------------------------------------------
 # Deal Verdict Recomputation
 # ---------------------------------------------------------------------------

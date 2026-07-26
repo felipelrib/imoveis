@@ -225,7 +225,7 @@ LISTINGS_JSON_AGG = """
             )
         )
         FROM property_listings pl
-        WHERE pl.property_id = p.id
+        WHERE pl.property_id = p.id AND pl.active = true
     ) AS listings
 """
 
