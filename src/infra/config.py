@@ -159,6 +159,21 @@ class GeoAllowlistConfig(BaseModel, frozen=True):
     states: list[str] = Field(default_factory=lambda: ["MG", "SP"])
 
 
+class PhotoGateConfig(BaseModel, frozen=True):
+    """Minimum gallery size for AI-eligible / deal-feed listings (BIN-78).
+
+    Effective minimum is ``max(floor_min, ceil(max_images_per_property *
+    coverage_ratio))`` unless ``min_photos`` is set (hard override).
+    Under-threshold rows are persisted inactive for offline stats, not deleted.
+    """
+
+    enabled: bool = True
+    floor_min: int = 3
+    coverage_ratio: float = 0.6
+    # None → use dynamic formula; set to force a fixed threshold.
+    min_photos: int | None = None
+
+
 class ScrapingConfig(BaseModel, frozen=True):
     """Web scraping defaults and per-platform overrides."""
 
@@ -166,6 +181,7 @@ class ScrapingConfig(BaseModel, frozen=True):
     user_agent: str = "imoveis-bot/0.1 (real-estate-research)"
     platforms: dict[str, PlatformConfig] = Field(default_factory=dict)
     geo_allowlist: GeoAllowlistConfig = Field(default_factory=GeoAllowlistConfig)
+    photo_gate: PhotoGateConfig = Field(default_factory=PhotoGateConfig)
 
 
 class FeaturesConfig(BaseModel, frozen=True):

@@ -38,8 +38,12 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
         "parking": 1,
         "location": None,
         "address": "Savassi, Belo Horizonte",
-        "image_urls": [],
-        "props_json": {"neighborhood": "Savassi"},
+        "image_urls": [
+            "https://cdn.example/1.jpg",
+            "https://cdn.example/2.jpg",
+            "https://cdn.example/3.jpg",
+        ],
+        "props_json": {"neighborhood": "Savassi", "city": "Belo Horizonte", "state": "MG"},
         "listings": [
             {
                 "platform": "olx",
@@ -105,6 +109,7 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
     assign_by_name.assert_called_once()
     assign_fn.assert_not_called()
     enqueue_fn.assert_called_once()
+    assert enqueue_fn.call_args.kwargs.get("skip_ai_enrich") is False
 
     status_writes = [
         call
@@ -121,3 +126,77 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
     assert completed[-1]["processed"] == 1
     assert completed[-1]["errors"] == 0
     assert completed[-1]["skipped"] == 0
+
+
+@pytest.mark.unit
+def test_scrape_listings_deactivates_and_skips_ai_for_thin_gallery():
+    """BIN-78: persist thin galleries inactive; skip VLM enqueue."""
+    from adapters.queue import tasks as tasks_mod
+
+    real_cfg = get_config()
+    normalized = {
+        "platform": "olx",
+        "platform_id": "thin-gallery-1",
+        "title": "Apartamento poucas fotos",
+        "description": "",
+        "price": 2500.0,
+        "area_m2": 70.0,
+        "bedrooms": 2,
+        "bathrooms": 1,
+        "parking": 1,
+        "location": None,
+        "address": "Savassi, Belo Horizonte",
+        "image_urls": ["https://cdn.example/only.jpg"],
+        "props_json": {
+            "neighborhood": "Savassi",
+            "city": "Belo Horizonte",
+            "state": "MG",
+        },
+        "listings": [
+            {
+                "platform": "olx",
+                "platform_listing_id": "thin-gallery-1",
+                "listing_type": "rent",
+                "price": 2500.0,
+                "currency": "BRL",
+                "url": "https://www.olx.com.br/detalhes/thin-gallery-1",
+            }
+        ],
+    }
+
+    scraper = MagicMock()
+    scraper.proxy_summary = {}
+    scraper.fetch_pages.return_value = iter([{"list_id": "thin-gallery-1"}])
+    scraper.normalize.return_value = normalized
+    scraper.__enter__ = MagicMock(return_value=scraper)
+    scraper.__exit__ = MagicMock(return_value=False)
+
+    fake_redis = MagicMock()
+    fake_redis.exists.return_value = False
+    session = MagicMock()
+
+    with (
+        patch.object(tasks_mod, "get_config", return_value=real_cfg),
+        patch.object(tasks_mod, "SessionLocal", return_value=session),
+        patch.object(tasks_mod, "get_redis", return_value=fake_redis),
+        patch.object(tasks_mod, "CheckpointStore") as store_cls,
+        patch.object(tasks_mod, "ScraperRegistry") as registry,
+        patch.object(
+            tasks_mod,
+            "match_or_create_property",
+            return_value=DedupeMatchResult(property_id="prop-thin", action="created"),
+        ),
+        patch.object(tasks_mod, "assign_property_neighbourhood"),
+        patch.object(tasks_mod, "assign_property_neighbourhood_by_name"),
+        patch.object(tasks_mod, "_enqueue_post_scrape_jobs") as enqueue_fn,
+        patch.object(tasks_mod, "_set_property_active") as set_active,
+        patch.object(tasks_mod, "sync_ai_extract", return_value=None),
+        patch.object(tasks_mod, "load_neighborhood_names", return_value=["Savassi"]),
+    ):
+        store_cls.return_value.get.return_value = {}
+        registry.get.return_value = scraper
+        tasks_mod.scrape_listings.run("olx")
+
+    set_active.assert_called_once_with(session, "prop-thin", False)
+    enqueue_fn.assert_called_once()
+    assert enqueue_fn.call_args.kwargs.get("skip_ai_enrich") is True

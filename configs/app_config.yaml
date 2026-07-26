@@ -39,6 +39,14 @@ scraping:
     states:
       - MG
       - SP
+  # Reject thin galleries for AI scoring / deal feed (BIN-78).
+  # effective_min = max(floor_min, ceil(ai.max_images_per_property * coverage_ratio))
+  # Under-threshold rows stay in DB as active=false for offline price/geo stats.
+  photo_gate:
+    enabled: true
+    floor_min: 3          # absolute quality floor (living + bedroom + wet area)
+    coverage_ratio: 0.6   # scale with VLM image budget
+    min_photos: null      # set to an int to force a fixed threshold
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil
