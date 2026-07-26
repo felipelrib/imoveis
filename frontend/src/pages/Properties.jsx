@@ -573,13 +573,15 @@ export default function Properties() {
                     className="form-input"
                     data-testid="max-price-input"
                     style={{ width: 110 }}
-                    type="number"
+                    type="text"
                     inputMode="numeric"
-                    min="0"
-                    step="1"
+                    pattern="[0-9]*"
                     placeholder="Any"
                     value={maxPrice}
-                    onChange={e => setMaxPrice(e.target.value)}
+                    onChange={e => {
+                      const raw = e.target.value.replace(/[^\d]/g, '')
+                      setMaxPrice(raw)
+                    }}
                   />
                   <select
                     className="form-select"
