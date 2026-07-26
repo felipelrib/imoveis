@@ -55,13 +55,11 @@ def _prop(*, image_urls, description="Nice flat"):
 def test_enrich_missing_queues_only_unenriched_with_enough_photos(client_with_auth):
     client, auth = client_with_auth
     enough = _prop(
-        image_urls=[
-            "https://cdn.example/a.jpg",
-            "https://cdn.example/b.jpg",
-            "https://cdn.example/c.jpg",
-        ]
+        image_urls=[f"https://cdn.example/{i}.jpg" for i in range(8)]
     )
-    too_few = _prop(image_urls=["https://cdn.example/a.jpg"])
+    too_few = _prop(
+        image_urls=[f"https://cdn.example/{i}.jpg" for i in range(3)]
+    )
     no_images = _prop(image_urls=[])
     null_images = _prop(image_urls=None)
 

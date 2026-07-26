@@ -44,8 +44,8 @@ scraping:
   # Under-threshold rows stay in DB as active=false for offline price/geo stats.
   photo_gate:
     enabled: true
-    floor_min: 3          # absolute quality floor (living + bedroom + wet area)
-    coverage_ratio: 0.6   # scale with VLM image budget
+    floor_min: 8          # whole-home coverage (rooms + wet areas + common spaces)
+    coverage_ratio: 1.0   # require a full VLM image budget worth of photos
     min_photos: null      # set to an int to force a fixed threshold
   platforms:
     quintoandar:
@@ -182,12 +182,12 @@ ai:
   embedding_model: bge-m3     # multilingual 1024-d (requires properties.embedding vector(1024))
   timeout: 120
   max_tokens: 1024            # Ollama num_predict
-  # Context window for generate calls. 8192 fits listing prompts + a few images on
-  # ~15–17GB free VRAM with qwen2.5vl:7b; raise to 16384 only if you have headroom.
-  num_ctx: 8192
+  # Context window for generate calls. 16384 supports listing prompts + ~8 images on
+  # qwen2.5vl:7b when you have VRAM headroom (drop to 8192 if OOM).
+  num_ctx: 16384
   visual_weight: 0.6
   text_weight: 0.4
-  max_images_per_property: 5
+  max_images_per_property: 8
   max_description_chars: 1000
   output_language: "en"
 
