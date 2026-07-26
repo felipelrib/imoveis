@@ -48,6 +48,7 @@ class PropertyListFilters(BaseModel):
     platform: Optional[str] = None
     min_score: Optional[float] = Field(None, ge=0, le=1)
     max_price: Optional[float] = None
+    price_type: Optional[str] = Field(None, pattern="^(rent|sale)$")
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
@@ -69,6 +70,7 @@ class PropertyExportFilters(BaseModel):
     platform: Optional[str] = None
     min_score: Optional[float] = Field(None, ge=0, le=1)
     max_price: Optional[float] = None
+    price_type: Optional[str] = Field(None, pattern="^(rent|sale)$")
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
@@ -173,8 +175,24 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         filters.append("p.platform = :platform")
         params["platform"] = filters_in.platform
     if filters_in.max_price is not None:
-        filters.append("p.price <= :max_price")
+        # Decisioning ``p.price`` is the lowest listing (rent preferred). Cap against
+        # the chosen rent/sale listing instead so sale budgets are not matched on rent.
+        price_type = filters_in.price_type
+        if price_type is None and filters_in.listing_type in ("rent", "sale"):
+            price_type = filters_in.listing_type
+        if price_type is None:
+            price_type = "rent"
+        filters.append(
+            "EXISTS ("
+            "SELECT 1 FROM property_listings pl "
+            "WHERE pl.property_id = p.id "
+            "AND pl.listing_type = :price_type "
+            "AND pl.price IS NOT NULL "
+            "AND pl.price <= :max_price"
+            ")"
+        )
         params["max_price"] = filters_in.max_price
+        params["price_type"] = price_type
     if filters_in.min_bedrooms is not None:
         filters.append("p.bedrooms >= :min_bedrooms")
         params["min_bedrooms"] = filters_in.min_bedrooms

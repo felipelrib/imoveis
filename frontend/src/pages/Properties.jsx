@@ -23,6 +23,7 @@ const DEFAULT_FILTERS = {
   propertyType: '',
   platform: '',
   maxPrice: '',
+  priceType: 'rent',
   minBedrooms: '',
   minParking: '',
   minScore: '',
@@ -44,6 +45,7 @@ export default function Properties() {
   const [propertyType, setPropertyType] = useState(DEFAULT_FILTERS.propertyType)
   const [platform, setPlatform] = useState(DEFAULT_FILTERS.platform)
   const [maxPrice, setMaxPrice] = useState(DEFAULT_FILTERS.maxPrice)
+  const [priceType, setPriceType] = useState(DEFAULT_FILTERS.priceType)
   const [minBedrooms, setMinBedrooms] = useState(DEFAULT_FILTERS.minBedrooms)
   const [minParking, setMinParking] = useState(DEFAULT_FILTERS.minParking)
   const [minScore, setMinScore] = useState(DEFAULT_FILTERS.minScore)
@@ -109,7 +111,7 @@ export default function Properties() {
   const [exporting, setExporting] = useState(false)
 
   const currentFilters = {
-    sortBy, sortDir, listingType, propertyType, platform, maxPrice,
+    sortBy, sortDir, listingType, propertyType, platform, maxPrice, priceType,
     minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
   }
 
@@ -121,6 +123,7 @@ export default function Properties() {
       sortBy: actualSortBy,
       sortDir: actualSortDir,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+      priceType: maxPrice ? priceType : undefined,
       minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
       minScore: minScore ? parseFloat(minScore) : undefined,
       minParking: minParking ? parseInt(minParking) : undefined,
@@ -133,7 +136,7 @@ export default function Properties() {
       acceptsPets: acceptsPets ? true : undefined,
       q: q || undefined,
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
   const handleExport = useCallback(async (format) => {
     if (exporting) return
@@ -157,6 +160,7 @@ export default function Properties() {
         sortBy: sortBy === 'price_desc' ? 'price' : sortBy,
         sortDir: sortBy === 'price_desc' ? 'desc' : sortDir,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        priceType: maxPrice ? priceType : undefined,
         minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
@@ -176,7 +180,7 @@ export default function Properties() {
     } finally {
       setMapLoading(false)
     }
-  }, [sortBy, sortDir, maxPrice, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
   const applyFilters = useCallback((filters) => {
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
@@ -185,6 +189,7 @@ export default function Properties() {
     if (filters.propertyType !== undefined) setPropertyType(filters.propertyType)
     if (filters.platform !== undefined) setPlatform(filters.platform)
     if (filters.maxPrice !== undefined) setMaxPrice(filters.maxPrice)
+    if (filters.priceType !== undefined) setPriceType(filters.priceType)
     if (filters.minBedrooms !== undefined) setMinBedrooms(filters.minBedrooms)
     if (filters.minParking !== undefined) setMinParking(filters.minParking)
     if (filters.minScore !== undefined) setMinScore(filters.minScore)
@@ -230,6 +235,7 @@ export default function Properties() {
         sortBy: actualSortBy,
         sortDir: actualSortDir,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        priceType: maxPrice ? priceType : undefined,
         minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
@@ -314,7 +320,7 @@ export default function Properties() {
       load(1)
       setPage(1)
     }
-  }, [sortBy, listingType, propertyType, platform, maxPrice, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
+  }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
@@ -363,6 +369,12 @@ export default function Properties() {
   const totalResults = viewMode === 'favourites' ? favouritesData.total : (data?.total || 0)
   const properties = viewMode === 'favourites' ? (favouritesData.items || []) : (data?.properties || [])
   const pages = viewMode === 'favourites' ? Math.ceil(totalResults / 24) : (data?.pages || 1)
+  const hasActiveFilters = Object.entries(currentFilters).some(([key, value]) => {
+    if (key === 'priceType') return Boolean(maxPrice)
+    const defaults = DEFAULT_FILTERS[key]
+    if (defaults !== undefined) return value !== defaults && Boolean(value)
+    return Boolean(value)
+  })
 
   return (
     <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 60px)' }}>
@@ -465,7 +477,16 @@ export default function Properties() {
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                 <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Transaction</label>
-                <select className="form-select" style={{ width: 110 }} value={listingType} onChange={e => setListingType(e.target.value)}>
+                <select
+                  className="form-select"
+                  style={{ width: 110 }}
+                  value={listingType}
+                  onChange={e => {
+                    const next = e.target.value
+                    setListingType(next)
+                    if (next === 'rent' || next === 'sale') setPriceType(next)
+                  }}
+                >
                   <option value="both">Rent & Sale</option>
                   <option value="rent">Rent Only</option>
                   <option value="sale">Sale Only</option>
@@ -548,7 +569,29 @@ export default function Properties() {
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'flex-start', background: 'rgba(0,0,0,0.1)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                   <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Max price R$</label>
-                  <input className="form-input" style={{ width: 100 }} type="number" placeholder="Any" value={maxPrice} onChange={e => setMaxPrice(e.target.value)} />
+                  <input
+                    className="form-input"
+                    data-testid="max-price-input"
+                    style={{ width: 110 }}
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    step="1"
+                    placeholder="Any"
+                    value={maxPrice}
+                    onChange={e => setMaxPrice(e.target.value)}
+                  />
+                  <select
+                    className="form-select"
+                    data-testid="price-type-filter"
+                    style={{ width: 90 }}
+                    value={priceType}
+                    onChange={e => setPriceType(e.target.value)}
+                    aria-label="Price type"
+                  >
+                    <option value="rent">Rent</option>
+                    <option value="sale">Sale</option>
+                  </select>
                 </div>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                   <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Beds</label>
@@ -622,7 +665,7 @@ export default function Properties() {
                   />
                 </div>
                 <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => {
-                  setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
+                  setMaxPrice(''); setPriceType(DEFAULT_FILTERS.priceType); setMinBedrooms(''); setMinScore(''); setMinParking('');
                   setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
                   setPlatform('');
                   setIsFurnished(false); setAcceptsPets(false);
@@ -668,14 +711,14 @@ export default function Properties() {
               <div className="empty-state-icon">{viewMode === 'favourites' ? '☆' : '🏚️'}</div>
               <h3>{viewMode === 'favourites' ? 'No favourites yet' : 'No properties found'}</h3>
               <p>{viewMode === 'favourites' ? 'Star a property to add it to your favourites.' : (
-                Object.values(currentFilters).some(v => v && v !== 'combined_score' && v !== 'desc' && v !== 'both')
+                hasActiveFilters
                   ? 'Try adjusting your filters to see more results.'
                   : 'Go to Scraper Control and trigger your first ingestion job to start building the database.'
               )}</p>
               {viewMode !== 'favourites' && (
-                Object.values(currentFilters).some(v => v && v !== 'combined_score' && v !== 'desc' && v !== 'both')
+                hasActiveFilters
                   ? <button className="btn btn-ghost" onClick={() => {
-                      setMaxPrice(''); setMinBedrooms(''); setMinScore(''); setMinParking('');
+                      setMaxPrice(''); setPriceType(DEFAULT_FILTERS.priceType); setMinBedrooms(''); setMinScore(''); setMinParking('');
                       setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
                       setPlatform('');
                       setIsFurnished(false); setAcceptsPets(false);

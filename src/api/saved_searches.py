@@ -37,6 +37,7 @@ class SavedSearchFilters(BaseModel):
     property_type: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
+    price_type: Optional[str] = None
     min_bedrooms: Optional[int] = None
     max_bedrooms: Optional[int] = None
     neighbourhood: List[str] = Field(default_factory=list)
