@@ -5,12 +5,18 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from api.property_projection import (
+    LISTINGS_JSON_AGG,
     decisioning_price,
     map_property_detail,
     map_property_list_item,
     neighborhood_fields,
     select_primary_listing,
 )
+
+
+def test_listings_subquery_filters_inactive():
+    """BIN-80: API must not emit soft-deactivated listings."""
+    assert "pl.active = true" in LISTINGS_JSON_AGG
 
 
 def _listing(**overrides):

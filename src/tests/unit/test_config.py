@@ -124,6 +124,10 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.scraping.photo_gate.floor_min == 3
     assert cfg.scraping.photo_gate.coverage_ratio == 0.6
     assert cfg.scraping.photo_gate.min_photos is None
+    assert cfg.scraping.availability_recheck.enabled is True
+    assert cfg.scraping.availability_recheck.interval_minutes == 360
+    assert cfg.scraping.availability_recheck.batch_size == 50
+    assert cfg.scraping.availability_recheck.stale_after_hours == 24
 
 
 @pytest.mark.unit

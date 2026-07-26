@@ -919,3 +919,149 @@ def send_top_deals_digest(self):
         count=len(properties),
     )
     return {"status": "sent", "sent": len(properties)}
+
+
+# ---------------------------------------------------------------------------
+# Listing availability recheck (BIN-80)
+# ---------------------------------------------------------------------------
+
+
+@celery.task(
+    bind=True,
+    name="tasks.recheck_listing_availability",
+    max_retries=2,
+    default_retry_delay=60,
+)
+def recheck_listing_availability(self, batch_size: int | None = None):
+    """Probe stale active listing URLs and soft-deactivate unavailable ones.
+
+    Never flips ``active=false`` on ``unknown`` (proxy / Cloudflare / timeout).
+    Property rows deactivate only when zero active listings remain.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from adapters.scrapers.availability import (
+        AvailabilityStatus,
+        check_listing,
+        deactivate_listing_and_maybe_property,
+    )
+    from adapters.scrapers.http_client import create_scraper_http_client
+
+    cfg = get_config()
+    recheck = cfg.scraping.availability_recheck
+    if not recheck.enabled:
+        logger.info("availability_recheck_skipped", reason="disabled")
+        return {"status": "skipped", "checked": 0}
+
+    limit = int(batch_size) if batch_size is not None else int(recheck.batch_size)
+    stale_hours = int(recheck.stale_after_hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=stale_hours)
+
+    checked = 0
+    unavailable = 0
+    available = 0
+    unknown = 0
+    properties_deactivated = 0
+
+    with SessionLocal() as session:
+        rows = session.execute(
+            text(
+                "SELECT id, property_id, platform, listing_type, url "
+                "FROM property_listings "
+                "WHERE active = true "
+                "AND url IS NOT NULL AND url <> '' "
+                "AND (last_seen IS NULL OR last_seen < :cutoff) "
+                "ORDER BY last_seen ASC NULLS FIRST "
+                "LIMIT :limit"
+            ),
+            {"cutoff": cutoff, "limit": limit},
+        ).fetchall()
+
+        if not rows:
+            logger.info("availability_recheck_empty")
+            return {
+                "status": "empty",
+                "checked": 0,
+                "unavailable": 0,
+                "available": 0,
+                "unknown": 0,
+            }
+
+        client = create_scraper_http_client(
+            timeout=float(recheck.request_timeout_sec),
+            follow_redirects=True,
+            headers={"User-Agent": cfg.scraping.user_agent},
+        )
+        try:
+            for row in rows:
+                listing_id, _property_id, platform, listing_type, url = row
+                checked += 1
+                result = check_listing(
+                    str(platform),
+                    str(url),
+                    listing_type=str(listing_type) if listing_type else None,
+                    client=client,
+                    timeout=float(recheck.request_timeout_sec),
+                )
+
+                if result.status == AvailabilityStatus.UNAVAILABLE:
+                    summary = deactivate_listing_and_maybe_property(
+                        session, str(listing_id)
+                    )
+                    unavailable += 1
+                    if summary.get("property_deactivated"):
+                        properties_deactivated += 1
+                    logger.info(
+                        "listing_unavailable",
+                        listing_id=str(listing_id),
+                        platform=str(platform),
+                        listing_type=str(listing_type),
+                        reason=result.reason,
+                        property_deactivated=summary.get("property_deactivated"),
+                    )
+                elif result.status == AvailabilityStatus.AVAILABLE:
+                    available += 1
+                    session.execute(
+                        text(
+                            "UPDATE property_listings SET last_seen = :now "
+                            "WHERE id = :id"
+                        ),
+                        {
+                            "now": datetime.now(timezone.utc),
+                            "id": str(listing_id),
+                        },
+                    )
+                    logger.info(
+                        "listing_still_available",
+                        listing_id=str(listing_id),
+                        platform=str(platform),
+                        reason=result.reason,
+                    )
+                else:
+                    unknown += 1
+                    logger.info(
+                        "recheck_unknown",
+                        listing_id=str(listing_id),
+                        platform=str(platform),
+                        reason=result.reason,
+                    )
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            logger.error("availability_recheck_failed", error=str(exc))
+            raise
+        finally:
+            client.close()
+
+    payload = {
+        "status": "ok",
+        "checked": checked,
+        "unavailable": unavailable,
+        "available": available,
+        "unknown": unknown,
+        "properties_deactivated": properties_deactivated,
+    }
+    logger.info("availability_recheck_complete", **payload)
+    return payload

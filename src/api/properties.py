@@ -186,6 +186,7 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
             "EXISTS ("
             "SELECT 1 FROM property_listings pl "
             "WHERE pl.property_id = p.id "
+            "AND pl.active = true "
             "AND pl.listing_type = :price_type "
             "AND pl.price IS NOT NULL "
             "AND pl.price <= :max_price"
