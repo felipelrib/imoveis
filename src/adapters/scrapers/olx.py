@@ -856,8 +856,15 @@ class OLXScraper(BaseScraper):
 
         Prefer the search-window stamp (``_olx_listing_type``) because modern
         detail URLs often omit ``/venda/`` or ``/aluguel/``. Path-segment checks
-        avoid false positives from zone slugs like ``venda-nova``.
+        avoid false positives from zone slugs like ``venda-nova``. When those
+        are missing, use title cues (Venda Nova–safe) and price band before
+        defaulting to sale (BIN-81).
         """
+        from core.olx_listing_type import (
+            infer_olx_listing_type,
+            mask_venda_nova,
+        )
+
         stamped = raw.get("_olx_listing_type")
         if stamped in ("rent", "sale"):
             return stamped
@@ -869,9 +876,11 @@ class OLXScraper(BaseScraper):
 
         prop_map = OLXScraper._prop_map_from_raw(raw)
         tipo = str(prop_map.get("tipo") or prop_map.get("real_estate_type") or "").lower()
-        if "aluguel" in tipo or "alugar" in tipo:
+        # Mask neighbourhood so tipo/value junk containing "venda nova" is safe.
+        tipo_masked = mask_venda_nova(tipo).casefold()
+        if "aluguel" in tipo_masked or "alugar" in tipo_masked:
             return "rent"
-        if "venda" in tipo or "vender" in tipo:
+        if "venda" in tipo_masked or "vender" in tipo_masked:
             return "sale"
 
         pricing = raw.get("pricingInfos") or []
@@ -881,9 +890,15 @@ class OLXScraper(BaseScraper):
                 period = (first.get("period") or "").lower()
                 if "month" in period or "mês" in period or "mes" in period:
                     return "rent"
-                return "sale"
 
-        return "sale"
+        title = str(raw.get("subject") or raw.get("title") or "")
+        price: float | None = None
+        try:
+            price = OLXScraper._parse_price(raw)
+        except (TypeError, ValueError):
+            price = None
+
+        return infer_olx_listing_type(title=title, price=price, current="sale")
 
     @staticmethod
     def _neighborhood_from_raw(raw: dict) -> str | None:
