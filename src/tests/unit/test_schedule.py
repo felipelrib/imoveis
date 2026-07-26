@@ -268,7 +268,6 @@ class TestBuildBeatSchedule:
                 f"{task_name} must route to scrapers — workers do not consume default celery"
             )
 
-
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_availability_recheck_schedule_when_enabled(self, mock_get_redis, mock_get_config):
