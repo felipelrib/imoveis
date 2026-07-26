@@ -5,8 +5,8 @@ import {
   installCommonMocks,
 } from "./helpers/apiMocks.js";
 
-test.describe("Max price rent/sale filter (BIN-77)", () => {
-  test("max price has no steppers and sends price_type=sale", async ({ page }) => {
+test.describe("Max price rent/sale filter (BIN-77/BIN-79)", () => {
+  test("max price is text (no steppers) and sends price_type=sale", async ({ page }) => {
     await installCommonMocks(page);
 
     /** @type {string[]} */
@@ -27,19 +27,9 @@ test.describe("Max price rent/sale filter (BIN-77)", () => {
 
     const maxPrice = page.getByTestId("max-price-input");
     await expect(maxPrice).toBeVisible();
-
-    // Steppers are suppressed via CSS (appearance: textfield / webkit spin none).
-    const spinnerHidden = await maxPrice.evaluate((el) => {
-      const cs = getComputedStyle(el);
-      const webkit = getComputedStyle(el, "::-webkit-inner-spin-button");
-      return (
-        cs.appearance === "textfield" ||
-        cs.getPropertyValue("-moz-appearance") === "textfield" ||
-        webkit.webkitAppearance === "none" ||
-        webkit.getPropertyValue("-webkit-appearance") === "none"
-      );
-    });
-    expect(spinnerHidden).toBeTruthy();
+    // type=text cannot render native number steppers (BIN-79).
+    await expect(maxPrice).toHaveAttribute("type", "text");
+    await expect(maxPrice).toHaveAttribute("inputMode", "numeric");
 
     await page.getByTestId("price-type-filter").selectOption("sale");
     await maxPrice.fill("500000");
