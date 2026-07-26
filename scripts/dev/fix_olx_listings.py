@@ -41,6 +41,7 @@ from core.neighbourhood_assignment import (  # noqa: E402
     assign_property_neighbourhood_by_name,
     load_neighborhood_names,
 )
+from core.olx_listing_type import infer_olx_listing_type  # noqa: E402
 from core.olx_location import (  # noqa: E402
     humanize_neighborhood_slugs,
     reconcile_olx_location,
@@ -48,9 +49,6 @@ from core.olx_location import (  # noqa: E402
 )
 from infra.config import get_config  # noqa: E402
 from infra.db import SessionLocal  # noqa: E402
-
-_SALE_CUES = ("vendo", "venda", "à venda", "a venda", "vende-se")
-_RENT_CUES = ("alugo", "aluguel", "para alugar", "aluga-se")
 
 
 def _delete_image_dirs(property_ids: list) -> int:
@@ -78,17 +76,7 @@ def _infer_listing_type(
         detected = OLXScraper._detect_listing_type(raw_json)
         if detected in ("rent", "sale"):
             return detected
-    folded = (title or "").casefold()
-    if any(cue in folded for cue in _RENT_CUES):
-        return "rent"
-    if any(cue in folded for cue in _SALE_CUES):
-        return "sale"
-    if price is not None:
-        if price >= 80_000:
-            return "sale"
-        if price < 30_000:
-            return "rent"
-    return current if current in ("rent", "sale") else "sale"
+    return infer_olx_listing_type(title=title, price=price, current=current)
 
 
 def _neighborhood_catalog(session: Session) -> list[str]:
@@ -307,6 +295,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip fuzzy duplicate merges (recommended: template OLX titles false-positive heavily).",
     )
     parser.add_argument(
+        "--types-only",
+        action="store_true",
+        help="Only reclassify listing_type / availability flags (skip location, purge, merge).",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=0,
@@ -319,14 +312,14 @@ def main(argv: list[str] | None = None) -> int:
     states = list(cfg.scraping.geo_allowlist.states)
     text_threshold = cfg.dedup.text_similarity_threshold
     area_tol = cfg.dedup.area_tolerance_m2
-    ai_extract = None if args.skip_ai else sync_ai_extract
+    ai_extract = None if args.skip_ai or args.types_only else sync_ai_extract
 
     counts: Counter[str] = Counter()
     purge_ids: list = []
     merge_orphans: list = []
 
     with SessionLocal() as session:
-        catalog = _neighborhood_catalog(session)
+        catalog = [] if args.types_only else _neighborhood_catalog(session)
         q = (
             session.query(Property)
             .filter(Property.platform == "olx")
@@ -336,12 +329,19 @@ def main(argv: list[str] | None = None) -> int:
             q = q.limit(args.limit)
         props = q.all()
 
-        print(f"Scanning {len(props)} OLX properties (apply={args.apply}, skip_ai={args.skip_ai})")
-        print(f"Allowlist cities: {cities}")
+        print(
+            f"Scanning {len(props)} OLX properties "
+            f"(apply={args.apply}, skip_ai={args.skip_ai}, types_only={args.types_only})"
+        )
+        if not args.types_only:
+            print(f"Allowlist cities: {cities}")
 
         for prop in props:
             if _fix_listing_types(session, prop, apply=args.apply):
                 counts["type_fixed"] += 1
+
+            if args.types_only:
+                continue
 
             loc_action = _apply_location(
                 session,

@@ -395,21 +395,42 @@ class TestDetectListingType:
                 "https://www.olx.com.br/imoveis/estado-mg/belo-horizonte-e-regiao/"
                 "venda-nova/planalto/apartamento-123"
             ),
+            "subject": "Apartamento 2 quartos",
+            "priceValue": "2500",
         }
-        assert OLXScraper._detect_listing_type(raw) == "sale"  # default when unknown
-        # With rent stamp, zone name must not override:
+        # Category-less zone URL + rent-band price → rent (BIN-81).
+        assert OLXScraper._detect_listing_type(raw) == "rent"
         raw["_olx_listing_type"] = "rent"
         assert OLXScraper._detect_listing_type(raw) == "rent"
+
+    def test_venda_nova_in_title_with_rent_price_is_rent(self):
+        """Title 'Venda Nova' must not force sale when price is rent-band."""
+        raw = {
+            "url": (
+                "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/"
+                "casa-de-03-quartos-no-candelaria-venda-nova-belo-horizonte-1520650089"
+            ),
+            "subject": "Casa de 03 quartos no Candelária - Venda Nova/Belo Horizonte",
+            "priceValue": "1.300",
+        }
+        assert OLXScraper._detect_listing_type(raw) == "rent"
+
+    def test_a_venda_phrase_still_sale(self):
+        raw = {
+            "subject": "Apartamento à venda no Centro",
+            "priceValue": "450.000",
+        }
+        assert OLXScraper._detect_listing_type(raw) == "sale"
 
     def test_rent_from_pricing(self):
         raw = {"pricingInfos": [{"period": "monthly"}]}
         assert OLXScraper._detect_listing_type(raw) == "rent"
 
-    def test_sale_from_pricing(self):
-        raw = {"pricingInfos": [{"period": ""}]}
+    def test_sale_from_pricing_empty_period_uses_price_band(self):
+        raw = {"pricingInfos": [{"period": "", "price": 450000}]}
         assert OLXScraper._detect_listing_type(raw) == "sale"
 
-    def test_default_sale(self):
+    def test_default_sale_mid_band(self):
         raw = {}
         assert OLXScraper._detect_listing_type(raw) == "sale"
 
