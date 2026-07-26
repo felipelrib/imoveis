@@ -120,6 +120,10 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.ai.num_ctx == 8192
     assert cfg.gpu.enabled is True
     assert cfg.features.property_enrichment is False
+    assert cfg.scraping.photo_gate.enabled is True
+    assert cfg.scraping.photo_gate.floor_min == 3
+    assert cfg.scraping.photo_gate.coverage_ratio == 0.6
+    assert cfg.scraping.photo_gate.min_photos is None
 
 
 @pytest.mark.unit

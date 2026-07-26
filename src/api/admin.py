@@ -244,16 +244,21 @@ def enrich_missing():
 
     Matches Dashboard "AI Enriched" semantics (``metrics_scoring.ai_score > 0``):
     properties with no scoring row, or ``ai_score`` NULL/0, are candidates.
-    Only rows with at least one image URL are queued — same gate as post-scrape
-    enqueue in ``_enqueue_post_scrape_jobs``.
+    Only rows that pass the photo gate (BIN-78) are queued — same gate as
+    post-scrape enqueue in ``_enqueue_post_scrape_jobs``.
     """
     from sqlalchemy import or_
 
     from adapters.db.models import MetricsScoring, Property
     from adapters.queue.tasks import ai_enrich
+    from core.photo_gate import passes_photo_gate, photo_gate_kwargs_from_config
+    from infra.config import get_config
 
     queued = 0
     skipped_no_images = 0
+    skipped_too_few_photos = 0
+    cfg = get_config()
+    gate_kwargs = photo_gate_kwargs_from_config(cfg.scraping.photo_gate, cfg.ai)
     with SessionLocal() as session:
         try:
             query = (
@@ -273,6 +278,10 @@ def enrich_missing():
                 if not image_urls:
                     skipped_no_images += 1
                     continue
+                ok, _, _, _ = passes_photo_gate(prop, **gate_kwargs)
+                if not ok:
+                    skipped_too_few_photos += 1
+                    continue
                 description = prop.description or ""
                 ai_enrich.apply_async(
                     args=[str(prop.id), image_urls, description],
@@ -287,14 +296,20 @@ def enrich_missing():
         "enrich_missing_queued",
         queued=queued,
         skipped_no_images=skipped_no_images,
+        skipped_too_few_photos=skipped_too_few_photos,
     )
     log_audit_action(
         "enrich_missing",
-        {"queued": queued, "skipped_no_images": skipped_no_images},
+        {
+            "queued": queued,
+            "skipped_no_images": skipped_no_images,
+            "skipped_too_few_photos": skipped_too_few_photos,
+        },
     )
     return {
         "queued_enrichments": queued,
         "skipped_no_images": skipped_no_images,
+        "skipped_too_few_photos": skipped_too_few_photos,
     }
 
 

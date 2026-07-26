@@ -46,6 +46,7 @@ from core.olx_location import (
     reconcile_olx_location,
     sync_ai_extract,
 )
+from core.photo_gate import passes_photo_gate, photo_gate_kwargs_from_config
 from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -123,16 +124,25 @@ def _normalize_scrape_item(scraper, raw, platform_name: str):
         return None, "error"
 
 
-def _enqueue_post_scrape_jobs(candidate, result) -> None:
+def _enqueue_post_scrape_jobs(candidate, result, *, skip_ai_enrich: bool = False) -> None:
     if result.action == "noop":
         return
-    if candidate.image_urls:
+    if candidate.image_urls and not skip_ai_enrich:
         ai_enrich.apply_async(
             args=[str(result.property_id), candidate.image_urls, candidate.description or ""],
             queue="ai",
         )
     if (candidate.title or "").strip() or (candidate.description or "").strip():
         embed_property.apply_async(args=[str(result.property_id)], queue="ai")
+
+
+def _set_property_active(session, property_id: str, active: bool) -> None:
+    """Flip ``properties.active`` after ingest (photo gate / reactivation)."""
+    from adapters.db.models import Property
+
+    prop = session.get(Property, property_id)
+    if prop is not None and prop.active is not active:
+        prop.active = active
 
 
 def _write_scraper_status(
@@ -313,6 +323,11 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     skipped += 1
                     continue
 
+                photo_ok, photo_reason, photo_count, photo_min = passes_photo_gate(
+                    candidate,
+                    **photo_gate_kwargs_from_config(cfg.scraping.photo_gate, cfg.ai),
+                )
+
                 try:
                     result = match_or_create_property(
                         session,
@@ -334,8 +349,21 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                             )
                         else:
                             assign_property_neighbourhood(session, result.property_id)
+                    # BIN-78: keep thin galleries for offline stats, hide from deal feed.
+                    _set_property_active(session, result.property_id, photo_ok)
+                    if not photo_ok:
+                        logger.info(
+                            "scrape_photo_gate_deactivated",
+                            platform=platform_name,
+                            property_id=result.property_id,
+                            reason=photo_reason,
+                            photo_count=photo_count,
+                            required_min=photo_min,
+                        )
                     session.commit()
-                    _enqueue_post_scrape_jobs(candidate, result)
+                    _enqueue_post_scrape_jobs(
+                        candidate, result, skip_ai_enrich=not photo_ok
+                    )
                     processed += 1
                 except Exception as exc:
                     session.rollback()

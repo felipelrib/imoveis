@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from infra.config import AuthConfig, get_config
+from infra.config import AIConfig, AuthConfig, PhotoGateConfig, ScrapingConfig, get_config
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +35,8 @@ def client_with_auth(monkeypatch: pytest.MonkeyPatch):
     auth = _auth_config()
     cfg = MagicMock()
     cfg.auth = auth
+    cfg.scraping = ScrapingConfig(photo_gate=PhotoGateConfig())
+    cfg.ai = AIConfig()
     monkeypatch.setattr("api.auth.get_config", lambda: cfg)
     monkeypatch.setattr("infra.config.get_config", lambda: cfg)
     return TestClient(app, raise_server_exceptions=False), auth
@@ -50,9 +52,16 @@ def _prop(*, image_urls, description="Nice flat"):
 
 
 @pytest.mark.unit
-def test_enrich_missing_queues_only_unenriched_with_images(client_with_auth):
+def test_enrich_missing_queues_only_unenriched_with_enough_photos(client_with_auth):
     client, auth = client_with_auth
-    with_images = _prop(image_urls=["https://cdn.example/a.jpg"])
+    enough = _prop(
+        image_urls=[
+            "https://cdn.example/a.jpg",
+            "https://cdn.example/b.jpg",
+            "https://cdn.example/c.jpg",
+        ]
+    )
+    too_few = _prop(image_urls=["https://cdn.example/a.jpg"])
     no_images = _prop(image_urls=[])
     null_images = _prop(image_urls=None)
 
@@ -60,7 +69,8 @@ def test_enrich_missing_queues_only_unenriched_with_images(client_with_auth):
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
     session.query.return_value.outerjoin.return_value.filter.return_value.filter.return_value = [
-        with_images,
+        enough,
+        too_few,
         no_images,
         null_images,
     ]
@@ -80,8 +90,9 @@ def test_enrich_missing_queues_only_unenriched_with_images(client_with_auth):
     body = response.json()
     assert body["queued_enrichments"] == 1
     assert body["skipped_no_images"] == 2
+    assert body["skipped_too_few_photos"] == 1
     mock_enrich.apply_async.assert_called_once_with(
-        args=[str(with_images.id), ["https://cdn.example/a.jpg"], "Nice flat"],
+        args=[str(enough.id), enough.image_urls, "Nice flat"],
         queue="ai",
     )
 
