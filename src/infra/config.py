@@ -127,10 +127,10 @@ class AIConfig(BaseModel, frozen=True):
     embedding_model: str = "bge-m3"
     timeout: int = 120
     max_tokens: int = 1024
-    num_ctx: int = 8192
+    num_ctx: int = 16384
     visual_weight: float = 0.6
     text_weight: float = 0.4
-    max_images_per_property: int = 5
+    max_images_per_property: int = 8
     max_description_chars: int = 1000
     output_language: str = "en"
 
@@ -168,8 +168,8 @@ class PhotoGateConfig(BaseModel, frozen=True):
     """
 
     enabled: bool = True
-    floor_min: int = 3
-    coverage_ratio: float = 0.6
+    floor_min: int = 8
+    coverage_ratio: float = 1.0
     # None → use dynamic formula; set to force a fixed threshold.
     min_photos: int | None = None
 

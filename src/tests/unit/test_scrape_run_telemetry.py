@@ -96,11 +96,7 @@ def test_scrape_listings_records_completed_telemetry():
         "parking": 1,
         "location": None,
         "address": "Savassi, Belo Horizonte",
-        "image_urls": [
-            "https://cdn.example/1.jpg",
-            "https://cdn.example/2.jpg",
-            "https://cdn.example/3.jpg",
-        ],
+        "image_urls": [f"https://cdn.example/{i}.jpg" for i in range(1, 9)],
         "props_json": {"neighborhood": "Savassi", "city": "Belo Horizonte", "state": "MG"},
         "listings": [
             {

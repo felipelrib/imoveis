@@ -5,9 +5,10 @@ dynamic so it scales with the VLM image budget:
 
     effective_min = max(floor_min, ceil(max_images_per_property * coverage_ratio))
 
-Default floor 3 covers living / bedroom / wet-area at minimum; with the stock
-``max_images_per_property=5`` and ``coverage_ratio=0.6`` the threshold stays 3.
-Raising the VLM budget automatically raises the bar.
+Default floor 8 targets whole-home coverage (rooms + wet areas + common spaces).
+With stock ``max_images_per_property=8`` and ``coverage_ratio=1.0`` the
+threshold stays 8 — ingest requires a full analysis set. Raising the VLM
+budget automatically raises the bar.
 """
 
 from __future__ import annotations
@@ -18,9 +19,9 @@ from typing import Any, Mapping, Optional
 
 def effective_min_photos(
     *,
-    floor_min: int = 3,
-    max_images_per_property: int = 5,
-    coverage_ratio: float = 0.6,
+    floor_min: int = 8,
+    max_images_per_property: int = 8,
+    coverage_ratio: float = 1.0,
 ) -> int:
     """Return the minimum gallery size for AI-eligible listings."""
     floor = max(0, int(floor_min))
@@ -54,9 +55,9 @@ def passes_photo_gate(
     candidate: Any,
     *,
     enabled: bool = True,
-    floor_min: int = 3,
-    max_images_per_property: int = 5,
-    coverage_ratio: float = 0.6,
+    floor_min: int = 8,
+    max_images_per_property: int = 8,
+    coverage_ratio: float = 1.0,
     min_photos: Optional[int] = None,
 ) -> tuple[bool, Optional[str], int, int]:
     """Return ``(ok, reject_reason, photo_count, required_min)``.
@@ -92,8 +93,8 @@ def photo_gate_kwargs_from_config(
     override = getattr(scraping_photo_cfg, "min_photos", None)
     return {
         "enabled": bool(getattr(scraping_photo_cfg, "enabled", True)),
-        "floor_min": int(getattr(scraping_photo_cfg, "floor_min", 3)),
-        "max_images_per_property": int(getattr(ai_cfg, "max_images_per_property", 5)),
-        "coverage_ratio": float(getattr(scraping_photo_cfg, "coverage_ratio", 0.6)),
+        "floor_min": int(getattr(scraping_photo_cfg, "floor_min", 8)),
+        "max_images_per_property": int(getattr(ai_cfg, "max_images_per_property", 8)),
+        "coverage_ratio": float(getattr(scraping_photo_cfg, "coverage_ratio", 1.0)),
         "min_photos": int(override) if override is not None else None,
     }

@@ -45,7 +45,7 @@ class ImageStore:
         self,
         property_id: str,
         urls: List[str],
-        max_images: int = 5,
+        max_images: int = 8,
     ) -> List[str]:
         """Download images from *urls* into local storage.
 

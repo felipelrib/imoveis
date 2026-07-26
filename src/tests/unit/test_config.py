@@ -117,12 +117,12 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.ai.visual_model == "qwen2.5vl:7b"
     assert cfg.ai.text_model == "qwen2.5vl:7b"
     assert cfg.ai.embedding_model == "bge-m3"
-    assert cfg.ai.num_ctx == 8192
+    assert cfg.ai.num_ctx == 16384
     assert cfg.gpu.enabled is True
     assert cfg.features.property_enrichment is False
     assert cfg.scraping.photo_gate.enabled is True
-    assert cfg.scraping.photo_gate.floor_min == 3
-    assert cfg.scraping.photo_gate.coverage_ratio == 0.6
+    assert cfg.scraping.photo_gate.floor_min == 8
+    assert cfg.scraping.photo_gate.coverage_ratio == 1.0
     assert cfg.scraping.photo_gate.min_photos is None
 
 
@@ -456,7 +456,7 @@ def test_ai_stack_from_default_app_config_yaml():
     assert cfg.ai.visual_model == "qwen2.5vl:7b"
     assert cfg.ai.text_model == "qwen2.5vl:7b"
     assert cfg.ai.embedding_model == "bge-m3"
-    assert cfg.ai.num_ctx == 8192
+    assert cfg.ai.num_ctx == 16384
 
 
 @pytest.mark.unit
