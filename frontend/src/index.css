@@ -426,6 +426,17 @@ body {
 .form-select:focus, .form-input:focus { border-color: var(--accent); }
 .form-select option { background: var(--bg-surface); }
 
+/* Hide number steppers — max price (and similar) are typed amounts, not spun. */
+.form-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.form-input[type="number"]::-webkit-outer-spin-button,
+.form-input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* ── Searchable multi-select (antd-style) ─────────────────────── */
 .sms {
   position: relative;

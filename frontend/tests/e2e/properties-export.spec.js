@@ -20,14 +20,8 @@ test.describe("Properties export (BIN-51)", () => {
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
 
     await page.getByRole("button", { name: /Advanced Filters/i }).click();
-    await page
-      .locator("label", { hasText: "Max price R$" })
-      .locator("..")
-      .locator("input")
-      .fill("5000");
-    await expect(
-      page.locator("label", { hasText: "Max price R$" }).locator("..").locator("input")
-    ).toHaveValue("5000");
+    await page.getByTestId("max-price-input").fill("5000");
+    await expect(page.getByTestId("max-price-input")).toHaveValue("5000");
 
     const csvDownloadPromise = page.waitForEvent("download");
     await page.getByTestId("export-csv").click();
