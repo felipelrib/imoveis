@@ -1,0 +1,4 @@
+stop_id,stop_name,stop_lat,stop_lon
+BUS1,FixtureA Bus Stop,-19.9175,-43.9375
+BUS2,FixtureA Edge Bus,-19.9180,-43.9380
+FAR1,Far Away Bus,-19.9500,-43.9700

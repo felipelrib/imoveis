@@ -65,7 +65,7 @@ Local AI pipeline using Ollama (primary) or LM Studio (fallback). Enriches listi
 
 Celery workers split into two queues:
 - **scrapers** (I/O-bound, higher concurrency) — platform scraping tasks
-- **ai** (GPU-bound, concurrency=1) — AI enrichment tasks
+- **ai** (GPU-bound, concurrency=2, serial generates per property) — AI enrichment tasks
 
 ### Frontend (`frontend/`)
 

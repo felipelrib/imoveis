@@ -17,6 +17,20 @@ def _round_or_none(value: Any, digits: int) -> Optional[float]:
     return round(float(value), digits) if value is not None else None
 
 
+def _dual_score_fields(row: Mapping[str, Any]) -> Dict[str, Optional[float]]:
+    """Map rent/sale score columns from a DB row (BIN-83)."""
+    return {
+        "stat_score_rent": _round_or_none(row.get("stat_score_rent"), 3),
+        "stat_score_sale": _round_or_none(row.get("stat_score_sale"), 3),
+        "z_score_rent": _round_or_none(row.get("z_score_rent"), 3),
+        "z_score_sale": _round_or_none(row.get("z_score_sale"), 3),
+        "percentile_rank_rent": _round_or_none(row.get("percentile_rank_rent"), 3),
+        "percentile_rank_sale": _round_or_none(row.get("percentile_rank_sale"), 3),
+        "combined_score_rent": _round_or_none(row.get("combined_score_rent"), 3),
+        "combined_score_sale": _round_or_none(row.get("combined_score_sale"), 3),
+    }
+
+
 def select_primary_listing(listings: Sequence[Mapping[str, Any]] | None) -> Optional[Dict[str, Any]]:
     """Return the canonical primary listing dict, or None if none are priced."""
     if not listings:
@@ -138,6 +152,7 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "price_per_m2_sale": _round_or_none(row.get("price_per_m2_sale"), 2),
         "neighborhood_mean_rent": _round_or_none(row.get("neighborhood_mean_rent"), 2),
         "neighborhood_mean_sale": _round_or_none(row.get("neighborhood_mean_sale"), 2),
+        **_dual_score_fields(row),
         "neighborhood_id": nbr["neighborhood_id"],
         "neighborhood_name": nbr["neighborhood_name"],
         "city": nbr["city"],
@@ -218,6 +233,7 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
             if row.get("neighborhood_median_sale") is not None
             else None
         ),
+        **_dual_score_fields(row),
         "neighborhood_id": nbr["neighborhood_id"],
         "neighborhood_name": nbr["neighborhood_name"],
         "city": nbr["city"],
@@ -281,6 +297,14 @@ LIST_SELECT_COLUMNS = f"""
                 ms.price_per_m2_sale,
                 ms.neighborhood_mean_rent,
                 ms.neighborhood_mean_sale,
+                ms.stat_score_rent,
+                ms.stat_score_sale,
+                ms.z_score_rent,
+                ms.z_score_sale,
+                ms.percentile_rank_rent,
+                ms.percentile_rank_sale,
+                ms.combined_score_rent,
+                ms.combined_score_sale,
                 ms.meta,
                 p.neighborhood_id,
                 n.name AS neighborhood_name,

@@ -99,7 +99,8 @@ class GPUScaleRequest(BaseModel):
 
 @router.post("/gpu/scale")
 def set_gpu_limit(payload: GPUScaleRequest):
-    sem = GPUSemaphore()
+    cfg = get_config()
+    sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
     sem.scale(payload.limit)
     logger.info("gpu_limit_scaled", new_limit=payload.limit)
     log_audit_action("gpu_scale", {"limit": payload.limit})
@@ -406,6 +407,43 @@ def backfill_embeddings(force: bool = False):
     logger.info("embeddings_backfill_queued", count=count, force=force)
     log_audit_action("embeddings_backfill", {"queued": count, "force": force})
     return {"queued_embeddings": count, "force": force}
+
+
+@router.post("/neighbourhoods/quality/load", responses=_RESP_500)
+def load_neighbourhood_quality():
+    """Apply curated YAML quality scores onto existing neighbourhoods (BIN-87).
+
+    Reads ``configs/neighbourhood_quality.yaml``. Unknown names are skipped;
+    matching rows get ``quality_meta.source = curated``. Does not invent rows.
+    """
+    from core.neighbourhood_quality_yaml import (
+        DEFAULT_YAML_PATH,
+        NeighbourhoodQualityYamlError,
+        load_curated_neighbourhood_quality,
+    )
+
+    try:
+        with SessionLocal() as session:
+            result = load_curated_neighbourhood_quality(session, DEFAULT_YAML_PATH)
+            session.commit()
+    except (OSError, NeighbourhoodQualityYamlError) as exc:
+        logger.error("neighbourhood_quality_load_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("neighbourhood_quality_load_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    logger.info(
+        "neighbourhood_quality_loaded",
+        updated=result.updated,
+        skipped=result.skipped,
+        yaml=str(DEFAULT_YAML_PATH),
+    )
+    log_audit_action(
+        "neighbourhood_quality_load",
+        {"updated": result.updated, "skipped": result.skipped},
+    )
+    return {"updated": result.updated, "skipped": result.skipped}
 
 
 @router.get("/audit")

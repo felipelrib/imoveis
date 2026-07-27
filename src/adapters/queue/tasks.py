@@ -24,6 +24,7 @@ from pydantic import ValidationError
 import adapters.scrapers.olx  # noqa: F401
 import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 from adapters.ai.client import create_ai_client
+from adapters.ai.enrich_pipeline import analyze_visual_and_sentiment
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
 from adapters.metrics.scoring import score_single_property
@@ -439,6 +440,11 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# AI enrichment
+# ---------------------------------------------------------------------------
+
+
 @celery.task(
     name="tasks.ai_enrich",
     bind=True,
@@ -465,13 +471,11 @@ def ai_enrich(
         logger.info("ai_enrich_paused", property_id=property_id)
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
 
-    sem = GPUSemaphore()
+    sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
     acquired = sem.acquire(timeout=30)
     if not acquired:
         logger.warning("ai_enrich_gpu_busy", property_id=property_id)
         raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
-
-    import time
 
     start_time = time.time()
     client = None
@@ -490,11 +494,15 @@ def ai_enrich(
                 visual_prompt = build_visual_condition_prompt(len(paths))
                 sentiment_prompt = build_sentiment_prompt(description, max_chars=cfg.ai.max_description_chars)
 
-                # --- AI inference (Parallelized) ---
-                import asyncio
-                v_res, s_res = await asyncio.gather(
-                    client.analyze_visuals(paths, visual_prompt),
-                    client.analyze_text(description, sentiment_prompt)
+                # --- AI inference (serial) ---
+                # One GPU request at a time so a single semaphore slot never opens
+                # two Ollama KV caches (VRAM→system-RAM spill on ~20GB cards).
+                v_res, s_res = await analyze_visual_and_sentiment(
+                    client,
+                    paths,
+                    description,
+                    visual_prompt,
+                    sentiment_prompt,
                 )
 
                 # Weighted blend: visual condition 60%, location sentiment 40%

@@ -1,0 +1,28 @@
+# Example path map for flood / environmental risk overlays (BIN-91).
+# Copy to configs/risk_overlays.yaml (or pass --config) and point paths at
+# local GeoJSON exports. Missing paths are skipped with a warning — not a failure.
+# Large municipal dumps belong under data/geo/ (gitignored); do not commit them.
+#
+# Convert SHP/WFS exports to GeoJSON locally (ogr2ogr / QGIS). The loader never
+# fetches municipal URLs — see docs/features/68-flood-environmental-risk-overlays.md.
+
+cities:
+  - city: Belo Horizonte
+    state: MG
+    layers:
+      - path: data/geo/bh_flood.geojson
+        risk_type: flood_zone
+      - path: data/geo/bh_industrial.geojson
+        risk_type: industrial_adjacent
+
+  - city: São Paulo
+    state: SP
+    layers:
+      - path: data/geo/sp_flood.geojson
+        risk_type: flood_zone
+
+  - city: Campinas
+    state: SP
+    layers:
+      - path: data/geo/campinas_flood.geojson
+        risk_type: flood_zone

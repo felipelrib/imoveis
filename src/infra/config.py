@@ -108,7 +108,7 @@ class GPUConfig(BaseModel, frozen=True):
     """GPU resource management."""
 
     enabled: bool = True
-    semaphore_limit: int = 1
+    semaphore_limit: int = 2
 
 
 class AIConfig(BaseModel, frozen=True):
@@ -326,10 +326,36 @@ class OsmAmenitiesConfig(BaseModel, frozen=True):
     )
 
 
+class NeighbourhoodTransitConfig(BaseModel, frozen=True):
+    """Transit proximity radii and mode weights (BIN-89).
+
+    Used by ``core.transit_proximity`` when scoring neighbourhoods from
+    GTFS / OSM stop files. Metro/BRT weigh higher than bus.
+    """
+
+    count_radius_m: float = 400.0
+    max_radius_m: float = 1200.0
+    nearest_weight: float = 0.7
+    density_weight: float = 0.3
+    density_cap: float = 8.0
+    mode_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "metro": 1.0,
+            "brt": 0.9,
+            "rail": 0.85,
+            "bus": 0.55,
+            "other": 0.4,
+        }
+    )
+
+
 class NeighbourhoodQualityConfig(BaseModel, frozen=True):
-    """Objective neighbourhood quality refresh jobs (Epic 6)."""
+    """Objective neighbourhood quality fill-job settings (BIN-86+)."""
 
     osm_amenities: OsmAmenitiesConfig = Field(default_factory=OsmAmenitiesConfig)
+    transit: NeighbourhoodTransitConfig = Field(
+        default_factory=NeighbourhoodTransitConfig
+    )
 
 
 class AppConfig(BaseModel, frozen=True):

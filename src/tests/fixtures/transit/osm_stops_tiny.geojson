@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "FixtureA Metro",
+        "mode": "metro",
+        "railway": "station"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9375, -19.9175]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Distant Bus",
+        "highway": "bus_stop"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9700, -19.9500]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "BRT Corridor",
+        "mode": "brt"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9360, -19.9165]
+      }
+    }
+  ]
+}

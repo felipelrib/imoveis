@@ -112,8 +112,8 @@ uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 # Scraper workers (I/O-bound, high concurrency)
 celery -A src.adapters.queue.celery worker -Q scrapers -c 4
 
-# AI workers (GPU-bound, low concurrency)
-celery -A src.adapters.queue.celery worker -Q ai -c 1
+# AI workers (GPU-bound — match gpu.semaphore_limit / OLLAMA_NUM_PARALLEL)
+celery -A src.adapters.queue.celery worker -Q ai -c 2
 ```
 
 ## AI Model Setup
@@ -121,8 +121,29 @@ celery -A src.adapters.queue.celery worker -Q ai -c 1
 ### Ollama (Recommended)
 
 ```bash
-ollama serve  # Runs on http://localhost:11434
-ollama pull llama-3-2-vision  # Vision model (~11GB)
+ollama serve  # Prefer OLLAMA_HOST=http://0.0.0.0:11434 so Docker/WSL can reach Windows Ollama
+ollama pull qwen2.5vl:7b
+ollama pull bge-m3
+```
+
+#### Windows host memory / concurrency (RX 7900 XT ~20 GB VRAM)
+
+Ollama env vars control KV-cache preallocation. Oversized `OLLAMA_NUM_PARALLEL` with
+`num_ctx=16384` spills VRAM into system RAM and thrash the host.
+
+| Variable | Recommended | Notes |
+|---|---|---|
+| `OLLAMA_NUM_PARALLEL` | `2` | Must equal `gpu.semaphore_limit` / `worker_ai` concurrency |
+| `OLLAMA_CONTEXT_LENGTH` | `16384` | Align with `ai.num_ctx` in `app_config.yaml` |
+| `OLLAMA_KEEP_ALIVE` | `30m` | Avoid leaving models resident for hours (`600m`) |
+| `OLLAMA_MAX_LOADED_MODELS` | `2` | VLM + embedding |
+| `OLLAMA_HOST` | `http://0.0.0.0:11434` | Required for Docker `host.docker.internal` / WSL |
+
+App defaults after tuning: `gpu.semaphore_limit: 2`, Celery AI `--concurrency=2`,
+serial visual→text inside each enrich task. Re-measure with:
+
+```bash
+PYTHONPATH=src python scripts/dev/bench_ollama_vram.py --cases A,D
 ```
 
 ### LM Studio (Alternative)
@@ -247,7 +268,7 @@ OLLAMA_BASE_URL=http://gpu-host:11434
 ### Scaling Considerations
 
 - **Scraper workers**: Scale horizontally (more replicas)
-- **AI workers**: Keep at 1-2 (GPU-bound, monitor VRAM)
+- **AI workers**: Keep at 2 on a 20 GB card with `OLLAMA_NUM_PARALLEL=2` (monitor VRAM; see setup § Ollama)
 - **Database**: Read replicas for analytics, keep writes on primary
 - **Redis**: Managed Redis for HA in production
 
