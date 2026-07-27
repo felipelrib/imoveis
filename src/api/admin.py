@@ -335,6 +335,23 @@ def enqueue_availability_recheck(batch_size: Optional[int] = None):
     return {"queued": True, "task_id": async_result.id, "batch_size": limit}
 
 
+@router.post("/neighbourhoods/access/refresh", responses=_RESP_500)
+def enqueue_neighbourhood_access_refresh():
+    """Enqueue neighbourhood access_score refresh (BIN-90)."""
+    from adapters.queue.tasks import refresh_neighbourhood_access_task
+
+    cfg = get_config().neighbourhood_access
+    if cfg.enabled is not True:
+        raise HTTPException(status_code=400, detail="neighbourhood_access is disabled")
+
+    async_result = refresh_neighbourhood_access_task.apply_async(queue="scrapers")
+    log_audit_action(
+        "neighbourhood_access_refresh",
+        {"task_id": async_result.id},
+    )
+    return {"queued": True, "task_id": async_result.id}
+
+
 # ---------------------------------------------------------------------------
 # Deal Verdict Recomputation
 # ---------------------------------------------------------------------------

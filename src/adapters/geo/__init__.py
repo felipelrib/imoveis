@@ -1,1 +1,1 @@
-"""Geo adapters for neighbourhood amenity density (BIN-88)."""
+"""Geo adapters package (routing / spatial providers)."""

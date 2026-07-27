@@ -485,6 +485,32 @@ def test_osm_amenities_from_default_app_config_yaml():
 
 
 @pytest.mark.unit
+def test_neighbourhood_access_from_default_app_config_yaml():
+    """Real configs/app_config.yaml loads BIN-90 hubs and routing defaults."""
+    cfg = get_config()
+    access = cfg.neighbourhood_access
+    assert access.enabled is True
+    assert access.interval_minutes == 1440
+    assert access.base_url == ""
+    assert access.mode == "driving"
+    assert access.max_minutes == 45.0
+    assert access.avg_speed_kmh == 30.0
+    bh = access.hubs["Belo Horizonte"]
+    assert {h.id for h in bh} == {"praca-sete", "savassi"}
+    assert access.hubs["São Paulo"][0].id == "paulista"
+    assert access.hubs["Campinas"][0].id == "centro"
+
+
+@pytest.mark.unit
+def test_neighbourhood_access_defaults_when_absent(tmp_path: Path):
+    """Missing neighbourhood_access block still exposes defaults."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    cfg = load_config(cfg_file)
+    assert cfg.neighbourhood_access.enabled is True
+    assert cfg.neighbourhood_access.hubs == {}
+
+
+@pytest.mark.unit
 def test_dedup_defaults_when_absent(tmp_path: Path):
     """Missing dedup block still exposes DedupConfig defaults."""
     cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
@@ -523,6 +549,7 @@ _CRITICAL_APP_CONFIG_SECTIONS = (
     "database",
     "pipeline_metrics",
     "neighbourhood_quality",
+    "neighbourhood_access",
 )
 
 
