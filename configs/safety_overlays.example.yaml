@@ -13,7 +13,7 @@
 #   5. PYTHONPATH=src python scripts/dev/load_safety_overlays.py --config ...
 #
 # Belo Horizonte / Campinas: SEJUSP open grain is município/RISP only — park
-# neighbourhood scoring until bairro dumps exist. See docs/features/71-*.
+# neighbourhood scoring until bairro dumps exist. See docs/features/72-*.
 
 cities:
   - city: São Paulo
