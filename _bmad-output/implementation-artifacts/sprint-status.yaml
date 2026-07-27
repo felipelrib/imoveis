@@ -90,7 +90,7 @@ development_status:
   6-4-transit-proximity-gtfs-osm-stops: done
   6-5-access-travel-time-to-downtown-hubs: done
   6-6-flood-environmental-risk-overlays: done
-  6-7-crime-safety-open-data-optional: backlog
+  6-7-crime-safety-open-data-optional: done
   6-8-aggregate-listing-sentiment-flags-by-neighbourhood: done
   6-9-blend-neighbourhood-profiles-into-scoring-ui: backlog
   6-10-selective-ai-enrichment-re-run-controls: backlog
