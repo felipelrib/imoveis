@@ -1210,10 +1210,17 @@ function PropertyCard({
             <span className="score-badge-label">AI</span>
             <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
           </div>
+          {p.neighbourhood_quality?.neighbourhood_score != null && (
+            <div className="score-badge" data-testid="card-nhood-score" title="Neighbourhood quality">
+              <span className="score-badge-label">Nhood</span>
+              <span className="score-badge-val">{displayScore(p.neighbourhood_quality.neighbourhood_score)}</span>
+            </div>
+          )}
         </div>
 
         {((p.ai_green_flags || []).length > 0 || (p.ai_red_flags || []).length > 0) && (
-          <div className="flags" style={{ marginTop: 10 }}>
+          <div className="flags" style={{ marginTop: 10 }} data-testid="card-ad-claims">
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 6 }}>Ad claims</span>
             {(p.ai_green_flags || []).slice(0, 2).map(f => <span key={f} className="flag green">✔ {f}</span>)}
             {(p.ai_red_flags || []).slice(0, 1).map(f => <span key={f} className="flag red">✖ {f}</span>)}
           </div>

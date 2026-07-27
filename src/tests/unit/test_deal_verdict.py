@@ -21,7 +21,7 @@ class TestTemplateDealVerdict:
         )
         assert "Slightly undervalued" in result
         assert "good condition" in result
-        assert "no location alerts" in result
+        assert "no listing claim alerts" in result
 
     def test_stat_only(self):
         result = template_deal_verdict(
@@ -45,7 +45,7 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": ["noisy avenue", "no parking"], "green_flags": []},
         )
-        assert "2 location concerns" in result
+        assert "2 listing claim concerns" in result
 
     def test_sentiment_single_red_flag(self):
         result = template_deal_verdict(
@@ -53,8 +53,8 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": ["noise"], "green_flags": ["metro nearby"]},
         )
-        assert "1 location concern" in result
-        assert "positive location signals" not in result
+        assert "1 listing claim concern" in result
+        assert "positive listing claims" not in result
 
     def test_sentiment_many_green_flags(self):
         result = template_deal_verdict(
@@ -62,8 +62,22 @@ class TestTemplateDealVerdict:
             visual=None,
             sentiment={"red_flags": [], "green_flags": ["metro", "park", "school"]},
         )
-        assert "3 positive location signals" in result
-        assert "no location alerts" in result
+        assert "3 positive listing claims" in result
+        assert "no listing claim alerts" in result
+
+    def test_neighbourhood_quality_in_template(self):
+        result = template_deal_verdict(
+            stat_analysis={"category": "Average", "reasoning": "..."},
+            visual={"category": "Good", "reasoning": "..."},
+            sentiment={"red_flags": [], "green_flags": []},
+            neighbourhood_quality={
+                "neighbourhood_score": 0.8,
+                "risk_flags": ["flood"],
+            },
+        )
+        assert "neighbourhood quality 80%" in result
+        assert "1 neighbourhood risk (flood)" in result
+        assert "no listing claim alerts" in result
 
     def test_no_signals(self):
         result = template_deal_verdict()
@@ -187,12 +201,20 @@ class TestBuildDealVerdictPrompt:
             sentiment={"category": "Good", "reasoning": "Nice area",
                        "green_flags": ["metro"], "red_flags": ["noise"]},
             neighborhood_name="Savassi",
+            neighbourhood_quality={
+                "neighbourhood_score": 0.75,
+                "amenity_score": 0.8,
+                "risk_flags": ["flood"],
+            },
         )
         assert "Savassi" in prompt
         assert "Average" in prompt
         assert "Good" in prompt
         assert "metro" in prompt
         assert "noise" in prompt
+        assert "Ad Claims from Listing" in prompt
+        assert "Objective Neighbourhood Quality" in prompt
+        assert "flood" in prompt
         assert "JSON" in prompt or "json" in prompt
 
     def test_defaults_handled(self):
@@ -200,3 +222,4 @@ class TestBuildDealVerdictPrompt:
 
         prompt = build_deal_verdict_prompt()
         assert "N/A" in prompt
+        assert "Ad Claims from Listing" in prompt

@@ -16,8 +16,9 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from adapters.db.models import MetricsScoring, Property, PropertyListing
+from adapters.db.models import MetricsScoring, Neighborhood, Property, PropertyListing
 from core.entities import ScoringWeights
+from core.neighbourhood_quality import aggregate_neighbourhood_score
 from infra.config import get_config
 from infra.logging import get_logger
 
@@ -27,6 +28,23 @@ logger = get_logger(__name__)
 # Used by bulk stats SQL and single-property scoring so preference cannot drift.
 _COHORT_KEY_SQL = "COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')"
 _COHORT_KEY_SQL_P2 = "COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown')"
+
+# SQL expression: mean of available neighbourhood quality scores, else 0.5.
+_NHOOD_SCORE_SQL = """
+COALESCE(
+    (
+        SELECT AVG(v)
+        FROM (VALUES
+            (n.amenity_score),
+            (n.transit_score),
+            (n.access_score),
+            (n.safety_score)
+        ) AS t(v)
+        WHERE v IS NOT NULL
+    ),
+    0.5
+)
+"""
 
 
 def primary_listing_type_for_ppm(
@@ -65,7 +83,42 @@ def _stat_analysis(z_score: float) -> dict:
 
 def _scoring_weights() -> ScoringWeights:
     cfg = get_config()
-    return ScoringWeights(stat_weight=cfg.scoring.stat_weight, ai_weight=cfg.scoring.ai_weight)
+    return ScoringWeights(
+        stat_weight=cfg.scoring.stat_weight,
+        ai_weight=cfg.scoring.ai_weight,
+        neighbourhood_weight=cfg.scoring.neighbourhood_weight,
+    )
+
+
+def blend_combined_score(
+    stat_score: float,
+    ai_score: float,
+    neighbourhood_score: float,
+    weights: ScoringWeights,
+) -> float:
+    """Blend stat / AI / neighbourhood into combined_score."""
+    return (
+        float(stat_score) * weights.stat_weight
+        + float(ai_score or 0.0) * weights.ai_weight
+        + float(neighbourhood_score) * weights.neighbourhood_weight
+    )
+
+
+def _neighbourhood_score_for_property(session: Session, prop: Property) -> float:
+    """Load linked neighbourhood quality aggregate (neutral 0.5 when missing)."""
+    if not prop.neighborhood_id:
+        return aggregate_neighbourhood_score({})
+    nhood = session.get(Neighborhood, prop.neighborhood_id)
+    if nhood is None:
+        return aggregate_neighbourhood_score({})
+    return aggregate_neighbourhood_score(
+        {
+            "amenity_score": nhood.amenity_score,
+            "transit_score": nhood.transit_score,
+            "access_score": nhood.access_score,
+            "safety_score": nhood.safety_score,
+        }
+    )
 
 
 def _compute_type_scores(
@@ -76,6 +129,7 @@ def _compute_type_scores(
     pct_rank: Optional[float],
     ai_score: float,
     weights: ScoringWeights,
+    neighbourhood_score: float = 0.5,
 ) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
     """Return (stat_score, z_score, percentile_rank, combined_score) for one type."""
     if ppm is None:
@@ -88,14 +142,18 @@ def _compute_type_scores(
     z = float(z)
     stat_score = _sigmoid_undervalued(z)
     pct = pct_rank if pct_rank is not None else 0.5
-    combined = stat_score * weights.stat_weight + float(ai_score or 0.0) * weights.ai_weight
+    combined = blend_combined_score(stat_score, ai_score, neighbourhood_score, weights)
     return stat_score, z, pct, combined
 
 
-def _update_metrics_score(ms, stat_score, price_per_m2, stats, z_score, weights, stat_analysis) -> None:
+def _update_metrics_score(
+    ms, stat_score, price_per_m2, stats, z_score, weights, stat_analysis, neighbourhood_score=0.5
+) -> None:
     ms.stat_score, ms.price_per_m2 = stat_score, price_per_m2
     ms.neighborhood_mean, ms.neighborhood_median, ms.z_score = stats["mean"], stats["median"], z_score
-    ms.combined_score = stat_score * weights.stat_weight + float(ms.ai_score or 0.0) * weights.ai_weight
+    ms.combined_score = blend_combined_score(
+        stat_score, float(ms.ai_score or 0.0), neighbourhood_score, weights
+    )
     meta = dict(ms.meta or {})
     meta["stat_analysis"] = stat_analysis
     ms.meta = meta
@@ -300,6 +358,13 @@ def compute_neighborhood_stats(
         if ms is not None:
             ai = float(ms.ai_score or 0.0)
 
+        prop = session.get(Property, prop_id)
+        nhood_score = (
+            _neighbourhood_score_for_property(session, prop)
+            if prop is not None
+            else aggregate_neighbourhood_score({})
+        )
+
         stat_rent, z_rent, pct_rent_out, combined_rent = _compute_type_scores(
             ppm=ppm_rent,
             mean=mean_rent,
@@ -307,6 +372,7 @@ def compute_neighborhood_stats(
             pct_rank=pct_rent,
             ai_score=ai,
             weights=weights,
+            neighbourhood_score=nhood_score,
         )
         stat_sale, z_sale, pct_sale_out, combined_sale = _compute_type_scores(
             ppm=ppm_sale,
@@ -315,6 +381,7 @@ def compute_neighborhood_stats(
             pct_rank=pct_sale,
             ai_score=ai,
             weights=weights,
+            neighbourhood_score=nhood_score,
         )
 
         if primary == "rent":
@@ -325,7 +392,7 @@ def compute_neighborhood_stats(
             stat_score, z, pct_rank = stat_sale, z_sale, pct_sale_out
 
         assert stat_score is not None and z is not None and pct_rank is not None
-        combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
+        combined_score = blend_combined_score(stat_score, ai, nhood_score, weights)
         stat_analysis = _stat_analysis(z)
 
         if ms is None:
@@ -387,6 +454,7 @@ def recalculate_all_combined_scores(
 ) -> int:
     """Instantly bulk-update combined_score for the entire table using a single SQL UPDATE.
 
+    Joins live neighbourhood quality scores so geo profile updates do not need AI.
     This is O(1) in application memory regardless of table size.
 
     Args:
@@ -397,33 +465,39 @@ def recalculate_all_combined_scores(
         Number of rows updated.
     """
     if weights is None:
-        cfg = get_config()
-        weights = ScoringWeights(
-            stat_weight=cfg.scoring.stat_weight,
-            ai_weight=cfg.scoring.ai_weight,
-        )
+        weights = _scoring_weights()
 
     result = session.execute(
-        text("""
-            UPDATE metrics_scoring
+        text(f"""
+            UPDATE metrics_scoring AS ms
             SET combined_score =
-                    COALESCE(stat_score, 0) * :w_stat
-                    + COALESCE(ai_score, 0)  * :w_ai,
+                    COALESCE(ms.stat_score, 0) * :w_stat
+                    + COALESCE(ms.ai_score, 0) * :w_ai
+                    + ({_NHOOD_SCORE_SQL}) * :w_nhood,
                 combined_score_rent = CASE
-                    WHEN stat_score_rent IS NOT NULL THEN
-                        COALESCE(stat_score_rent, 0) * :w_stat
-                        + COALESCE(ai_score, 0) * :w_ai
+                    WHEN ms.stat_score_rent IS NOT NULL THEN
+                        COALESCE(ms.stat_score_rent, 0) * :w_stat
+                        + COALESCE(ms.ai_score, 0) * :w_ai
+                        + ({_NHOOD_SCORE_SQL}) * :w_nhood
                     ELSE NULL
                 END,
                 combined_score_sale = CASE
-                    WHEN stat_score_sale IS NOT NULL THEN
-                        COALESCE(stat_score_sale, 0) * :w_stat
-                        + COALESCE(ai_score, 0) * :w_ai
+                    WHEN ms.stat_score_sale IS NOT NULL THEN
+                        COALESCE(ms.stat_score_sale, 0) * :w_stat
+                        + COALESCE(ms.ai_score, 0) * :w_ai
+                        + ({_NHOOD_SCORE_SQL}) * :w_nhood
                     ELSE NULL
                 END,
                 updated_at = NOW()
+            FROM properties p
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE ms.property_id = p.id
             """),
-        {"w_stat": weights.stat_weight, "w_ai": weights.ai_weight},
+        {
+            "w_stat": weights.stat_weight,
+            "w_ai": weights.ai_weight,
+            "w_nhood": weights.neighbourhood_weight,
+        },
     )
     count = result.rowcount
     session.flush()
@@ -432,6 +506,7 @@ def recalculate_all_combined_scores(
         rows=count,
         stat_weight=weights.stat_weight,
         ai_weight=weights.ai_weight,
+        neighbourhood_weight=weights.neighbourhood_weight,
     )
     return count
 
@@ -582,6 +657,8 @@ def score_single_property(session: Session, property_id: str) -> None:
     if ms is not None:
         ai = float(ms.ai_score or 0.0)
 
+    nhood_score = _neighbourhood_score_for_property(session, prop)
+
     mean_rent = rent_stats["mean"] if rent_stats and rent_stats["count"] else None
     median_rent = rent_stats["median"] if rent_stats and rent_stats["count"] else None
     std_rent = rent_stats["stddev"] if rent_stats and rent_stats["count"] else None
@@ -596,6 +673,7 @@ def score_single_property(session: Session, property_id: str) -> None:
         pct_rank=0.5,
         ai_score=ai,
         weights=weights,
+        neighbourhood_score=nhood_score,
     )
     stat_sale, z_sale, pct_sale, combined_sale = _compute_type_scores(
         ppm=ppm_sale,
@@ -604,6 +682,7 @@ def score_single_property(session: Session, property_id: str) -> None:
         pct_rank=0.5,
         ai_score=ai,
         weights=weights,
+        neighbourhood_score=nhood_score,
     )
 
     if primary == "rent":
@@ -615,13 +694,14 @@ def score_single_property(session: Session, property_id: str) -> None:
 
     assert stat_score is not None and z is not None
     stat_analysis = _stat_analysis(z)
+    combined_score = blend_combined_score(stat_score, ai, nhood_score, weights)
 
     if ms is None:
         ms = MetricsScoring(
             property_id=property_id,
             stat_score=stat_score,
             ai_score=ai,
-            combined_score=stat_score * weights.stat_weight + ai * weights.ai_weight,
+            combined_score=combined_score,
             price_per_m2=price_per_m2,
             neighborhood_mean=n_mean,
             neighborhood_median=n_median,
@@ -639,6 +719,7 @@ def score_single_property(session: Session, property_id: str) -> None:
             z,
             weights,
             stat_analysis,
+            neighbourhood_score=nhood_score,
         )
 
     _apply_type_fields(

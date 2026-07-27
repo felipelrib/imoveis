@@ -75,7 +75,21 @@ class PropertyModel(BaseModel):
     sentiment_reasoning: Optional[str] = None
     listings: List[PropertyListingModel] = []
     primary_listing: Optional[PropertyListingModel] = None
+    neighbourhood_quality: Optional["NeighbourhoodQualityModel"] = None
     model_config = ConfigDict(extra="ignore")
+
+
+class NeighbourhoodQualityModel(BaseModel):
+    """Objective neighbourhood quality profile projected onto a property (BIN-94)."""
+
+    amenity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    transit_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    access_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    safety_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    neighbourhood_score: float = Field(0.5, ge=0.0, le=1.0)
+    risk_flags: List[str] = Field(default_factory=list)
+    quality_meta: Optional[Dict[str, Any]] = None
+    quality_notes: Optional[str] = None
 
 
 class PaginatedPropertiesResponse(BaseModel):
@@ -116,6 +130,7 @@ class NeighborhoodModel(BaseModel):
     risk_flags: List[str] = Field(default_factory=list)
     quality_meta: Optional[Dict[str, Any]] = None
     quality_notes: Optional[str] = None
+    neighbourhood_score: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class CityModel(BaseModel):
@@ -170,6 +185,7 @@ class PropertyDetailModel(BaseModel):
     deal_summary: Optional[str] = None
     stat_analysis: Dict[str, Any]
     ai_analysis: Dict[str, Any]
+    neighbourhood_quality: Optional[NeighbourhoodQualityModel] = None
     model_config = ConfigDict(extra="ignore")
 
 

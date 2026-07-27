@@ -84,16 +84,20 @@ class DedupeResult(BaseModel):
 
 
 class ScoringWeights(BaseModel):
-    """Blending weights for statistical vs. AI scores."""
+    """Blending weights for statistical, AI, and neighbourhood quality scores."""
 
-    ai_weight: float = 0.5
-    stat_weight: float = 0.5
+    ai_weight: float = 0.4
+    stat_weight: float = 0.4
+    neighbourhood_weight: float = 0.2
 
     @model_validator(mode="after")
-    def weights_must_sum_to_one(self) -> 'ScoringWeights':
-        total = self.stat_weight + self.ai_weight
+    def weights_must_sum_to_one(self) -> "ScoringWeights":
+        total = self.stat_weight + self.ai_weight + self.neighbourhood_weight
         if not (0.999 <= total <= 1.001):
-            raise ValueError(f"stat_weight + ai_weight must equal 1.0 (got {total:.4f})")
+            raise ValueError(
+                "stat_weight + ai_weight + neighbourhood_weight must equal 1.0 "
+                f"(got {total:.4f})"
+            )
         return self
 
 

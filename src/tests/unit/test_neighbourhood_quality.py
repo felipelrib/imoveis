@@ -7,10 +7,39 @@ from pydantic import ValidationError
 
 from api.schemas import NeighborhoodModel
 from core.neighbourhood_quality import (
+    aggregate_neighbourhood_score,
     normalize_quality_score,
     normalize_risk_flags,
     quality_profile_fields,
 )
+
+
+class TestAggregateNeighbourhoodScore:
+    def test_all_null_returns_neutral_mid(self):
+        assert aggregate_neighbourhood_score({}) == pytest.approx(0.5)
+        assert aggregate_neighbourhood_score(
+            {
+                "amenity_score": None,
+                "transit_score": None,
+                "access_score": None,
+                "safety_score": None,
+            }
+        ) == pytest.approx(0.5)
+
+    def test_mean_of_available_scores(self):
+        assert aggregate_neighbourhood_score(
+            {"amenity_score": 0.8, "transit_score": 0.4, "access_score": None, "safety_score": None}
+        ) == pytest.approx(0.6)
+
+    def test_all_four_scores(self):
+        assert aggregate_neighbourhood_score(
+            {
+                "amenity_score": 1.0,
+                "transit_score": 0.0,
+                "access_score": 0.5,
+                "safety_score": 0.5,
+            }
+        ) == pytest.approx(0.5)
 
 
 class TestNormalizeQualityScore:

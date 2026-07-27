@@ -23,6 +23,18 @@ export const SAMPLE_PROPERTY = {
   city: "Belo Horizonte",
   deal_summary: null,
   image_urls: [],
+  neighbourhood_quality: {
+    amenity_score: 0.8,
+    transit_score: 0.7,
+    access_score: 0.75,
+    safety_score: 0.65,
+    neighbourhood_score: 0.725,
+    risk_flags: ["flood"],
+    quality_meta: { source: "curated" },
+    quality_notes: null,
+  },
+  ai_green_flags: ["near metro"],
+  ai_red_flags: ["noisy avenue"],
   primary_listing: {
     platform: "olx",
     platform_listing_id: "123456789",

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from core.neighbourhood_quality import quality_profile_fields
+
 _LISTING_TYPE_RANK = {"rent": 0, "sale": 1}
 
 
@@ -105,6 +107,26 @@ def neighborhood_fields(row: Mapping[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
+def neighbourhood_quality_fields(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """Objective quality profile when the property is linked to a neighbourhood."""
+    if row.get("neighborhood_id") is None:
+        return None
+    profile = quality_profile_fields(
+        {
+            "id": row.get("neighborhood_id"),
+            "amenity_score": row.get("amenity_score"),
+            "transit_score": row.get("transit_score"),
+            "access_score": row.get("access_score"),
+            "safety_score": row.get("safety_score"),
+            "risk_flags": row.get("risk_flags"),
+            "quality_meta": row.get("quality_meta"),
+            "quality_notes": row.get("quality_notes"),
+        }
+    )
+    profile.pop("id", None)
+    return profile
+
+
 def format_location_label(
     neighborhood_name: str | None, city: str | None
 ) -> Optional[str]:
@@ -175,6 +197,7 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "sentiment_reasoning": sentiment.get("reasoning"),
         "listings": listings,
         "primary_listing": primary,
+        "neighbourhood_quality": neighbourhood_quality_fields(row),
     }
 
 
@@ -246,6 +269,7 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
             "visual": meta.get("visual", {}),
             "sentiment": meta.get("sentiment", {}),
         },
+        "neighbourhood_quality": neighbourhood_quality_fields(row),
     }
 
 
@@ -309,6 +333,13 @@ LIST_SELECT_COLUMNS = f"""
                 p.neighborhood_id,
                 n.name AS neighborhood_name,
                 COALESCE(n.city, p.props_json->>'city') AS city,
+                n.amenity_score,
+                n.transit_score,
+                n.access_score,
+                n.safety_score,
+                n.risk_flags,
+                n.quality_meta,
+                n.quality_notes,
                 p.parking,
                 p.description,
                 p.props_json,

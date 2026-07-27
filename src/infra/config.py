@@ -128,8 +128,8 @@ class AIConfig(BaseModel, frozen=True):
     timeout: int = 120
     max_tokens: int = 1024
     num_ctx: int = 16384
-    visual_weight: float = 0.6
-    text_weight: float = 0.4
+    visual_weight: float = 0.7
+    text_weight: float = 0.3
     max_images_per_property: int = 8
     max_description_chars: int = 1000
     output_language: str = "en"
@@ -212,8 +212,9 @@ class FeaturesConfig(BaseModel, frozen=True):
 class ScoringConfig(BaseModel, frozen=True):
     """Scoring defaults and weights."""
 
-    stat_weight: float = 0.5
-    ai_weight: float = 0.5
+    stat_weight: float = 0.4
+    ai_weight: float = 0.4
+    neighbourhood_weight: float = 0.2
     recalculate_on_enrichment: bool = True
 
 

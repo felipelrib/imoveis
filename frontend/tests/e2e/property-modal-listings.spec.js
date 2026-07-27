@@ -13,7 +13,7 @@ const FURNISHED_PROPERTY = {
   id: "furnished-uuid-1",
   public_id: 42,
   title: "Furnished Savassi Flat",
-  deal_summary: "Slightly undervalued — good condition, no location alerts",
+  deal_summary: "Slightly undervalued — good condition, no listing claim alerts",
   listings: [
     {
       platform: "olx",

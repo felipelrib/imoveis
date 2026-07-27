@@ -92,6 +92,6 @@ development_status:
   6-6-flood-environmental-risk-overlays: done
   6-7-crime-safety-open-data-optional: done
   6-8-aggregate-listing-sentiment-flags-by-neighbourhood: done
-  6-9-blend-neighbourhood-profiles-into-scoring-ui: backlog
+  6-9-blend-neighbourhood-profiles-into-scoring-ui: done
   6-10-selective-ai-enrichment-re-run-controls: backlog
   epic-6-retrospective: optional

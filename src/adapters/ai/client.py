@@ -78,21 +78,48 @@ def _template_visual_part(visual: dict | None) -> str | None:
 
 
 def _template_sentiment_parts(sentiment: dict | None) -> list[str]:
+    """Listing ad-claim signals (not objective neighbourhood truth)."""
     if not sentiment:
         return []
     red_flags = sentiment.get("red_flags")
     green_flags = sentiment.get("green_flags")
     red_flags = red_flags if isinstance(red_flags, list) else []
     green_flags = green_flags if isinstance(green_flags, list) else []
-    location_part = (
-        "no location alerts" if not red_flags
-        else "1 location concern" if len(red_flags) == 1
-        else f"{len(red_flags)} location concerns"
+    claims_part = (
+        "no listing claim alerts" if not red_flags
+        else "1 listing claim concern" if len(red_flags) == 1
+        else f"{len(red_flags)} listing claim concerns"
     )
     return [
-        location_part,
-        *([f"{len(green_flags)} positive location signals"] if len(green_flags) >= 2 else []),
+        claims_part,
+        *(
+            [f"{len(green_flags)} positive listing claims"]
+            if len(green_flags) >= 2
+            else []
+        ),
     ]
+
+
+def _template_neighbourhood_parts(neighbourhood_quality: dict | None) -> list[str]:
+    """Objective neighbourhood quality summary for the template path."""
+    if not neighbourhood_quality:
+        return []
+    score = neighbourhood_quality.get("neighbourhood_score")
+    risk_flags = neighbourhood_quality.get("risk_flags") or []
+    if not isinstance(risk_flags, list):
+        risk_flags = []
+    parts: list[str] = []
+    if score is not None:
+        try:
+            parts.append(f"neighbourhood quality {float(score):.0%}")
+        except (TypeError, ValueError):
+            pass
+    if risk_flags:
+        if len(risk_flags) == 1:
+            parts.append(f"1 neighbourhood risk ({risk_flags[0]})")
+        else:
+            parts.append(f"{len(risk_flags)} neighbourhood risks")
+    return parts
 
 
 def template_deal_verdict(
@@ -100,13 +127,15 @@ def template_deal_verdict(
     visual: dict | None = None,
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
+    neighbourhood_quality: dict | None = None,
 ) -> str:
-    """Deterministic English deal verdict from the three scoring signals.
+    """Deterministic English deal verdict from scoring signals.
 
     Works without GPU/LLM.  Returns a concise sentence combining:
     - Statistical positioning relative to neighbourhood median
     - Visual condition assessment
-    - Location sentiment / red-flag count
+    - Objective neighbourhood quality (when available)
+    - Listing ad-claims / red-flag count
 
     Examples
     --------
@@ -116,14 +145,15 @@ def template_deal_verdict(
     ...     sentiment={"category": "Highly Desirable", "reasoning": "...", "red_flags": []},
     ...     neighborhood_name="Savassi",
     ... )
-    'Slightly undervalued — good condition, no location alerts'
+    'Slightly undervalued — good condition, no listing claim alerts'
     """
-    del neighborhood_name  # The template intentionally remains neighborhood-agnostic.
+    del neighborhood_name  # Name is context for the LLM path; template stays place-agnostic.
     parts = [
         part
         for part in (_template_stat_part(stat_analysis), _template_visual_part(visual))
         if part
     ]
+    parts.extend(_template_neighbourhood_parts(neighbourhood_quality))
     parts.extend(_template_sentiment_parts(sentiment))
 
     if not parts:
@@ -171,6 +201,7 @@ class LocalAIClient(ABC):
         visual: dict | None = None,
         sentiment: dict | None = None,
         neighborhood_name: str | None = None,
+        neighbourhood_quality: dict | None = None,
     ) -> DealVerdictResult:
         """Generate a natural-language deal verdict.
 
@@ -185,6 +216,7 @@ class LocalAIClient(ABC):
                 visual=visual,
                 sentiment=sentiment,
                 neighborhood_name=neighborhood_name,
+                neighbourhood_quality=neighbourhood_quality,
                 output_language=cfg.ai.output_language,
             )
             # Subclasses override to call their specific LLM endpoint
@@ -193,7 +225,13 @@ class LocalAIClient(ABC):
         except Exception as exc:
             logger.warning("deal_verdict_llm_fallback: %s", str(exc))
             return DealVerdictResult(
-                verdict=template_deal_verdict(stat_analysis, visual, sentiment, neighborhood_name),
+                verdict=template_deal_verdict(
+                    stat_analysis,
+                    visual,
+                    sentiment,
+                    neighborhood_name,
+                    neighbourhood_quality=neighbourhood_quality,
+                ),
                 confidence=0.0,
             )
 

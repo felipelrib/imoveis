@@ -505,8 +505,11 @@ def ai_enrich(
                     sentiment_prompt,
                 )
 
-                # Weighted blend: visual condition 60%, location sentiment 40%
-                a_score = v_res.condition_score * cfg.ai.visual_weight + s_res.sentiment_score * cfg.ai.text_weight
+                # Weighted blend: visual condition + listing ad-claims (config weights)
+                a_score = (
+                    v_res.condition_score * cfg.ai.visual_weight
+                    + s_res.sentiment_score * cfg.ai.text_weight
+                )
 
                 # --- Persist -------------------------------------------------------
                 from adapters.db.models import MetricsScoring  # local import avoids circular
@@ -521,24 +524,44 @@ def ai_enrich(
                         }
                     )
 
-                    stat_weight = getattr(getattr(cfg, "scoring", None), "stat_weight", 0.5)
-                    ai_weight = getattr(getattr(cfg, "scoring", None), "ai_weight", 0.5)
+                    from adapters.metrics.scoring import (
+                        _neighbourhood_score_for_property,
+                        blend_combined_score,
+                    )
+                    from core.entities import ScoringWeights
+
+                    weights = ScoringWeights(
+                        stat_weight=getattr(getattr(cfg, "scoring", None), "stat_weight", 0.4),
+                        ai_weight=getattr(getattr(cfg, "scoring", None), "ai_weight", 0.4),
+                        neighbourhood_weight=getattr(
+                            getattr(cfg, "scoring", None), "neighbourhood_weight", 0.2
+                        ),
+                    )
 
                     if ms is None:
                         ms = MetricsScoring(
                             property_id=property_id,
                             stat_score=0.0,
                             ai_score=a_score,
-                            combined_score=a_score * ai_weight,
+                            combined_score=a_score * weights.ai_weight,
                             meta=meta,
                         )
                         session.add(ms)
                     else:
                         ms.ai_score = a_score
                         ms.meta = meta
-                        # Recompute combined using existing stat_score
+                        # Recompute combined using existing stat_score + nhood
+                        from adapters.db.models import Property as _PropTmp
+                        _tmp = session.get(_PropTmp, property_id)
+                        nhood = (
+                            _neighbourhood_score_for_property(session, _tmp)
+                            if _tmp is not None
+                            else 0.5
+                        )
                         stat = float(ms.stat_score or 0.0)
-                        ms.combined_score = stat * stat_weight + a_score * ai_weight
+                        ms.combined_score = blend_combined_score(
+                            stat, a_score, nhood, weights
+                        )
                     session.flush()
 
                     # AD-10 geo stage: refresh spatial neighbourhood before scoring
@@ -552,17 +575,38 @@ def ai_enrich(
                     updated_meta = dict(ms.meta or {}) if ms is not None else {}
                     stat_analysis = updated_meta.get("stat_analysis", {})
                     neighborhood_name = "Unknown"
+                    neighbourhood_quality = None
                     from adapters.db.models import Property as _Prop
+                    from core.neighbourhood_quality import quality_profile_fields
                     _prop = session.get(_Prop, property_id)
                     if _prop is not None:
                         if _prop.neighborhood_id:
                             from sqlalchemy import text
                             nb = session.execute(
-                                text("SELECT name FROM neighborhoods WHERE id = :nid"),
-                                {"nid": _prop.neighborhood_id}
-                            ).fetchone()
+                                text(
+                                    "SELECT name, amenity_score, transit_score, "
+                                    "access_score, safety_score, risk_flags, "
+                                    "quality_meta, quality_notes "
+                                    "FROM neighborhoods WHERE id = :nid"
+                                ),
+                                {"nid": _prop.neighborhood_id},
+                            ).mappings().fetchone()
                             if nb:
-                                neighborhood_name = nb.name
+                                neighborhood_name = nb["name"]
+                                profile = quality_profile_fields(
+                                    {
+                                        "id": _prop.neighborhood_id,
+                                        "amenity_score": nb["amenity_score"],
+                                        "transit_score": nb["transit_score"],
+                                        "access_score": nb["access_score"],
+                                        "safety_score": nb["safety_score"],
+                                        "risk_flags": nb["risk_flags"],
+                                        "quality_meta": nb["quality_meta"],
+                                        "quality_notes": nb["quality_notes"],
+                                    }
+                                )
+                                profile.pop("id", None)
+                                neighbourhood_quality = profile
 
                         if neighborhood_name == "Unknown" and _prop.props_json:
                             neighborhood_name = _prop.props_json.get("neighborhood", "Unknown")
@@ -572,6 +616,7 @@ def ai_enrich(
                         visual=meta.get("visual", {}),
                         sentiment=meta.get("sentiment", {}),
                         neighborhood_name=neighborhood_name,
+                        neighbourhood_quality=neighbourhood_quality,
                     )
                     if ms is not None:
                         updated_meta = dict(ms.meta or {})

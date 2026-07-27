@@ -447,9 +447,53 @@ export default function PropertyModal({ id, onClose }) {
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{visual.reasoning}</div>
                   </div>
                 )}
+                {p.neighbourhood_quality && (
+                  <div
+                    data-testid="neighbourhood-quality-section"
+                    style={{ padding: '12px', background: 'rgba(14, 165, 233, 0.1)', border: '1px solid rgba(14, 165, 233, 0.25)', borderRadius: 8 }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0284c7', marginBottom: 8 }}>
+                      Neighbourhood quality
+                      {p.neighbourhood_quality.neighbourhood_score != null && (
+                        <span style={{ marginLeft: 8, fontWeight: 600 }}>
+                          {(p.neighbourhood_quality.neighbourhood_score * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: (p.neighbourhood_quality.risk_flags || []).length ? 8 : 0 }}>
+                      {[
+                        ['Amenity', p.neighbourhood_quality.amenity_score],
+                        ['Transit', p.neighbourhood_quality.transit_score],
+                        ['Access', p.neighbourhood_quality.access_score],
+                        ['Safety', p.neighbourhood_quality.safety_score],
+                      ].map(([label, score]) => (
+                        <span key={label} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                          {label}: {score != null ? `${(score * 100).toFixed(0)}%` : '—'}
+                        </span>
+                      ))}
+                    </div>
+                    {(p.neighbourhood_quality.risk_flags || []).length > 0 && (
+                      <div className="flags">
+                        {p.neighbourhood_quality.risk_flags.map((f) => (
+                          <span key={f} className="flag red">⚠ {f}</span>
+                        ))}
+                      </div>
+                    )}
+                    {p.neighbourhood_quality.quality_notes && (
+                      <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
+                        {p.neighbourhood_quality.quality_notes}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {sentiment.category && (
-                  <div style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>Location Sentiment: {sentiment.category}</div>
+                  <div
+                    data-testid="ad-claims-section"
+                    style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>
+                      Ad claims (listing): {sentiment.category}
+                    </div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sentiment.reasoning}</div>
                   </div>
                 )}
@@ -478,7 +522,7 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   {sentiment.green_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Location positives</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Claims from listing (positives)</div>
                       <div className="flags">
                         {sentiment.green_flags.map(f => <span key={f} className="flag green">✔ {f}</span>)}
                       </div>
@@ -486,7 +530,7 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   {sentiment.red_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Location concerns</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Claims from listing (concerns)</div>
                       <div className="flags">
                         {sentiment.red_flags.map(f => <span key={f} className="flag red">✖ {f}</span>)}
                       </div>
