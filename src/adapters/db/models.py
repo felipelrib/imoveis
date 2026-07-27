@@ -115,6 +115,13 @@ class MetricsScoring(Base):
     price_per_m2 = Column(Float)
     neighborhood_mean = Column(Float)
     neighborhood_median = Column(Float)
+    # BIN-84: listing-type cohorts (nullable when that type is absent)
+    price_per_m2_rent = Column(Float)
+    price_per_m2_sale = Column(Float)
+    neighborhood_mean_rent = Column(Float)
+    neighborhood_mean_sale = Column(Float)
+    neighborhood_median_rent = Column(Float)
+    neighborhood_median_sale = Column(Float)
     meta = Column(JSON)
     updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
 

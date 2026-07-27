@@ -197,6 +197,10 @@ class TestPropertyModelAiScoreContract:
 _PROJECTION_KEYS = (
     "price",
     "price_per_m2",
+    "price_per_m2_rent",
+    "price_per_m2_sale",
+    "neighborhood_mean_rent",
+    "neighborhood_mean_sale",
     "stat_score",
     "ai_score",
     "combined_score",

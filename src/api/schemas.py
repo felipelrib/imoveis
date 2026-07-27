@@ -39,6 +39,10 @@ class PropertyModel(BaseModel):
     z_score: Optional[float] = None
     price_per_m2: Optional[float] = None
     neighborhood_mean: Optional[float] = None
+    price_per_m2_rent: Optional[float] = None
+    price_per_m2_sale: Optional[float] = None
+    neighborhood_mean_rent: Optional[float] = None
+    neighborhood_mean_sale: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     city: Optional[str] = None
@@ -119,6 +123,12 @@ class PropertyDetailModel(BaseModel):
     price_per_m2: Optional[float] = None
     neighborhood_mean: Optional[float] = None
     neighborhood_median: Optional[float] = None
+    price_per_m2_rent: Optional[float] = None
+    price_per_m2_sale: Optional[float] = None
+    neighborhood_mean_rent: Optional[float] = None
+    neighborhood_mean_sale: Optional[float] = None
+    neighborhood_median_rent: Optional[float] = None
+    neighborhood_median_sale: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     city: Optional[str] = None
