@@ -1,4 +1,4 @@
-"""Unit tests for POST /admin/enrichment/missing."""
+"""Unit tests for POST /admin/enrichment/missing (legacy wrapper)."""
 
 from __future__ import annotations
 
@@ -48,6 +48,8 @@ def _prop(*, image_urls, description="Nice flat"):
         image_urls=image_urls,
         description=description,
         active=True,
+        platform="zap",
+        neighborhood_id=None,
     )
 
 
@@ -66,11 +68,16 @@ def test_enrich_missing_queues_only_unenriched_with_enough_photos(client_with_au
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
-    session.query.return_value.outerjoin.return_value.filter.return_value.filter.return_value = [
-        enough,
-        too_few,
-        no_images,
-        null_images,
+    query = MagicMock()
+    session.query.return_value = query
+    query.outerjoin.return_value = query
+    query.filter.return_value = query
+    query.limit.return_value = query
+    query.all.return_value = [
+        (enough, None),
+        (too_few, None),
+        (no_images, None),
+        (null_images, None),
     ]
 
     mock_enrich = MagicMock()
@@ -91,6 +98,7 @@ def test_enrich_missing_queues_only_unenriched_with_enough_photos(client_with_au
     assert body["skipped_too_few_photos"] == 1
     mock_enrich.apply_async.assert_called_once_with(
         args=[str(enough.id), enough.image_urls, "Nice flat"],
+        kwargs={"stages": "all"},
         queue="ai",
     )
 

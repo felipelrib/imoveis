@@ -51,5 +51,8 @@ None.
 - Properties without images are counted in `skipped_no_images` and are not queued.
 - Large backfills can saturate a single GPU for a long time; pause workers or scale GPU
   if needed via Scraper Control.
-- Recalculate All Scores remains useful after enrichment and as the neighbourhood cohort
-  grows (stat z-scores / percentiles become more stable with more peers).
+- **Recalculate vs AI re-run:** Recalculate All Scores refreshes stat/combined math after
+  geo profile or weight changes (no VLM). For prompt/model/verdict refresh, use the
+  selective AI re-run panel (`docs/features/76-selective-ai-enrichment-rerun.md`, BIN-95).
+- Recalculate remains useful after enrichment and as the neighbourhood cohort grows
+  (stat z-scores / percentiles become more stable with more peers).

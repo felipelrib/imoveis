@@ -53,9 +53,13 @@ None.
    curl -X POST -H "X-API-Key: $API_KEY" http://localhost:${API_PORT:-8000}/admin/scoring/recalculate
    ```
 3. Open a property modal: confirm **Neighbourhood quality** is separate from **Ad claims (listing)**.
-4. After the epic (BIN-95 / operator): selective AI re-enrich so stored `ai_score` and `deal_summary` pick up text-weight + nhood-aware verdicts.
+4. After prompt/model/verdict changes: Dashboard **AI Enrichment re-run** (or
+   `POST /admin/enrichment/rerun`) — see `docs/features/76-selective-ai-enrichment-rerun.md`.
+   Geo profile / weight-only updates still use recalculate (no GPU).
 
 ## Notes / Follow-ups
 
-- Operator should recalculate + AI-reenrich once remaining v0.6 fills land and BIN-95 ships.
-- Related: BIN-85 epic, BIN-86 profile schema, BIN-95 selective AI re-run.
+- Operator should recalculate after geo profile fills; use BIN-95 AI re-run when stored
+  `ai_score` / `deal_summary` must pick up prompt or nhood-aware verdict changes.
+- Related: BIN-85 epic, BIN-86 profile schema, BIN-95 selective AI re-run
+  (`docs/features/76-selective-ai-enrichment-rerun.md`).

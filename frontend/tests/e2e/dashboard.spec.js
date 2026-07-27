@@ -61,6 +61,81 @@ test.describe("Dashboard page", () => {
     await expect.poll(() => enrichCalled).toBeTruthy();
   });
 
+  test("dry-run enrichment re-run posts body and shows would_queue (BIN-95)", async ({
+    page,
+  }) => {
+    await installCommonMocks(page);
+    /** @type {object | null} */
+    let posted = null;
+    await page.route("**/api/admin/enrichment/rerun", async (route) => {
+      if (route.request().method() === "POST") {
+        posted = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            mode: "force",
+            stages: "all",
+            dry_run: true,
+            queued: 0,
+            would_queue: 7,
+            skipped_no_images: 0,
+            skipped_too_few_photos: 0,
+            skipped_missing_prior_enrichment: 0,
+            filters: {},
+          }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("enrichment-rerun-panel")).toBeVisible();
+    await page.getByTestId("enrichment-rerun-mode").selectOption("force");
+    await page.getByTestId("enrichment-rerun-dry-run").click();
+    await expect(page.getByTestId("enrichment-rerun-result")).toContainText(
+      "Would queue 7"
+    );
+    await expect.poll(() => posted?.mode).toBe("force");
+    await expect.poll(() => posted?.dry_run).toBe(true);
+  });
+
+  test("force enrichment re-run sends mode=force (BIN-95)", async ({ page }) => {
+    await installCommonMocks(page);
+    /** @type {object | null} */
+    let posted = null;
+    await page.route("**/api/admin/enrichment/rerun", async (route) => {
+      if (route.request().method() === "POST") {
+        posted = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            mode: "force",
+            stages: "verdict_only",
+            dry_run: false,
+            queued: 2,
+            would_queue: 2,
+            skipped_no_images: 0,
+            skipped_too_few_photos: 0,
+            skipped_missing_prior_enrichment: 1,
+            filters: {},
+          }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+    await page.goto("/");
+    await page.getByTestId("enrichment-rerun-mode").selectOption("force");
+    await page.getByTestId("enrichment-rerun-stages").selectOption("verdict_only");
+    await page.getByTestId("enrichment-rerun-run").click();
+    await expect(page.getByTestId("enrichment-rerun-result")).toContainText("Queued 2");
+    await expect.poll(() => posted?.mode).toBe("force");
+    await expect.poll(() => posted?.stages).toBe("verdict_only");
+    await expect.poll(() => posted?.dry_run).toBe(false);
+  });
+
   test("loads pipeline history into charts on mount (BIN-61)", async ({ page }) => {
     await installCommonMocks(page);
     const ts = new Date().toISOString();
