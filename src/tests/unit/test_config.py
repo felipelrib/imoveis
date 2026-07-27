@@ -474,6 +474,17 @@ def test_dedup_from_default_app_config_yaml():
 
 
 @pytest.mark.unit
+def test_osm_amenities_from_default_app_config_yaml():
+    """Real configs/app_config.yaml loads OSM amenity refresh defaults (BIN-88)."""
+    cfg = get_config()
+    osm = cfg.neighbourhood_quality.osm_amenities
+    assert osm.enabled is False
+    assert osm.mode == "geojson"
+    assert osm.category_targets["shop"] == 3.0
+    assert osm.interval_hours == 168.0
+
+
+@pytest.mark.unit
 def test_neighbourhood_access_from_default_app_config_yaml():
     """Real configs/app_config.yaml loads BIN-90 hubs and routing defaults."""
     cfg = get_config()

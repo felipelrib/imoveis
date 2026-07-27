@@ -271,6 +271,7 @@ pipeline_metrics:
 # Transit proximity (BIN-89): radii + mode weights for GTFS/OSM stop scoring.
 # Refresh via scripts/dev/refresh_transit_proximity.py (offline files; no live
 # Overpass/GTFS HTTP in CI).
+# OSM amenities (BIN-88): offline GeoJSON or rate-limited Overpass.
 neighbourhood_quality:
   transit:
     count_radius_m: 400
@@ -284,6 +285,23 @@ neighbourhood_quality:
       rail: 0.85
       bus: 0.55
       other: 0.4
+  osm_amenities:
+    enabled: false              # set true to schedule Celery beat refresh
+    mode: geojson               # geojson (offline) | overpass (HTTP)
+    poi_geojson_path: ""        # required when mode=geojson
+    overpass_url: https://overpass-api.de/api/interpreter
+    request_timeout_sec: 60
+    rate_limit_per_minute: 8    # politeness sleep between Overpass calls
+    buffer_m: 0                 # expand neighbourhood polygon for POI match
+    cache_dir: ""               # optional disk cache for Overpass JSON
+    cache_ttl_hours: 24
+    interval_hours: 168         # beat cadence when enabled (weekly)
+    batch_size: 50
+    category_targets:
+      shop: 3
+      park: 1
+      school: 1
+      healthcare: 2
 
 # ---------------------------------------------------------------------------
 # Neighbourhood access / travel-time to downtown hubs (BIN-90)

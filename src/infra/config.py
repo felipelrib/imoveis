@@ -297,6 +297,35 @@ class PipelineMetricsConfig(BaseModel, frozen=True):
     retention_days: int = 7
 
 
+class OsmAmenitiesConfig(BaseModel, frozen=True):
+    """OSM amenity density refresh for neighbourhood profiles (BIN-88).
+
+    ``mode=geojson`` loads an offline POI FeatureCollection (preferred for
+    CI/dev). ``mode=overpass`` queries Overpass HTTP with rate limiting.
+    Default ``enabled=false`` so beat does not hit Overpass until configured.
+    """
+
+    enabled: bool = False
+    mode: str = "geojson"  # geojson | overpass
+    poi_geojson_path: str = ""
+    overpass_url: str = "https://overpass-api.de/api/interpreter"
+    request_timeout_sec: float = 60.0
+    rate_limit_per_minute: float = 8.0
+    buffer_m: float = 0.0
+    cache_dir: str = ""
+    cache_ttl_hours: float = 24.0
+    interval_hours: float = 168.0
+    batch_size: int = 50
+    category_targets: dict[str, float] = Field(
+        default_factory=lambda: {
+            "shop": 3.0,
+            "park": 1.0,
+            "school": 1.0,
+            "healthcare": 2.0,
+        }
+    )
+
+
 class AccessHubConfig(BaseModel, frozen=True):
     """A fixed downtown / life hub used for neighbourhood access scoring."""
 
@@ -349,6 +378,7 @@ class NeighbourhoodTransitConfig(BaseModel, frozen=True):
 class NeighbourhoodQualityConfig(BaseModel, frozen=True):
     """Objective neighbourhood quality fill-job settings (BIN-86+)."""
 
+    osm_amenities: OsmAmenitiesConfig = Field(default_factory=OsmAmenitiesConfig)
     transit: NeighbourhoodTransitConfig = Field(
         default_factory=NeighbourhoodTransitConfig
     )

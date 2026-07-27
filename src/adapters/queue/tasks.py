@@ -1076,6 +1076,45 @@ def recheck_listing_availability(self, batch_size: int | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Neighbourhood OSM amenity density (BIN-88)
+# ---------------------------------------------------------------------------
+
+
+@celery.task(
+    bind=True,
+    name="tasks.refresh_neighbourhood_amenities",
+    max_retries=2,
+    default_retry_delay=120,
+)
+def refresh_neighbourhood_amenities(self, batch_size: int | None = None):
+    """Refresh ``neighborhoods.amenity_score`` from OSM POIs (geojson or Overpass)."""
+    from adapters.geo.amenity_refresh import refresh_neighbourhood_amenities as run_refresh
+
+    cfg = get_config()
+    osm = cfg.neighbourhood_quality.osm_amenities
+    if not osm.enabled:
+        logger.info("amenity_refresh_skipped", reason="disabled")
+        return {"status": "skipped", "updated": 0}
+
+    limit = int(batch_size) if batch_size is not None else int(osm.batch_size)
+    with SessionLocal() as session:
+        result = run_refresh(
+            session,
+            mode=osm.mode,
+            poi_geojson_path=osm.poi_geojson_path,
+            buffer_m=float(osm.buffer_m),
+            category_targets=dict(osm.category_targets),
+            batch_size=limit,
+            overpass_url=osm.overpass_url,
+            request_timeout_sec=float(osm.request_timeout_sec),
+            rate_limit_per_minute=float(osm.rate_limit_per_minute),
+            cache_dir=osm.cache_dir,
+            cache_ttl_hours=float(osm.cache_ttl_hours),
+        )
+    return result.as_dict()
+
+
+# ---------------------------------------------------------------------------
 # Neighbourhood access / travel-time to hubs (BIN-90)
 # ---------------------------------------------------------------------------
 
