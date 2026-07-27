@@ -511,6 +511,7 @@ _CRITICAL_APP_CONFIG_SECTIONS = (
     "ai",
     "database",
     "pipeline_metrics",
+    "neighbourhood_quality",
 )
 
 
