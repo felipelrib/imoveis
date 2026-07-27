@@ -173,8 +173,9 @@ dedup:
 # Scoring Engine
 # ---------------------------------------------------------------------------
 scoring:
-  stat_weight: 0.5    # weight for statistical z-score/percentile component
-  ai_weight: 0.5      # weight for AI qualitative assessment component
+  stat_weight: 0.4              # statistical z-score/percentile component
+  ai_weight: 0.4                # AI qualitative assessment (visual + listing claims)
+  neighbourhood_weight: 0.2     # objective neighbourhood quality profile (BIN-94)
 
 # ---------------------------------------------------------------------------
 # Local AI / VLM
@@ -192,8 +193,8 @@ ai:
   # Context window for generate calls. 16384 supports listing prompts + ~8 images on
   # qwen2.5vl:7b when you have VRAM headroom (drop to 8192 if OOM).
   num_ctx: 16384
-  visual_weight: 0.6
-  text_weight: 0.4
+  visual_weight: 0.7
+  text_weight: 0.3
   max_images_per_property: 8
   max_description_chars: 1000
   output_language: "en"

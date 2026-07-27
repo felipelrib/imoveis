@@ -81,13 +81,23 @@ class TestPropertyCandidate:
 
 class TestScoringWeights:
     def test_valid(self):
-        w = ScoringWeights(stat_weight=0.6, ai_weight=0.4)
+        w = ScoringWeights(stat_weight=0.6, ai_weight=0.4, neighbourhood_weight=0.0)
         assert w.stat_weight == 0.6
+        assert w.neighbourhood_weight == 0.0
 
     def test_defaults(self):
         w = ScoringWeights()
-        assert w.ai_weight == 0.5
-        assert w.stat_weight == 0.5
+        assert w.stat_weight == 0.4
+        assert w.ai_weight == 0.4
+        assert w.neighbourhood_weight == 0.2
+
+    def test_three_way_blend(self):
+        w = ScoringWeights(stat_weight=0.4, ai_weight=0.4, neighbourhood_weight=0.2)
+        assert w.stat_weight + w.ai_weight + w.neighbourhood_weight == pytest.approx(1.0)
+
+    def test_weights_must_sum_to_one(self):
+        with pytest.raises(ValidationError):
+            ScoringWeights(stat_weight=0.5, ai_weight=0.5, neighbourhood_weight=0.2)
 
 
 class TestDedupeResult:

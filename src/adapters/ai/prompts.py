@@ -239,13 +239,14 @@ def build_deal_verdict_prompt(
     visual: dict | None = None,
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
+    neighbourhood_quality: dict | None = None,
     output_language: str = "en",
 ) -> str:
     """Return a prompt that asks the LLM to produce a concise deal verdict.
 
-    Combines the three scoring signals into a single natural-language sentence
-    that serves as the property's "deal verdict" — the product's punchline.
-    Default language is English (NFR-7 / BIN-64); override via ``output_language``.
+    Combines statistical, visual, objective neighbourhood, and listing ad-claim
+    signals into a single natural-language sentence. Default language is English
+    (NFR-7 / BIN-64); override via ``output_language``.
 
     Parameters
     ----------
@@ -255,9 +256,11 @@ def build_deal_verdict_prompt(
         Dict with ``condition_score``, ``category``, ``reasoning`` from VLM.
     sentiment:
         Dict with ``sentiment_score``, ``category``, ``reasoning``,
-        ``green_flags``, ``red_flags`` from text LLM.
+        ``green_flags``, ``red_flags`` from listing-text LLM (ad claims).
     neighborhood_name:
         The neighbourhood/area name for context (e.g. "Savassi").
+    neighbourhood_quality:
+        Optional objective profile: scores, ``neighbourhood_score``, ``risk_flags``.
     """
     stat_cat = (stat_analysis or {}).get("category", "N/A")
     stat_reason = (stat_analysis or {}).get("reasoning", "")
@@ -268,10 +271,32 @@ def build_deal_verdict_prompt(
     red_flags = (sentiment or {}).get("red_flags", [])
     green_flags = (sentiment or {}).get("green_flags", [])
 
-    red_flags_str = ", ".join(red_flags) if red_flags else "nenhum"
+    red_flags_str = ", ".join(red_flags) if red_flags else "none"
     green_flags_str = ", ".join(green_flags) if green_flags else "none"
 
-    return f"""You are a real-estate deal evaluator. Given three analysis signals for a property in {neighborhood_name or "N/A"}, write a SHORT 1-2 sentence verdict in {output_language} that fuses them into a single punchline.
+    nq = neighbourhood_quality or {}
+    nhood_score = nq.get("neighbourhood_score")
+    nhood_score_str = f"{float(nhood_score):.2f}" if nhood_score is not None else "N/A"
+    risk_flags = nq.get("risk_flags") or []
+    if not isinstance(risk_flags, list):
+        risk_flags = []
+    risk_str = ", ".join(str(r) for r in risk_flags) if risk_flags else "none"
+    sub_scores = []
+    for key, label in (
+        ("amenity_score", "amenity"),
+        ("transit_score", "transit"),
+        ("access_score", "access"),
+        ("safety_score", "safety"),
+    ):
+        val = nq.get(key)
+        if val is not None:
+            try:
+                sub_scores.append(f"{label}={float(val):.2f}")
+            except (TypeError, ValueError):
+                pass
+    sub_str = ", ".join(sub_scores) if sub_scores else "none filled"
+
+    return f"""You are a real-estate deal evaluator. Given analysis signals for a property in {neighborhood_name or "N/A"}, write a SHORT 1-2 sentence verdict in {output_language} that fuses them into a single punchline.
 
 **Statistical Analysis**: {stat_cat}
 {stat_reason}
@@ -279,14 +304,17 @@ def build_deal_verdict_prompt(
 **Visual Condition**: {vis_cat}
 {vis_reason}
 
-**Location Sentiment**: {sent_cat}
+**Objective Neighbourhood Quality** (geospatial / curated — not ad copy): score={nhood_score_str}; {sub_str}; risk_flags={risk_str}
+
+**Ad Claims from Listing** (LLM reading seller copy — not location truth): {sent_cat}
 {sent_reason}
 
-**Green Flags**: {green_flags_str}
+**Listing Claim Positives**: {green_flags_str}
 
-**Red Flags**: {red_flags_str}
+**Listing Claim Concerns**: {red_flags_str}
 
 Write the verdict as a concise sentence (max ~30 words).  Start with the most impactful signal.
+Prefer objective neighbourhood quality over listing ad claims when they conflict.
 If signals conflict, mention the tension briefly.
 
 Return ONLY a JSON object — no markdown fences, no explanation:

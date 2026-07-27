@@ -248,7 +248,7 @@ class TestPropertyModelAiScoreContract:
         assert model.condition_score == pytest.approx(0.75)
         assert model.sentiment_score == pytest.approx(0.78)
 
-    def test_property_model_rejects_string_scores(self):
+    def test_property_model_accepts_neighbourhood_quality(self):
         payload = {
             "id": "11111111-1111-1111-1111-111111111111",
             "platform": "test",
@@ -256,10 +256,20 @@ class TestPropertyModelAiScoreContract:
             "title": "Apt",
             "price": 1000.0,
             "image_urls": [],
-            "condition_score": "good",
+            "neighbourhood_quality": {
+                "amenity_score": 0.8,
+                "transit_score": 0.6,
+                "access_score": None,
+                "safety_score": 0.7,
+                "neighbourhood_score": 0.7,
+                "risk_flags": ["flood"],
+                "quality_meta": {"source": "curated"},
+            },
         }
-        with pytest.raises(ValidationError):
-            PropertyModel.model_validate(payload)
+        model = PropertyModel.model_validate(payload)
+        assert model.neighbourhood_quality is not None
+        assert model.neighbourhood_quality.neighbourhood_score == pytest.approx(0.7)
+        assert model.neighbourhood_quality.risk_flags == ["flood"]
 
 
 _PROJECTION_KEYS = (
@@ -280,6 +290,7 @@ _PROJECTION_KEYS = (
     "combined_score",
     "neighborhood_name",
     "neighborhood_id",
+    "neighbourhood_quality",
     "primary_listing",
     "listings",
 )

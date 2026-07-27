@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from api.property_projection import (
     LISTINGS_JSON_AGG,
     decisioning_price,
@@ -229,22 +231,51 @@ class TestMapPropertyProjection:
         assert mapped["sentiment_score"] == 0.78
         assert len(mapped["listings"]) == 2
 
+    def test_list_item_projects_neighbourhood_quality(self):
+        mapped = map_property_list_item(
+            self._row(
+                amenity_score=0.8,
+                transit_score=0.4,
+                access_score=None,
+                safety_score=None,
+                risk_flags=["flood"],
+                quality_meta={"source": "curated"},
+                quality_notes="note",
+            )
+        )
+        nq = mapped["neighbourhood_quality"]
+        assert nq is not None
+        assert nq["amenity_score"] == pytest.approx(0.8)
+        assert nq["transit_score"] == pytest.approx(0.4)
+        assert nq["neighbourhood_score"] == pytest.approx(0.6)
+        assert nq["risk_flags"] == ["flood"]
+        assert nq["quality_meta"]["source"] == "curated"
+
+    def test_list_item_omits_quality_without_neighborhood_id(self):
+        mapped = map_property_list_item(self._row(neighborhood_id=None))
+        assert mapped["neighbourhood_quality"] is None
+
     def test_list_item_validates_against_property_model_with_float_scores(self):
         """Regression: AI scores are floats — PropertyModel must accept them (BIN-56)."""
         from api.schemas import PropertyModel
 
-        mapped = map_property_list_item(self._row())
+        mapped = map_property_list_item(
+            self._row(amenity_score=0.9, transit_score=0.7, access_score=0.5, safety_score=0.3)
+        )
         model = PropertyModel.model_validate(mapped)
         assert model.condition_score == 0.75
         assert model.sentiment_score == 0.78
+        assert model.neighbourhood_quality is not None
+        assert model.neighbourhood_quality.neighbourhood_score == pytest.approx(0.6)
 
     def test_detail_includes_primary_and_neighborhood_id(self):
-        mapped = map_property_detail(self._row())
+        mapped = map_property_detail(self._row(amenity_score=0.5, safety_score=0.5))
         assert mapped["neighborhood_id"] == "nbr-9"
         assert mapped["primary_listing"]["listing_type"] == "rent"
         assert mapped["price"] == 2800.0
         assert "stat_analysis" in mapped
         assert "ai_analysis" in mapped
+        assert mapped["neighbourhood_quality"]["neighbourhood_score"] == pytest.approx(0.5)
 
     def test_no_listings_keeps_row_price(self):
         mapped = map_property_list_item(self._row(listings=[]))

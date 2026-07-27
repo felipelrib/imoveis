@@ -60,6 +60,39 @@ const ATTR_ROWS = [
   { key: 'title', label: 'Title', get: (p) => p.title || '—' },
   { key: 'address', label: 'Address', get: (p) => p.address || '—' },
   { key: 'neighborhood', label: 'Neighbourhood', get: (p) => p.neighborhood_name || '—' },
+  {
+    key: 'neighbourhood_score',
+    label: 'Neighbourhood quality',
+    get: (p) => formatScore(p.neighbourhood_quality?.neighbourhood_score),
+  },
+  {
+    key: 'amenity_score',
+    label: 'Amenity score',
+    get: (p) => formatScore(p.neighbourhood_quality?.amenity_score),
+  },
+  {
+    key: 'transit_score',
+    label: 'Transit score',
+    get: (p) => formatScore(p.neighbourhood_quality?.transit_score),
+  },
+  {
+    key: 'access_score',
+    label: 'Access score',
+    get: (p) => formatScore(p.neighbourhood_quality?.access_score),
+  },
+  {
+    key: 'safety_score',
+    label: 'Safety score',
+    get: (p) => formatScore(p.neighbourhood_quality?.safety_score),
+  },
+  {
+    key: 'risk_flags',
+    label: 'Neighbourhood risks',
+    get: (p) => {
+      const flags = p.neighbourhood_quality?.risk_flags
+      return Array.isArray(flags) && flags.length ? flags.join(', ') : '—'
+    },
+  },
   { key: 'platform', label: 'Platform', get: (p) => formatPlatform(p.platform || p.primary_listing?.platform) },
   {
     key: 'listing_type',
