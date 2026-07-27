@@ -387,8 +387,9 @@ class TestApplyWithMocks:
     def test_apply_updates_and_skips_no_geometry(self):
         from unittest.mock import MagicMock, patch
 
-        from core.risk_overlay import apply_risk_overlays
         from shapely.geometry import box
+
+        from core.risk_overlay import apply_risk_overlays
 
         flood = parse_risk_feature_collection(FLOOD_FIXTURE)
         nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
@@ -428,11 +429,12 @@ class TestApplyWithMocks:
     def test_apply_unchanged_when_same(self):
         from unittest.mock import MagicMock, patch
 
+        from shapely.geometry import box
+
         from core.risk_overlay import (
             apply_risk_overlays,
             merge_quality_meta_risk,
         )
-        from shapely.geometry import box
 
         flood = parse_risk_feature_collection(FLOOD_FIXTURE)
         nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
@@ -491,8 +493,9 @@ class TestApplyWithMocks:
     def test_load_and_apply_happy_path(self):
         from unittest.mock import MagicMock, patch
 
-        from core.risk_overlay import load_and_apply_risk_overlays
         from shapely.geometry import box
+
+        from core.risk_overlay import load_and_apply_risk_overlays
 
         nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
         row = MagicMock()
