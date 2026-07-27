@@ -1,6 +1,6 @@
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useAlerts } from '../hooks/useAlerts.js'
-import { ensureOllama, recalculateScores, enrichMissing, fetchPipeline, fetchPipelineHistory } from '../api.js'
+import { ensureOllama, recalculateScores, enrichMissing, enrichmentRerun, fetchPipeline, fetchPipelineHistory } from '../api.js'
 import { useState, useEffect, useRef } from 'react'
 import { useToast } from '../components/ToastProvider.jsx'
 import {
@@ -42,6 +42,17 @@ export default function Dashboard({ status, loading }) {
   const [recalcResult, setRecalcResult] = useState(null)
   const [enriching, setEnriching] = useState(false)
   const [enrichResult, setEnrichResult] = useState(null)
+  const [rerunBusy, setRerunBusy] = useState(false)
+  const [rerunResult, setRerunResult] = useState(null)
+  const [rerunForm, setRerunForm] = useState({
+    mode: 'missing',
+    stages: 'all',
+    city: '',
+    platform: '',
+    limit: '',
+    active_only: true,
+    stale_before: '',
+  })
   const [ollamaLoading, setOllamaLoading] = useState(false)
   const [pipeline, setPipeline] = useState(null)
   const [throughputHistory, setThroughputHistory] = useState([])
@@ -150,6 +161,42 @@ export default function Dashboard({ status, loading }) {
       showToast('Enrich missing failed: ' + e.message, { type: 'error' })
     } finally {
       setEnriching(false)
+    }
+  }
+
+  const handleEnrichmentRerun = async (dryRun) => {
+    setRerunBusy(true)
+    setRerunResult(null)
+    try {
+      const payload = {
+        mode: rerunForm.mode,
+        stages: rerunForm.stages,
+        dry_run: dryRun,
+        active_only: rerunForm.active_only,
+        city: rerunForm.city.trim() || undefined,
+        platform: rerunForm.platform.trim() || undefined,
+        limit: rerunForm.limit === '' ? undefined : Number(rerunForm.limit),
+        stale_before: rerunForm.mode === 'stale_before' && rerunForm.stale_before
+          ? new Date(rerunForm.stale_before).toISOString()
+          : undefined,
+      }
+      const r = await enrichmentRerun(payload)
+      const n = dryRun ? r.would_queue : r.queued
+      const verb = dryRun ? 'Would queue' : 'Queued'
+      const skips = [
+        r.skipped_no_images ? `${r.skipped_no_images} no images` : null,
+        r.skipped_too_few_photos ? `${r.skipped_too_few_photos} photo gate` : null,
+        r.skipped_missing_prior_enrichment ? `${r.skipped_missing_prior_enrichment} missing prior AI` : null,
+      ].filter(Boolean)
+      const skipNote = skips.length ? ` (${skips.join(', ')})` : ''
+      const msg = `✔ ${verb} ${n}${skipNote}`
+      setRerunResult(msg)
+      showToast(`${verb} ${n} for AI enrichment`, { type: 'success' })
+    } catch (e) {
+      setRerunResult('✖ Error: ' + e.message)
+      showToast('Enrichment re-run failed: ' + e.message, { type: 'error' })
+    } finally {
+      setRerunBusy(false)
     }
   }
 
@@ -321,6 +368,130 @@ export default function Dashboard({ status, loading }) {
           )}
         </div>
       )}
+
+      {/* Selective AI enrichment (BIN-95) */}
+      <div className="card" data-testid="enrichment-rerun-panel" style={{ marginBottom: 28 }}>
+        <div className="panel-section-title">✨ AI Enrichment re-run</div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.45 }}>
+          Use <strong>Recalculate</strong> after geo/neighbourhood profile or weight changes (no VLM).
+          Use this panel after prompt/model/verdict changes — optionally force-refresh or filter by city/platform.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            Mode
+            <select
+              className="form-select"
+              data-testid="enrichment-rerun-mode"
+              value={rerunForm.mode}
+              onChange={(e) => setRerunForm((f) => ({ ...f, mode: e.target.value }))}
+            >
+              <option value="missing">Missing only</option>
+              <option value="force">Force refresh</option>
+              <option value="stale_before">Stale before…</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            Stages
+            <select
+              className="form-select"
+              data-testid="enrichment-rerun-stages"
+              value={rerunForm.stages}
+              onChange={(e) => setRerunForm((f) => ({ ...f, stages: e.target.value }))}
+            >
+              <option value="all">All (visual + sentiment + verdict)</option>
+              <option value="visual+sentiment">Visual + sentiment</option>
+              <option value="verdict_only">Verdict only</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            City
+            <input
+              className="form-input"
+              data-testid="enrichment-rerun-city"
+              value={rerunForm.city}
+              onChange={(e) => setRerunForm((f) => ({ ...f, city: e.target.value }))}
+              placeholder="e.g. Belo Horizonte"
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            Platform
+            <input
+              className="form-input"
+              data-testid="enrichment-rerun-platform"
+              value={rerunForm.platform}
+              onChange={(e) => setRerunForm((f) => ({ ...f, platform: e.target.value }))}
+              placeholder="olx / zap / …"
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            Limit
+            <input
+              className="form-input"
+              data-testid="enrichment-rerun-limit"
+              inputMode="numeric"
+              type="text"
+              value={rerunForm.limit}
+              onChange={(e) => setRerunForm((f) => ({ ...f, limit: e.target.value.replace(/\D/g, '') }))}
+              placeholder="max queue"
+            />
+          </label>
+          {rerunForm.mode === 'stale_before' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+              Stale before
+              <input
+                className="form-input"
+                data-testid="enrichment-rerun-stale-before"
+                type="datetime-local"
+                value={rerunForm.stale_before}
+                onChange={(e) => setRerunForm((f) => ({ ...f, stale_before: e.target.value }))}
+              />
+            </label>
+          )}
+        </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 14 }}>
+          <input
+            type="checkbox"
+            data-testid="enrichment-rerun-active-only"
+            checked={rerunForm.active_only}
+            onChange={(e) => setRerunForm((f) => ({ ...f, active_only: e.target.checked }))}
+          />
+          Active listings only
+        </label>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-ghost"
+            data-testid="enrichment-rerun-dry-run"
+            disabled={rerunBusy}
+            onClick={() => handleEnrichmentRerun(true)}
+          >
+            {rerunBusy ? <span className="spinner" /> : null} Dry-run
+          </button>
+          <button
+            className="btn btn-primary"
+            data-testid="enrichment-rerun-run"
+            disabled={rerunBusy}
+            onClick={() => handleEnrichmentRerun(false)}
+          >
+            {rerunBusy ? <span className="spinner" /> : null} Run enrichment
+          </button>
+        </div>
+        {rerunResult && (
+          <div
+            data-testid="enrichment-rerun-result"
+            style={{
+              marginTop: 12,
+              padding: '10px 16px',
+              borderRadius: 8,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: 13,
+              color: rerunResult.startsWith('✔') ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+            }}
+          >
+            {rerunResult}
+          </div>
+        )}
+      </div>
 
       {/* Ollama models list */}
       {status?.ollama?.status === 'ok' && (status.ollama.models || []).length > 0 && (

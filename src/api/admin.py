@@ -12,15 +12,27 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_admin_access
+from core.enrichment_rerun import (
+    MODE_MISSING,
+    MODE_STALE_BEFORE,
+    STAGES_ALL,
+    STAGES_VERDICT_ONLY,
+    EnrichmentRerunParams,
+    fetch_candidate_rows,
+    run_enrichment_rerun,
+)
 from core.entities import ScoringWeights
+from core.photo_gate import photo_gate_kwargs_from_config
 from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -235,82 +247,121 @@ def update_schedule(payload: ScheduleUpdateRequest):
 
 
 # ---------------------------------------------------------------------------
-# AI enrichment backfill
+# AI enrichment backfill / selective re-run (BIN-95)
 # ---------------------------------------------------------------------------
 
 
-@router.post("/enrichment/missing", responses=_RESP_500)
-def enrich_missing():
-    """Enqueue ``ai_enrich`` for active properties that are not yet AI-enriched.
+class EnrichmentRerunRequest(BaseModel):
+    """Body for ``POST /admin/enrichment/rerun``."""
 
-    Matches Dashboard "AI Enriched" semantics (``metrics_scoring.ai_score > 0``):
-    properties with no scoring row, or ``ai_score`` NULL/0, are candidates.
-    Only rows that pass the photo gate (BIN-78) are queued — same gate as
-    post-scrape enqueue in ``_enqueue_post_scrape_jobs``.
-    """
-    from sqlalchemy import or_
+    mode: Literal["missing", "force", "stale_before"] = MODE_MISSING
+    stages: Literal["all", "visual+sentiment", "verdict_only"] = STAGES_ALL
+    dry_run: bool = False
+    city: Optional[str] = None
+    neighbourhood_ids: Optional[list[UUID]] = None
+    platform: Optional[str] = None
+    limit: Optional[int] = Field(default=None, ge=1, le=5000)
+    active_only: bool = True
+    stale_before: Optional[datetime] = None
 
-    from adapters.db.models import MetricsScoring, Property
+    @model_validator(mode="after")
+    def _stale_before_required(self) -> EnrichmentRerunRequest:
+        if self.mode == MODE_STALE_BEFORE and self.stale_before is None:
+            raise ValueError("stale_before is required when mode=stale_before")
+        return self
+
+
+def _enqueue_ai_enrich(
+    *,
+    property_id: str,
+    image_urls: list,
+    description: str,
+    stages: str,
+) -> None:
     from adapters.queue.tasks import ai_enrich
-    from core.photo_gate import passes_photo_gate, photo_gate_kwargs_from_config
-    from infra.config import get_config
 
-    queued = 0
-    skipped_no_images = 0
-    skipped_too_few_photos = 0
+    ai_enrich.apply_async(
+        args=[property_id, image_urls, description],
+        kwargs={"stages": stages},
+        queue="ai",
+    )
+
+
+def enqueue_enrichment_rerun(
+    req: EnrichmentRerunRequest,
+    *,
+    audit_action: str = "enrichment_rerun",
+) -> dict:
+    """Select candidates and optionally enqueue ``ai_enrich`` (shared helper).
+
+    Raises ``ValueError`` for bad params and ``RuntimeError`` for unexpected
+    failures; route handlers map these to HTTP 400/500.
+    """
+    params = EnrichmentRerunParams(
+        mode=req.mode,
+        stages=req.stages,
+        dry_run=req.dry_run,
+        city=req.city,
+        neighbourhood_ids=req.neighbourhood_ids,
+        platform=req.platform,
+        limit=req.limit,
+        active_only=req.active_only,
+        stale_before=req.stale_before,
+    )
     cfg = get_config()
     gate_kwargs = photo_gate_kwargs_from_config(cfg.scraping.photo_gate, cfg.ai)
     with SessionLocal() as session:
         try:
-            query = (
-                session.query(Property)
-                .outerjoin(MetricsScoring, Property.id == MetricsScoring.property_id)
-                .filter(Property.active.is_(True))
-                .filter(
-                    or_(
-                        MetricsScoring.id.is_(None),
-                        MetricsScoring.ai_score.is_(None),
-                        MetricsScoring.ai_score == 0,
-                    )
-                )
+            rows = fetch_candidate_rows(session, params)
+            result = run_enrichment_rerun(
+                rows,
+                params,
+                gate_kwargs=gate_kwargs,
+                enqueue_fn=_enqueue_ai_enrich,
             )
-            for prop in query:
-                image_urls = prop.image_urls if isinstance(prop.image_urls, list) else []
-                if not image_urls:
-                    skipped_no_images += 1
-                    continue
-                ok, _, _, _ = passes_photo_gate(prop, **gate_kwargs)
-                if not ok:
-                    skipped_too_few_photos += 1
-                    continue
-                description = prop.description or ""
-                ai_enrich.apply_async(
-                    args=[str(prop.id), image_urls, description],
-                    queue="ai",
-                )
-                queued += 1
+        except ValueError:
+            raise
         except Exception as exc:
-            logger.error("enrich_missing_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
+            logger.error("enrichment_rerun_failed", error=str(exc), action=audit_action)
+            raise RuntimeError(str(exc)) from exc
 
-    logger.info(
-        "enrich_missing_queued",
-        queued=queued,
-        skipped_no_images=skipped_no_images,
-        skipped_too_few_photos=skipped_too_few_photos,
-    )
-    log_audit_action(
-        "enrich_missing",
-        {
-            "queued": queued,
-            "skipped_no_images": skipped_no_images,
-            "skipped_too_few_photos": skipped_too_few_photos,
-        },
-    )
+    payload = result.to_dict()
+    logger.info("enrichment_rerun_done", **{k: v for k, v in payload.items() if k != "filters"})
+    log_audit_action(audit_action, payload)
+    return payload
+
+
+@router.post("/enrichment/rerun", responses={**_RESP_400, **_RESP_500})
+def enrichment_rerun(body: EnrichmentRerunRequest):
+    """Selective AI enrichment enqueue with mode / filters / stages / dry-run."""
+    try:
+        return enqueue_enrichment_rerun(body, audit_action="enrichment_rerun")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/enrichment/missing", responses={**_RESP_400, **_RESP_500})
+def enrich_missing():
+    """Enqueue ``ai_enrich`` for active properties that are not yet AI-enriched.
+
+    Thin wrapper around ``/enrichment/rerun`` with ``mode=missing`` (BIN-54/95).
+    Response shape stays backward-compatible for the Dashboard one-click button.
+    """
+    try:
+        result = enqueue_enrichment_rerun(
+            EnrichmentRerunRequest(mode=MODE_MISSING, stages=STAGES_ALL),
+            audit_action="enrich_missing",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "queued_enrichments": queued,
-        "skipped_no_images": skipped_no_images,
-        "skipped_too_few_photos": skipped_too_few_photos,
+        "queued_enrichments": result["queued"],
+        "skipped_no_images": result["skipped_no_images"],
+        "skipped_too_few_photos": result["skipped_too_few_photos"],
     }
 
 
@@ -377,36 +428,54 @@ def enqueue_listing_claim_stats_refresh():
 
 @router.post("/verdict/recompute", responses=_RESP_500)
 def recompute_verdicts():
-    """Query properties where metrics_scoring.meta->'deal_verdict' IS NULL
-    and dispatch ai_enrich for each.
+    """Queue ``verdict_only`` AI for rows missing ``meta.deal_verdict``.
+
+    Uses the selective re-run path (no VLM) so existing visual/sentiment scores
+    are reused. Requires prior visual+sentiment meta (skipped otherwise).
     """
     from sqlalchemy import text
 
     from adapters.db.models import MetricsScoring, Property
-    from adapters.queue.tasks import ai_enrich
 
+    cfg = get_config()
+    gate_kwargs = photo_gate_kwargs_from_config(cfg.scraping.photo_gate, cfg.ai)
     count = 0
+    skipped_prior = 0
     with SessionLocal() as session:
         try:
-            # Find properties that need deal verdict recomputation
-            query = session.query(Property, MetricsScoring).join(
-                MetricsScoring, Property.id == MetricsScoring.property_id
-            ).filter(
-                text("metrics_scoring.meta->'deal_verdict' IS NULL")
+            query = (
+                session.query(Property, MetricsScoring)
+                .join(MetricsScoring, Property.id == MetricsScoring.property_id)
+                .filter(Property.active.is_(True))
+                .filter(text("metrics_scoring.meta->'deal_verdict' IS NULL"))
             )
-
-            for prop, ms in query:
-                image_urls = prop.image_urls or []
-                description = prop.description or ""
-                ai_enrich.delay(str(prop.id), image_urls, description)
-                count += 1
+            rows = query.all()
+            params = EnrichmentRerunParams(
+                mode="force",
+                stages=STAGES_VERDICT_ONLY,
+                active_only=True,
+            )
+            result = run_enrichment_rerun(
+                rows,
+                params,
+                gate_kwargs=gate_kwargs,
+                enqueue_fn=_enqueue_ai_enrich,
+            )
+            count = result.queued
+            skipped_prior = result.skipped_missing_prior_enrichment
         except Exception as exc:
             logger.error("verdict_recompute_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    logger.info("verdicts_recompute_queued", count=count)
-    log_audit_action("recompute_verdicts", {"queued": count})
-    return {"queued_recomputations": count}
+    logger.info("verdicts_recompute_queued", count=count, skipped_prior=skipped_prior)
+    log_audit_action(
+        "recompute_verdicts",
+        {"queued": count, "skipped_missing_prior_enrichment": skipped_prior, "stages": STAGES_VERDICT_ONLY},
+    )
+    return {
+        "queued_recomputations": count,
+        "skipped_missing_prior_enrichment": skipped_prior,
+    }
 
 
 @router.post("/embeddings/backfill", responses=_RESP_500)

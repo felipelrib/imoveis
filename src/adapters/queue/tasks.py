@@ -445,6 +445,133 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 # ---------------------------------------------------------------------------
 
 
+def _enriched_at_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _neighbourhood_verdict_context(session, property_id: str):
+    """Return ``(neighborhood_name, neighbourhood_quality)`` for deal verdict."""
+    from sqlalchemy import text
+
+    from adapters.db.models import Property as _Prop
+    from core.neighbourhood_quality import quality_profile_fields
+
+    neighborhood_name = "Unknown"
+    neighbourhood_quality = None
+    _prop = session.get(_Prop, property_id)
+    if _prop is None:
+        return neighborhood_name, neighbourhood_quality
+
+    if _prop.neighborhood_id:
+        nb = session.execute(
+            text(
+                "SELECT name, amenity_score, transit_score, "
+                "access_score, safety_score, risk_flags, "
+                "quality_meta, quality_notes "
+                "FROM neighborhoods WHERE id = :nid"
+            ),
+            {"nid": _prop.neighborhood_id},
+        ).mappings().fetchone()
+        if nb:
+            neighborhood_name = nb["name"]
+            profile = quality_profile_fields(
+                {
+                    "id": _prop.neighborhood_id,
+                    "amenity_score": nb["amenity_score"],
+                    "transit_score": nb["transit_score"],
+                    "access_score": nb["access_score"],
+                    "safety_score": nb["safety_score"],
+                    "risk_flags": nb["risk_flags"],
+                    "quality_meta": nb["quality_meta"],
+                    "quality_notes": nb["quality_notes"],
+                }
+            )
+            profile.pop("id", None)
+            neighbourhood_quality = profile
+
+    if neighborhood_name == "Unknown" and _prop.props_json:
+        neighborhood_name = _prop.props_json.get("neighborhood", "Unknown")
+    return neighborhood_name, neighbourhood_quality
+
+
+async def _write_deal_verdict(client, session, property_id: str, meta: dict) -> dict:
+    """Persist ``meta.deal_verdict`` from existing visual/sentiment (+ nhood)."""
+    from adapters.db.models import MetricsScoring
+
+    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+    if ms is None:
+        return meta
+
+    updated_meta = dict(ms.meta or {})
+    updated_meta.update(meta)
+    neighborhood_name, neighbourhood_quality = _neighbourhood_verdict_context(
+        session, property_id
+    )
+    verdict_res = await client.summarize_deal(
+        stat_analysis=updated_meta.get("stat_analysis", {}),
+        visual=updated_meta.get("visual", {}),
+        sentiment=updated_meta.get("sentiment", {}),
+        neighborhood_name=neighborhood_name,
+        neighbourhood_quality=neighbourhood_quality,
+    )
+    updated_meta["deal_verdict"] = {
+        "verdict": verdict_res.verdict,
+        "confidence": verdict_res.confidence,
+    }
+    updated_meta["enriched_at"] = _enriched_at_now()
+    ms.meta = updated_meta
+    session.flush()
+    return updated_meta
+
+
+def _persist_ai_scores(session, property_id: str, a_score: float, meta: dict, cfg) -> None:
+    """Create/update MetricsScoring ai_score + meta, then refresh geo/stat."""
+    from adapters.db.models import MetricsScoring
+    from adapters.db.models import Property as _PropTmp
+    from adapters.metrics.scoring import (
+        _neighbourhood_score_for_property,
+        blend_combined_score,
+    )
+    from core.entities import ScoringWeights
+
+    weights = ScoringWeights(
+        stat_weight=getattr(getattr(cfg, "scoring", None), "stat_weight", 0.4),
+        ai_weight=getattr(getattr(cfg, "scoring", None), "ai_weight", 0.4),
+        neighbourhood_weight=getattr(
+            getattr(cfg, "scoring", None), "neighbourhood_weight", 0.2
+        ),
+    )
+    meta = dict(meta)
+    meta["enriched_at"] = _enriched_at_now()
+
+    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+    if ms is None:
+        ms = MetricsScoring(
+            property_id=property_id,
+            stat_score=0.0,
+            ai_score=a_score,
+            combined_score=a_score * weights.ai_weight,
+            meta=meta,
+        )
+        session.add(ms)
+    else:
+        ms.ai_score = a_score
+        ms.meta = meta
+        _tmp = session.get(_PropTmp, property_id)
+        nhood = (
+            _neighbourhood_score_for_property(session, _tmp)
+            if _tmp is not None
+            else 0.5
+        )
+        stat = float(ms.stat_score or 0.0)
+        ms.combined_score = blend_combined_score(stat, a_score, nhood, weights)
+    session.flush()
+    assign_property_neighbourhood(session, property_id)
+    score_single_property(session, property_id)
+
+
 @celery.task(
     name="tasks.ai_enrich",
     bind=True,
@@ -455,6 +582,7 @@ def ai_enrich(
     property_id: str,
     image_urls: List[str],
     description: str,
+    stages: str = "all",
 ):
     """Download images, run VLM visual + sentiment analysis, persist scores.
 
@@ -462,11 +590,21 @@ def ai_enrich(
         property_id: UUID of the property to enrich.
         image_urls: List of remote image URLs from the listing.
         description: Property description text for sentiment analysis.
+        stages: ``all`` | ``visual+sentiment`` | ``verdict_only`` (BIN-95).
     """
+    from core.enrichment_rerun import (
+        STAGES,
+        STAGES_ALL,
+        STAGES_VERDICT_ONLY,
+        STAGES_VISUAL_SENTIMENT,
+    )
+
+    if stages not in STAGES:
+        stages = STAGES_ALL
+
     r = get_redis()
     cfg = get_config()
 
-    # Respect admin pause flag
     if r.exists(REDIS_KEY_AI_PAUSED):
         logger.info("ai_enrich_paused", property_id=property_id)
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
@@ -478,25 +616,37 @@ def ai_enrich(
         raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
 
     start_time = time.time()
-    client = None
     try:
         image_store = ImageStore()
         client = create_ai_client()
 
+        async def _run_verdict_only():
+            async with client.session_context():
+                from adapters.db.models import MetricsScoring
+
+                session = SessionLocal()
+                try:
+                    ms = (
+                        session.query(MetricsScoring)
+                        .filter_by(property_id=property_id)
+                        .one_or_none()
+                    )
+                    meta = dict(ms.meta or {}) if ms is not None else {}
+                    await _write_deal_verdict(client, session, property_id, meta)
+                    session.commit()
+                finally:
+                    session.close()
+                return meta.get("visual", {}), meta.get("sentiment", {})
+
         async def _run_enrichment():
             async with client.session_context():
-                # --- Image pipeline ------------------------------------------------
                 paths: List[str] = await image_store.download_images(
                     property_id, image_urls, max_images=cfg.ai.max_images_per_property
                 )
-
-                # --- Build prompts -------------------------------------------------
                 visual_prompt = build_visual_condition_prompt(len(paths))
-                sentiment_prompt = build_sentiment_prompt(description, max_chars=cfg.ai.max_description_chars)
-
-                # --- AI inference (serial) ---
-                # One GPU request at a time so a single semaphore slot never opens
-                # two Ollama KV caches (VRAM→system-RAM spill on ~20GB cards).
+                sentiment_prompt = build_sentiment_prompt(
+                    description, max_chars=cfg.ai.max_description_chars
+                )
                 v_res, s_res = await analyze_visual_and_sentiment(
                     client,
                     paths,
@@ -504,18 +654,19 @@ def ai_enrich(
                     visual_prompt,
                     sentiment_prompt,
                 )
-
-                # Weighted blend: visual condition + listing ad-claims (config weights)
                 a_score = (
                     v_res.condition_score * cfg.ai.visual_weight
                     + s_res.sentiment_score * cfg.ai.text_weight
                 )
-
-                # --- Persist -------------------------------------------------------
-                from adapters.db.models import MetricsScoring  # local import avoids circular
                 session = SessionLocal()
                 try:
-                    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+                    from adapters.db.models import MetricsScoring
+
+                    ms = (
+                        session.query(MetricsScoring)
+                        .filter_by(property_id=property_id)
+                        .one_or_none()
+                    )
                     meta = dict(ms.meta or {}) if ms is not None else {}
                     meta.update(
                         {
@@ -523,109 +674,10 @@ def ai_enrich(
                             "sentiment": s_res.model_dump(),
                         }
                     )
+                    _persist_ai_scores(session, property_id, a_score, meta, cfg)
 
-                    from adapters.metrics.scoring import (
-                        _neighbourhood_score_for_property,
-                        blend_combined_score,
-                    )
-                    from core.entities import ScoringWeights
-
-                    weights = ScoringWeights(
-                        stat_weight=getattr(getattr(cfg, "scoring", None), "stat_weight", 0.4),
-                        ai_weight=getattr(getattr(cfg, "scoring", None), "ai_weight", 0.4),
-                        neighbourhood_weight=getattr(
-                            getattr(cfg, "scoring", None), "neighbourhood_weight", 0.2
-                        ),
-                    )
-
-                    if ms is None:
-                        ms = MetricsScoring(
-                            property_id=property_id,
-                            stat_score=0.0,
-                            ai_score=a_score,
-                            combined_score=a_score * weights.ai_weight,
-                            meta=meta,
-                        )
-                        session.add(ms)
-                    else:
-                        ms.ai_score = a_score
-                        ms.meta = meta
-                        # Recompute combined using existing stat_score + nhood
-                        from adapters.db.models import Property as _PropTmp
-                        _tmp = session.get(_PropTmp, property_id)
-                        nhood = (
-                            _neighbourhood_score_for_property(session, _tmp)
-                            if _tmp is not None
-                            else 0.5
-                        )
-                        stat = float(ms.stat_score or 0.0)
-                        ms.combined_score = blend_combined_score(
-                            stat, a_score, nhood, weights
-                        )
-                    session.flush()
-
-                    # AD-10 geo stage: refresh spatial neighbourhood before scoring
-                    assign_property_neighbourhood(session, property_id)
-
-                    # Recompute neighbourhood-relative stat_score for this property
-                    score_single_property(session, property_id)
-
-                    # --- Deal verdict synthesis ---
-                    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
-                    updated_meta = dict(ms.meta or {}) if ms is not None else {}
-                    stat_analysis = updated_meta.get("stat_analysis", {})
-                    neighborhood_name = "Unknown"
-                    neighbourhood_quality = None
-                    from adapters.db.models import Property as _Prop
-                    from core.neighbourhood_quality import quality_profile_fields
-                    _prop = session.get(_Prop, property_id)
-                    if _prop is not None:
-                        if _prop.neighborhood_id:
-                            from sqlalchemy import text
-                            nb = session.execute(
-                                text(
-                                    "SELECT name, amenity_score, transit_score, "
-                                    "access_score, safety_score, risk_flags, "
-                                    "quality_meta, quality_notes "
-                                    "FROM neighborhoods WHERE id = :nid"
-                                ),
-                                {"nid": _prop.neighborhood_id},
-                            ).mappings().fetchone()
-                            if nb:
-                                neighborhood_name = nb["name"]
-                                profile = quality_profile_fields(
-                                    {
-                                        "id": _prop.neighborhood_id,
-                                        "amenity_score": nb["amenity_score"],
-                                        "transit_score": nb["transit_score"],
-                                        "access_score": nb["access_score"],
-                                        "safety_score": nb["safety_score"],
-                                        "risk_flags": nb["risk_flags"],
-                                        "quality_meta": nb["quality_meta"],
-                                        "quality_notes": nb["quality_notes"],
-                                    }
-                                )
-                                profile.pop("id", None)
-                                neighbourhood_quality = profile
-
-                        if neighborhood_name == "Unknown" and _prop.props_json:
-                            neighborhood_name = _prop.props_json.get("neighborhood", "Unknown")
-
-                    verdict_res = await client.summarize_deal(
-                        stat_analysis=stat_analysis,
-                        visual=meta.get("visual", {}),
-                        sentiment=meta.get("sentiment", {}),
-                        neighborhood_name=neighborhood_name,
-                        neighbourhood_quality=neighbourhood_quality,
-                    )
-                    if ms is not None:
-                        updated_meta = dict(ms.meta or {})
-                        updated_meta["deal_verdict"] = {
-                            "verdict": verdict_res.verdict,
-                            "confidence": verdict_res.confidence,
-                        }
-                        ms.meta = updated_meta
-                        session.flush()
+                    if stages == STAGES_ALL:
+                        await _write_deal_verdict(client, session, property_id, meta)
 
                     session.commit()
                 finally:
@@ -633,7 +685,26 @@ def ai_enrich(
 
                 return a_score, v_res, s_res, paths
 
-        ai_score, visual_result, sentiment_result, local_paths = asyncio.run(_run_enrichment())
+        if stages == STAGES_VERDICT_ONLY:
+            visual_meta, sentiment_meta = asyncio.run(_run_verdict_only())
+            duration = time.time() - start_time
+            logger.info(
+                "ai_enrich_completed",
+                property_id=property_id,
+                stages=stages,
+                duration_sec=round(duration, 2),
+            )
+            return {
+                "status": "completed",
+                "stages": stages,
+                "duration": duration,
+                "visual": visual_meta,
+                "sentiment": sentiment_meta,
+            }
+
+        ai_score, visual_result, sentiment_result, local_paths = asyncio.run(
+            _run_enrichment()
+        )
 
         duration = time.time() - start_time
         with r.pipeline() as pipe:
@@ -644,22 +715,30 @@ def ai_enrich(
                         "property_id": property_id,
                         "duration": duration,
                         "timestamp": time.time(),
+                        "stages": stages,
                     }
                 ),
             )
-            pipe.ltrim("pipeline:ai:telemetry", 0, 999)  # Keep last 1000
+            pipe.ltrim("pipeline:ai:telemetry", 0, 999)
             pipe.execute()
 
         logger.info(
             "ai_enrich_completed",
             property_id=property_id,
+            stages=stages,
             ai_score=round(ai_score, 4),
             condition_score=visual_result.condition_score,
             sentiment_score=sentiment_result.sentiment_score,
             images_processed=len(local_paths),
             duration_sec=round(duration, 2),
+            skipped_verdict=stages == STAGES_VISUAL_SENTIMENT,
         )
-        return {"status": "completed", "ai_score": ai_score, "duration": duration}
+        return {
+            "status": "completed",
+            "ai_score": ai_score,
+            "duration": duration,
+            "stages": stages,
+        }
 
     except Exception as exc:
         logger.error("ai_enrich_error", property_id=property_id, error=str(exc))

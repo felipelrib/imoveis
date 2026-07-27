@@ -50,6 +50,8 @@ with neither credential receive 401.
 - `POST /admin/enrichment/missing` — enqueue `ai_enrich` for active properties that are
   not yet enriched (`ai_score` missing/0), with at least one image URL. Dashboard Quick
   Action: **Enrich Missing**. See `docs/features/54-enrich-missing.md`.
+  Selective re-run (force / filters / stages / dry-run): Dashboard **AI Enrichment re-run**
+  panel → `POST /admin/enrichment/rerun`. See `docs/features/76-selective-ai-enrichment-rerun.md`.
 
 ### Schedule Management
 

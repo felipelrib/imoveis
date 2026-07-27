@@ -288,6 +288,33 @@ export async function enrichMissing() {
   return apiFetch('/admin/enrichment/missing', { method: 'POST' })
 }
 
+/**
+ * Selective AI enrichment re-run (BIN-95).
+ * @param {object} opts
+ * @param {'missing'|'force'|'stale_before'} [opts.mode]
+ * @param {'all'|'visual+sentiment'|'verdict_only'} [opts.stages]
+ * @param {boolean} [opts.dry_run]
+ * @param {string} [opts.city]
+ * @param {string} [opts.platform]
+ * @param {number} [opts.limit]
+ * @param {boolean} [opts.active_only]
+ * @param {string} [opts.stale_before] ISO datetime
+ * @param {string[]} [opts.neighbourhood_ids]
+ */
+export async function enrichmentRerun(opts = {}) {
+  const body = { ...opts }
+  if (body.limit === '' || body.limit == null) delete body.limit
+  else body.limit = Number(body.limit)
+  if (!body.city) delete body.city
+  if (!body.platform) delete body.platform
+  if (!body.stale_before) delete body.stale_before
+  if (!body.neighbourhood_ids?.length) delete body.neighbourhood_ids
+  return apiFetch('/admin/enrichment/rerun', {
+    method: 'POST',
+    body,
+  })
+}
+
 export async function scaleGPU(limit) {
   return apiFetch('/admin/gpu/scale', {
     method: 'POST',
