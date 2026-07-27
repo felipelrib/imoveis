@@ -18,21 +18,23 @@ On an AMD RX 7900 XT (20 GB VRAM), AI enrichment was spilling model KV cache i
 Files touched:
 
 ```
- configs/app_config.yaml                      | gpu.semaphore_limit: 2 + comment
- docker-compose.yml                           | worker_ai --concurrency=2
- src/infra/config.py                          | GPUConfig.semaphore_limit default 2
- src/adapters/ai/enrich_pipeline.py               | NEW — serial visual→text helper
- src/adapters/queue/tasks.py                      | use enrich_pipeline; GPUSemaphore(max_concurrent=cfg…)
- src/api/admin.py                             | GPU scale uses config default limit
- src/tests/unit/test_ai_enrich_serial.py      | NEW — peak in-flight generates == 1
- src/tests/unit/test_config.py                | empty-YAML default semaphore 2
- scripts/agent/validate-ai.sh                     | prefer .venv python; PYTHONPATH
- src/tests/unit/test_ai_quality.py                | fix stale CONDITION_ANALYSIS_PROMPT; ±0.20 tolerance
- docs/setup.md                                    | Ollama Windows env + AI worker guidance
- docs/architecture.md                             | ai queue concurrency note
- docs/features/66-ai-enrich-ram-concurrency.md    | NEW — this doc
- mkdocs.yml                                       | nav link
- .gitignore                                       | data/bench/```
+ configs/app_config.yaml                       | gpu.semaphore_limit: 2 + comment
+ docker-compose.yml                            | worker_ai --concurrency=2
+ src/infra/config.py                           | GPUConfig.semaphore_limit default 2
+ src/adapters/ai/enrich_pipeline.py            | NEW — serial visual→text helper
+ src/adapters/queue/tasks.py                   | use enrich_pipeline; GPUSemaphore(max_concurrent=cfg…)
+ src/api/admin.py                              | GPU scale uses config default limit
+ src/tests/unit/test_ai_enrich_serial.py       | NEW — peak in-flight generates == 1
+ src/tests/unit/test_config.py                 | empty-YAML default semaphore 2
+ scripts/dev/bench_ollama_vram.py              | NEW — A/B/C/D VRAM matrix on real properties
+ scripts/agent/validate-ai.sh                  | prefer .venv python; PYTHONPATH
+ src/tests/unit/test_ai_quality.py             | fix stale CONDITION_ANALYSIS_PROMPT; ±0.20 tolerance
+ docs/setup.md                                 | Ollama Windows env + AI worker guidance
+ docs/architecture.md                          | ai queue concurrency note
+ docs/features/66-ai-enrich-ram-concurrency.md | NEW — this doc
+ mkdocs.yml                                    | nav link
+ .gitignore                                    | data/bench/
+```
 
 ## New Dependencies
 
