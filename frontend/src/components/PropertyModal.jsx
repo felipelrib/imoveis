@@ -128,12 +128,13 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   <button
                     className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
+                    data-testid="modal-watchlist-toggle"
                     onClick={toggleWatchlist}
-                    title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
-                    aria-label={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                    title={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
+                    aria-label={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
                     style={{ fontSize: 18, padding: '6px 10px', background: 'none', border: 'none' }}
                   >
-                    {isWatched ? '🔔' : '☆'}
+                    {isWatched ? '🔔' : '📉'}
                   </button>
                 </div>
               </>

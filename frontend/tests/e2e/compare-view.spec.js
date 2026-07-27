@@ -11,6 +11,19 @@ import {
   mockPriceHistoryByIds,
 } from "./helpers/apiMocks.js";
 
+async function enterCompareMode(page) {
+  await page.getByTestId("compare-mode-toggle").click();
+  await expect(page.getByTestId("compare-mode-toggle")).toHaveAttribute("aria-pressed", "true");
+}
+
+async function selectAndOpenCompare(page, ids) {
+  await enterCompareMode(page);
+  for (const id of ids) {
+    await page.getByTestId(`compare-select-${id}`).click();
+  }
+  await page.getByTestId("compare-open").click();
+}
+
 test.describe("Side-by-side compare view", () => {
   test.beforeEach(async ({ page }) => {
     await installCommonMocks(page);
@@ -31,9 +44,7 @@ test.describe("Side-by-side compare view", () => {
   });
 
   test("opens compare with attribute columns, scores, price/m², and history", async ({ page }) => {
-    await page.getByTestId("compare-select-1").click();
-    await page.getByTestId("compare-select-2").click();
-    await page.getByTestId("compare-open").click();
+    await selectAndOpenCompare(page, ["1", "2"]);
 
     await expect(page.getByTestId("compare-view")).toBeVisible();
     await expect(page.getByTestId("compare-table")).toBeVisible();
@@ -47,10 +58,22 @@ test.describe("Side-by-side compare view", () => {
     await expect(page.getByTestId("compare-history-2")).toBeVisible();
   });
 
-  test("Back to grid keeps selection; Clear & exit clears it", async ({ page }) => {
-    await page.getByTestId("compare-select-1").click();
-    await page.getByTestId("compare-select-2").click();
-    await page.getByTestId("compare-open").click();
+  test("compare view panel is opaque (does not show grid through it)", async ({ page }) => {
+    await selectAndOpenCompare(page, ["1", "2"]);
+    await expect(page.getByTestId("compare-view")).toBeVisible();
+
+    const bg = await page.getByTestId("compare-view").evaluate((el) => getComputedStyle(el).backgroundColor);
+    const m = String(bg).match(/rgba?\(([^)]+)\)/i);
+    let alpha = 1;
+    if (m) {
+      const parts = m[1].split(",").map((s) => s.trim());
+      alpha = parts.length === 4 ? Number.parseFloat(parts[3]) : 1;
+    }
+    expect(alpha).toBeGreaterThanOrEqual(0.95);
+  });
+
+  test("Back to grid keeps selection; Clear & exit clears it and leaves compare mode", async ({ page }) => {
+    await selectAndOpenCompare(page, ["1", "2"]);
     await expect(page.getByTestId("compare-view")).toBeVisible();
 
     await page.getByTestId("compare-exit").click();
@@ -63,14 +86,13 @@ test.describe("Side-by-side compare view", () => {
     await page.getByTestId("compare-exit-clear").click();
     await expect(page.getByTestId("compare-view")).toHaveCount(0);
     await expect(page.getByTestId("compare-bar")).toHaveCount(0);
-    await expect(page.getByTestId("compare-select-1")).not.toBeChecked();
+    await expect(page.getByTestId("compare-select-1")).toHaveCount(0);
+    await expect(page.getByTestId("compare-mode-toggle")).toHaveAttribute("aria-pressed", "false");
   });
 
   test("missing price history degrades to placeholder", async ({ page }) => {
     await mockPriceHistoryByIds(page, { "1": [], "3": [] });
-    await page.getByTestId("compare-select-1").click();
-    await page.getByTestId("compare-select-3").click();
-    await page.getByTestId("compare-open").click();
+    await selectAndOpenCompare(page, ["1", "3"]);
 
     await expect(page.getByTestId("compare-view")).toBeVisible();
     await expect(page.getByTestId("compare-history-empty-1")).toHaveText("No price history");
