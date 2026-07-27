@@ -87,7 +87,8 @@ def mode_is_missing_ai(metrics: Any) -> bool:
     if metrics is None:
         return True
     score = getattr(metrics, "ai_score", None)
-    return score is None or score == 0 or score == 0.0
+    # Falsy covers None and 0 / 0.0 without float equality (Sonar S1244).
+    return not score
 
 
 def _parse_enriched_at(meta: Any) -> Optional[datetime]:
@@ -118,18 +119,22 @@ def mode_matches_row(
     if mode == MODE_MISSING:
         return mode_is_missing_ai(metrics)
     if mode == MODE_STALE_BEFORE:
-        if stale_before is None:
-            raise ValueError("stale_before is required when mode=stale_before")
-        cutoff = stale_before
-        if cutoff.tzinfo is None:
-            cutoff = cutoff.replace(tzinfo=timezone.utc)
-        if metrics is None:
-            return True
-        enriched_at = _parse_enriched_at(getattr(metrics, "meta", None))
-        if enriched_at is None:
-            return True
-        return enriched_at < cutoff
+        return _stale_before_matches(metrics, stale_before)
     raise ValueError(f"unknown mode: {mode}")
+
+
+def _stale_before_matches(metrics: Any, stale_before: Optional[datetime]) -> bool:
+    if stale_before is None:
+        raise ValueError("stale_before is required when mode=stale_before")
+    cutoff = stale_before
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    if metrics is None:
+        return True
+    enriched_at = _parse_enriched_at(getattr(metrics, "meta", None))
+    if enriched_at is None:
+        return True
+    return enriched_at < cutoff
 
 
 def evaluate_candidate(
@@ -162,6 +167,41 @@ def evaluate_candidate(
 
 
 EnqueueFn = Callable[..., None]
+
+
+def _record_skip(result: EnrichmentRerunResult, action: str) -> bool:
+    """Accumulate skip counters. Return True when the row was skipped."""
+    if action == "skip_images":
+        result.skipped_no_images += 1
+        return True
+    if action == "skip_photos":
+        result.skipped_too_few_photos += 1
+        return True
+    if action == "skip_prior":
+        result.skipped_missing_prior_enrichment += 1
+        return True
+    return False
+
+
+def _queue_or_count(
+    prop: Any,
+    params: EnrichmentRerunParams,
+    *,
+    enqueue_fn: EnqueueFn,
+    result: EnrichmentRerunResult,
+) -> None:
+    result.would_queue += 1
+    if params.dry_run:
+        return
+    image_urls = prop.image_urls if isinstance(getattr(prop, "image_urls", None), list) else []
+    description = getattr(prop, "description", None) or ""
+    enqueue_fn(
+        property_id=str(prop.id),
+        image_urls=image_urls,
+        description=description,
+        stages=params.stages,
+    )
+    result.queued += 1
 
 
 def run_enrichment_rerun(
@@ -199,29 +239,9 @@ def run_enrichment_rerun(
             break
 
         action, _ = evaluate_candidate(prop, metrics, params.stages, gate_kwargs)
-        if action == "skip_images":
-            result.skipped_no_images += 1
+        if _record_skip(result, action):
             continue
-        if action == "skip_photos":
-            result.skipped_too_few_photos += 1
-            continue
-        if action == "skip_prior":
-            result.skipped_missing_prior_enrichment += 1
-            continue
-
-        result.would_queue += 1
-        if params.dry_run:
-            continue
-
-        image_urls = prop.image_urls if isinstance(getattr(prop, "image_urls", None), list) else []
-        description = getattr(prop, "description", None) or ""
-        enqueue_fn(
-            property_id=str(prop.id),
-            image_urls=image_urls,
-            description=description,
-            stages=params.stages,
-        )
-        result.queued += 1
+        _queue_or_count(prop, params, enqueue_fn=enqueue_fn, result=result)
 
     return result
 

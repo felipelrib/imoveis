@@ -292,7 +292,11 @@ def enqueue_enrichment_rerun(
     *,
     audit_action: str = "enrichment_rerun",
 ) -> dict:
-    """Select candidates and optionally enqueue ``ai_enrich`` (shared helper)."""
+    """Select candidates and optionally enqueue ``ai_enrich`` (shared helper).
+
+    Raises ``ValueError`` for bad params and ``RuntimeError`` for unexpected
+    failures; route handlers map these to HTTP 400/500.
+    """
     params = EnrichmentRerunParams(
         mode=req.mode,
         stages=req.stages,
@@ -315,11 +319,11 @@ def enqueue_enrichment_rerun(
                 gate_kwargs=gate_kwargs,
                 enqueue_fn=_enqueue_ai_enrich,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError:
+            raise
         except Exception as exc:
             logger.error("enrichment_rerun_failed", error=str(exc), action=audit_action)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise RuntimeError(str(exc)) from exc
 
     payload = result.to_dict()
     logger.info("enrichment_rerun_done", **{k: v for k, v in payload.items() if k != "filters"})
@@ -330,20 +334,30 @@ def enqueue_enrichment_rerun(
 @router.post("/enrichment/rerun", responses={**_RESP_400, **_RESP_500})
 def enrichment_rerun(body: EnrichmentRerunRequest):
     """Selective AI enrichment enqueue with mode / filters / stages / dry-run."""
-    return enqueue_enrichment_rerun(body, audit_action="enrichment_rerun")
+    try:
+        return enqueue_enrichment_rerun(body, audit_action="enrichment_rerun")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/enrichment/missing", responses=_RESP_500)
+@router.post("/enrichment/missing", responses={**_RESP_400, **_RESP_500})
 def enrich_missing():
     """Enqueue ``ai_enrich`` for active properties that are not yet AI-enriched.
 
     Thin wrapper around ``/enrichment/rerun`` with ``mode=missing`` (BIN-54/95).
     Response shape stays backward-compatible for the Dashboard one-click button.
     """
-    result = enqueue_enrichment_rerun(
-        EnrichmentRerunRequest(mode=MODE_MISSING, stages=STAGES_ALL),
-        audit_action="enrich_missing",
-    )
+    try:
+        result = enqueue_enrichment_rerun(
+            EnrichmentRerunRequest(mode=MODE_MISSING, stages=STAGES_ALL),
+            audit_action="enrich_missing",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
         "queued_enrichments": result["queued"],
         "skipped_no_images": result["skipped_no_images"],
