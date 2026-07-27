@@ -46,7 +46,7 @@ Files touched:
  src/tests/unit/test_safety_overlay.py                         | NEW — parse / score / meta / skip / idempotent
  src/tests/integration/test_safety_overlays.py                 | NEW — DB scores + meta + missing file
  .gitignore                                                    | ADD data/safety/
- docs/features/71-crime-safety-open-data.md                    | NEW — this doc
+ docs/features/72-crime-safety-open-data.md                    | NEW — this doc
  _bmad-output/implementation-artifacts/sprint-status.yaml      | 6-7 → done
 ```
 

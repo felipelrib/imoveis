@@ -375,12 +375,28 @@ class NeighbourhoodTransitConfig(BaseModel, frozen=True):
     )
 
 
+class ListingClaimStatsConfig(BaseModel, frozen=True):
+    """Aggregate listing LLM green/red flags by neighbourhood (BIN-93).
+
+    Weak secondary signal only — never overwrites amenity/safety scores.
+    Default ``enabled=false`` so beat does not run until an operator opts in.
+    """
+
+    enabled: bool = False
+    top_n: int = 10
+    interval_hours: float = 24.0
+    min_sample_size: int = 1
+
+
 class NeighbourhoodQualityConfig(BaseModel, frozen=True):
     """Objective neighbourhood quality fill-job settings (BIN-86+)."""
 
     osm_amenities: OsmAmenitiesConfig = Field(default_factory=OsmAmenitiesConfig)
     transit: NeighbourhoodTransitConfig = Field(
         default_factory=NeighbourhoodTransitConfig
+    )
+    listing_claim_stats: ListingClaimStatsConfig = Field(
+        default_factory=ListingClaimStatsConfig
     )
 
 

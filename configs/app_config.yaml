@@ -302,6 +302,12 @@ neighbourhood_quality:
       park: 1
       school: 1
       healthcare: 2
+  # Weak secondary signal from listing LLM flags (BIN-93). Never ground truth.
+  listing_claim_stats:
+    enabled: false              # set true to schedule Celery beat refresh
+    top_n: 10                   # top green/red flag frequencies per nhood
+    interval_hours: 24
+    min_sample_size: 1          # skip nhoods below this many sentiment rows
 
 # ---------------------------------------------------------------------------
 # Neighbourhood access / travel-time to downtown hubs (BIN-90)
