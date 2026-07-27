@@ -19,7 +19,7 @@ Property detail (modal), favourites view, and side-by-side compare lived only in
 Files touched:
 
 ```
- alembic/versions/d1e2f3a4b5c6_add_property_public_id.py | NEW — public_id column + backfill
+ alembic/versions/e2f3a4b5c6d7_add_property_public_id.py | NEW — public_id column + backfill
  src/adapters/db/models.py                              | Property.public_id
  src/api/property_projection.py                         | expose public_id in list/detail
  src/api/schemas.py                                     | PropertyModel / Detail public_id

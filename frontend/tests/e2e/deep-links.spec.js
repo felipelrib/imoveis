@@ -86,6 +86,8 @@ test.describe("Shareable deep links (BIN-82)", () => {
     });
 
     await page.goto("/properties");
+    await page.getByTestId("compare-mode-toggle").click();
+    await expect(page.getByTestId("compare-mode-toggle")).toHaveAttribute("aria-pressed", "true");
     await page.getByTestId("compare-select-1").click();
     await page.getByTestId("compare-select-2").click();
     await page.getByTestId("compare-open").click();
