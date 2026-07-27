@@ -12,7 +12,8 @@
 #   stacks also use `down --rmi local` to drop Compose-built images.
 #
 # Always runs docker-cleanup.sh afterward (stopped containers + dangling
-# images + build cache; never named volumes).
+# images + unused feat/wt tagged images + build cache; never named volumes).
+# Primary imoveis-* images and third-party bases are kept.
 #
 # With --remove, also removes a linked git worktree and its registry entry.
 # Run from INSIDE the worktree (or any checkout with .env.local).

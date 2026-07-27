@@ -51,3 +51,5 @@ Manual:
 
 - Local Cursor rules/skills (`.cursor/`, gitignored) also encode this wrap-up step.
 - Nuclear image wipe remains interactive via `./scripts/clean.sh --all` only.
+- **Follow-up (feature 62):** also prune unused *tagged* feature/worktree Compose images
+  (`feat-*`, `imoveis-wt-*`, …) while keeping the primary `imoveis-*` stack and base images.
