@@ -108,7 +108,7 @@ class GPUConfig(BaseModel, frozen=True):
     """GPU resource management."""
 
     enabled: bool = True
-    semaphore_limit: int = 1
+    semaphore_limit: int = 2
 
 
 class AIConfig(BaseModel, frozen=True):

@@ -99,7 +99,8 @@ class GPUScaleRequest(BaseModel):
 
 @router.post("/gpu/scale")
 def set_gpu_limit(payload: GPUScaleRequest):
-    sem = GPUSemaphore()
+    cfg = get_config()
+    sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
     sem.scale(payload.limit)
     logger.info("gpu_limit_scaled", new_limit=payload.limit)
     log_audit_action("gpu_scale", {"limit": payload.limit})

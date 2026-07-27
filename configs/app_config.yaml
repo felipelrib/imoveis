@@ -202,7 +202,9 @@ ai:
 # GPU Resource Management
 # ---------------------------------------------------------------------------
 gpu:
-  semaphore_limit: 1    # max concurrent GPU-bound tasks
+  # Safe on RX 7900 XT 20GB with OLLAMA_NUM_PARALLEL=2, num_ctx=16384, 8 images
+  # (bench case D ~7GB VRAM, 0 spill). Keep NUM_PARALLEL == this limit.
+  semaphore_limit: 2    # max concurrent GPU-bound tasks
   semaphore_name: gpu
 
 # ---------------------------------------------------------------------------
