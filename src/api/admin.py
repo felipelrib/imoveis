@@ -352,6 +352,25 @@ def enqueue_neighbourhood_access_refresh():
     return {"queued": True, "task_id": async_result.id}
 
 
+@router.post("/neighbourhoods/listing-claims/refresh", responses=_RESP_500)
+def enqueue_listing_claim_stats_refresh():
+    """Enqueue listing LLM flag aggregation by neighbourhood (BIN-93)."""
+    from adapters.queue.tasks import refresh_listing_claim_stats_task
+
+    cfg = get_config().neighbourhood_quality.listing_claim_stats
+    if cfg.enabled is not True:
+        raise HTTPException(
+            status_code=400, detail="listing_claim_stats is disabled"
+        )
+
+    async_result = refresh_listing_claim_stats_task.apply_async(queue="scrapers")
+    log_audit_action(
+        "listing_claim_stats_refresh",
+        {"task_id": async_result.id},
+    )
+    return {"queued": True, "task_id": async_result.id}
+
+
 # ---------------------------------------------------------------------------
 # Deal Verdict Recomputation
 # ---------------------------------------------------------------------------

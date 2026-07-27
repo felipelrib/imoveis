@@ -151,6 +151,25 @@ def build_beat_schedule() -> dict:
                 "schedule": access_interval * 60,
             }
 
+    # Listing LLM flag aggregates by neighbourhood (BIN-93). Explicit ``is True``.
+    listing_claim_cfg = None
+    try:
+        nq = getattr(cfg, "neighbourhood_quality", None) if cfg is not None else None
+        listing_claim_cfg = (
+            getattr(nq, "listing_claim_stats", None) if nq is not None else None
+        )
+    except Exception:
+        listing_claim_cfg = None
+    if listing_claim_cfg is not None and getattr(
+        listing_claim_cfg, "enabled", False
+    ) is True:
+        claim_interval = float(getattr(listing_claim_cfg, "interval_hours", 24) or 0)
+        if claim_interval > 0:
+            schedule["refresh-listing-claim-stats"] = {
+                "task": "tasks.refresh_listing_claim_stats",
+                "schedule": claim_interval * 3600,
+            }
+
     return schedule
 
 
@@ -195,6 +214,7 @@ def make_celery() -> Celery:
         'tasks.recheck_listing_availability': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_amenities': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_access': {'queue': 'scrapers'},
+        'tasks.refresh_listing_claim_stats': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config
