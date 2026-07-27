@@ -1,0 +1,63 @@
+# Map curated BH neighbourhoods → PBH administrative regionals (BIN-96).
+# Used to fan SEJUSP regional crime counts onto neighbourhood safety_score
+# until a stable bairro extract is available (LAI / on-demand SEJUSP).
+#
+# Regionals: Barreiro, Centro-Sul, Leste, Nordeste, Noroeste, Norte, Oeste,
+# Pampulha, Venda Nova.
+
+defaults:
+  city: Belo Horizonte
+  state: MG
+
+neighbourhoods:
+  # Centro-Sul
+  Savassi: Centro-Sul
+  Lourdes: Centro-Sul
+  Funcionários: Centro-Sul
+  Centro: Centro-Sul
+  Santo Agostinho: Centro-Sul
+  Serra: Centro-Sul
+  Sion: Centro-Sul
+  Cruzeiro: Centro-Sul
+  Anchieta: Centro-Sul
+  Belvedere: Centro-Sul
+  Santo Antônio: Centro-Sul
+  Carmo: Centro-Sul
+  Mangabeiras: Centro-Sul
+  Luxemburgo: Centro-Sul
+
+  # Leste
+  Santa Efigênia: Leste
+  Floresta: Leste
+  Santa Tereza: Leste
+  Horto: Leste
+
+  # Oeste
+  Buritis: Oeste
+  Gutierrez: Oeste
+  Prado: Oeste
+  Barro Preto: Oeste
+  Nova Suíça: Oeste
+  Calafate: Oeste
+
+  # Pampulha
+  Castelo: Pampulha
+  Ouro Preto: Pampulha
+  Bandeirantes: Pampulha
+  São Luiz: Pampulha
+
+  # Noroeste
+  Caiçaras: Noroeste
+  Carlos Prates: Noroeste
+  Santo André: Noroeste
+  Bonfim: Noroeste
+
+  # Nordeste
+  Cidade Nova: Nordeste
+
+  # Venda Nova
+  Planalto: Venda Nova
+  Venda Nova: Venda Nova
+
+  # Barreiro
+  Barreiro: Barreiro

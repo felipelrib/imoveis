@@ -1,0 +1,84 @@
+provider: sejusp-mg-regional
+rate_definition: sejusp_violent_crime_count_by_regional_h1_2026
+grain: regional
+attribution: SEJUSP-MG crimes violentos by PBH regional (H1 2026), via Estado de Minas
+  compilation — registration counts at regional grain, not absolute safety. Prefer
+  bairro LAI extracts when available.
+period_start: 2026-01
+period_end: 2026-06
+defaults:
+  city: Belo Horizonte
+  state: MG
+rates:
+- name: Savassi
+  rate_per_100k: 658.0
+- name: Lourdes
+  rate_per_100k: 658.0
+- name: Funcionários
+  rate_per_100k: 658.0
+- name: Centro
+  rate_per_100k: 658.0
+- name: Santo Agostinho
+  rate_per_100k: 658.0
+- name: Serra
+  rate_per_100k: 658.0
+- name: Sion
+  rate_per_100k: 658.0
+- name: Cruzeiro
+  rate_per_100k: 658.0
+- name: Anchieta
+  rate_per_100k: 658.0
+- name: Belvedere
+  rate_per_100k: 658.0
+- name: Santo Antônio
+  rate_per_100k: 658.0
+- name: Carmo
+  rate_per_100k: 658.0
+- name: Mangabeiras
+  rate_per_100k: 658.0
+- name: Luxemburgo
+  rate_per_100k: 658.0
+- name: Santa Efigênia
+  rate_per_100k: 216.0
+- name: Floresta
+  rate_per_100k: 216.0
+- name: Santa Tereza
+  rate_per_100k: 216.0
+- name: Horto
+  rate_per_100k: 216.0
+- name: Buritis
+  rate_per_100k: 269.0
+- name: Gutierrez
+  rate_per_100k: 269.0
+- name: Prado
+  rate_per_100k: 269.0
+- name: Barro Preto
+  rate_per_100k: 269.0
+- name: Nova Suíça
+  rate_per_100k: 269.0
+- name: Calafate
+  rate_per_100k: 269.0
+- name: Castelo
+  rate_per_100k: 346.0
+- name: Ouro Preto
+  rate_per_100k: 346.0
+- name: Bandeirantes
+  rate_per_100k: 346.0
+- name: São Luiz
+  rate_per_100k: 346.0
+- name: Caiçaras
+  rate_per_100k: 352.0
+- name: Carlos Prates
+  rate_per_100k: 352.0
+- name: Santo André
+  rate_per_100k: 352.0
+- name: Bonfim
+  rate_per_100k: 352.0
+- name: Cidade Nova
+  rate_per_100k: 371.0
+- name: Planalto
+  rate_per_100k: 195.0
+- name: Venda Nova
+  rate_per_100k: 195.0
+- name: Barreiro
+  rate_per_100k: 260.0

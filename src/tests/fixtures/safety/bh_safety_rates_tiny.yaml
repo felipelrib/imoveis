@@ -1,0 +1,17 @@
+# Tiny BH safety rates fixture (synthetic regional-style counts, BIN-96).
+provider: sejusp-mg-regional
+rate_definition: sejusp_violent_crime_count_by_regional_h1_2026
+grain: regional
+attribution: "SEJUSP-MG regional counts — registration rates, not absolute safety"
+period_start: "2026-01"
+period_end: "2026-06"
+defaults:
+  city: Belo Horizonte
+  state: MG
+rates:
+  - name: Savassi
+    rate_per_100k: 658.0
+  - name: Venda Nova
+    rate_per_100k: 195.0
+  - name: Unknown Bairro
+    rate_per_100k: 300.0

@@ -10,19 +10,20 @@ Neighbourhood `safety_score` was only filled by curated operator judgment (BIN-8
 
 - Spike MG/SP sources first (table below); ship ingest only where grain supports neighbourhood differentiation.
 - **Ship São Paulo** via vendor-agnostic YAML/CSV rate files (mirrors flood overlays BIN-91): operator exports SSP-SP BO microdata offline → aggregate rates → load. No live SSP scrape in CI.
-- **Park Belo Horizonte / Campinas / Fogo Cruzado** — wrong grain, PDF-only, or no coverage of operator cities.
+- **Ship Belo Horizonte (BIN-96)** via PBH regional SEJUSP counts mapped to curated neighbourhoods; bairro LAI extracts preferred when available. Campinas / Fogo Cruzado remain parked.
 - City-relative invert of `rate_per_100k` → `safety_score` in `[0,1]`; nested `quality_meta.safety` carries period, rate definition, and attribution (UI must not label absolute safe/unsafe without this — blend is BIN-94).
 
 ### Spike findings (2026-07-27)
 
 | Source | Grain | Usable? |
 |--------|-------|---------|
-| [SEJUSP MG Crimes Violentos](https://dados.mg.gov.br/dataset/crimes-violentos) | Município + RISP | **Park** for neighbourhood score |
-| [SSP-SP Transparência BO](https://www.ssp.sp.gov.br/transparenciassp/Apresentacao.aspx) | Bairro / coords | **Ship** (operator → rates file) |
+| [SEJUSP MG Crimes Violentos](https://dados.mg.gov.br/dataset/crimes-violentos) | Município + RISP | Not for nhood score |
+| SEJUSP regional counts (PBH regionais) | Regional | **Ship BH** — see [73-bh-crime-safety-rates.md](73-bh-crime-safety-rates.md) |
+| [SSP-SP Transparência BO](https://www.ssp.sp.gov.br/transparenciassp/Apresentacao.aspx) | Bairro / coords | **Ship SP** (operator → rates file) |
 | PBH GCM stats | PDF aggregates | Park |
 | [Fogo Cruzado API](https://api.fogocruzado.org.br/docs) | Lat/lon | Park (not BH/SP) |
 | SINESP / IBGE | Município / population | Benchmark / denominator only |
-| GeoSampa distritos | 96 districts | Preferred join geometry when building rates offline |
+| GeoSampa distritos | 96 districts | Preferred join geometry when building SP rates offline |
 
 ### Operator recipe (São Paulo)
 
@@ -82,4 +83,5 @@ None.
 - Curated YAML remains the BH safety fill; it has no SP rows today. Run open-data loader after curated if SP curated scores are added later.
 - Scoring / UI blend is BIN-94 — must surface `quality_meta.safety.attribution` and never claim absolute safe/unsafe.
 - Never invent crime numbers from listing AI prompts.
-- BH unlock: LAI / on-demand SEJUSP bairro extracts, or Fogo Cruzado expansion into MG/SP.
+- BH unlock (done in BIN-96): regional SEJUSP counts → neighbourhood rates; bairro LAI extracts via `build_bh_safety_rates.py --bairro-csv`. See docs/features/73-bh-crime-safety-rates.md.
+- Fogo Cruzado expansion into MG/SP still a future option for armed-violence grain.
