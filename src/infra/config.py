@@ -297,6 +297,37 @@ class PipelineMetricsConfig(BaseModel, frozen=True):
     retention_days: int = 7
 
 
+class NeighbourhoodTransitConfig(BaseModel, frozen=True):
+    """Transit proximity radii and mode weights (BIN-89).
+
+    Used by ``core.transit_proximity`` when scoring neighbourhoods from
+    GTFS / OSM stop files. Metro/BRT weigh higher than bus.
+    """
+
+    count_radius_m: float = 400.0
+    max_radius_m: float = 1200.0
+    nearest_weight: float = 0.7
+    density_weight: float = 0.3
+    density_cap: float = 8.0
+    mode_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "metro": 1.0,
+            "brt": 0.9,
+            "rail": 0.85,
+            "bus": 0.55,
+            "other": 0.4,
+        }
+    )
+
+
+class NeighbourhoodQualityConfig(BaseModel, frozen=True):
+    """Objective neighbourhood quality fill-job settings (BIN-86+)."""
+
+    transit: NeighbourhoodTransitConfig = Field(
+        default_factory=NeighbourhoodTransitConfig
+    )
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -321,6 +352,9 @@ class AppConfig(BaseModel, frozen=True):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     pipeline_metrics: PipelineMetricsConfig = Field(default_factory=PipelineMetricsConfig)
+    neighbourhood_quality: NeighbourhoodQualityConfig = Field(
+        default_factory=NeighbourhoodQualityConfig
+    )
     image_storage_path: str = "data/images"
 
 
