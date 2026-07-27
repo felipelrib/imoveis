@@ -1073,3 +1073,35 @@ def recheck_listing_availability(self, batch_size: int | None = None):
     }
     logger.info("availability_recheck_complete", **payload)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Neighbourhood access / travel-time to hubs (BIN-90)
+# ---------------------------------------------------------------------------
+
+
+@celery.task(
+    bind=True,
+    name="tasks.refresh_neighbourhood_access",
+    max_retries=2,
+    default_retry_delay=60,
+)
+def refresh_neighbourhood_access_task(self):
+    """Fill ``access_score`` + ``quality_meta.access`` from YAML hubs (OSRM/haversine)."""
+    from adapters.geo.access_refresh import refresh_neighbourhood_access
+
+    cfg = get_config().neighbourhood_access
+    if cfg.enabled is not True:
+        logger.info("neighbourhood_access_skipped", reason="disabled")
+        return {"status": "skipped", "processed": 0, "updated": 0, "skipped": 0, "errors": 0}
+
+    with SessionLocal() as session:
+        try:
+            stats = refresh_neighbourhood_access(session, cfg)
+        except Exception as exc:
+            logger.error("neighbourhood_access_failed", error=str(exc))
+            raise
+
+    payload = {"status": "ok", **stats}
+    logger.info("neighbourhood_access_complete", **payload)
+    return payload
