@@ -35,7 +35,7 @@ Files touched:
  src/tests/unit/test_schedule.py                 | route + beat assertions
  src/tests/integration/test_neighbourhood_access.py | NEW — DB write + API read
  _bmad-output/implementation-artifacts/sprint-status.yaml | 6-5 → done
- docs/features/68-access-travel-time-hubs.md     | NEW — this doc
+ docs/features/69-access-travel-time-hubs.md     | NEW — this doc
 ```
 
 ## New Dependencies
