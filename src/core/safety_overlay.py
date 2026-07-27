@@ -25,12 +25,15 @@ logger = logging.getLogger(__name__)
 
 RatesInput = Union[str, Path, Mapping[str, Any]]
 
-DEFAULT_PROVIDER = "ssp-sp-bo-rates"
-DEFAULT_RATE_DEFINITION = "crimes_violentos_per_100k_pop"
-DEFAULT_GRAIN = "bairro"
+DEFAULT_PROVIDER = "sejusp-mg-regional"
+DEFAULT_RATE_DEFINITION = "sejusp_violent_crime_count_by_regional_h1_2026"
+DEFAULT_GRAIN = "regional"
 DEFAULT_ATTRIBUTION = (
-    "SSP-SP Transparência — registration rates, not absolute safety"
+    "SEJUSP-MG crimes violentos by PBH regional — registration counts, "
+    "not absolute safety"
 )
+DEFAULT_CITY = "Belo Horizonte"
+DEFAULT_STATE = "MG"
 
 
 @dataclass(frozen=True)
@@ -138,8 +141,8 @@ def _require_rate(value: Any, *, name: str) -> float:
 def parse_safety_rates(
     data: RatesInput,
     *,
-    default_city: str = "São Paulo",
-    default_state: str = "SP",
+    default_city: str = DEFAULT_CITY,
+    default_state: str = DEFAULT_STATE,
     default_provider: Optional[str] = None,
 ) -> list[SafetyRateRow]:
     """Parse YAML/CSV/mapping into rate rows. Does not touch the database."""
@@ -332,8 +335,8 @@ def apply_safety_rates(
 def load_safety_rates_file(
     path: Path,
     *,
-    default_city: str = "São Paulo",
-    default_state: str = "SP",
+    default_city: str = DEFAULT_CITY,
+    default_state: str = DEFAULT_STATE,
     default_provider: Optional[str] = None,
 ) -> tuple[list[SafetyRateRow], bool]:
     """Load one rates file. Returns (rows, missing). Missing → empty + True."""
@@ -355,8 +358,8 @@ def load_and_apply_safety_rates(
     *,
     city: Optional[str] = None,
     state: Optional[str] = None,
-    default_city: str = "São Paulo",
-    default_state: str = "SP",
+    default_city: str = DEFAULT_CITY,
+    default_state: str = DEFAULT_STATE,
     default_provider: Optional[str] = None,
     refreshed_at: Optional[str] = None,
 ) -> ApplyResult:

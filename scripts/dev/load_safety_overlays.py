@@ -66,13 +66,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--city",
-        default="São Paulo",
-        help="City filter for one-shot mode (default: São Paulo).",
+        default="Belo Horizonte",
+        help="City filter for one-shot mode (default: Belo Horizonte).",
     )
     parser.add_argument(
         "--state",
-        default="SP",
-        help="UF for one-shot mode (default: SP).",
+        default="MG",
+        help="UF for one-shot mode (default: MG).",
     )
     parser.add_argument(
         "--provider",
@@ -140,8 +140,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 rows, missing = load_safety_rates_file(
                     path,
-                    default_city=city or "São Paulo",
-                    default_state=state or "SP",
+                    default_city=city or "Belo Horizonte",
+                    default_state=state or "MG",
                     default_provider=provider,
                 )
             except (OSError, SafetyOverlayError) as exc:
@@ -183,8 +183,8 @@ def main(argv: list[str] | None = None) -> int:
                     path,
                     city=city,
                     state=state,
-                    default_city=city or "São Paulo",
-                    default_state=state or "SP",
+                    default_city=city or "Belo Horizonte",
+                    default_state=state or "MG",
                     default_provider=provider,
                 )
             except (OSError, SafetyOverlayError) as exc:

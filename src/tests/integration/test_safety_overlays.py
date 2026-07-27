@@ -8,7 +8,6 @@ import pytest
 
 from adapters.db.models import Neighborhood
 from core.safety_overlay import (
-    DEFAULT_PROVIDER,
     load_and_apply_safety_rates,
     parse_safety_rates,
 )
@@ -84,7 +83,7 @@ class TestApplySafetyOverlays:
         assert moema.transit_score == pytest.approx(0.8)
         assert moema.quality_meta["risk"]["provider"] == "geojson-overlay"
         safety = pinheiros.quality_meta["safety"]
-        assert safety["provider"] == DEFAULT_PROVIDER
+        assert safety["provider"] == "ssp-sp-bo-rates"
         assert safety["refreshed_at"] == FIXED_TS
         assert safety["rate_per_100k"] == pytest.approx(200.0)
         assert safety["period_start"] == "2024-01"
