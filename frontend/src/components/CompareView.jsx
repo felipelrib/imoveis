@@ -73,6 +73,26 @@ const ATTR_ROWS = [
   },
   { key: 'price', label: 'Price', get: (p) => formatPrice(decisioningPrice(p)) },
   { key: 'price_per_m2', label: 'Price / m²', get: (p) => formatPricePerM2(p.price_per_m2) },
+  {
+    key: 'price_per_m2_rent',
+    label: 'Price / m² (rent)',
+    get: (p) => formatPricePerM2(p.price_per_m2_rent),
+  },
+  {
+    key: 'neighborhood_mean_rent',
+    label: 'Neighbourhood avg / m² (rent)',
+    get: (p) => formatPricePerM2(p.neighborhood_mean_rent),
+  },
+  {
+    key: 'price_per_m2_sale',
+    label: 'Price / m² (sale)',
+    get: (p) => formatPricePerM2(p.price_per_m2_sale),
+  },
+  {
+    key: 'neighborhood_mean_sale',
+    label: 'Neighbourhood avg / m² (sale)',
+    get: (p) => formatPricePerM2(p.neighborhood_mean_sale),
+  },
   { key: 'area', label: 'Area', get: (p) => (p.area_m2 != null ? `${p.area_m2} m²` : '—') },
   { key: 'bedrooms', label: 'Bedrooms', get: (p) => (p.bedrooms != null ? String(p.bedrooms) : '—') },
   { key: 'bathrooms', label: 'Bathrooms', get: (p) => (p.bathrooms != null ? String(p.bathrooms) : '—') },

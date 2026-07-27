@@ -133,6 +133,10 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "z_score": _round_or_none(row.get("z_score"), 3),
         "price_per_m2": _round_or_none(row.get("price_per_m2"), 2),
         "neighborhood_mean": _round_or_none(row.get("neighborhood_mean"), 2),
+        "price_per_m2_rent": _round_or_none(row.get("price_per_m2_rent"), 2),
+        "price_per_m2_sale": _round_or_none(row.get("price_per_m2_sale"), 2),
+        "neighborhood_mean_rent": _round_or_none(row.get("neighborhood_mean_rent"), 2),
+        "neighborhood_mean_sale": _round_or_none(row.get("neighborhood_mean_sale"), 2),
         "neighborhood_id": nbr["neighborhood_id"],
         "neighborhood_name": nbr["neighborhood_name"],
         "city": nbr["city"],
@@ -189,6 +193,28 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
         "neighborhood_mean": float(row["neighborhood_mean"]) if row.get("neighborhood_mean") is not None else None,
         "neighborhood_median": (
             float(row["neighborhood_median"]) if row.get("neighborhood_median") is not None else None
+        ),
+        "price_per_m2_rent": (
+            float(row["price_per_m2_rent"]) if row.get("price_per_m2_rent") is not None else None
+        ),
+        "price_per_m2_sale": (
+            float(row["price_per_m2_sale"]) if row.get("price_per_m2_sale") is not None else None
+        ),
+        "neighborhood_mean_rent": (
+            float(row["neighborhood_mean_rent"]) if row.get("neighborhood_mean_rent") is not None else None
+        ),
+        "neighborhood_mean_sale": (
+            float(row["neighborhood_mean_sale"]) if row.get("neighborhood_mean_sale") is not None else None
+        ),
+        "neighborhood_median_rent": (
+            float(row["neighborhood_median_rent"])
+            if row.get("neighborhood_median_rent") is not None
+            else None
+        ),
+        "neighborhood_median_sale": (
+            float(row["neighborhood_median_sale"])
+            if row.get("neighborhood_median_sale") is not None
+            else None
         ),
         "neighborhood_id": nbr["neighborhood_id"],
         "neighborhood_name": nbr["neighborhood_name"],
@@ -248,6 +274,10 @@ LIST_SELECT_COLUMNS = f"""
                 ms.z_score,
                 ms.price_per_m2,
                 ms.neighborhood_mean,
+                ms.price_per_m2_rent,
+                ms.price_per_m2_sale,
+                ms.neighborhood_mean_rent,
+                ms.neighborhood_mean_sale,
                 ms.meta,
                 p.neighborhood_id,
                 n.name AS neighborhood_name,

@@ -218,8 +218,37 @@ export default function PropertyModal({ id, onClose }) {
                   ['Bedrooms', p.bedrooms ?? '—'],
                   ['Bathrooms', p.bathrooms ?? '—'],
                   ['Parking', p.parking ?? '—'],
-                  ['Price / m²', p.price_per_m2 ? `R$ ${Math.round(p.price_per_m2)}/m²` : '—'],
-                  ['Neighbourhood avg / m²', p.neighborhood_mean ? `R$ ${Math.round(p.neighborhood_mean)}/m²` : '—'],
+                  ...(p.price_per_m2_rent != null
+                    ? [
+                      ['Price / m² (rent)', `R$ ${Math.round(p.price_per_m2_rent)}/m²`],
+                      [
+                        'Neighbourhood avg / m² (rent)',
+                        p.neighborhood_mean_rent != null
+                          ? `R$ ${Math.round(p.neighborhood_mean_rent)}/m²`
+                          : '—',
+                      ],
+                    ]
+                    : []),
+                  ...(p.price_per_m2_sale != null
+                    ? [
+                      ['Price / m² (sale)', `R$ ${Math.round(p.price_per_m2_sale)}/m²`],
+                      [
+                        'Neighbourhood avg / m² (sale)',
+                        p.neighborhood_mean_sale != null
+                          ? `R$ ${Math.round(p.neighborhood_mean_sale)}/m²`
+                          : '—',
+                      ],
+                    ]
+                    : []),
+                  ...(p.price_per_m2_rent == null && p.price_per_m2_sale == null
+                    ? [
+                      ['Price / m²', p.price_per_m2 ? `R$ ${Math.round(p.price_per_m2)}/m²` : '—'],
+                      [
+                        'Neighbourhood avg / m²',
+                        p.neighborhood_mean ? `R$ ${Math.round(p.neighborhood_mean)}/m²` : '—',
+                      ],
+                    ]
+                    : []),
                   ['Percentile in neighbourhood', p.percentile_rank != null ? `${(p.percentile_rank * 100).toFixed(1)}th pct` : '—'],
                   ['Z-score', p.z_score != null ? p.z_score.toFixed(3) : '—'],
                 ].filter(([, v]) => v && v !== '—' || v === '—').map(([k, v]) => (
