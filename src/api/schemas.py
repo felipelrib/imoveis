@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PropertyListingModel(BaseModel):
@@ -91,9 +91,23 @@ class PropertyExportResponse(BaseModel):
 
 
 class NeighborhoodModel(BaseModel):
+    """Neighbourhood filter option + optional quality profile (BIN-86).
+
+    Score fields are floats in ``[0.0, 1.0]``; ``None`` means unknown / not filled.
+    Legacy list rows (props-only neighbourhoods) omit ``id`` and leave profile null.
+    """
+
     name: str
     count: int
     city: Optional[str] = None
+    id: Optional[str] = None
+    amenity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    transit_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    access_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    safety_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    risk_flags: List[str] = Field(default_factory=list)
+    quality_meta: Optional[Dict[str, Any]] = None
+    quality_notes: Optional[str] = None
 
 
 class CityModel(BaseModel):

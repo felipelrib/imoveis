@@ -145,6 +145,74 @@ class TestNeighborhoodsEndpoint:
             assert isinstance(item["count"], int)
             # city may be null for legacy rows without city metadata
             assert "city" in item
+            # BIN-86 quality profile keys (nullable / empty until fill jobs run)
+            for key in (
+                "id",
+                "amenity_score",
+                "transit_score",
+                "access_score",
+                "safety_score",
+                "risk_flags",
+                "quality_meta",
+                "quality_notes",
+            ):
+                assert key in item
+            assert isinstance(item["risk_flags"], list)
+            for score_key in (
+                "amenity_score",
+                "transit_score",
+                "access_score",
+                "safety_score",
+            ):
+                score = item[score_key]
+                if score is not None:
+                    assert isinstance(score, (int, float))
+                    assert 0.0 <= float(score) <= 1.0
+
+    def test_neighborhood_detail_unknown_id_is_404(self, client):
+        response = client.get(
+            "/properties/neighborhoods/00000000-0000-0000-0000-000000000000"
+        )
+        if response.status_code >= 500:
+            if not _properties_schema_ready():
+                pytest.skip(
+                    "GET /properties/neighborhoods/{id} unavailable — DB/schema not ready"
+                )
+            pytest.fail(
+                f"GET /properties/neighborhoods/{{id}} returned {response.status_code} "
+                f"while schema is available. Body: {response.text[:500]}"
+            )
+        assert response.status_code == 404
+
+
+class TestNeighborhoodModelQualityProfileContract:
+    """DB-free lock: quality scores are floats in [0,1]; null = unknown (BIN-86)."""
+
+    def test_neighborhood_model_accepts_fractional_scores(self):
+        from api.schemas import NeighborhoodModel
+
+        model = NeighborhoodModel.model_validate(
+            {
+                "name": "Savassi",
+                "count": 2,
+                "city": "Belo Horizonte",
+                "amenity_score": 0.85,
+                "transit_score": 0.4,
+                "risk_flags": ["flood"],
+                "quality_meta": {"provider": "curated-yaml"},
+            }
+        )
+        assert model.amenity_score == pytest.approx(0.85)
+        assert model.transit_score == pytest.approx(0.4)
+        assert model.risk_flags == ["flood"]
+
+    def test_neighborhood_model_rejects_out_of_range_score(self):
+        from api.schemas import NeighborhoodModel
+
+        with pytest.raises(ValidationError):
+            NeighborhoodModel.model_validate(
+                {"name": "Savassi", "count": 1, "safety_score": 2.0}
+            )
 
 
 class TestCitiesEndpoint:

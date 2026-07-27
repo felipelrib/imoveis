@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Dict, List, Optional, Union
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import DataError, StatementError
 
 from api.auth import verify_api_key_if_configured
 from api.property_export import EXPORT_MAX_ROWS, properties_to_csv, properties_to_export_json
@@ -27,6 +29,7 @@ from api.schemas import (
     PropertyDetailModel,
     PropertyExportResponse,
 )
+from core.neighbourhood_quality import quality_profile_fields
 from infra.db import SessionLocal
 from infra.limiter import limiter
 from infra.logging import get_logger
@@ -300,14 +303,46 @@ def list_properties(
         }
 
 
+def _neighborhood_row_dict(row: Any) -> Dict[str, Any]:
+    """Map a neighbourhood list/detail SQL row to the NeighborhoodModel payload."""
+    # Row layout: name, count, city, id, amenity, transit, access, safety,
+    # risk_flags, quality_meta, quality_notes
+    profile = quality_profile_fields(
+        {
+            "id": row[3],
+            "amenity_score": row[4],
+            "transit_score": row[5],
+            "access_score": row[6],
+            "safety_score": row[7],
+            "risk_flags": row[8],
+            "quality_meta": row[9],
+            "quality_notes": row[10],
+        }
+    )
+    return {
+        "name": row[0],
+        "count": int(row[1] or 0),
+        "city": row[2],
+        **profile,
+    }
+
+
 @router.get("/neighborhoods", response_model=List[NeighborhoodModel])
 def list_neighborhoods() -> List[Dict[str, Any]]:
-    """Return distinct neighborhoods with property counts for dynamic filter options."""
+    """Return distinct neighborhoods with property counts + optional quality profile."""
     with SessionLocal() as session:
         rows = session.execute(text("""
             SELECT COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown') AS name,
                    COUNT(p.id) AS property_count,
-                   COALESCE(n.city, p.props_json->>'city') AS city
+                   COALESCE(n.city, p.props_json->>'city') AS city,
+                   (array_agg(n.id) FILTER (WHERE n.id IS NOT NULL))[1] AS id,
+                   MAX(n.amenity_score) AS amenity_score,
+                   MAX(n.transit_score) AS transit_score,
+                   MAX(n.access_score) AS access_score,
+                   MAX(n.safety_score) AS safety_score,
+                   (array_agg(n.risk_flags) FILTER (WHERE n.id IS NOT NULL))[1] AS risk_flags,
+                   (array_agg(n.quality_meta) FILTER (WHERE n.id IS NOT NULL))[1] AS quality_meta,
+                   (array_agg(n.quality_notes) FILTER (WHERE n.id IS NOT NULL))[1] AS quality_notes
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.active = true
@@ -315,11 +350,50 @@ def list_neighborhoods() -> List[Dict[str, Any]]:
                      COALESCE(n.city, p.props_json->>'city')
             ORDER BY city NULLS LAST, name
         """)).fetchall()
-        return [
-            {"name": r[0], "count": r[1], "city": r[2]}
-            for r in rows
-            if r[0]
-        ]
+        return [_neighborhood_row_dict(r) for r in rows if r[0]]
+
+
+@router.get(
+    "/neighborhoods/{neighborhood_id}",
+    response_model=NeighborhoodModel,
+    responses=_RESP_404,
+)
+def get_neighborhood(neighborhood_id: str) -> Dict[str, Any]:
+    """Return one neighbourhood row with quality profile and active property count."""
+    try:
+        UUID(str(neighborhood_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Neighborhood not found") from exc
+
+    with SessionLocal() as session:
+        try:
+            row = session.execute(
+                text("""
+                    SELECT n.name,
+                           COUNT(p.id) FILTER (WHERE p.active = true) AS property_count,
+                           n.city,
+                           n.id,
+                           n.amenity_score,
+                           n.transit_score,
+                           n.access_score,
+                           n.safety_score,
+                           n.risk_flags,
+                           n.quality_meta,
+                           n.quality_notes
+                    FROM neighborhoods n
+                    LEFT JOIN properties p ON p.neighborhood_id = n.id
+                    WHERE n.id = CAST(:nid AS uuid)
+                    GROUP BY n.id, n.name, n.city, n.amenity_score, n.transit_score,
+                             n.access_score, n.safety_score, n.risk_flags,
+                             n.quality_meta, n.quality_notes
+                """),
+                {"nid": neighborhood_id},
+            ).fetchone()
+        except (DataError, StatementError) as exc:
+            raise HTTPException(status_code=404, detail="Neighborhood not found") from exc
+        if row is None:
+            raise HTTPException(status_code=404, detail="Neighborhood not found")
+        return _neighborhood_row_dict(row)
 
 
 @router.get("/cities", response_model=List[CityModel])

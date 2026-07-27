@@ -2,7 +2,7 @@ import sqlalchemy as sa
 from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -39,6 +39,14 @@ class Neighborhood(Base):
     state = Column(String(2), nullable=False)
     geometry = Column(Geometry(geometry_type="POLYGON", srid=4326))
     created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
+    # Objective quality profile (BIN-86); null score = unknown / not yet filled.
+    amenity_score = Column(Float, nullable=True)
+    transit_score = Column(Float, nullable=True)
+    access_score = Column(Float, nullable=True)
+    safety_score = Column(Float, nullable=True)
+    risk_flags = Column(ARRAY(String), nullable=False, server_default=sa.text("'{}'"))
+    quality_meta = Column(JSONB, nullable=True)
+    quality_notes = Column(String, nullable=True)
 
 
 class PlatformCheckpoint(Base):
