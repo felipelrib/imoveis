@@ -621,10 +621,11 @@ body {
   align-items: center;
   gap: 16px;
   padding: 12px 18px;
-  background: var(--bg-card);
+  /* Solid surface — --bg-card is ~4% white and reads as transparent over the grid */
+  background: var(--bg-surface);
   border: 1px solid var(--border-glow);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
   min-width: 280px;
 }
 .compare-bar-count {
@@ -644,7 +645,8 @@ body {
   z-index: 950;
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
+  /* --bg-primary was undefined → fully transparent overlay; use opaque base */
+  background: var(--bg-base);
   padding: 20px 24px 28px;
 }
 .compare-view-header {
@@ -697,7 +699,7 @@ body {
   color: var(--text-primary);
 }
 .compare-table thead th {
-  background: var(--bg-card);
+  background: var(--bg-surface);
   font-weight: 700;
   position: sticky;
   top: 0;
@@ -922,6 +924,7 @@ body {
   max-height: 90vh;
   overflow-y: auto;
   animation: slideUp 0.2s ease;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
 }
 @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .modal-header {
@@ -1030,6 +1033,29 @@ body {
   background: rgba(245, 158, 11, 0.15);
 }
 
+/* Card action icons (favourites ★ vs price-watch 📉) */
+.icon-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  color: var(--text-muted, #9ca3af);
+  line-height: 1;
+  transition: transform 0.15s, color 0.15s, border-color 0.15s;
+}
+.icon-btn:hover {
+  transform: scale(1.15);
+  color: var(--text-primary);
+}
+.icon-btn.active {
+  color: var(--accent-amber);
+}
+.icon-btn.icon-btn--watch.active {
+  color: var(--accent-amber);
+}
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar { display: none; }
@@ -1041,7 +1067,7 @@ body {
 .saved-searches-sidebar {
   width: 220px;
   min-width: 220px;
-  background: var(--bg-card, rgba(0,0,0,0.3));
+  background: var(--bg-surface);
   border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
   border-radius: 12px;
   padding: 16px;
@@ -1051,6 +1077,7 @@ body {
   align-self: flex-start;
   position: sticky;
   top: 20px;
+  box-shadow: var(--shadow-card);
 }
 
 .sidebar-section {

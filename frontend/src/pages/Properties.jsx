@@ -78,7 +78,19 @@ export default function Properties() {
     toggleCompare(propertyId)
   }, [toggleCompare])
 
+  const [compareMode, setCompareMode] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
+
+  const toggleCompareMode = useCallback(() => {
+    setCompareMode((prev) => {
+      if (prev) {
+        clearCompare()
+        setCompareOpen(false)
+        return false
+      }
+      return true
+    })
+  }, [clearCompare])
 
   const openCompare = useCallback(() => {
     if (!canCompare) return
@@ -88,6 +100,12 @@ export default function Properties() {
   const closeCompare = useCallback(() => {
     setCompareOpen(false)
   }, [])
+
+  const clearCompareAndExitMode = useCallback(() => {
+    clearCompare()
+    setCompareOpen(false)
+    setCompareMode(false)
+  }, [clearCompare])
 
   // Saved searches state
   const [savedSearches, setSavedSearches] = useState([])
@@ -556,6 +574,16 @@ export default function Properties() {
                   </button>
                 </div>
                 <button
+                  type="button"
+                  className={`btn btn-sm ${compareMode ? 'btn-primary' : 'btn-ghost'}`}
+                  data-testid="compare-mode-toggle"
+                  aria-pressed={compareMode}
+                  title={compareMode ? 'Exit comparison mode' : 'Select properties to compare'}
+                  onClick={toggleCompareMode}
+                >
+                  {compareMode ? '✕ Exit compare' : '⇄ Compare'}
+                </button>
+                <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   style={{ display: 'flex', alignItems: 'center', gap: 6 }}
@@ -740,6 +768,7 @@ export default function Properties() {
                     onToggleWatchlist={toggleWatchlist}
                     isFavourited={favouriteIds.has(p.id)}
                     onToggleFavourite={toggleFavourite}
+                    compareMode={compareMode}
                     isCompareSelected={isCompareSelected(p.id)}
                     onToggleCompare={handleToggleCompare}
                   />
@@ -791,11 +820,11 @@ export default function Properties() {
         <CompareView
           ids={compareIds}
           onClose={closeCompare}
-          onClearSelection={clearCompare}
+          onClearSelection={clearCompareAndExitMode}
         />
       )}
 
-      {compareIds.length > 0 && !compareOpen && (
+      {compareMode && compareIds.length > 0 && !compareOpen && (
         <div className="compare-bar" data-testid="compare-bar" role="region" aria-label="Compare selection">
           <span className="compare-bar-count" data-testid="compare-count">
             {compareIds.length} selected
@@ -881,6 +910,7 @@ function PropertyCard({
   onToggleWatchlist,
   isFavourited,
   onToggleFavourite,
+  compareMode = false,
   isCompareSelected,
   onToggleCompare,
 }) {
@@ -894,7 +924,7 @@ function PropertyCard({
 
   return (
     <div
-      className={`property-card${isCompareSelected ? ' property-card--selected' : ''}`}
+      className={`property-card${compareMode && isCompareSelected ? ' property-card--selected' : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -906,20 +936,22 @@ function PropertyCard({
         }
       }}
     >
-      <label
-        className="property-compare-select"
-        title="Select for comparison"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
-        <input
-          type="checkbox"
-          checked={!!isCompareSelected}
-          onChange={(e) => onToggleCompare(e, p.id)}
-          aria-label={isCompareSelected ? 'Remove from comparison' : 'Select for comparison'}
-          data-testid={`compare-select-${p.id}`}
-        />
-      </label>
+      {compareMode && (
+        <label
+          className="property-compare-select"
+          title="Select for comparison"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={!!isCompareSelected}
+            onChange={(e) => onToggleCompare(e, p.id)}
+            aria-label={isCompareSelected ? 'Remove from comparison' : 'Select for comparison'}
+            data-testid={`compare-select-${p.id}`}
+          />
+        </label>
+      )}
       {img
         ? <img className="property-image" src={img} alt={p.title || 'property'} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
         : null
@@ -968,6 +1000,7 @@ function PropertyCard({
             )}
             <div
               className={`icon-btn ${isFavourited ? 'active' : ''}`}
+              data-testid={`favourite-toggle-${p.id}`}
               title="Add to Favourites"
               aria-label={isFavourited ? "Remove from Favourites" : "Add to Favourites"}
               role="button"
@@ -983,9 +1016,10 @@ function PropertyCard({
               {isFavourited ? '★' : '☆'}
             </div>
             <div
-              className={`icon-btn ${isWatched ? 'active' : ''}`}
+              className={`icon-btn icon-btn--watch ${isWatched ? 'active' : ''}`}
+              data-testid={`watchlist-toggle-${p.id}`}
               title="Watch for price drops"
-              aria-label={isWatched ? "Remove from Watchlist" : "Add to Watchlist"}
+              aria-label={isWatched ? "Remove from Watchlist" : "Watch for price drops"}
               role="button"
               tabIndex={0}
               onClick={(e) => onToggleWatchlist(e, p.id)}
@@ -996,7 +1030,7 @@ function PropertyCard({
                 }
               }}
             >
-              {isWatched ? '🔔' : '☆'}
+              {isWatched ? '🔔' : '📉'}
             </div>
           </div>
         </div>
