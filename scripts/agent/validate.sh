@@ -179,13 +179,11 @@ run_frontend() {
 
 run_e2e() {
   [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping E2E"; return; }
-  # Parallel worktrees: bind Playwright's ephemeral Vite to this workspace's
-  # FRONTEND_PORT so agents don't fight over the default :5177.
-  local pw_port="${PLAYWRIGHT_PORT:-}"
-  if [ -z "$pw_port" ] && [ -n "${FRONTEND_PORT:-}" ]; then
-    pw_port="$FRONTEND_PORT"
-  fi
-  pw_port="${pw_port:-5177}"
+  # PLAYWRIGHT_PORT is separate from Compose FRONTEND_PORT. Prefer .env.local
+  # (sourced above); if unset, probe 5177 then 5187..5197 (etc.) for a free port.
+  local pw_port
+  pw_port="$(resolve_playwright_port)"
+  export PLAYWRIGHT_PORT="$pw_port"
   log "E2E: Playwright (port ${pw_port})"
   ( cd "$REPO_ROOT/frontend" \
       && PLAYWRIGHT_PORT="$pw_port" npm run test:e2e ) \

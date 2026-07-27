@@ -19,11 +19,13 @@ Multiple Cursor agents may work on **different features in parallel**. Isolation
 
 **Idle invariant:** after `finish-feature.sh` on the primary checkout, return to `main` so the next agent can detect a free primary. Worktree finishes leave primary alone; use `teardown.sh --remove` to drop the worktree.
 
-**Worktree location:** sibling directories `../<repo>-wt-<slug>` (not nested `.worktrees/`, which was root-owned and confused small agents). Port registry: `.agent-workspaces/registry.tsv` on the primary. Each worktree gets `.env.local` with unique ports + `COMPOSE_PROJECT_NAME`; start stack with `run-services.sh`.
+**Worktree location:** sibling directories `../<repo>-wt-<slug>` (not nested `.worktrees/`, which was root-owned and confused small agents). Port registry: `.agent-workspaces/registry.tsv` on the primary; allocation is race-safe via `flock` on `.agent-workspaces/.ports.lock` (mkdir lock fallback). Each worktree gets `.env.local` with unique Compose ports (`POSTGRES`/`REDIS`/`API`/`FRONTEND`) plus a distinct `PLAYWRIGHT_PORT` (5177–5299, not shared with Compose FE); start stack with `run-services.sh`. `validate.sh` / `finish-feature.sh` source `.env.local` and, if `PLAYWRIGHT_PORT` is unset, probe for a free port before E2E.
 
 **Postgres persistence:** scraped data should live on the **primary** Compose project (`COMPOSE_PROJECT_NAME=imoveis`). `teardown.sh` keeps volumes for that project unless `--volumes` is passed; worktree projects still drop their private volumes by default (and remove Compose-built local images via `--rmi local`). Prefer `./scripts/stop.sh` / `./scripts/clean.sh` (no `--volumes`) over volume-wiping flags for routine stops. After wrap-up, `finish-feature.sh` / `teardown.sh` always run `scripts/agent/docker-cleanup.sh` to prune stopped containers, dangling images, unused feature/worktree tagged images (`feat-*`, `imoveis-wt-*`, …), and build cache — keeping the primary `imoveis-*` stack and third-party bases, and never named volumes.
 
 After creating a worktree, agents must **`move_agent_to_root`** (or `cd`) into that path before editing.
+
+**Harness (`.cursor/`):** worktrees symlink `.cursor/` from the primary checkout (same pattern as `.venv`), rather than copying it, so harness retrospect edits survive `teardown.sh --remove` and concurrent agents do not drift. Legacy real `.cursor/` directories under a worktree are replaced safely (`rm -rf` only when the path is exactly that worktree's `.cursor` directory, then `ln -sfn`).
 
 This does **not** revive ADR 0001 dual-model Planner/Implementer. Each agent is still a single Plan→Implement session; parallelism is across *tasks*, not within one task.
 
@@ -35,7 +37,7 @@ Worktrees were removed (2026-07-10) because cheap Act models got lost across dir
 
 - Prefer `setup-workspace.sh` over calling `setup-branch.sh` directly for merge-bound work.
 - Solo agents must not leave the primary parked on a feature branch after finish.
-- Parallel stacks must not share default Compose project / ports.
+- Parallel stacks must not share default Compose project / ports (including `PLAYWRIGHT_PORT`; do not conflate with Compose `FRONTEND_PORT`).
 
 ## Alternatives considered
 
