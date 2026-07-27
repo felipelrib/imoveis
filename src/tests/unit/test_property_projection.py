@@ -172,6 +172,14 @@ class TestMapPropertyProjection:
             "price_per_m2_sale": None,
             "neighborhood_mean_rent": 55.0,
             "neighborhood_mean_sale": None,
+            "stat_score_rent": 0.82,
+            "stat_score_sale": 0.41,
+            "z_score_rent": -0.5,
+            "z_score_sale": 0.8,
+            "percentile_rank_rent": 0.2,
+            "percentile_rank_sale": 0.9,
+            "combined_score_rent": 0.79,
+            "combined_score_sale": 0.52,
             "neighborhood_id": "nbr-9",
             "neighborhood_name": "Savassi",
             "parking": 1,
@@ -214,6 +222,8 @@ class TestMapPropertyProjection:
         assert mapped["price_per_m2_rent"] == 50.0
         assert mapped["neighborhood_mean_rent"] == 55.0
         assert mapped["combined_score"] == 0.7
+        assert mapped["combined_score_rent"] == 0.79
+        assert mapped["stat_score_rent"] == 0.82
         assert mapped["ai_features"] == ["balcony"]
         assert mapped["condition_score"] == 0.75
         assert mapped["sentiment_score"] == 0.78

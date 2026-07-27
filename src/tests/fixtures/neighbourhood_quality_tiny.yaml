@@ -1,0 +1,30 @@
+# Tiny curated-quality fixture for unit/integration tests (BIN-87).
+version: 1
+defaults:
+  city: Belo Horizonte
+  state: MG
+profiles:
+  - name: Savassi
+    slug: savassi
+    amenity_score: 0.90
+    transit_score: 0.85
+    access_score: 0.88
+    safety_score: 0.72
+    risk_flags: []
+    notes: "Central retail hub (fixture)."
+  - name: Santa Efigênia
+    slug: santa-efigenia
+    amenity_score: 0.65
+    transit_score: 0.70
+    access_score: 0.68
+    safety_score: 0.55
+    risk_flags: []
+    notes: "East of centre (fixture)."
+  - name: Unknown Bairro
+    slug: unknown-bairro
+    amenity_score: 0.50
+    transit_score: 0.50
+    access_score: 0.50
+    safety_score: 0.50
+    risk_flags: []
+    notes: "Intentionally absent from DB for skip tests."

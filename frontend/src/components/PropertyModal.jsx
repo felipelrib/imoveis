@@ -253,8 +253,34 @@ export default function PropertyModal({ id, onClose }) {
                       ],
                     ]
                     : []),
-                  ['Percentile in neighbourhood', p.percentile_rank != null ? `${(p.percentile_rank * 100).toFixed(1)}th pct` : '—'],
-                  ['Z-score', p.z_score != null ? p.z_score.toFixed(3) : '—'],
+                  ...(p.combined_score_rent != null
+                    ? [
+                      ['Combined score (rent)', p.combined_score_rent != null ? `${(p.combined_score_rent * 100).toFixed(0)}` : '—'],
+                      ['Statistical score (rent)', p.stat_score_rent != null ? `${(p.stat_score_rent * 100).toFixed(0)}` : '—'],
+                      ['Z-score (rent)', p.z_score_rent != null ? p.z_score_rent.toFixed(3) : '—'],
+                      [
+                        'Percentile (rent)',
+                        p.percentile_rank_rent != null ? `${(p.percentile_rank_rent * 100).toFixed(1)}th pct` : '—',
+                      ],
+                    ]
+                    : []),
+                  ...(p.combined_score_sale != null
+                    ? [
+                      ['Combined score (sale)', p.combined_score_sale != null ? `${(p.combined_score_sale * 100).toFixed(0)}` : '—'],
+                      ['Statistical score (sale)', p.stat_score_sale != null ? `${(p.stat_score_sale * 100).toFixed(0)}` : '—'],
+                      ['Z-score (sale)', p.z_score_sale != null ? p.z_score_sale.toFixed(3) : '—'],
+                      [
+                        'Percentile (sale)',
+                        p.percentile_rank_sale != null ? `${(p.percentile_rank_sale * 100).toFixed(1)}th pct` : '—',
+                      ],
+                    ]
+                    : []),
+                  ...(p.combined_score_rent == null && p.combined_score_sale == null
+                    ? [
+                      ['Percentile in neighbourhood', p.percentile_rank != null ? `${(p.percentile_rank * 100).toFixed(1)}th pct` : '—'],
+                      ['Z-score', p.z_score != null ? p.z_score.toFixed(3) : '—'],
+                    ]
+                    : []),
                 ].filter(([, v]) => v && v !== '—' || v === '—').map(([k, v]) => (
                   <div key={k} className="detail-row">
                     <span className="detail-key">{k}</span>

@@ -211,7 +211,7 @@ def test_empty_yaml_loads_with_defaults(tmp_path: Path):
     assert isinstance(cfg, AppConfig)
     assert cfg.database.host == "localhost"
     assert cfg.database.port == 5432
-    assert cfg.gpu.semaphore_limit == 1
+    assert cfg.gpu.semaphore_limit == 2
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +537,7 @@ _CRITICAL_APP_CONFIG_SECTIONS = (
     "ai",
     "database",
     "pipeline_metrics",
+    "neighbourhood_quality",
     "neighbourhood_access",
 )
 

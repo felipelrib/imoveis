@@ -68,6 +68,30 @@ def _scoring_weights() -> ScoringWeights:
     return ScoringWeights(stat_weight=cfg.scoring.stat_weight, ai_weight=cfg.scoring.ai_weight)
 
 
+def _compute_type_scores(
+    *,
+    ppm: Optional[float],
+    mean: Optional[float],
+    stddev: Optional[float],
+    pct_rank: Optional[float],
+    ai_score: float,
+    weights: ScoringWeights,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Return (stat_score, z_score, percentile_rank, combined_score) for one type."""
+    if ppm is None:
+        return None, None, None, None
+    z = (
+        (ppm - mean) / stddev
+        if mean is not None and stddev and stddev > 0
+        else 0.0
+    )
+    z = float(z)
+    stat_score = _sigmoid_undervalued(z)
+    pct = pct_rank if pct_rank is not None else 0.5
+    combined = stat_score * weights.stat_weight + float(ai_score or 0.0) * weights.ai_weight
+    return stat_score, z, pct, combined
+
+
 def _update_metrics_score(ms, stat_score, price_per_m2, stats, z_score, weights, stat_analysis) -> None:
     ms.stat_score, ms.price_per_m2 = stat_score, price_per_m2
     ms.neighborhood_mean, ms.neighborhood_median, ms.z_score = stats["mean"], stats["median"], z_score
@@ -86,6 +110,14 @@ def _apply_type_fields(
     neighborhood_mean_sale: Optional[float],
     neighborhood_median_rent: Optional[float],
     neighborhood_median_sale: Optional[float],
+    stat_score_rent: Optional[float] = None,
+    stat_score_sale: Optional[float] = None,
+    z_score_rent: Optional[float] = None,
+    z_score_sale: Optional[float] = None,
+    percentile_rank_rent: Optional[float] = None,
+    percentile_rank_sale: Optional[float] = None,
+    combined_score_rent: Optional[float] = None,
+    combined_score_sale: Optional[float] = None,
 ) -> None:
     ms.price_per_m2_rent = price_per_m2_rent
     ms.price_per_m2_sale = price_per_m2_sale
@@ -93,6 +125,14 @@ def _apply_type_fields(
     ms.neighborhood_mean_sale = neighborhood_mean_sale
     ms.neighborhood_median_rent = neighborhood_median_rent
     ms.neighborhood_median_sale = neighborhood_median_sale
+    ms.stat_score_rent = stat_score_rent
+    ms.stat_score_sale = stat_score_sale
+    ms.z_score_rent = z_score_rent
+    ms.z_score_sale = z_score_sale
+    ms.percentile_rank_rent = percentile_rank_rent
+    ms.percentile_rank_sale = percentile_rank_sale
+    ms.combined_score_rent = combined_score_rent
+    ms.combined_score_sale = combined_score_sale
 
 
 def compute_neighborhood_stats(
@@ -252,31 +292,48 @@ def compute_neighborhood_stats(
         pct_sale = float(row[10]) if row[10] is not None else None
 
         primary = primary_listing_type_for_ppm(ppm_rent, ppm_sale)
-        if primary == "rent":
-            price_per_m2, n_mean, n_median = ppm_rent, mean_rent, median_rent
-            stddev, pct_rank = std_rent or 0.0, pct_rent if pct_rent is not None else 0.5
-        elif primary == "sale":
-            price_per_m2, n_mean, n_median = ppm_sale, mean_sale, median_sale
-            stddev, pct_rank = std_sale or 0.0, pct_sale if pct_sale is not None else 0.5
-        else:
+        if primary is None:
             continue
 
-        z = (
-            (price_per_m2 - n_mean) / stddev
-            if n_mean is not None and stddev and stddev > 0
-            else 0.0
+        ai = 0.0
+        ms = session.query(MetricsScoring).filter_by(property_id=prop_id).one_or_none()
+        if ms is not None:
+            ai = float(ms.ai_score or 0.0)
+
+        stat_rent, z_rent, pct_rent_out, combined_rent = _compute_type_scores(
+            ppm=ppm_rent,
+            mean=mean_rent,
+            stddev=std_rent,
+            pct_rank=pct_rent,
+            ai_score=ai,
+            weights=weights,
         )
-        z = float(z)
-        stat_score = _sigmoid_undervalued(z)
+        stat_sale, z_sale, pct_sale_out, combined_sale = _compute_type_scores(
+            ppm=ppm_sale,
+            mean=mean_sale,
+            stddev=std_sale,
+            pct_rank=pct_sale,
+            ai_score=ai,
+            weights=weights,
+        )
+
+        if primary == "rent":
+            price_per_m2, n_mean, n_median = ppm_rent, mean_rent, median_rent
+            stat_score, z, pct_rank = stat_rent, z_rent, pct_rent_out
+        else:
+            price_per_m2, n_mean, n_median = ppm_sale, mean_sale, median_sale
+            stat_score, z, pct_rank = stat_sale, z_sale, pct_sale_out
+
+        assert stat_score is not None and z is not None and pct_rank is not None
+        combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
         stat_analysis = _stat_analysis(z)
 
-        ms = session.query(MetricsScoring).filter_by(property_id=prop_id).one_or_none()
         if ms is None:
             ms = MetricsScoring(
                 property_id=prop_id,
                 stat_score=stat_score,
-                ai_score=0.0,
-                combined_score=stat_score * weights.stat_weight,
+                ai_score=ai,
+                combined_score=combined_score,
                 price_per_m2=price_per_m2,
                 neighborhood_mean=n_mean,
                 neighborhood_median=n_median,
@@ -292,8 +349,7 @@ def compute_neighborhood_stats(
             ms.neighborhood_median = n_median
             ms.z_score = z
             ms.percentile_rank = pct_rank
-            ai = float(ms.ai_score or 0.0)
-            ms.combined_score = stat_score * weights.stat_weight + ai * weights.ai_weight
+            ms.combined_score = combined_score
             meta = dict(ms.meta or {})
             meta["stat_analysis"] = stat_analysis
             ms.meta = meta
@@ -306,6 +362,14 @@ def compute_neighborhood_stats(
             neighborhood_mean_sale=mean_sale,
             neighborhood_median_rent=median_rent,
             neighborhood_median_sale=median_sale,
+            stat_score_rent=stat_rent,
+            stat_score_sale=stat_sale,
+            z_score_rent=z_rent,
+            z_score_sale=z_sale,
+            percentile_rank_rent=pct_rent_out,
+            percentile_rank_sale=pct_sale_out,
+            combined_score_rent=combined_rent,
+            combined_score_sale=combined_sale,
         )
 
     session.flush()
@@ -345,6 +409,18 @@ def recalculate_all_combined_scores(
             SET combined_score =
                     COALESCE(stat_score, 0) * :w_stat
                     + COALESCE(ai_score, 0)  * :w_ai,
+                combined_score_rent = CASE
+                    WHEN stat_score_rent IS NOT NULL THEN
+                        COALESCE(stat_score_rent, 0) * :w_stat
+                        + COALESCE(ai_score, 0) * :w_ai
+                    ELSE NULL
+                END,
+                combined_score_sale = CASE
+                    WHEN stat_score_sale IS NOT NULL THEN
+                        COALESCE(stat_score_sale, 0) * :w_stat
+                        + COALESCE(ai_score, 0) * :w_ai
+                    ELSE NULL
+                END,
                 updated_at = NOW()
             """),
         {"w_stat": weights.stat_weight, "w_ai": weights.ai_weight},
@@ -494,41 +570,76 @@ def score_single_property(session: Session, property_id: str) -> None:
         logger.warning("score_single_property_no_price", property_id=property_id)
         return
 
-    stats = get_neighborhood_stats_cached(session, n_key, listing_type=primary)
     price_per_m2 = ppm_rent if primary == "rent" else ppm_sale
     assert price_per_m2 is not None
-    z = (price_per_m2 - stats["mean"]) / stats["stddev"] if stats["stddev"] > 0 else 0.0
 
-    # Peer means for the other type (display fields).
     rent_stats = get_neighborhood_stats_cached(session, n_key, listing_type="rent") if ppm_rent is not None else None
     sale_stats = get_neighborhood_stats_cached(session, n_key, listing_type="sale") if ppm_sale is not None else None
 
-    stat_score = _sigmoid_undervalued(z)
-    stat_analysis = _stat_analysis(z)
     weights = _scoring_weights()
+    ai = 0.0
+    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+    if ms is not None:
+        ai = float(ms.ai_score or 0.0)
 
     mean_rent = rent_stats["mean"] if rent_stats and rent_stats["count"] else None
     median_rent = rent_stats["median"] if rent_stats and rent_stats["count"] else None
+    std_rent = rent_stats["stddev"] if rent_stats and rent_stats["count"] else None
     mean_sale = sale_stats["mean"] if sale_stats and sale_stats["count"] else None
     median_sale = sale_stats["median"] if sale_stats and sale_stats["count"] else None
+    std_sale = sale_stats["stddev"] if sale_stats and sale_stats["count"] else None
 
-    ms = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+    stat_rent, z_rent, pct_rent, combined_rent = _compute_type_scores(
+        ppm=ppm_rent,
+        mean=mean_rent,
+        stddev=std_rent,
+        pct_rank=0.5,
+        ai_score=ai,
+        weights=weights,
+    )
+    stat_sale, z_sale, pct_sale, combined_sale = _compute_type_scores(
+        ppm=ppm_sale,
+        mean=mean_sale,
+        stddev=std_sale,
+        pct_rank=0.5,
+        ai_score=ai,
+        weights=weights,
+    )
+
+    if primary == "rent":
+        stat_score, z, pct_rank = stat_rent, z_rent, pct_rent
+        n_mean, n_median = mean_rent, median_rent
+    else:
+        stat_score, z, pct_rank = stat_sale, z_sale, pct_sale
+        n_mean, n_median = mean_sale, median_sale
+
+    assert stat_score is not None and z is not None
+    stat_analysis = _stat_analysis(z)
+
     if ms is None:
         ms = MetricsScoring(
             property_id=property_id,
             stat_score=stat_score,
-            ai_score=0.0,
-            combined_score=stat_score * weights.stat_weight,
+            ai_score=ai,
+            combined_score=stat_score * weights.stat_weight + ai * weights.ai_weight,
             price_per_m2=price_per_m2,
-            neighborhood_mean=stats["mean"],
-            neighborhood_median=stats["median"],
+            neighborhood_mean=n_mean,
+            neighborhood_median=n_median,
             z_score=z,
-            percentile_rank=0.5,  # Approximation
+            percentile_rank=pct_rank if pct_rank is not None else 0.5,
             meta={"stat_analysis": stat_analysis},
         )
         session.add(ms)
     else:
-        _update_metrics_score(ms, stat_score, price_per_m2, stats, z, weights, stat_analysis)
+        _update_metrics_score(
+            ms,
+            stat_score,
+            price_per_m2,
+            {"mean": n_mean, "median": n_median},
+            z,
+            weights,
+            stat_analysis,
+        )
 
     _apply_type_fields(
         ms,
@@ -538,6 +649,14 @@ def score_single_property(session: Session, property_id: str) -> None:
         neighborhood_mean_sale=mean_sale if ppm_sale is not None else None,
         neighborhood_median_rent=median_rent if ppm_rent is not None else None,
         neighborhood_median_sale=median_sale if ppm_sale is not None else None,
+        stat_score_rent=stat_rent,
+        stat_score_sale=stat_sale,
+        z_score_rent=z_rent,
+        z_score_sale=z_sale,
+        percentile_rank_rent=pct_rent,
+        percentile_rank_sale=pct_sale,
+        combined_score_rent=combined_rent,
+        combined_score_sale=combined_sale,
     )
 
     session.flush()

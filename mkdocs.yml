@@ -46,6 +46,7 @@ nav:
       - Scraper Framework: features/01-scraper-framework.md
       - Deduplication Engine: features/02-deduplication-engine.md
       - AI Enrichment: features/03-ai-enrichment.md
+      - AI Enrich RAM / Concurrency: features/66-ai-enrich-ram-concurrency.md
       - Scoring Engine: features/04-scoring-engine.md
       - Price-Drop Alerts: features/05-price-drop-alerts.md
       - Task Orchestration: features/06-task-orchestration.md

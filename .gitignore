@@ -83,3 +83,6 @@ _bmad-output/planning-artifacts/architecture/**/reviews/
 
 # Port registry for sibling worktrees
 .agent-workspaces/
+
+# Local Ollama VRAM bench outputs
+data/bench/

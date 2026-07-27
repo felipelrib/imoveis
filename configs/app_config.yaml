@@ -202,7 +202,9 @@ ai:
 # GPU Resource Management
 # ---------------------------------------------------------------------------
 gpu:
-  semaphore_limit: 1    # max concurrent GPU-bound tasks
+  # Safe on RX 7900 XT 20GB with OLLAMA_NUM_PARALLEL=2, num_ctx=16384, 8 images
+  # (bench case D ~7GB VRAM, 0 spill). Keep NUM_PARALLEL == this limit.
+  semaphore_limit: 2    # max concurrent GPU-bound tasks
   semaphore_name: gpu
 
 # ---------------------------------------------------------------------------
@@ -262,6 +264,26 @@ image_storage_path: data/images
 pipeline_metrics:
   snapshot_interval_sec: 30   # Celery beat interval for writing snapshots
   retention_days: 7           # prune snapshots older than this
+
+# ---------------------------------------------------------------------------
+# Neighbourhood quality fill jobs (BIN-86+)
+# ---------------------------------------------------------------------------
+# Transit proximity (BIN-89): radii + mode weights for GTFS/OSM stop scoring.
+# Refresh via scripts/dev/refresh_transit_proximity.py (offline files; no live
+# Overpass/GTFS HTTP in CI).
+neighbourhood_quality:
+  transit:
+    count_radius_m: 400
+    max_radius_m: 1200
+    nearest_weight: 0.7
+    density_weight: 0.3
+    density_cap: 8.0
+    mode_weights:
+      metro: 1.0
+      brt: 0.9
+      rail: 0.85
+      bus: 0.55
+      other: 0.4
 
 # ---------------------------------------------------------------------------
 # Neighbourhood access / travel-time to downtown hubs (BIN-90)

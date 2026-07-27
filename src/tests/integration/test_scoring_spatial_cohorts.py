@@ -291,7 +291,7 @@ class TestRentSalePricePerM2Cohorts:
             db_session, price=4_000, area_m2=100, props_neighborhood=STRING_COHORT
         )
         _add_listing(dual, listing_type="rent", price=4_000)
-        _add_listing(dual, listing_type="sale", price=300_000)
+        _add_listing(dual, listing_type="sale", price=520_000)
         db_session.commit()
 
         compute_neighborhood_stats(db_session, STRING_COHORT)
@@ -299,10 +299,21 @@ class TestRentSalePricePerM2Cohorts:
 
         ms = _metrics(db_session, dual.id)
         assert ms.price_per_m2_rent == pytest.approx(40.0)
-        assert ms.price_per_m2_sale == pytest.approx(3000.0)
-        # Rent mean: (50 + 40) / 2 = 45; sale mean: (5000 + 3000) / 2 = 4000
+        assert ms.price_per_m2_sale == pytest.approx(5200.0)
+        # Rent mean: (50 + 40) / 2 = 45; sale mean: (5000 + 5200) / 2 = 5100
         assert ms.neighborhood_mean_rent == pytest.approx(45.0)
-        assert ms.neighborhood_mean_sale == pytest.approx(4000.0)
+        assert ms.neighborhood_mean_sale == pytest.approx(5100.0)
         # Legacy primary = rent
         assert ms.price_per_m2 == pytest.approx(40.0)
         assert ms.neighborhood_mean == pytest.approx(45.0)
+        # BIN-83: dual stat scores persisted; rent undervalued, sale overvalued
+        assert ms.stat_score_rent is not None
+        assert ms.stat_score_sale is not None
+        assert ms.z_score_rent is not None
+        assert ms.z_score_sale is not None
+        assert ms.combined_score_rent is not None
+        assert ms.combined_score_sale is not None
+        assert ms.stat_score_rent > ms.stat_score_sale
+        assert ms.stat_score == ms.stat_score_rent
+        assert ms.z_score_rent < 0
+        assert ms.z_score_sale > 0

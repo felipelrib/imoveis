@@ -45,5 +45,5 @@ None.
 
 ## Notes / Follow-ups
 
-- Fill pipelines: [BIN-87](https://linear.app/felipelrib/issue/BIN-87) curated YAML, [BIN-88](https://linear.app/felipelrib/issue/BIN-88)–[BIN-91](https://linear.app/felipelrib/issue/BIN-91) geo overlays, optional [BIN-92](https://linear.app/felipelrib/issue/BIN-92) crime.
+- Fill pipelines: [BIN-87](https://linear.app/felipelrib/issue/BIN-87) curated YAML (docs/features/66-curated-yaml-neighbourhood-quality-mvp.md), [BIN-88](https://linear.app/felipelrib/issue/BIN-88)–[BIN-91](https://linear.app/felipelrib/issue/BIN-91) geo overlays, optional [BIN-92](https://linear.app/felipelrib/issue/BIN-92) crime.
 - Blend into scoring/UI: [BIN-94](https://linear.app/felipelrib/issue/BIN-94). Epic: [BIN-85](https://linear.app/felipelrib/issue/BIN-85).
