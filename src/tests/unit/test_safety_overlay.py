@@ -11,7 +11,9 @@ import yaml
 
 from core.safety_overlay import (
     DEFAULT_ATTRIBUTION,
+    DEFAULT_CITY,
     DEFAULT_PROVIDER,
+    DEFAULT_STATE,
     ApplyResult,
     SafetyOverlayError,
     SafetyRateRow,
@@ -29,6 +31,10 @@ FIXTURE = (
     / "sp_safety_rates_tiny.yaml"
 )
 FIXED_TS = "2026-07-27T12:00:00+00:00"
+SP_PROVIDER = "ssp-sp-bo-rates"
+SP_ATTRIBUTION = (
+    "SSP-SP Transparência — registration rates, not absolute safety"
+)
 
 
 def _rate(**overrides) -> SafetyRateRow:
@@ -41,8 +47,8 @@ def _rate(**overrides) -> SafetyRateRow:
         period_end="2024-12",
         rate_definition="crimes_violentos_per_100k_pop",
         grain="bairro",
-        provider=DEFAULT_PROVIDER,
-        attribution=DEFAULT_ATTRIBUTION,
+        provider=SP_PROVIDER,
+        attribution=SP_ATTRIBUTION,
     )
     base.update(overrides)
     return SafetyRateRow(**base)
@@ -92,15 +98,15 @@ class TestMergeQualityMetaSafety:
         merged = merge_quality_meta_safety(
             existing,
             {
-                "provider": DEFAULT_PROVIDER,
-                "attribution": DEFAULT_ATTRIBUTION,
+                "provider": SP_PROVIDER,
+                "attribution": SP_ATTRIBUTION,
                 "rate_per_100k": 12.0,
             },
         )
         assert merged["risk"]["provider"] == "geojson-overlay"
         assert merged["access"]["hub_id"] == "paulista"
         assert merged["transit"]["provider"] == "osm"
-        assert merged["safety"]["provider"] == DEFAULT_PROVIDER
+        assert merged["safety"]["provider"] == SP_PROVIDER
         assert merged["safety"]["rate_per_100k"] == 12.0
 
     def test_none_existing(self):
@@ -117,7 +123,7 @@ class TestParseSafetyRates:
         assert pinheiros.city == "São Paulo"
         assert pinheiros.state == "SP"
         assert pinheiros.rate_per_100k == pytest.approx(200.0)
-        assert pinheiros.provider == DEFAULT_PROVIDER
+        assert pinheiros.provider == SP_PROVIDER
         assert pinheiros.period_start == "2024-01"
         assert pinheiros.period_end == "2024-12"
         assert "not absolute safety" in pinheiros.attribution
@@ -184,7 +190,7 @@ class TestApplySafetyRates:
         assert result.updated == 2
         assert pinheiros.safety_score == pytest.approx(0.0)
         assert moema.safety_score == pytest.approx(1.0)
-        assert pinheiros.quality_meta["safety"]["provider"] == DEFAULT_PROVIDER
+        assert pinheiros.quality_meta["safety"]["provider"] == SP_PROVIDER
         assert pinheiros.quality_meta["safety"]["refreshed_at"] == FIXED_TS
         assert pinheiros.quality_meta["safety"]["rate_per_100k"] == 200.0
         assert "not absolute safety" in pinheiros.quality_meta["safety"]["attribution"]
@@ -225,18 +231,18 @@ class TestApplySafetyRates:
             )
         assert row.quality_meta["risk"]["provider"] == "geojson-overlay"
         assert row.quality_meta["access"]["hub_id"] == "paulista"
-        assert row.quality_meta["safety"]["provider"] == DEFAULT_PROVIDER
+        assert row.quality_meta["safety"]["provider"] == SP_PROVIDER
 
     def test_idempotent_when_unchanged(self):
         meta = merge_quality_meta_safety(
             None,
             {
-                "provider": DEFAULT_PROVIDER,
+                "provider": SP_PROVIDER,
                 "refreshed_at": FIXED_TS,
                 "rate_definition": "crimes_violentos_per_100k_pop",
                 "rate_per_100k": 100.0,
                 "grain": "bairro",
-                "attribution": DEFAULT_ATTRIBUTION,
+                "attribution": SP_ATTRIBUTION,
                 "period_start": "2024-01",
                 "period_end": "2024-12",
             },
@@ -272,5 +278,26 @@ class TestLoadSafetyRatesFile:
 def test_fixture_yaml_roundtrip():
     with FIXTURE.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
-    assert data["provider"] == DEFAULT_PROVIDER
+    assert data["provider"] == SP_PROVIDER
     assert len(data["rates"]) >= 2
+
+
+class TestBhOperatorDefaults:
+    def test_module_defaults_are_belo_horizonte(self):
+        assert DEFAULT_CITY == "Belo Horizonte"
+        assert DEFAULT_STATE == "MG"
+        assert DEFAULT_PROVIDER == "sejusp-mg-regional"
+        assert "SEJUSP" in DEFAULT_ATTRIBUTION
+
+    def test_parse_without_defaults_uses_bh(self):
+        rows = parse_safety_rates(
+            {
+                "rates": [
+                    {"name": "Savassi", "rate_per_100k": 10.0},
+                    {"name": "Centro", "rate_per_100k": 20.0},
+                ]
+            }
+        )
+        assert rows[0].city == "Belo Horizonte"
+        assert rows[0].state == "MG"
+        assert rows[0].provider == "sejusp-mg-regional"
