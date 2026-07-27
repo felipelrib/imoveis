@@ -179,9 +179,16 @@ run_frontend() {
 
 run_e2e() {
   [ -d "$REPO_ROOT/frontend" ] || { warn "no frontend/ — skipping E2E"; return; }
-  log "E2E: Playwright"
+  # Parallel worktrees: bind Playwright's ephemeral Vite to this workspace's
+  # FRONTEND_PORT so agents don't fight over the default :5177.
+  local pw_port="${PLAYWRIGHT_PORT:-}"
+  if [ -z "$pw_port" ] && [ -n "${FRONTEND_PORT:-}" ]; then
+    pw_port="$FRONTEND_PORT"
+  fi
+  pw_port="${pw_port:-5177}"
+  log "E2E: Playwright (port ${pw_port})"
   ( cd "$REPO_ROOT/frontend" \
-      && npm run test:e2e ) \
+      && PLAYWRIGHT_PORT="$pw_port" npm run test:e2e ) \
     && ok "E2E tests passed" || { warn "E2E tests FAILED"; rc=1; }
 }
 

@@ -7,7 +7,8 @@
 #
 # With --pr: after required checks are green, SQUASH-MERGES the PR into main, then
 # cleans up the workspace (worktree teardown --remove, or primary → main) and
-# runs docker-cleanup.sh (stopped containers + dangling images; never volumes).
+# runs docker-cleanup.sh (stopped containers + dangling/unused feat|wt images;
+# keeps primary imoveis-* + bases; never volumes).
 # Merge-ready is NOT finished — squash-merged to main is finished.
 #
 # Docs-only branches (prose under docs/, *.md, _bmad-output/, etc.):
@@ -159,7 +160,7 @@ if [ "$DRY_RUN" = true ]; then
     else
       log "  4. Merge PR into main"
       log "  5. Cleanup workspace (teardown --remove if worktree, else checkout main)"
-      log "  6. docker-cleanup.sh (temp containers/images; volumes preserved)"
+      log "  6. docker-cleanup.sh (temp containers + dangling/unused feat|wt images; primary + volumes preserved)"
     fi
   else
     log "  3. Return primary to main (unless worktree / --keep-branch)"
