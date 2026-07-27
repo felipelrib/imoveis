@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "risk_type": "industrial_adjacent",
+        "severity": "medium",
+        "city": "Belo Horizonte",
+        "state": "MG"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-43.9495, -19.9295],
+            [-43.9455, -19.9295],
+            [-43.9455, -19.9255],
+            [-43.9495, -19.9255],
+            [-43.9495, -19.9295]
+          ]
+        ]
+      }
+    }
+  ]
+}
