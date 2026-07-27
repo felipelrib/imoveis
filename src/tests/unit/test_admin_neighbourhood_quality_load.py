@@ -69,3 +69,29 @@ def test_admin_quality_load_requires_auth(client_with_auth):
     client, _auth = client_with_auth
     response = client.post("/admin/neighbourhoods/quality/load")
     assert response.status_code in (401, 403)
+
+
+@pytest.mark.unit
+def test_admin_quality_load_yaml_error_is_500(client_with_auth):
+    client, auth = client_with_auth
+    session = MagicMock()
+    session.__enter__ = MagicMock(return_value=session)
+    session.__exit__ = MagicMock(return_value=False)
+
+    from core.neighbourhood_quality_yaml import NeighbourhoodQualityYamlError
+
+    with (
+        patch("api.admin.SessionLocal", return_value=session),
+        patch(
+            "core.neighbourhood_quality_yaml.load_curated_neighbourhood_quality",
+            side_effect=NeighbourhoodQualityYamlError("bad yaml"),
+        ),
+        patch("api.admin.log_audit_action"),
+    ):
+        response = client.post(
+            "/admin/neighbourhoods/quality/load",
+            headers={"X-API-Key": auth.api_key},
+        )
+
+    assert response.status_code == 500
+    assert "bad yaml" in response.json()["detail"]
