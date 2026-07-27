@@ -262,3 +262,25 @@ image_storage_path: data/images
 pipeline_metrics:
   snapshot_interval_sec: 30   # Celery beat interval for writing snapshots
   retention_days: 7           # prune snapshots older than this
+
+# ---------------------------------------------------------------------------
+# Neighbourhood quality refresh (Epic 6 / BIN-88 OSM amenities)
+# ---------------------------------------------------------------------------
+neighbourhood_quality:
+  osm_amenities:
+    enabled: false              # set true to schedule Celery beat refresh
+    mode: geojson               # geojson (offline) | overpass (HTTP)
+    poi_geojson_path: ""        # required when mode=geojson
+    overpass_url: https://overpass-api.de/api/interpreter
+    request_timeout_sec: 60
+    rate_limit_per_minute: 8    # politeness sleep between Overpass calls
+    buffer_m: 0                 # expand neighbourhood polygon for POI match
+    cache_dir: ""               # optional disk cache for Overpass JSON
+    cache_ttl_hours: 24
+    interval_hours: 168         # beat cadence when enabled (weekly)
+    batch_size: 50
+    category_targets:
+      shop: 3
+      park: 1
+      school: 1
+      healthcare: 2

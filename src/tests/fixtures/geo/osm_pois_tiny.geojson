@@ -1,0 +1,82 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Supermarket Inside A",
+        "shop": "supermarket"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9375, -19.9175]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Convenience Inside A",
+        "shop": "convenience"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9365, -19.9165]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Park Inside A",
+        "leisure": "park"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9380, -19.9180]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "School Inside A",
+        "amenity": "school"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9370, -19.9170]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Pharmacy Inside A",
+        "amenity": "pharmacy"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9360, -19.9185]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Clinic Outside A",
+        "amenity": "clinic"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9500, -19.9275]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Cafe Ignored",
+        "amenity": "cafe"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-43.9375, -19.9175]
+      }
+    }
+  ]
+}

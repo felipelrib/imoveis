@@ -120,6 +120,22 @@ def build_beat_schedule() -> dict:
                 "schedule": interval_min * 60,
             }
 
+    # OSM amenity density for neighbourhoods (BIN-88). Explicit ``is True`` so
+    # MagicMock stubs in unit tests do not accidentally enable the job.
+    osm_cfg = None
+    try:
+        nq = getattr(cfg, "neighbourhood_quality", None) if cfg is not None else None
+        osm_cfg = getattr(nq, "osm_amenities", None) if nq is not None else None
+    except Exception:
+        osm_cfg = None
+    if osm_cfg is not None and getattr(osm_cfg, "enabled", False) is True:
+        interval_hours = float(getattr(osm_cfg, "interval_hours", 168) or 0)
+        if interval_hours > 0:
+            schedule["refresh-neighbourhood-amenities"] = {
+                "task": "tasks.refresh_neighbourhood_amenities",
+                "schedule": interval_hours * 3600,
+            }
+
     return schedule
 
 
@@ -162,6 +178,7 @@ def make_celery() -> Celery:
         'tasks.send_daily_digest': {'queue': 'scrapers'},
         'tasks.send_top_deals_digest': {'queue': 'scrapers'},
         'tasks.recheck_listing_availability': {'queue': 'scrapers'},
+        'tasks.refresh_neighbourhood_amenities': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config

@@ -229,6 +229,7 @@ class TestBuildBeatSchedule:
         assert app.conf.task_routes["tasks.send_daily_digest"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.send_top_deals_digest"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.recheck_listing_availability"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.refresh_neighbourhood_amenities"] == {"queue": "scrapers"}
         assert app.conf.beat_schedule == {"scheduled": {}}
         build_schedule.assert_called_once()
 
@@ -263,6 +264,7 @@ class TestBuildBeatSchedule:
             "tasks.send_daily_digest",
             "tasks.send_top_deals_digest",
             "tasks.recheck_listing_availability",
+            "tasks.refresh_neighbourhood_amenities",
         ):
             assert routes.get(task_name) == {"queue": "scrapers"}, (
                 f"{task_name} must route to scrapers — workers do not consume default celery"
@@ -312,6 +314,53 @@ class TestBuildBeatSchedule:
 
         schedule = build_beat_schedule()
         assert "recheck-listing-availability" not in schedule
+
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_osm_amenities_schedule_when_enabled(self, mock_get_redis, mock_get_config):
+        """BIN-88: enabled osm_amenities adds a scrapers-bound beat entry."""
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals.enabled = False
+        cfg.scraping.platforms = {}
+        cfg.scraping.availability_recheck = SimpleNamespace(enabled=False)
+        cfg.pipeline_metrics.snapshot_interval_sec = 30
+        cfg.neighbourhood_quality.osm_amenities = SimpleNamespace(
+            enabled=True,
+            interval_hours=168,
+        )
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock(get=MagicMock(return_value=None))
+
+        schedule = build_beat_schedule()
+        assert "refresh-neighbourhood-amenities" in schedule
+        assert schedule["refresh-neighbourhood-amenities"]["task"] == (
+            "tasks.refresh_neighbourhood_amenities"
+        )
+        assert schedule["refresh-neighbourhood-amenities"]["schedule"] == 168 * 3600
+
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_osm_amenities_excluded_when_disabled(self, mock_get_redis, mock_get_config):
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals.enabled = False
+        cfg.scraping.platforms = {}
+        cfg.scraping.availability_recheck = SimpleNamespace(enabled=False)
+        cfg.pipeline_metrics.snapshot_interval_sec = 30
+        cfg.neighbourhood_quality.osm_amenities = SimpleNamespace(
+            enabled=False,
+            interval_hours=168,
+        )
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock(get=MagicMock(return_value=None))
+
+        schedule = build_beat_schedule()
+        assert "refresh-neighbourhood-amenities" not in schedule
 
 
 @pytest.mark.unit
