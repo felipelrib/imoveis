@@ -105,6 +105,7 @@ class _OwnerScopedSession:
         self.saved_searches: list[dict] = []
         self.watchlist: list[dict] = []
         self.properties: set[str] = set()
+        self.public_ids: dict[int, str] = {}  # public_id → UUID
         self.committed = False
 
     def __enter__(self):
@@ -124,7 +125,13 @@ class _OwnerScopedSession:
         sql = str(statement).lower()
 
         if "from properties" in sql and "select id" in sql:
-            pid = params.get("pid")
+            if "public_id" in sql:
+                pub = params.get("id")
+                uuid_val = self.public_ids.get(int(pub)) if pub is not None else None
+                if uuid_val is not None:
+                    return _FakeResult(rows=[(uuid_val,)])
+                return _FakeResult(rows=[])
+            pid = params.get("id") or params.get("pid")
             if pid in self.properties:
                 return _FakeResult(rows=[(pid,)])
             return _FakeResult(rows=[])
@@ -455,3 +462,49 @@ def test_watchlist_scoped_to_principal(monkeypatch: pytest.MonkeyPatch, owner_db
         ).status_code
         == 404
     )
+
+
+@pytest.mark.unit
+def test_favourite_accepts_public_id_ref(monkeypatch: pytest.MonkeyPatch, owner_db):
+    """BIN-82 deep links use public_id; favourites must resolve it to UUID (not 500)."""
+    prop_id = str(uuid4())
+    owner_db.properties.add(prop_id)
+    owner_db.public_ids[316] = prop_id
+
+    client = _client_for(monkeypatch, "alice", "key-a")
+    add = client.post(
+        "/favourites",
+        headers={"X-API-Key": "key-a"},
+        json={"property_id": "316"},
+    )
+    assert add.status_code == 201, add.text
+    assert add.json()["property_id"] == prop_id
+    assert owner_db.favourites[0]["property_id"] == prop_id
+
+    check = client.get("/favourites/check/316", headers={"X-API-Key": "key-a"})
+    assert check.status_code == 200
+    assert check.json()["favourited"] is True
+
+    removed = client.delete("/favourites/316", headers={"X-API-Key": "key-a"})
+    assert removed.status_code == 200
+    assert owner_db.favourites == []
+
+
+@pytest.mark.unit
+def test_watchlist_accepts_public_id_ref(monkeypatch: pytest.MonkeyPatch, owner_db):
+    prop_id = str(uuid4())
+    owner_db.properties.add(prop_id)
+    owner_db.public_ids[42] = prop_id
+
+    client = _client_for(monkeypatch, "alice", "key-a")
+    add = client.post(
+        "/watchlist",
+        headers={"X-API-Key": "key-a"},
+        json={"property_id": "42", "min_drop_pct": 5.0},
+    )
+    assert add.status_code == 201, add.text
+    assert add.json()["property_id"] == prop_id
+
+    check = client.get("/watchlist/check/42", headers={"X-API-Key": "key-a"})
+    assert check.status_code == 200
+    assert check.json()["watched"] is True
