@@ -83,7 +83,7 @@ development_status:
   5-3-scoring-cohorts-prefer-spatial-neighbourhoods: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress
+  epic-6: done
   6-1-neighbourhood-quality-profile-schema-api: done
   6-2-curated-yaml-neighbourhood-quality-mvp: done
   6-3-osm-amenity-density-for-neighbourhoods: done
