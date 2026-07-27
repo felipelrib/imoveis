@@ -1,0 +1,47 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "risk_type": "flood_zone",
+        "severity": "high",
+        "city": "Belo Horizonte",
+        "state": "MG"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-43.9395, -19.9195],
+            [-43.9355, -19.9195],
+            [-43.9355, -19.9155],
+            [-43.9395, -19.9155],
+            [-43.9395, -19.9195]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "risk_type": "flood_zone",
+        "severity": "low",
+        "city": "Belo Horizonte",
+        "state": "MG"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-43.9390, -19.9190],
+            [-43.9360, -19.9190],
+            [-43.9360, -19.9160],
+            [-43.9390, -19.9160],
+            [-43.9390, -19.9190]
+          ]
+        ]
+      }
+    }
+  ]
+}
