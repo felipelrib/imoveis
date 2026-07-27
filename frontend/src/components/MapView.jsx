@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { combinedScoreForListingType, formatScorePercent } from '../utils/scores.js'
 
 function scoreColor(v) {
   if (v == null) return '#6b7280'  // grey for no score
@@ -14,7 +15,7 @@ function formatPrice(p) {
   return 'R$ ' + Number(p).toLocaleString('pt-BR')
 }
 
-export default function MapView({ properties, onSelectProperty, onBboxChange }) {
+export default function MapView({ properties, listingType = 'both', onSelectProperty, onBboxChange }) {
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef([])
@@ -28,19 +29,21 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
       type: 'FeatureCollection',
       features: props
         .filter(p => p.lat != null && p.lon != null)
-        .map(p => ({
+        .map(p => {
+          const displayScore = combinedScoreForListingType(p, listingType)
+          return {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
           properties: {
             id: p.id,
             title: p.title || 'Sem titulo',
             price: p.price,
-            combined_score: p.combined_score,
+            combined_score: displayScore,
             neighborhood_name: p.neighborhood_name,
             bedrooms: p.bedrooms,
             area_m2: p.area_m2,
           },
-        })),
+        }}),
     }
 
     // Update or create source
@@ -128,7 +131,7 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
         const props = e.features[0].properties
         const coords = e.features[0].geometry.coordinates.slice()
         const score = props.combined_score != null
-          ? (props.combined_score * 100).toFixed(0)
+          ? formatScorePercent(props.combined_score)
           : '—'
 
         const container = document.createElement('div')
@@ -189,7 +192,7 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
           })
       })
     }
-  }, [onSelectProperty, onBboxChange])
+  }, [onSelectProperty, onBboxChange, listingType])
 
   // Initialize map
   useEffect(() => {
@@ -247,7 +250,7 @@ export default function MapView({ properties, onSelectProperty, onBboxChange }) 
     const map = mapRef.current
     if (!map || !map.isStyleLoaded()) return
     updateMarkers(map, properties || [])
-  }, [properties, updateMarkers])
+  }, [properties, listingType, updateMarkers])
 
   return (
     <div

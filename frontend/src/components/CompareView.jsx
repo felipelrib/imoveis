@@ -98,7 +98,21 @@ const ATTR_ROWS = [
   { key: 'bathrooms', label: 'Bathrooms', get: (p) => (p.bathrooms != null ? String(p.bathrooms) : '—') },
   { key: 'parking', label: 'Parking', get: (p) => (p.parking != null ? String(p.parking) : '—') },
   { key: 'combined_score', label: 'Combined score', get: (p) => formatScore(p.combined_score) },
+  { key: 'combined_score_rent', label: 'Combined score (rent)', get: (p) => formatScore(p.combined_score_rent) },
+  { key: 'combined_score_sale', label: 'Combined score (sale)', get: (p) => formatScore(p.combined_score_sale) },
   { key: 'stat_score', label: 'Statistical score', get: (p) => formatScore(p.stat_score) },
+  { key: 'stat_score_rent', label: 'Statistical score (rent)', get: (p) => formatScore(p.stat_score_rent) },
+  { key: 'stat_score_sale', label: 'Statistical score (sale)', get: (p) => formatScore(p.stat_score_sale) },
+  {
+    key: 'z_score_rent',
+    label: 'Z-score (rent)',
+    get: (p) => (p.z_score_rent != null ? p.z_score_rent.toFixed(3) : '—'),
+  },
+  {
+    key: 'z_score_sale',
+    label: 'Z-score (sale)',
+    get: (p) => (p.z_score_sale != null ? p.z_score_sale.toFixed(3) : '—'),
+  },
   { key: 'ai_score', label: 'AI score', get: (p) => formatScore(p.ai_score) },
   { key: 'deal_summary', label: 'Deal summary', get: (p) => p.deal_summary || '—' },
 ]
