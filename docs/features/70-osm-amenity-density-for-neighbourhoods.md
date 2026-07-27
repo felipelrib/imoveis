@@ -33,7 +33,7 @@ Files touched:
  src/tests/unit/test_osm_amenities.py                       | NEW — domain tests
  src/tests/unit/test_osm_amenity_adapters.py                | NEW — loader/overpass/task
  src/tests/unit/test_schedule.py                            | Beat/route assertions
- docs/features/67-osm-amenity-density-for-neighbourhoods.md | NEW — this doc
+ docs/features/70-osm-amenity-density-for-neighbourhoods.md | NEW — this doc
  _bmad-output/implementation-artifacts/sprint-status.yaml   | 6-3 done
 ```
 
