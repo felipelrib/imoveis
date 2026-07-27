@@ -57,8 +57,9 @@ worker.log
 .agent-workspaces/
 .env.local
 
-# Cursor IDE / agent harness (local only — not committed)
-.cursor/
+# Cursor IDE / agent harness (local only — not committed).
+# No trailing slash: worktrees use a .cursor symlink (same as .venv).
+.cursor
 
 # Legacy Cline local-only state (if present)
 .cline/memory/

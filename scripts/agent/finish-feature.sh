@@ -37,6 +37,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
+# Worktree ports / PLAYWRIGHT_PORT (validate.sh also sources this).
+if [ -f "$REPO_ROOT/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env.local"
+  set +a
+fi
+
 # --- Parse flags -------------------------------------------------------------
 DRY_RUN=false
 SKIP_DOCS=false

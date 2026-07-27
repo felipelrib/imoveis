@@ -84,6 +84,23 @@ else
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$BRANCH" "$PROJ" "$PG" "$RD" "$API" "$FE" "$WORKTREE" >> "$REGISTRY_FILE"
   ok "allocated ports pg=$PG redis=$RD api=$API fe=$FE"
 fi
+
+# PLAYWRIGHT_PORT is separate from Compose FRONTEND_PORT (ephemeral Vite for E2E).
+# Allocate under the same ports lock so parallel setups do not all land on 5177.
+PW_PREFERRED=$((5177 + (FE % 100)))
+if [ "$PW_PREFERRED" -lt 5177 ] || [ "$PW_PREFERRED" -gt 5299 ]; then
+  PW_PREFERRED=5177
+fi
+# Reuse existing .env.local PLAYWRIGHT_PORT when re-running setup on same worktree.
+PW=""
+if [ -f "$WORKTREE/.env.local" ]; then
+  PW="$(awk -F= '/^PLAYWRIGHT_PORT=/{print $2; exit}' "$WORKTREE/.env.local" 2>/dev/null || true)"
+fi
+if [ -z "$PW" ] || ! port_free "$PW"; then
+  PW="$(alloc_playwright_port "$PW_PREFERRED")"
+fi
+ok "allocated PLAYWRIGHT_PORT=$PW (Compose FE=$FE stays separate)"
+
 registry_unlock
 trap - EXIT
 
@@ -94,6 +111,7 @@ POSTGRES_PORT=$PG
 REDIS_PORT=$RD
 API_PORT=$API
 FRONTEND_PORT=$FE
+PLAYWRIGHT_PORT=$PW
 EOF
 ok ".env.local written"
 
@@ -105,11 +123,36 @@ if [ -x "$PRIMARY_ROOT/.venv/bin/python" ] && [ ! -e "$WORKTREE/.venv" ]; then
     || warn "could not symlink .venv (optional — create one or pip install -r requirements.txt)"
 fi
 
-# Best-effort: copy local Cursor harness so agents keep project skills/rules.
-if [ -d "$PRIMARY_ROOT/.cursor" ] && [ ! -e "$WORKTREE/.cursor" ]; then
-  cp -a "$PRIMARY_ROOT/.cursor" "$WORKTREE/.cursor" 2>/dev/null \
-    && ok "copied .cursor/ harness into worktree" \
-    || warn "could not copy .cursor/ (optional)"
+# Single local harness: symlink primary .cursor (do NOT copy — teardown would lose edits).
+# Legacy: older setups copied .cursor/ into the worktree. Replace a real directory
+# safely: only rm -rf when the path is exactly $WORKTREE/.cursor, is a directory,
+# and is NOT already a symlink — then ln -sfn to primary.
+if [ -d "$PRIMARY_ROOT/.cursor" ]; then
+  _cursor_dest="$WORKTREE/.cursor"
+  if [ -L "$_cursor_dest" ]; then
+    ln -sfn "$PRIMARY_ROOT/.cursor" "$_cursor_dest" \
+      && ok "symlinked .cursor/ harness from primary" \
+      || warn "could not refresh .cursor/ symlink (optional)"
+  elif [ -d "$_cursor_dest" ] && [ ! -L "$_cursor_dest" ]; then
+    # Path-guard: only rm -rf a directory that is exactly $WORKTREE/.cursor.
+    case "$_cursor_dest" in
+      "$WORKTREE/.cursor")
+        rm -rf -- "$_cursor_dest"
+        ln -sfn "$PRIMARY_ROOT/.cursor" "$_cursor_dest" \
+          && ok "replaced legacy .cursor/ directory with symlink from primary" \
+          || warn "could not replace legacy .cursor/ (optional)"
+        ;;
+      *)
+        warn "refusing to remove unexpected .cursor path: $_cursor_dest"
+        ;;
+    esac
+  elif [ ! -e "$_cursor_dest" ]; then
+    ln -sfn "$PRIMARY_ROOT/.cursor" "$_cursor_dest" \
+      && ok "symlinked .cursor/ harness from primary" \
+      || warn "could not symlink .cursor/ (optional)"
+  else
+    warn "unexpected non-directory at $_cursor_dest — skip .cursor symlink"
+  fi
 fi
 
 # Sync agent scripts from primary ONLY when primary has local (uncommitted)

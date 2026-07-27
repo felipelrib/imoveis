@@ -174,10 +174,26 @@ validate_docs_only() {
 }
 
 # --- Registry locking (race-free across parallel setup runs) ----------------
+# Prefer flock on .ports.lock (atomic across agents). Fall back to mkdir lock
+# when flock is unavailable (rare). Covers port pick + registry.tsv writes.
+PORTS_LOCK_FILE="$REGISTRY_DIR/.ports.lock"
+REGISTRY_LOCK_FD=""
+
 registry_lock() {
   mkdir -p "$REGISTRY_DIR" 2>/dev/null || true
   if [ ! -d "$REGISTRY_DIR" ] || [ ! -w "$REGISTRY_DIR" ]; then
     die "registry dir not writable: $REGISTRY_DIR (fix ownership or use .agent-workspaces on primary)"
+  fi
+  if command -v flock >/dev/null 2>&1; then
+    # Open/create lock file and hold an exclusive flock for the critical section.
+    # FD stays open until registry_unlock (or process exit).
+    exec {REGISTRY_LOCK_FD}<>"$PORTS_LOCK_FILE"
+    if ! flock -w 90 "$REGISTRY_LOCK_FD"; then
+      exec {REGISTRY_LOCK_FD}>&- 2>/dev/null || true
+      REGISTRY_LOCK_FD=""
+      die "could not acquire ports lock after 90s at $PORTS_LOCK_FILE"
+    fi
+    return 0
   fi
   local attempts=0
   until mkdir "$REGISTRY_LOCK" 2>/dev/null; do
@@ -192,7 +208,14 @@ registry_lock() {
     fi
   done
 }
-registry_unlock() { rm -rf "$REGISTRY_LOCK" 2>/dev/null || true; }
+registry_unlock() {
+  if [ -n "${REGISTRY_LOCK_FD:-}" ]; then
+    flock -u "$REGISTRY_LOCK_FD" 2>/dev/null || true
+    exec {REGISTRY_LOCK_FD}>&- 2>/dev/null || true
+    REGISTRY_LOCK_FD=""
+  fi
+  rm -rf "$REGISTRY_LOCK" 2>/dev/null || true
+}
 
 # --- Port helpers -----------------------------------------------------------
 # A port is "free" if we cannot open a TCP connection to it on localhost.
@@ -227,6 +250,67 @@ alloc_port_block() {
     [ "$ok_block" -eq 1 ] && { printf '%s' "$base"; return 0; }
   done
   die "could not find a free port block after 400 attempts"
+}
+
+# Playwright binds its own ephemeral Vite (PLAYWRIGHT_PORT), separate from the
+# Compose FRONTEND_PORT. Parallel agents must not all default to 5177.
+# Collect PLAYWRIGHT_PORT values already written to sibling worktree .env.local.
+playwright_ports_in_use() {
+  local path envf p
+  [ -f "$REGISTRY_FILE" ] || return 0
+  while IFS=$'\t' read -r _branch _proj _pg _rd _api _fe path; do
+    [ -n "${path:-}" ] || continue
+    envf="$path/.env.local"
+    [ -f "$envf" ] || continue
+    p="$(awk -F= '/^PLAYWRIGHT_PORT=/{print $2; exit}' "$envf" 2>/dev/null || true)"
+    [ -n "$p" ] && printf '%s\n' "$p"
+  done < "$REGISTRY_FILE"
+}
+
+# True if Playwright port is claimed by another worktree's .env.local.
+playwright_port_reserved() {
+  local p="$1"
+  playwright_ports_in_use | grep -qx "$p"
+}
+
+# Pick a free Playwright port in 5177..5299.
+# Optional preferred start (e.g. derived from FE). Call under registry_lock when
+# writing .env.local so parallel setups do not collide.
+# Prefer: preferred (if given) → 5177 → 5187..5197 → remaining 5178..5299.
+alloc_playwright_port() {
+  local preferred="${1:-}"
+  local p used
+  used="$(playwright_ports_in_use | tr '\n' ' ')"
+  _pw_try() {
+    local cand="$1"
+    [ -n "$cand" ] || return 1
+    case " $used " in
+      *" $cand "*) return 1 ;;
+    esac
+    playwright_port_reserved "$cand" && return 1
+    port_free "$cand" || return 1
+    printf '%s' "$cand"
+    return 0
+  }
+  if [ -n "$preferred" ] && _pw_try "$preferred"; then return 0; fi
+  if _pw_try 5177; then return 0; fi
+  for p in $(seq 5187 5197); do
+    if _pw_try "$p"; then return 0; fi
+  done
+  for p in $(seq 5178 5186) $(seq 5198 5299); do
+    if _pw_try "$p"; then return 0; fi
+  done
+  die "could not find a free PLAYWRIGHT_PORT in 5177..5299"
+}
+
+# If PLAYWRIGHT_PORT is unset, probe for a free port (validate/finish). Does not
+# take the registry lock — best-effort for a single agent run.
+resolve_playwright_port() {
+  if [ -n "${PLAYWRIGHT_PORT:-}" ]; then
+    printf '%s' "$PLAYWRIGHT_PORT"
+    return 0
+  fi
+  alloc_playwright_port ""
 }
 
 # Read a field for a branch from the registry: registry_get <branch> <col 2..6>
