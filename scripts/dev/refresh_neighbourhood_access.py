@@ -17,9 +17,9 @@ _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _REPO)
 sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from infra.db import SessionLocal  # noqa: E402
 from adapters.geo.access_refresh import refresh_neighbourhood_access  # noqa: E402
 from infra.config import get_config  # noqa: E402
+from infra.db import SessionLocal  # noqa: E402
 
 
 def main() -> int:
