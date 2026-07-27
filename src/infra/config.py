@@ -297,6 +297,32 @@ class PipelineMetricsConfig(BaseModel, frozen=True):
     retention_days: int = 7
 
 
+class AccessHubConfig(BaseModel, frozen=True):
+    """A fixed downtown / life hub used for neighbourhood access scoring."""
+
+    id: str
+    lat: float
+    lon: float
+    label: str = ""
+
+
+class NeighbourhoodAccessConfig(BaseModel, frozen=True):
+    """Travel-time / road-distance access scores to city hubs (BIN-90).
+
+    When ``base_url`` is empty, the refresh job uses haversine + ``avg_speed_kmh``.
+    Point ``base_url`` at a self-hosted OSRM instance for real routing.
+    """
+
+    enabled: bool = True
+    interval_minutes: int = 1440
+    base_url: str = ""
+    mode: str = "driving"
+    max_minutes: float = 45.0
+    avg_speed_kmh: float = 30.0
+    request_timeout_sec: float = 20.0
+    hubs: dict[str, list[AccessHubConfig]] = Field(default_factory=dict)
+
+
 class AppConfig(BaseModel, frozen=True):
     """Top-level frozen configuration object.
 
@@ -321,6 +347,9 @@ class AppConfig(BaseModel, frozen=True):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     pipeline_metrics: PipelineMetricsConfig = Field(default_factory=PipelineMetricsConfig)
+    neighbourhood_access: NeighbourhoodAccessConfig = Field(
+        default_factory=NeighbourhoodAccessConfig
+    )
     image_storage_path: str = "data/images"
 
 

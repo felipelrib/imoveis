@@ -262,3 +262,26 @@ image_storage_path: data/images
 pipeline_metrics:
   snapshot_interval_sec: 30   # Celery beat interval for writing snapshots
   retention_days: 7           # prune snapshots older than this
+
+# ---------------------------------------------------------------------------
+# Neighbourhood access / travel-time to downtown hubs (BIN-90)
+# ---------------------------------------------------------------------------
+# When base_url is empty, haversine + avg_speed_kmh estimates minutes.
+# Point base_url at self-hosted OSRM (e.g. http://localhost:5000) for road routes.
+neighbourhood_access:
+  enabled: true
+  interval_minutes: 1440      # daily Celery beat
+  base_url: ""                # OSRM root; empty → haversine fallback
+  mode: driving               # OSRM profile / travel mode label
+  max_minutes: 45             # score = 1 - minutes/max_minutes (clamped)
+  avg_speed_kmh: 30           # haversine → minutes conversion
+  request_timeout_sec: 20
+  hubs:
+    "Belo Horizonte":
+      - { id: praca-sete, lat: -19.9191, lon: -43.9386, label: "Praça Sete" }
+      - { id: savassi, lat: -19.9386, lon: -43.9378, label: "Savassi" }
+    "São Paulo":
+      - { id: paulista, lat: -23.5614, lon: -46.6558, label: "Paulista" }
+      - { id: se, lat: -23.5505, lon: -46.6333, label: "Sé" }
+    "Campinas":
+      - { id: centro, lat: -22.9056, lon: -47.0608, label: "Centro" }

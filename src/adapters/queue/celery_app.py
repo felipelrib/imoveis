@@ -120,6 +120,21 @@ def build_beat_schedule() -> dict:
                 "schedule": interval_min * 60,
             }
 
+    # Neighbourhood access / travel-time to hubs (BIN-90). Explicit ``is True`` so
+    # MagicMock stubs in unit tests do not accidentally enable the job.
+    access_cfg = None
+    try:
+        access_cfg = getattr(cfg, "neighbourhood_access", None) if cfg is not None else None
+    except Exception:
+        access_cfg = None
+    if access_cfg is not None and getattr(access_cfg, "enabled", False) is True:
+        access_interval = int(getattr(access_cfg, "interval_minutes", 1440) or 0)
+        if access_interval > 0:
+            schedule["refresh-neighbourhood-access"] = {
+                "task": "tasks.refresh_neighbourhood_access",
+                "schedule": access_interval * 60,
+            }
+
     return schedule
 
 
@@ -162,6 +177,7 @@ def make_celery() -> Celery:
         'tasks.send_daily_digest': {'queue': 'scrapers'},
         'tasks.send_top_deals_digest': {'queue': 'scrapers'},
         'tasks.recheck_listing_availability': {'queue': 'scrapers'},
+        'tasks.refresh_neighbourhood_access': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config
