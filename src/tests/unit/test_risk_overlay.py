@@ -232,3 +232,289 @@ class TestLoadRiskLayers:
             features, skipped = load_risk_layers(layers)
         assert features == []
         assert skipped == 2
+
+
+class TestMergeHelpers:
+    def test_merge_risk_flags_preserves_unapplied_managed(self):
+        from core.risk_overlay import merge_risk_flags
+
+        out = merge_risk_flags(
+            ["flood_zone", "seller_noise"],
+            ["industrial_adjacent"],
+            layers_applied=["industrial_adjacent"],
+        )
+        assert out == ["flood_zone", "seller_noise", "industrial_adjacent"]
+
+    def test_merge_risk_flags_clears_applied_when_no_hit(self):
+        from core.risk_overlay import merge_risk_flags
+
+        out = merge_risk_flags(
+            ["flood_zone", "other"],
+            [],
+            layers_applied=["flood_zone"],
+        )
+        assert out == ["other"]
+
+    def test_merge_quality_meta_overwrites_risk_only(self):
+        from core.risk_overlay import merge_quality_meta_risk
+
+        meta = merge_quality_meta_risk(
+            {"provider": "curated-yaml", "risk": {"old": True}},
+            severity={"flood_zone": "high"},
+            layers_applied=["flood_zone"],
+            refreshed_at="2026-07-27T00:00:00+00:00",
+        )
+        assert meta["provider"] == "curated-yaml"
+        assert meta["risk"]["severity"] == {"flood_zone": "high"}
+        assert meta["risk"]["layers_applied"] == ["flood_zone"]
+
+    def test_merge_quality_meta_non_dict_existing(self):
+        from core.risk_overlay import merge_quality_meta_risk
+
+        meta = merge_quality_meta_risk(
+            "nope",
+            severity={},
+            layers_applied=[],
+            refreshed_at="t",
+        )
+        assert meta["risk"]["refreshed_at"] == "t"
+
+
+class TestParseEdgeCases:
+    def test_invalid_default_risk_type(self):
+        with pytest.raises(RiskOverlayError, match="Unsupported risk_type"):
+            parse_risk_feature_collection(
+                {"type": "FeatureCollection", "features": []},
+                default_risk_type="volcano",
+            )
+
+    def test_wrong_root_and_features(self):
+        with pytest.raises(RiskOverlayError, match="FeatureCollection"):
+            parse_risk_feature_collection({"type": "Feature"})
+        with pytest.raises(RiskOverlayError, match="features"):
+            parse_risk_feature_collection(
+                {"type": "FeatureCollection", "features": "nope"}
+            )
+
+    def test_bad_feature_shape_and_state(self):
+        with pytest.raises(RiskOverlayError, match="must be an object"):
+            parse_risk_feature_collection(
+                {"type": "FeatureCollection", "features": ["x"]}
+            )
+        with pytest.raises(RiskOverlayError, match="type must be Feature"):
+            parse_risk_feature_collection(
+                {
+                    "type": "FeatureCollection",
+                    "features": [{"type": "NotFeature", "properties": {}}],
+                }
+            )
+        with pytest.raises(RiskOverlayError, match="2-letter"):
+            parse_risk_feature_collection(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "risk_type": "flood_zone",
+                                "state": "MGG",
+                            },
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": [
+                                    [
+                                        [0, 0],
+                                        [1, 0],
+                                        [1, 1],
+                                        [0, 1],
+                                        [0, 0],
+                                    ]
+                                ],
+                            },
+                        }
+                    ],
+                }
+            )
+
+    def test_point_geometry_rejected(self):
+        with pytest.raises(RiskOverlayError, match="Unsupported geometry"):
+            parse_risk_feature_collection(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {"risk_type": "flood_zone"},
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [0, 0],
+                            },
+                        }
+                    ],
+                }
+            )
+
+    def test_empty_polygon_and_missing_geometry(self):
+        with pytest.raises(RiskOverlayError, match="missing geometry"):
+            parse_risk_feature_collection(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {"risk_type": "flood_zone"},
+                            "geometry": None,
+                        }
+                    ],
+                }
+            )
+
+    def test_numeric_severity_out_of_range(self):
+        assert normalize_severity(1.5) is None
+        assert normalize_severity(True) is None
+
+
+class TestFlagsEdgeCases:
+    def test_empty_neighbourhood(self):
+        flags, severity = flags_for_neighbourhood(
+            Polygon(), parse_risk_feature_collection(FLOOD_FIXTURE)
+        )
+        assert flags == []
+        assert severity == {}
+
+
+class TestApplyWithMocks:
+    def test_apply_updates_and_skips_no_geometry(self):
+        from unittest.mock import MagicMock, patch
+
+        from core.risk_overlay import apply_risk_overlays
+        from shapely.geometry import box
+
+        flood = parse_risk_feature_collection(FLOOD_FIXTURE)
+        nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
+        row_hit = MagicMock()
+        row_hit.geometry = object()
+        row_hit.risk_flags = []
+        row_hit.quality_meta = None
+
+        row_none = MagicMock()
+        row_none.geometry = None
+        row_none.risk_flags = []
+        row_none.quality_meta = None
+
+        session = MagicMock()
+        session.query.return_value.filter_by.return_value.all.return_value = [
+            row_hit,
+            row_none,
+        ]
+
+        with patch(
+            "geoalchemy2.shape.to_shape", return_value=nhood_hit
+        ):
+            result = apply_risk_overlays(
+                session,
+                flood,
+                city="Belo Horizonte",
+                state="mg",
+                refreshed_at="t0",
+            )
+
+        assert result.updated == 1
+        assert result.skipped_no_geometry == 1
+        assert row_hit.risk_flags == ["flood_zone"]
+        assert row_hit.quality_meta["risk"]["severity"]["flood_zone"] == "high"
+        session.flush.assert_called()
+
+    def test_apply_unchanged_when_same(self):
+        from unittest.mock import MagicMock, patch
+
+        from core.risk_overlay import (
+            apply_risk_overlays,
+            merge_quality_meta_risk,
+        )
+        from shapely.geometry import box
+
+        flood = parse_risk_feature_collection(FLOOD_FIXTURE)
+        nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
+        meta = merge_quality_meta_risk(
+            None,
+            severity={"flood_zone": "high"},
+            layers_applied=["flood_zone"],
+            refreshed_at="t0",
+        )
+        row = MagicMock()
+        row.geometry = object()
+        row.risk_flags = ["flood_zone"]
+        row.quality_meta = meta
+
+        session = MagicMock()
+        session.query.return_value.filter_by.return_value.all.return_value = [
+            row
+        ]
+
+        with patch("geoalchemy2.shape.to_shape", return_value=nhood_hit):
+            result = apply_risk_overlays(
+                session,
+                flood,
+                city="Belo Horizonte",
+                state="MG",
+                layers_applied=["flood_zone"],
+                refreshed_at="t0",
+            )
+
+        assert result.updated == 0
+        assert result.unchanged == 1
+        session.flush.assert_not_called()
+
+    def test_load_and_apply_all_missing(self, caplog):
+        import logging
+        from unittest.mock import MagicMock
+
+        from core.risk_overlay import load_and_apply_risk_overlays
+
+        session = MagicMock()
+        with caplog.at_level(logging.WARNING):
+            result = load_and_apply_risk_overlays(
+                session,
+                [
+                    RiskOverlayLayer(
+                        path=Path("/missing.geojson"), risk_type="flood_zone"
+                    )
+                ],
+                city="Belo Horizonte",
+                state="MG",
+            )
+        assert result.layers_skipped_missing == 1
+        assert result.updated == 0
+        session.query.assert_not_called()
+
+    def test_load_and_apply_happy_path(self):
+        from unittest.mock import MagicMock, patch
+
+        from core.risk_overlay import load_and_apply_risk_overlays
+        from shapely.geometry import box
+
+        nhood_hit = box(-43.9395, -19.9195, -43.9355, -19.9155)
+        row = MagicMock()
+        row.geometry = object()
+        row.risk_flags = []
+        row.quality_meta = {"keep": True}
+
+        session = MagicMock()
+        session.query.return_value.filter_by.return_value.all.return_value = [
+            row
+        ]
+
+        with patch("geoalchemy2.shape.to_shape", return_value=nhood_hit):
+            result = load_and_apply_risk_overlays(
+                session,
+                [RiskOverlayLayer(path=FLOOD_FIXTURE, risk_type="flood_zone")],
+                city="Belo Horizonte",
+                state="MG",
+                refreshed_at="t1",
+            )
+
+        assert result.updated == 1
+        assert result.layers_skipped_missing == 0
+        assert row.quality_meta["keep"] is True
+        assert "flood_zone" in row.risk_flags
