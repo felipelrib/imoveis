@@ -10,7 +10,8 @@ import {
 
 const FURNISHED_PROPERTY = {
   ...SAMPLE_PROPERTY,
-  id: "furnished-1",
+  id: "furnished-uuid-1",
+  public_id: 42,
   title: "Furnished Savassi Flat",
   deal_summary: "Slightly undervalued — good condition, no location alerts",
   listings: [

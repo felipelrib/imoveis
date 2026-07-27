@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods, fetchCities } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
@@ -7,6 +8,15 @@ import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
+import {
+  PROPERTIES_PATH,
+  FAVOURITES_PATH,
+  propertyPath,
+  comparePath,
+  parseCompareIds,
+  parsePropertyId,
+  linkIdForProperty,
+} from '../routes/propertyPaths.js'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', label: '⭐ Best Score' },
@@ -35,6 +45,15 @@ const DEFAULT_FILTERS = {
 }
 
 export default function Properties() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { propertyId: propertyIdParam, compareIds: compareIdsParam } = useParams()
+  const routePropertyId = parsePropertyId(propertyIdParam)
+  const routeCompareIds = parseCompareIds(compareIdsParam)
+  const isFavouritesRoute = location.pathname === FAVOURITES_PATH
+    || location.pathname.startsWith(`${FAVOURITES_PATH}/`)
+  const isCompareRoute = location.pathname.startsWith('/compare/')
+
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -55,7 +74,6 @@ export default function Properties() {
   const [acceptsPets, setAcceptsPets] = useState(DEFAULT_FILTERS.acceptsPets)
   const [q, setQ] = useState(DEFAULT_FILTERS.q)
   const [qDraft, setQDraft] = useState(DEFAULT_FILTERS.q)
-  const [selectedId, setSelectedId] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [favouriteIds, setFavouriteIds] = useState(new Set())
@@ -69,23 +87,44 @@ export default function Properties() {
     selectedIds: compareIds,
     toggle: toggleCompare,
     clear: clearCompare,
+    replace: replaceCompare,
     isSelected: isCompareSelected,
     canCompare,
-  } = useCompareSelection({ onLimitReached: onCompareLimitReached })
+  } = useCompareSelection({
+    onLimitReached: onCompareLimitReached,
+    initialIds: isCompareRoute ? routeCompareIds : (location.state?.compareIds || []),
+  })
 
-  const handleToggleCompare = useCallback((e, propertyId) => {
+  const listReturnPath = isFavouritesRoute ? FAVOURITES_PATH : PROPERTIES_PATH
+  const returnToRef = useRef(listReturnPath)
+
+  const openProperty = useCallback((propertyOrId) => {
+    const linkId = typeof propertyOrId === 'object'
+      ? linkIdForProperty(propertyOrId)
+      : (parsePropertyId(String(propertyOrId)) || String(propertyOrId))
+    if (!linkId) return
+    returnToRef.current = isFavouritesRoute ? FAVOURITES_PATH : PROPERTIES_PATH
+    navigate(propertyPath(linkId), { state: { returnTo: returnToRef.current, compareIds } })
+  }, [navigate, isFavouritesRoute, compareIds])
+
+  const handleToggleCompare = useCallback((e, property) => {
     e.stopPropagation()
-    toggleCompare(propertyId)
+    const linkId = linkIdForProperty(property)
+    if (!linkId) return
+    toggleCompare(linkId)
   }, [toggleCompare])
 
   const [compareMode, setCompareMode] = useState(false)
-  const [compareOpen, setCompareOpen] = useState(false)
+
+  const closeProperty = useCallback(() => {
+    const returnTo = location.state?.returnTo || returnToRef.current || PROPERTIES_PATH
+    navigate(returnTo, { state: { compareIds } })
+  }, [navigate, location.state, compareIds])
 
   const toggleCompareMode = useCallback(() => {
     setCompareMode((prev) => {
       if (prev) {
         clearCompare()
-        setCompareOpen(false)
         return false
       }
       return true
@@ -94,26 +133,28 @@ export default function Properties() {
 
   const openCompare = useCallback(() => {
     if (!canCompare) return
-    setCompareOpen(true)
-  }, [canCompare])
+    navigate(comparePath(compareIds), { state: { returnTo: listReturnPath } })
+  }, [canCompare, navigate, compareIds, listReturnPath])
 
   const closeCompare = useCallback(() => {
-    setCompareOpen(false)
-  }, [])
+    const returnTo = location.state?.returnTo || PROPERTIES_PATH
+    navigate(returnTo, { state: { compareIds } })
+  }, [navigate, location.state, compareIds])
 
   const clearCompareAndExitMode = useCallback(() => {
     clearCompare()
-    setCompareOpen(false)
     setCompareMode(false)
-  }, [clearCompare])
+    const returnTo = location.state?.returnTo || PROPERTIES_PATH
+    navigate(returnTo)
+  }, [clearCompare, navigate, location.state])
 
   // Saved searches state
   const [savedSearches, setSavedSearches] = useState([])
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [saveName, setSaveName] = useState('')
 
-  // View mode: 'all' | 'favourites'
-  const [viewMode, setViewMode] = useState('all')
+  // View mode derived from URL: 'all' | 'favourites'
+  const viewMode = isFavouritesRoute ? 'favourites' : 'all'
   const [favouritesData, setFavouritesData] = useState({ items: [], total: 0 })
 
   // Dynamic neighborhoods / cities from backend
@@ -127,6 +168,32 @@ export default function Properties() {
   const [mapProperties, setMapProperties] = useState([])
   const [mapLoading, setMapLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  const selectedId = routePropertyId
+  const compareOpen = isCompareRoute && routeCompareIds.length >= 2
+
+  // Hydrate compare selection from URL / navigation state
+  useEffect(() => {
+    if (isCompareRoute) {
+      if (routeCompareIds.length >= 2) {
+        replaceCompare(routeCompareIds)
+        setCompareMode(true)
+      } else {
+        navigate(PROPERTIES_PATH, { replace: true })
+      }
+      return
+    }
+    if (location.state?.compareIds?.length) {
+      replaceCompare(location.state.compareIds)
+    }
+  }, [isCompareRoute, compareIdsParam]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Invalid /properties/:id → list
+  useEffect(() => {
+    if (propertyIdParam && !routePropertyId) {
+      navigate(PROPERTIES_PATH, { replace: true })
+    }
+  }, [propertyIdParam, routePropertyId, navigate])
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, platform, maxPrice, priceType,
@@ -332,24 +399,26 @@ export default function Properties() {
     }
   }, [favouriteIds, showToast])
 
-  // Reload on filter changes (except in favourites mode)
+  // Reload on filter changes; also enter favourites view via URL/sidebar
   useEffect(() => {
-    if (viewMode === 'all') {
-      load(1)
-      setPage(1)
-    }
+    setPage(1)
+    load(1)
   }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
   // page 1 when setPage(1) runs after visiting page 2+, which is intentional and correct.
   useEffect(() => {
-    if (viewMode === 'all') load(page)
+    load(page)
   }, [page])
 
   const handleViewModeChange = (mode) => {
-    setViewMode(mode)
     setPage(1)
+    if (mode === 'favourites') {
+      navigate(FAVOURITES_PATH, { state: { compareIds } })
+    } else {
+      navigate(PROPERTIES_PATH, { state: { compareIds } })
+    }
   }
 
   const handleSaveSearch = async () => {
@@ -380,12 +449,19 @@ export default function Properties() {
   }
 
   const handleApplySavedSearch = (filters) => {
-    setViewMode('all')
+    navigate(PROPERTIES_PATH, { state: { compareIds } })
     applyFilters(filters)
   }
 
   const totalResults = viewMode === 'favourites' ? favouritesData.total : (data?.total || 0)
-  const properties = viewMode === 'favourites' ? (favouritesData.items || []) : (data?.properties || [])
+  // Favourites API uses property_id (+ public_id); cards need UUID on `id` for watchlist/favourites.
+  const properties = viewMode === 'favourites'
+    ? (favouritesData.items || []).map((f) => ({
+        ...f,
+        id: f.property_id || f.id,
+        public_id: f.public_id,
+      }))
+    : (data?.properties || [])
   const pages = viewMode === 'favourites' ? Math.ceil(totalResults / 24) : (data?.pages || 1)
   const hasActiveFilters = Object.entries(currentFilters).some(([key, value]) => {
     if (key === 'priceType') return Boolean(maxPrice)
@@ -396,6 +472,7 @@ export default function Properties() {
 
   return (
     <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 60px)' }}>
+      <Outlet />
       {/* Sidebar */}
       <aside className="saved-searches-sidebar">
         <div className="sidebar-section">
@@ -425,11 +502,17 @@ export default function Properties() {
           <button
             className={`sidebar-link ${viewMode === 'favourites' ? 'active' : ''}`}
             onClick={() => handleViewModeChange('favourites')}
+            data-testid="favourites-nav"
           >
             ★ Favourites {favouriteIds.size > 0 && <span className="badge">{favouriteIds.size}</span>}
           </button>
           {viewMode === 'favourites' && (
-            <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: 4 }} onClick={() => handleViewModeChange('all')}>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ width: '100%', marginTop: 4 }}
+              onClick={() => handleViewModeChange('all')}
+              data-testid="favourites-back"
+            >
               ← Back to All Properties
             </button>
           )}
@@ -724,7 +807,11 @@ export default function Properties() {
           ) : (
             <MapView
               properties={mapProperties.length > 0 ? mapProperties : (data?.properties || [])}
-              onSelectProperty={(id) => setSelectedId(id)}
+              onSelectProperty={(id) => {
+                const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
+                const match = list.find((p) => String(p.id) === String(id))
+                openProperty(match || id)
+              }}
               onBboxChange={handleBboxChange}
             />
           )
@@ -763,13 +850,13 @@ export default function Properties() {
                   <PropertyCard
                     key={p.id}
                     property={p}
-                    onClick={() => setSelectedId(p.id)}
+                    onClick={() => openProperty(p)}
                     isWatched={watchedIds.has(p.id)}
                     onToggleWatchlist={toggleWatchlist}
                     isFavourited={favouriteIds.has(p.id)}
                     onToggleFavourite={toggleFavourite}
                     compareMode={compareMode}
-                    isCompareSelected={isCompareSelected(p.id)}
+                    isCompareSelected={isCompareSelected(linkIdForProperty(p))}
                     onToggleCompare={handleToggleCompare}
                   />
                 ))}
@@ -814,11 +901,11 @@ export default function Properties() {
         </div>
       )}
 
-      {selectedId && <PropertyModal id={selectedId} onClose={() => setSelectedId(null)} />}
+      {selectedId && <PropertyModal id={selectedId} onClose={closeProperty} />}
 
       {compareOpen && (
         <CompareView
-          ids={compareIds}
+          ids={routeCompareIds.length >= 2 ? routeCompareIds : compareIds}
           onClose={closeCompare}
           onClearSelection={clearCompareAndExitMode}
         />
@@ -921,6 +1008,7 @@ function PropertyCard({
   const platformCount = getPlatformCount(listings)
   const hasListings = listings.length > 0
   const locationLabel = formatLocationLabel(p.neighborhood_name, p.city)
+  const compareKey = linkIdForProperty(p) || String(p.id)
 
   return (
     <div
@@ -929,6 +1017,7 @@ function PropertyCard({
       role="button"
       tabIndex={0}
       data-property-id={p.id}
+      data-public-id={p.public_id ?? undefined}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -946,9 +1035,9 @@ function PropertyCard({
           <input
             type="checkbox"
             checked={!!isCompareSelected}
-            onChange={(e) => onToggleCompare(e, p.id)}
+            onChange={(e) => onToggleCompare(e, p)}
             aria-label={isCompareSelected ? 'Remove from comparison' : 'Select for comparison'}
-            data-testid={`compare-select-${p.id}`}
+            data-testid={`compare-select-${compareKey}`}
           />
         </label>
       )}

@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base
 
@@ -76,6 +76,13 @@ class Property(Base):
         UUID(as_uuid=True),
         primary_key=True,
         server_default=sa.text(SQL_GEN_RANDOM_UUID),
+    )
+    # Sequential id for shareable SPA URLs (/properties/14); UUID remains the PK.
+    public_id = Column(
+        BigInteger,
+        nullable=False,
+        unique=True,
+        server_default=sa.text("nextval('properties_public_id_seq')"),
     )
     platform = Column(String, nullable=False)
     platform_id = Column(String, nullable=False, index=True)

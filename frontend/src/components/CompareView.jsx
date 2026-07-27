@@ -167,10 +167,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
             type="button"
             className="btn btn-ghost btn-sm"
             data-testid="compare-exit-clear"
-            onClick={() => {
-              onClearSelection()
-              onClose()
-            }}
+            onClick={onClearSelection}
           >
             Clear & exit
           </button>

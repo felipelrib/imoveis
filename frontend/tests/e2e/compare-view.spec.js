@@ -46,6 +46,7 @@ test.describe("Side-by-side compare view", () => {
   test("opens compare with attribute columns, scores, price/m², and history", async ({ page }) => {
     await selectAndOpenCompare(page, ["1", "2"]);
 
+    await expect(page).toHaveURL(/\/compare\/1,2$/);
     await expect(page.getByTestId("compare-view")).toBeVisible();
     await expect(page.getByTestId("compare-table")).toBeVisible();
     await expect(page.getByTestId("compare-col-1")).toContainText("2BR Apartment Savassi");
@@ -75,9 +76,11 @@ test.describe("Side-by-side compare view", () => {
   test("Back to grid keeps selection; Clear & exit clears it and leaves compare mode", async ({ page }) => {
     await selectAndOpenCompare(page, ["1", "2"]);
     await expect(page.getByTestId("compare-view")).toBeVisible();
+    await expect(page).toHaveURL(/\/compare\/1,2$/);
 
     await page.getByTestId("compare-exit").click();
     await expect(page.getByTestId("compare-view")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/properties$/);
     await expect(page.getByTestId("compare-bar")).toBeVisible();
     await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
 

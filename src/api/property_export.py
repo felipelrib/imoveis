@@ -16,6 +16,7 @@ EXPORT_MAX_ROWS = 5000
 # Scalar / simple AD-12 fields written as CSV columns (order is stable for clients).
 _CSV_SCALAR_COLUMNS: tuple[str, ...] = (
     "id",
+    "public_id",
     "platform",
     "platform_id",
     "title",

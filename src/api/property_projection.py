@@ -114,6 +114,7 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
 
     return {
         "id": str(row["id"]),
+        "public_id": int(row["public_id"]) if row.get("public_id") is not None else None,
         "platform": row["platform"],
         "platform_id": row["platform_id"],
         "title": row["title"],
@@ -171,6 +172,7 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
 
     return {
         "id": str(row["id"]),
+        "public_id": int(row["public_id"]) if row.get("public_id") is not None else None,
         "platform": row["platform"],
         "platform_id": row["platform_id"],
         "title": row["title"],
@@ -257,6 +259,7 @@ LISTINGS_JSON_AGG = """
 
 LIST_SELECT_COLUMNS = f"""
                 p.id,
+                p.public_id,
                 p.platform,
                 p.platform_id,
                 p.title,
