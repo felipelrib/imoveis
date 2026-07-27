@@ -1,21 +1,27 @@
-# Example path map for crime / safety rate overlays (BIN-92).
+# Example path map for crime / safety rate overlays (BIN-92 / BIN-96).
 # Copy to configs/safety_overlays.yaml (or pass --config) and point paths at
-# local YAML/CSV rate files built from SSP-SP (or other) open data. Missing
-# paths are skipped with a warning — not a failure.
+# local YAML/CSV rate files. Missing paths are skipped with a warning.
 # Large dumps belong under data/safety/ (gitignored); do not commit them.
 #
-# Operator recipe (São Paulo):
-#   1. Download BO microdata from SSP-SP Transparência / Dados Abertos.
-#   2. Filter município São Paulo; aggregate counts by bairro (or point→GeoSampa
-#      distrito then map to neighbourhood names).
-#   3. Divide by population (IBGE / distrito) → rate_per_100k.
-#   4. Write YAML/CSV with name, city, state, rate_per_100k, period_*.
-#   5. PYTHONPATH=src python scripts/dev/load_safety_overlays.py --config ...
+# Belo Horizonte (priority):
+#   Regional seed is committed at configs/bh_safety_rates.yaml (rebuild with
+#   scripts/dev/build_bh_safety_rates.py). Prefer LAI/on-demand bairro CSV:
+#     PYTHONPATH=src python scripts/dev/build_bh_safety_rates.py \
+#       --bairro-csv data/safety/sejusp_bh_bairro.csv \
+#       --out data/safety/bh_crime_rates.yaml
+#   See docs/features/73-bh-crime-safety-rates.md.
 #
-# Belo Horizonte / Campinas: SEJUSP open grain is município/RISP only — park
-# neighbourhood scoring until bairro dumps exist. See docs/features/72-*.
+# São Paulo (secondary):
+#   1. Download BO microdata from SSP-SP Transparência / Dados Abertos.
+#   2. Aggregate by bairro / GeoSampa distrito → rate_per_100k.
+#   3. Write YAML/CSV under data/safety/sp_crime_rates.yaml.
 
 cities:
+  - city: Belo Horizonte
+    state: MG
+    provider: sejusp-mg-regional
+    path: configs/bh_safety_rates.yaml
+
   - city: São Paulo
     state: SP
     provider: ssp-sp-bo-rates

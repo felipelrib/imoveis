@@ -1,0 +1,33 @@
+# SEJUSP-MG crimes violentos counts by PBH regional — H1 2026 (BIN-96).
+#
+# Source: SEJUSP-MG, as compiled by Estado de Minas (27 Jul 2026):
+# https://www.em.com.br/gerais/2026/07/7468642-homicidios-aumentam-93-em-bh-e-crimes-violentos-recuam-no-1-semestre.html
+#
+# CKAN open dumps are município/RISP only (no bairro). Regional grain is the
+# finest published series usable for neighbourhood differentiation today.
+# Barreiro was not listed in the article totals; count = city total − sum of
+# listed regionals (2903 − 2643 = 260) for H1 2026 violent crimes.
+#
+# Prefer replacing this file with a LAI / on-demand SEJUSP bairro extract when
+# available (see docs/features/73-bh-crime-safety-rates.md).
+
+period_start: "2026-01"
+period_end: "2026-06"
+city_total: 2903
+rate_definition: sejusp_violent_crime_count_by_regional_h1_2026
+provider: sejusp-mg-regional
+attribution: >-
+  SEJUSP-MG crimes violentos by PBH regional (H1 2026), via Estado de Minas
+  compilation — registration counts at regional grain, not absolute safety.
+  Prefer bairro LAI extracts when available.
+
+regionals:
+  Centro-Sul: 658
+  Nordeste: 371
+  Noroeste: 352
+  Pampulha: 346
+  Oeste: 269
+  Norte: 236
+  Leste: 216
+  Venda Nova: 195
+  Barreiro: 260

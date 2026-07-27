@@ -19,6 +19,15 @@ FIXTURE = (
     / "safety"
     / "sp_safety_rates_tiny.yaml"
 )
+BH_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "safety"
+    / "bh_safety_rates_tiny.yaml"
+)
+BH_GENERATED = (
+    Path(__file__).resolve().parents[3] / "configs" / "bh_safety_rates.yaml"
+)
 FIXED_TS = "2026-07-27T12:00:00+00:00"
 
 
@@ -132,3 +141,70 @@ class TestApplySafetyOverlays:
     def test_parse_fixture_matches_apply_inputs(self):
         rows = parse_safety_rates(FIXTURE)
         assert {r.name for r in rows} >= {"Pinheiros", "Moema"}
+
+
+@pytest.mark.integration
+class TestApplyBhSafetyOverlays:
+    def test_bh_fixture_sets_relative_regional_scores(self, db_session):
+        savassi = _seed(
+            db_session,
+            name="Savassi",
+            city="Belo Horizonte",
+            state="MG",
+            amenity_score=0.9,
+        )
+        venda_nova = _seed(
+            db_session,
+            name="Venda Nova",
+            city="Belo Horizonte",
+            state="MG",
+        )
+        db_session.commit()
+
+        result = load_and_apply_safety_rates(
+            db_session,
+            BH_FIXTURE,
+            city="Belo Horizonte",
+            state="MG",
+            default_city="Belo Horizonte",
+            default_state="MG",
+            refreshed_at=FIXED_TS,
+        )
+        db_session.commit()
+
+        assert result.updated == 2
+        assert result.skipped_unknown == 1
+        db_session.refresh(savassi)
+        db_session.refresh(venda_nova)
+        # Higher regional count → lower safety
+        assert savassi.safety_score == pytest.approx(0.0)
+        assert venda_nova.safety_score == pytest.approx(1.0)
+        assert savassi.amenity_score == pytest.approx(0.9)
+        safety = savassi.quality_meta["safety"]
+        assert safety["provider"] == "sejusp-mg-regional"
+        assert safety["grain"] == "regional"
+        assert "not absolute safety" in safety["attribution"]
+
+    def test_generated_bh_rates_apply_to_seeded_subset(self, db_session):
+        _seed(db_session, name="Savassi", city="Belo Horizonte", state="MG")
+        _seed(db_session, name="Barreiro", city="Belo Horizonte", state="MG")
+        db_session.commit()
+
+        result = load_and_apply_safety_rates(
+            db_session,
+            BH_GENERATED,
+            city="Belo Horizonte",
+            state="MG",
+            default_city="Belo Horizonte",
+            default_state="MG",
+            refreshed_at=FIXED_TS,
+        )
+        db_session.commit()
+        assert result.updated == 2
+        assert result.skipped_unknown == 34  # remaining curated names not seeded
+        savassi = (
+            db_session.query(Neighborhood)
+            .filter_by(name="Savassi", city="Belo Horizonte")
+            .one()
+        )
+        assert savassi.quality_meta["safety"]["provider"] == "sejusp-mg-regional"
