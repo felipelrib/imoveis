@@ -1,0 +1,302 @@
+# Neighbourhood quality profiles — curated MVP (BIN-87).
+#
+# IMPORTANT: Scores are operator judgment for transparent ranking, NOT ground
+# truth. They are easy to override when OSM amenity density (BIN-88), transit
+# (BIN-89), access/travel-time (BIN-90), or risk overlays (BIN-91) land — those
+# jobs should stamp quality_meta.source to their own value.
+#
+# Keys: display name (+ city/state defaults). Optional slug mirrors scraper
+# fan-out in app_config.yaml for coverage tests; matching uses folded name/city.
+version: 1
+defaults:
+  city: Belo Horizonte
+  state: MG
+profiles:
+  - name: Savassi
+    slug: savassi
+    amenity_score: 0.92
+    transit_score: 0.88
+    access_score: 0.90
+    safety_score: 0.72
+    risk_flags: []
+    notes: "Dense retail/services; primary leisure hub."
+  - name: Lourdes
+    slug: lourdes
+    amenity_score: 0.90
+    transit_score: 0.86
+    access_score: 0.88
+    safety_score: 0.74
+    risk_flags: []
+    notes: "Upscale central; strong services and dining."
+  - name: Funcionários
+    slug: funcionarios
+    amenity_score: 0.88
+    transit_score: 0.90
+    access_score: 0.92
+    safety_score: 0.70
+    risk_flags: []
+    notes: "Business core; excellent downtown access."
+  - name: Centro
+    slug: centro
+    amenity_score: 0.78
+    transit_score: 0.92
+    access_score: 0.95
+    safety_score: 0.52
+    risk_flags: []
+    notes: "Highest transit/access; safety more variable by block."
+  - name: Santo Agostinho
+    slug: santo-agostinho
+    amenity_score: 0.84
+    transit_score: 0.82
+    access_score: 0.86
+    safety_score: 0.70
+    risk_flags: []
+    notes: "Hospital/services corridor west of centre."
+  - name: Serra
+    slug: serra
+    amenity_score: 0.80
+    transit_score: 0.78
+    access_score: 0.82
+    safety_score: 0.68
+    risk_flags: []
+    notes: "Residential south-central with solid services."
+  - name: Sion
+    slug: sion
+    amenity_score: 0.82
+    transit_score: 0.75
+    access_score: 0.80
+    safety_score: 0.76
+    risk_flags: []
+    notes: "Quiet residential; good local retail."
+  - name: Cruzeiro
+    slug: cruzeiro
+    amenity_score: 0.83
+    transit_score: 0.80
+    access_score: 0.84
+    safety_score: 0.72
+    risk_flags: []
+    notes: "South-central; near Serra/Sion amenities."
+  - name: Anchieta
+    slug: anchieta
+    amenity_score: 0.78
+    transit_score: 0.72
+    access_score: 0.78
+    safety_score: 0.74
+    risk_flags: []
+    notes: "Residential south; moderate transit."
+  - name: Belvedere
+    slug: belvedere
+    amenity_score: 0.70
+    transit_score: 0.55
+    access_score: 0.62
+    safety_score: 0.82
+    risk_flags: []
+    notes: "Upscale south; car-oriented, lower transit density."
+  - name: Santo Antônio
+    slug: santo-antonio
+    amenity_score: 0.76
+    transit_score: 0.70
+    access_score: 0.76
+    safety_score: 0.72
+    risk_flags: []
+    notes: "South residential near Sion/Cruzeiro."
+  - name: Carmo
+    slug: carmo
+    amenity_score: 0.74
+    transit_score: 0.68
+    access_score: 0.74
+    safety_score: 0.74
+    risk_flags: []
+    notes: "South residential; quieter than Savassi."
+  - name: Santa Efigênia
+    slug: santa-efigenia
+    amenity_score: 0.72
+    transit_score: 0.78
+    access_score: 0.80
+    safety_score: 0.58
+    risk_flags: []
+    notes: "East of centre; strong transit, mixed blocks."
+  - name: Floresta
+    slug: floresta
+    amenity_score: 0.70
+    transit_score: 0.76
+    access_score: 0.78
+    safety_score: 0.56
+    risk_flags: []
+    notes: "East corridor; near Santa Efigênia."
+  - name: Santa Tereza
+    slug: santa-tereza
+    amenity_score: 0.74
+    transit_score: 0.70
+    access_score: 0.72
+    safety_score: 0.62
+    risk_flags: []
+    notes: "Bohemian east; bars/culture, hilly streets."
+  - name: Horto
+    slug: horto
+    amenity_score: 0.68
+    transit_score: 0.65
+    access_score: 0.70
+    safety_score: 0.60
+    risk_flags: []
+    notes: "East residential; OLX fan-out only vs QuintoAndar."
+  - name: Buritis
+    slug: buritis
+    amenity_score: 0.80
+    transit_score: 0.62
+    access_score: 0.70
+    safety_score: 0.74
+    risk_flags: []
+    notes: "West residential with malls; car-leaning."
+  - name: Gutierrez
+    slug: gutierrez
+    amenity_score: 0.76
+    transit_score: 0.68
+    access_score: 0.74
+    safety_score: 0.72
+    risk_flags: []
+    notes: "West of centre; solid local services."
+  - name: Prado
+    slug: prado
+    amenity_score: 0.72
+    transit_score: 0.70
+    access_score: 0.76
+    safety_score: 0.64
+    risk_flags: []
+    notes: "West corridor toward Barro Preto."
+  - name: Barro Preto
+    slug: barro-preto
+    amenity_score: 0.70
+    transit_score: 0.74
+    access_score: 0.80
+    safety_score: 0.58
+    risk_flags: []
+    notes: "Near hospital/business west; mixed safety."
+  - name: Castelo
+    slug: castelo
+    amenity_score: 0.72
+    transit_score: 0.60
+    access_score: 0.68
+    safety_score: 0.70
+    risk_flags: []
+    notes: "Pampulha residential."
+  - name: Ouro Preto
+    slug: ouro-preto
+    amenity_score: 0.74
+    transit_score: 0.62
+    access_score: 0.70
+    safety_score: 0.72
+    risk_flags: []
+    notes: "Pampulha; near university/lagoa amenities."
+  - name: Bandeirantes
+    slug: bandeirantes
+    amenity_score: 0.70
+    transit_score: 0.58
+    access_score: 0.66
+    safety_score: 0.70
+    risk_flags: []
+    notes: "Pampulha residential."
+  - name: São Luiz
+    slug: sao-luiz
+    amenity_score: 0.68
+    transit_score: 0.56
+    access_score: 0.64
+    safety_score: 0.68
+    risk_flags: []
+    notes: "Pampulha / north-west residential."
+  - name: Caiçaras
+    slug: caicaras
+    amenity_score: 0.66
+    transit_score: 0.60
+    access_score: 0.68
+    safety_score: 0.58
+    risk_flags: []
+    notes: "Northwest; moderate services."
+  - name: Carlos Prates
+    slug: carlos-prates
+    amenity_score: 0.64
+    transit_score: 0.68
+    access_score: 0.72
+    safety_score: 0.54
+    risk_flags: []
+    notes: "Northwest near rail corridor."
+  - name: Planalto
+    slug: planalto
+    amenity_score: 0.62
+    transit_score: 0.58
+    access_score: 0.60
+    safety_score: 0.58
+    risk_flags: []
+    notes: "Venda Nova region; farther from downtown hubs."
+  - name: Cidade Nova
+    slug: cidade-nova
+    amenity_score: 0.64
+    transit_score: 0.62
+    access_score: 0.66
+    safety_score: 0.56
+    risk_flags: []
+    notes: "Northeast residential."
+  - name: Venda Nova
+    slug: venda-nova
+    amenity_score: 0.60
+    transit_score: 0.55
+    access_score: 0.52
+    safety_score: 0.55
+    risk_flags: []
+    notes: "Northern region; lower downtown access."
+  - name: Barreiro
+    slug: barreiro
+    amenity_score: 0.62
+    transit_score: 0.58
+    access_score: 0.50
+    safety_score: 0.52
+    risk_flags: []
+    notes: "Southwest region; distant from centre hubs."
+  - name: Nova Suíça
+    slug: nova-suissa
+    amenity_score: 0.68
+    transit_score: 0.64
+    access_score: 0.70
+    safety_score: 0.60
+    risk_flags: []
+    notes: "West residential near Calafate."
+  - name: Calafate
+    slug: calafate
+    amenity_score: 0.66
+    transit_score: 0.62
+    access_score: 0.68
+    safety_score: 0.58
+    risk_flags: []
+    notes: "West corridor."
+  - name: Mangabeiras
+    slug: mangabeiras
+    amenity_score: 0.58
+    transit_score: 0.48
+    access_score: 0.55
+    safety_score: 0.78
+    risk_flags: []
+    notes: "Hilltop park adjacency; lower amenity density."
+  - name: Luxemburgo
+    slug: luxemburgo
+    amenity_score: 0.76
+    transit_score: 0.70
+    access_score: 0.78
+    safety_score: 0.72
+    risk_flags: []
+    notes: "South-central near Belvedere/Sion."
+  - name: Santo André
+    slug: santo-andre
+    amenity_score: 0.62
+    transit_score: 0.60
+    access_score: 0.66
+    safety_score: 0.54
+    risk_flags: []
+    notes: "Northwest residential."
+  - name: Bonfim
+    slug: bonfim
+    amenity_score: 0.64
+    transit_score: 0.66
+    access_score: 0.72
+    safety_score: 0.52
+    risk_flags: []
+    notes: "Northwest near Carlos Prates."
