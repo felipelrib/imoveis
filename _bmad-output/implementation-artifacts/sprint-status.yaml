@@ -1,5 +1,5 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-23T23:35:00-03:00
+# last_updated: 2026-07-27T05:45:00-03:00
 # project: Imoveis — Deal Tracker
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,12 +40,13 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 # - Linear SoR for ticket status: Epic 1=BIN-19 (BIN-41..43), Epic 2=BIN-20 (BIN-44,46,45),
-#   Epic 3=BIN-21 (BIN-47..49), Epic 4=BIN-22 (BIN-50..52), Epic 5=BIN-23 (BIN-53..55)
-# - Recommended delivery order (BIN-36 readiness): Epic 1 → 2 → 3|5 → 4
-#   (keep AD-12 property projection before export/digest)
+#   Epic 3=BIN-21 (BIN-47..49), Epic 4=BIN-22 (BIN-50..52), Epic 5=BIN-23 (BIN-53..55),
+#   Epic 6=BIN-85 (BIN-86..95)
+# - Recommended delivery order: Epic 6 foundation 6.1 first, then 6.2–6.6 fill jobs in parallel,
+#   then 6.9 blend, 6.10 selective AI re-run last. Optional 6.7/6.8 may park.
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-23T23:35:00-03:00
+last_updated: 2026-07-27T05:45:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -81,3 +82,16 @@ development_status:
   5-2-assign-properties-by-spatial-containment: done
   5-3-scoring-cohorts-prefer-spatial-neighbourhoods: done
   epic-5-retrospective: optional
+
+  epic-6: in-progress
+  6-1-neighbourhood-quality-profile-schema-api: done
+  6-2-curated-yaml-neighbourhood-quality-mvp: backlog
+  6-3-osm-amenity-density-for-neighbourhoods: backlog
+  6-4-transit-proximity-gtfs-osm-stops: backlog
+  6-5-access-travel-time-to-downtown-hubs: backlog
+  6-6-flood-environmental-risk-overlays: backlog
+  6-7-crime-safety-open-data-optional: backlog
+  6-8-aggregate-listing-sentiment-flags-by-neighbourhood: backlog
+  6-9-blend-neighbourhood-profiles-into-scoring-ui: backlog
+  6-10-selective-ai-enrichment-re-run-controls: backlog
+  epic-6-retrospective: optional
