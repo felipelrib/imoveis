@@ -1,0 +1,17 @@
+# Tiny SP crime-rate fixture for BIN-92 tests (synthetic rates, not real SSP).
+provider: ssp-sp-bo-rates
+rate_definition: crimes_violentos_per_100k_pop
+grain: bairro
+attribution: "SSP-SP Transparência — registration rates, not absolute safety"
+period_start: "2024-01"
+period_end: "2024-12"
+defaults:
+  city: São Paulo
+  state: SP
+rates:
+  - name: Pinheiros
+    rate_per_100k: 200.0
+  - name: Moema
+    rate_per_100k: 50.0
+  - name: Unknown Bairro
+    rate_per_100k: 100.0
