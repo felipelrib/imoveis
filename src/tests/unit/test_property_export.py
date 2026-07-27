@@ -18,6 +18,7 @@ from api.property_export import (
 def _sample_item(**overrides):
     base = {
         "id": "11111111-1111-1111-1111-111111111111",
+        "public_id": 14,
         "platform": "zap",
         "platform_id": "abc",
         "title": "Apt Savassi",

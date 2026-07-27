@@ -39,6 +39,7 @@ class FavouriteItem(BaseModel):
 class FavouriteWithProperty(BaseModel):
     id: str
     property_id: str
+    public_id: Optional[int] = None
     created_at: Optional[str] = None
     title: Optional[str] = None
     address: Optional[str] = None
@@ -75,7 +76,8 @@ def list_favourites(
             text(
                 "SELECT f.id, f.property_id, f.created_at, "
                 "p.title, p.address, p.price, p.image_urls, "
-                "ms.combined_score, n.name AS neighborhood_name, p.platform "
+                "ms.combined_score, n.name AS neighborhood_name, p.platform, "
+                "p.public_id "
                 "FROM favourites f "
                 "JOIN properties p ON p.id = f.property_id "
                 "LEFT JOIN metrics_scoring ms ON ms.property_id = f.property_id "
@@ -99,6 +101,7 @@ def list_favourites(
                 combined_score=float(r[7]) if r[7] is not None else None,
                 neighborhood_name=r[8],
                 platform=r[9],
+                public_id=int(r[10]) if r[10] is not None else None,
             )
             for r in rows
         ]

@@ -195,6 +195,8 @@ class TestPropertyModelAiScoreContract:
 
 
 _PROJECTION_KEYS = (
+    "id",
+    "public_id",
     "price",
     "price_per_m2",
     "price_per_m2_rent",

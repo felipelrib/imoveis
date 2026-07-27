@@ -148,6 +148,7 @@ class _OwnerScopedSession:
                     None,
                     None,
                     None,
+                    1,  # public_id
                 )
                 for r in self.favourites
                 if r["owner"] == owner

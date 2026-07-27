@@ -1,18 +1,24 @@
-import React, { useState } from 'react'
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import React from 'react'
+import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import { useSystemStatus } from './hooks/useSystemStatus.js'
 import { ToastProvider } from './components/ToastProvider.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CredentialGate from './components/CredentialGate.jsx'
+import { isPropertiesSurface } from './routes/propertyPaths.js'
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard.jsx'))
 const ScraperControl = React.lazy(() => import('./pages/ScraperControl.jsx'))
 const Properties = React.lazy(() => import('./pages/Properties.jsx'))
 
+/** Leaf marker so layout routes match without rendering a second page. */
+function RouteMatch() {
+  return null
+}
+
 const NAV = [
-  { path: '/',          icon: '⚡', label: 'Dashboard' },
-  { path: '/scraper',   icon: '🕸️', label: 'Scraper Control' },
-  { path: '/properties',icon: '🏘️', label: 'Properties' },
+  { path: '/',          icon: '⚡', label: 'Dashboard', end: true },
+  { path: '/scraper',   icon: '🕸️', label: 'Scraper Control', end: true },
+  { path: '/properties',icon: '🏘️', label: 'Properties', end: false, propertiesSurface: true },
 ]
 
 export default function App() {
@@ -34,16 +40,15 @@ export default function App() {
 
           <nav className="nav-section">
             <div className="nav-label">Navigation</div>
-            {NAV.map(({ path, icon, label }) => (
-              <NavLink
+            {NAV.map(({ path, icon, label, end, propertiesSurface }) => (
+              <NavItem
                 key={path}
-                to={path}
-                end={path === '/'}
-                className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
-              >
-                <span className="nav-icon">{icon}</span>
-                {label}
-              </NavLink>
+                path={path}
+                icon={icon}
+                label={label}
+                end={end}
+                propertiesSurface={propertiesSurface}
+              />
             ))}
           </nav>
 
@@ -66,7 +71,13 @@ export default function App() {
               <Routes>
                 <Route path="/"           element={<Dashboard status={status} loading={loading} />} />
                 <Route path="/scraper"    element={<ScraperControl />} />
-                <Route path="/properties" element={<Properties />} />
+                {/* Layout route keeps Properties mounted across deep-link navigations */}
+                <Route element={<Properties />}>
+                  <Route path="properties" element={<RouteMatch />} />
+                  <Route path="properties/:propertyId" element={<RouteMatch />} />
+                  <Route path="favourites" element={<RouteMatch />} />
+                  <Route path="compare/:compareIds" element={<RouteMatch />} />
+                </Route>
               </Routes>
             </React.Suspense>
           </ErrorBoundary>
@@ -74,6 +85,25 @@ export default function App() {
       </div>
     </BrowserRouter>
     </ToastProvider>
+  )
+}
+
+function NavItem({ path, icon, label, end, propertiesSurface }) {
+  const location = useLocation()
+  return (
+    <NavLink
+      to={path}
+      end={end}
+      className={({ isActive }) => {
+        const active = propertiesSurface
+          ? isPropertiesSurface(location.pathname)
+          : isActive
+        return `nav-link${active ? ' active' : ''}`
+      }}
+    >
+      <span className="nav-icon">{icon}</span>
+      {label}
+    </NavLink>
   )
 }
 

@@ -5,6 +5,7 @@
 
 export const SAMPLE_PROPERTY = {
   id: "1",
+  public_id: 1,
   title: "2BR Apartment Savassi",
   address: "Rua Pernambuco, 500, Savassi",
   price: 3500,
@@ -77,10 +78,11 @@ export const PROPERTIES_PAGE = {
 /** Five distinct properties for multi-select / compare limit e2e. */
 export const PROPERTIES_PAGE_FIVE = {
   properties: [
-    { ...SAMPLE_PROPERTY, id: "1", title: "2BR Apartment Savassi" },
+    { ...SAMPLE_PROPERTY, id: "1", public_id: 1, title: "2BR Apartment Savassi" },
     {
       ...SAMPLE_PROPERTY,
       id: "2",
+      public_id: 2,
       title: "3BR House Lourdes",
       address: "Rua da Bahia, 100, Lourdes",
       price: 4200,
@@ -108,6 +110,7 @@ export const PROPERTIES_PAGE_FIVE = {
     {
       ...SAMPLE_PROPERTY,
       id: "3",
+      public_id: 3,
       title: "Studio Funcionarios",
       address: "Av. Afonso Pena, 200, Funcionarios",
       price: 2100,
@@ -135,6 +138,7 @@ export const PROPERTIES_PAGE_FIVE = {
     {
       ...SAMPLE_PROPERTY,
       id: "4",
+      public_id: 4,
       title: "Penthouse Santo Antonio",
       address: "Rua Curitiba, 50, Santo Antonio",
       price: 8900,
@@ -162,6 +166,7 @@ export const PROPERTIES_PAGE_FIVE = {
     {
       ...SAMPLE_PROPERTY,
       id: "5",
+      public_id: 5,
       title: "Loft Centro",
       address: "Rua Rio de Janeiro, 10, Centro",
       price: 2800,
@@ -419,20 +424,28 @@ export async function mockPropertiesList(page, body = PROPERTIES_PAGE) {
  * @param {object} property
  */
 export async function mockPropertyDetail(page, property = SAMPLE_PROPERTY) {
-  await page.route(`**/api/properties/${property.id}`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(property),
-    })
-  );
-  await page.route(`**/api/properties/${property.id}/price-history`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    })
-  );
+  const pathKeys = [property.id, property.public_id]
+    .filter((k) => k != null && k !== "")
+    .map(String);
+  for (const key of pathKeys) {
+    await page.route(`**/api/properties/${key}`, (route) => {
+      if (route.request().url().includes("price-history") || route.request().url().includes("by-ids")) {
+        return route.fallback();
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(property),
+      });
+    });
+    await page.route(`**/api/properties/${key}/price-history**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      })
+    );
+  }
   await page.route(`**/api/watchlist/check/${property.id}`, (route) =>
     route.fulfill({
       status: 200,
@@ -461,7 +474,11 @@ export async function mockPropertiesByIds(page, properties) {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    const byId = new Map(properties.map((p) => [String(p.id), p]));
+    const byId = new Map();
+    for (const p of properties) {
+      byId.set(String(p.id), p);
+      if (p.public_id != null) byId.set(String(p.public_id), p);
+    }
     const ordered = requested.map((id) => byId.get(id)).filter(Boolean);
     return route.fulfill({
       status: 200,

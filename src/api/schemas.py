@@ -20,6 +20,7 @@ class PropertyListingModel(BaseModel):
 
 class PropertyModel(BaseModel):
     id: str
+    public_id: Optional[int] = None
     platform: str
     platform_id: str
     title: str
@@ -102,6 +103,7 @@ class CityModel(BaseModel):
 
 class PropertyDetailModel(BaseModel):
     id: str
+    public_id: Optional[int] = None
     platform: str
     platform_id: str
     title: str

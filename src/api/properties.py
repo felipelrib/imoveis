@@ -91,6 +91,24 @@ def _export_filters_as_list_filters(filters_in: PropertyExportFilters) -> Proper
     return PropertyListFilters(page=1, page_size=1, **data)
 
 
+def _is_public_id_token(value: str) -> bool:
+    return value.isdigit()
+
+
+def _parse_property_ref(raw: str) -> tuple[str, Any]:
+    """Return (``public_id``|``id``, value) for a path/query property reference."""
+    token = (raw or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Empty property id")
+    if _is_public_id_token(token):
+        return "public_id", int(token)
+    try:
+        uuid.UUID(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid property id: {token}") from exc
+    return "id", token
+
+
 def _embed_query_literal(query_text: str) -> str:
     import asyncio
 
@@ -338,9 +356,17 @@ def list_cities() -> List[Dict[str, Any]]:
 @limiter.limit("60/minute")
 def get_properties_by_ids(
     request: Request,
-    ids: Annotated[str, Query(description="Comma-separated property UUIDs (1–4)")],
+    ids: Annotated[
+        str,
+        Query(
+            description=(
+                "Comma-separated property refs (1–4): sequential public_id "
+                "and/or UUID primary keys"
+            ),
+        ),
+    ],
 ) -> Dict[str, Any]:
-    """Return 1–4 properties by id in request order (AD-12 projection for compare)."""
+    """Return 1–4 properties by public_id or UUID in request order (AD-12 projection)."""
     raw_ids = [part.strip() for part in ids.split(",") if part.strip()]
     if not raw_ids or len(raw_ids) > 4:
         raise HTTPException(
@@ -348,15 +374,19 @@ def get_properties_by_ids(
             detail="Provide between 1 and 4 property ids via the ids query parameter",
         )
     # Preserve first-seen order; drop duplicates
-    ordered_ids: List[str] = list(dict.fromkeys(raw_ids))
-    for pid in ordered_ids:
-        try:
-            uuid.UUID(pid)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid property id: {pid}") from exc
-
-    placeholders = ", ".join(f":id_{i}" for i in range(len(ordered_ids)))
-    params = {f"id_{i}": pid for i, pid in enumerate(ordered_ids)}
+    ordered_refs: List[str] = list(dict.fromkeys(raw_ids))
+    parsed = [_parse_property_ref(ref) for ref in ordered_refs]
+    key_kinds = {kind for kind, _ in parsed}
+    if len(key_kinds) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Mix of public_id and UUID is not supported in one by-ids request",
+        )
+    key_kind = next(iter(key_kinds))
+    values = [value for _, value in parsed]
+    placeholders = ", ".join(f":id_{i}" for i in range(len(values)))
+    params = {f"id_{i}": value for i, value in enumerate(values)}
+    column = "p.public_id" if key_kind == "public_id" else "p.id"
 
     with SessionLocal() as session:
         sql = text(f"""
@@ -364,12 +394,17 @@ def get_properties_by_ids(
             FROM properties p
             LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE p.id IN ({placeholders})
+            WHERE {column} IN ({placeholders})
         """)
         rows = session.execute(sql, params).mappings().fetchall()
-        by_id = {str(row["id"]): map_property_list_item(row) for row in rows}
+        if key_kind == "public_id":
+            by_key = {int(row["public_id"]): map_property_list_item(row) for row in rows}
+            return {
+                "properties": [by_key[pid] for pid in values if pid in by_key],
+            }
+        by_key = {str(row["id"]): map_property_list_item(row) for row in rows}
         return {
-            "properties": [by_id[pid] for pid in ordered_ids if pid in by_id],
+            "properties": [by_key[pid] for pid in values if pid in by_key],
         }
 
 
@@ -444,11 +479,16 @@ def export_properties(
 
 @router.get("/{property_id}", response_model=PropertyDetailModel, responses=_RESP_404)
 def get_property(property_id: str) -> Dict[str, Any]:
-    """Return a single property with full scoring details."""
+    """Return a single property with full scoring details.
+
+    ``property_id`` may be the sequential ``public_id`` (digits) or the UUID PK.
+    """
+    key_kind, key_value = _parse_property_ref(property_id)
+    where = "p.public_id = :id" if key_kind == "public_id" else "p.id = :id"
     with SessionLocal() as session:
         sql = text(f"""
             SELECT
-                p.id, p.platform, p.platform_id, p.title, p.description,
+                p.id, p.public_id, p.platform, p.platform_id, p.title, p.description,
                 p.price, p.area_m2, p.bedrooms, p.bathrooms, p.parking,
                 p.address, p.image_urls, p.first_seen, p.props_json,
                 ms.stat_score, ms.ai_score, ms.combined_score,
@@ -466,9 +506,9 @@ def get_property(property_id: str) -> Dict[str, Any]:
             FROM properties p
             LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE p.id = :id
+            WHERE {where}
         """)
-        row = session.execute(sql, {"id": property_id}).mappings().fetchone()
+        row = session.execute(sql, {"id": key_value}).mappings().fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Property not found")
         return map_property_detail(row)
@@ -487,17 +527,26 @@ def get_price_history(
     """Return ordered price-history intervals for a property.
 
     Optionally filter by listing_type (rent/sale) and/or platform.
+    ``property_id`` may be sequential ``public_id`` or UUID.
     """
+    key_kind, key_value = _parse_property_ref(property_id)
     with SessionLocal() as session:
-        check = session.execute(
-            text("SELECT id FROM properties WHERE id = :id"),
-            {"id": property_id},
-        ).fetchone()
+        if key_kind == "public_id":
+            check = session.execute(
+                text("SELECT id FROM properties WHERE public_id = :id"),
+                {"id": key_value},
+            ).fetchone()
+        else:
+            check = session.execute(
+                text("SELECT id FROM properties WHERE id = :id"),
+                {"id": key_value},
+            ).fetchone()
         if check is None:
             raise HTTPException(status_code=404, detail="Property not found")
+        resolved_uuid = str(check[0])
 
         filters = ["property_id = :pid"]
-        params: Dict[str, Any] = {"pid": property_id}
+        params: Dict[str, Any] = {"pid": resolved_uuid}
         if listing_type:
             filters.append("listing_type = :lt")
             params["lt"] = listing_type

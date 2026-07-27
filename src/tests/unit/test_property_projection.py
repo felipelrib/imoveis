@@ -147,6 +147,7 @@ class TestMapPropertyProjection:
     def _row(self, **overrides):
         base = {
             "id": "prop-1",
+            "public_id": 14,
             "platform": "quintoandar",
             "platform_id": "qa-1",
             "title": "Apt",
@@ -204,6 +205,7 @@ class TestMapPropertyProjection:
 
     def test_list_item_includes_primary_and_neighborhood_id(self):
         mapped = map_property_list_item(self._row())
+        assert mapped["public_id"] == 14
         assert mapped["neighborhood_id"] == "nbr-9"
         assert mapped["neighborhood_name"] == "Savassi"
         assert mapped["primary_listing"]["price"] == 2800.0
