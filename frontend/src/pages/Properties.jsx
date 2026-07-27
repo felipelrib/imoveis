@@ -7,6 +7,11 @@ import CompareView from '../components/CompareView.jsx'
 import SearchableMultiSelect from '../components/SearchableMultiSelect.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
+import {
+  combinedScoreForListingType,
+  hasDualScores,
+  statScoreForListingType,
+} from '../utils/scores.js'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
 import {
@@ -722,7 +727,7 @@ export default function Properties() {
                   </select>
                 </div>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min AI score</label>
+                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min combined score</label>
                   <select className="form-select" style={{ width: 80 }} value={minScore} onChange={e => setMinScore(e.target.value)}>
                     <option value="">Any</option>
                     <option value="0.7">0.7+</option>
@@ -808,6 +813,7 @@ export default function Properties() {
           ) : (
             <MapView
               properties={mapProperties.length > 0 ? mapProperties : (data?.properties || [])}
+              listingType={listingType}
               onSelectProperty={(id) => {
                 const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
                 const match = list.find((p) => String(p.id) === String(id))
@@ -851,6 +857,7 @@ export default function Properties() {
                   <PropertyCard
                     key={p.id}
                     property={p}
+                    listingType={listingType}
                     onClick={() => openProperty(p)}
                     isWatched={watchedIds.has(p.id)}
                     onToggleWatchlist={toggleWatchlist}
@@ -993,6 +1000,7 @@ function formatLocationLabel(neighborhoodName, city) {
 
 function PropertyCard({
   property: p,
+  listingType = 'both',
   onClick,
   isWatched,
   onToggleWatchlist,
@@ -1147,18 +1155,57 @@ function PropertyCard({
         )}
 
         <div className="property-scores" style={{ marginTop: 12 }}>
-          {p.combined_score != null && (
-            <div className="score-badge combined">
-              <span className="score-badge-label">Score</span>
-              <span className="score-badge-val" style={{ color: scoreColor(p.combined_score) }}>
-                {displayScore(p.combined_score)}
-              </span>
-            </div>
+          {listingType === 'both' && hasDualScores(p) ? (
+            <>
+              {p.combined_score_rent != null && (
+                <div className="score-badge combined" style={{ borderColor: listingTypeColor('rent').color }}>
+                  <span className="score-badge-label">Score Rent</span>
+                  <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_rent) }}>
+                    {displayScore(p.combined_score_rent)}
+                  </span>
+                </div>
+              )}
+              {p.combined_score_sale != null && (
+                <div className="score-badge combined" style={{ borderColor: listingTypeColor('sale').color }}>
+                  <span className="score-badge-label">Score Sale</span>
+                  <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_sale) }}>
+                    {displayScore(p.combined_score_sale)}
+                  </span>
+                </div>
+              )}
+              {p.stat_score_rent != null && (
+                <div className="score-badge stat" style={{ borderColor: listingTypeColor('rent').color }}>
+                  <span className="score-badge-label">Stat Rent</span>
+                  <span className="score-badge-val">{displayScore(p.stat_score_rent)}</span>
+                </div>
+              )}
+              {p.stat_score_sale != null && (
+                <div className="score-badge stat" style={{ borderColor: listingTypeColor('sale').color }}>
+                  <span className="score-badge-label">Stat Sale</span>
+                  <span className="score-badge-val">{displayScore(p.stat_score_sale)}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {combinedScoreForListingType(p, listingType) != null && (
+                <div className="score-badge combined">
+                  <span className="score-badge-label">Score</span>
+                  <span className="score-badge-val" style={{ color: scoreColor(combinedScoreForListingType(p, listingType)) }}>
+                    {displayScore(combinedScoreForListingType(p, listingType))}
+                  </span>
+                </div>
+              )}
+              <div className="score-badge stat">
+                <span className="score-badge-label">Stat</span>
+                <span className="score-badge-val">
+                  {statScoreForListingType(p, listingType) != null
+                    ? displayScore(statScoreForListingType(p, listingType))
+                    : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}
+                </span>
+              </div>
+            </>
           )}
-          <div className="score-badge stat">
-            <span className="score-badge-label">Stat</span>
-            <span className="score-badge-val">{p.stat_score != null ? displayScore(p.stat_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
-          </div>
           <div className="score-badge ai">
             <span className="score-badge-label">AI</span>
             <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>

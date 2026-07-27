@@ -43,6 +43,15 @@ _LISTINGS_JSON_AGG = LISTINGS_JSON_AGG
 _LIST_SELECT_COLUMNS = LIST_SELECT_COLUMNS
 
 
+def _effective_combined_score_expr(listing_type: Optional[str]) -> str:
+    """SQL expression for filter-aware combined score (BIN-83)."""
+    if listing_type == "rent":
+        return "COALESCE(ms.combined_score_rent, ms.combined_score, 0)"
+    if listing_type == "sale":
+        return "COALESCE(ms.combined_score_sale, ms.combined_score, 0)"
+    return "COALESCE(ms.combined_score, 0)"
+
+
 class PropertyListFilters(BaseModel):
     """Query filters for ``GET /properties`` (keeps FastAPI query params under the S107 limit)."""
 
@@ -212,7 +221,8 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
     if filters_in.city_name:
         _append_city_filters(filters, params, filters_in.city_name)
     if filters_in.min_score is not None:
-        filters.append("COALESCE(ms.combined_score, 0) >= :min_score")
+        score_expr = _effective_combined_score_expr(filters_in.listing_type)
+        filters.append(f"{score_expr} >= :min_score")
         params["min_score"] = filters_in.min_score
 
     if filters_in.listing_type and filters_in.listing_type != "both":
@@ -245,8 +255,9 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
     if query_vec_literal is not None:
         order = "p.embedding <=> CAST(:q_vec AS vector)"
     else:
+        score_expr = _effective_combined_score_expr(filters_in.listing_type)
         sort_col_map = {
-            "combined_score": "COALESCE(ms.combined_score, 0)",
+            "combined_score": score_expr,
             "price": "p.price",
             "first_seen": "p.first_seen",
             "created_at": "p.first_seen",
@@ -557,6 +568,10 @@ def get_property(property_id: str) -> Dict[str, Any]:
                 ms.price_per_m2_rent, ms.price_per_m2_sale,
                 ms.neighborhood_mean_rent, ms.neighborhood_mean_sale,
                 ms.neighborhood_median_rent, ms.neighborhood_median_sale,
+                ms.stat_score_rent, ms.stat_score_sale,
+                ms.z_score_rent, ms.z_score_sale,
+                ms.percentile_rank_rent, ms.percentile_rank_sale,
+                ms.combined_score_rent, ms.combined_score_sale,
                 ms.meta,
                 p.neighborhood_id,
                 n.name AS neighborhood_name,
