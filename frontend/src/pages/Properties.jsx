@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
+import { Star, Bell } from 'lucide-react'
 import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods, fetchCities } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
@@ -1102,7 +1103,7 @@ function PropertyCard({
                 }
               }}
             >
-              {isFavourited ? '★' : '☆'}
+              <Star size={18} strokeWidth={2} fill={isFavourited ? 'currentColor' : 'none'} aria-hidden />
             </div>
             <div
               className={`icon-btn icon-btn--watch ${isWatched ? 'active' : ''}`}
@@ -1119,7 +1120,7 @@ function PropertyCard({
                 }
               }}
             >
-              {isWatched ? '🔔' : '📉'}
+              <Bell size={18} strokeWidth={2} fill={isWatched ? 'currentColor' : 'none'} aria-hidden />
             </div>
           </div>
         </div>

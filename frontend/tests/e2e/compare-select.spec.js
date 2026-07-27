@@ -103,12 +103,12 @@ test.describe("Properties multi-select for comparison", () => {
     await expect(page.getByTestId("compare-bar")).toBeVisible();
   });
 
-  test("watchlist uses a price-drop icon distinct from favourites star", async ({ page }) => {
+  test("watchlist uses lucide Bell distinct from favourites Star", async ({ page }) => {
     const fav = page.getByTestId("favourite-toggle-1");
     const watch = page.getByTestId("watchlist-toggle-1");
-    await expect(fav).toContainText("☆");
-    await expect(watch).toContainText("📉");
-    await expect(watch).not.toContainText("☆");
-    await expect(watch).not.toContainText("★");
+    await expect(fav.locator("svg")).toBeVisible();
+    await expect(watch.locator("svg")).toBeVisible();
+    await expect(fav).toHaveAttribute("aria-label", /Favourites/i);
+    await expect(watch).toHaveAttribute("aria-label", /price drops|Watchlist/i);
   });
 });

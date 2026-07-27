@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,6 +17,7 @@ from api.property_projection import (
     map_property_detail,
     map_property_list_item,
 )
+from api.property_refs import parse_property_ref
 from api.schemas import (
     CityModel,
     NeighborhoodModel,
@@ -91,22 +91,8 @@ def _export_filters_as_list_filters(filters_in: PropertyExportFilters) -> Proper
     return PropertyListFilters(page=1, page_size=1, **data)
 
 
-def _is_public_id_token(value: str) -> bool:
-    return value.isdigit()
-
-
-def _parse_property_ref(raw: str) -> tuple[str, Any]:
-    """Return (``public_id``|``id``, value) for a path/query property reference."""
-    token = (raw or "").strip()
-    if not token:
-        raise HTTPException(status_code=400, detail="Empty property id")
-    if _is_public_id_token(token):
-        return "public_id", int(token)
-    try:
-        uuid.UUID(token)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid property id: {token}") from exc
-    return "id", token
+# Back-compat aliases (tests / callers that imported private helpers)
+_parse_property_ref = parse_property_ref
 
 
 def _embed_query_literal(query_text: str) -> str:

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Star, Bell } from 'lucide-react'
 import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, checkFavourite, addFavourite, removeFavourite, fetchPriceHistory } from '../api.js'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
@@ -48,13 +49,16 @@ export default function PropertyModal({ id, onClose }) {
 
   const [dropPct, setDropPct] = useState(5)
 
+  // Prefer resolved UUID from the detail payload — route `id` may be public_id (BIN-82).
+  const mutationId = property?.id || id
+
   const toggleWatchlist = async () => {
     try {
       if (isWatched) {
-        await removeFromWatchlist(id)
+        await removeFromWatchlist(mutationId)
         setIsWatched(false)
       } else {
-        await addToWatchlist(id, dropPct)
+        await addToWatchlist(mutationId, dropPct)
         setIsWatched(true)
       }
     } catch (err) {
@@ -65,10 +69,10 @@ export default function PropertyModal({ id, onClose }) {
   const toggleFavourite = async () => {
     try {
       if (isFavourited) {
-        await removeFavourite(id)
+        await removeFavourite(mutationId)
         setIsFavourited(false)
       } else {
-        await addFavourite(id)
+        await addFavourite(mutationId)
         setIsFavourited(true)
       }
     } catch (err) {
@@ -105,12 +109,12 @@ export default function PropertyModal({ id, onClose }) {
               <>
                 <button
                   className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}
+                  data-testid="modal-favourite-toggle"
                   onClick={toggleFavourite}
                   title={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
                   aria-label={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
-                  style={{ fontSize: 18, padding: '6px 10px' }}
                 >
-                  {isFavourited ? '★' : '☆'}
+                  <Star size={18} strokeWidth={2} fill={isFavourited ? 'currentColor' : 'none'} aria-hidden />
                 </button>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', padding: '4px 12px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
                   {!isWatched && (
@@ -132,9 +136,8 @@ export default function PropertyModal({ id, onClose }) {
                     onClick={toggleWatchlist}
                     title={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
                     aria-label={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
-                    style={{ fontSize: 18, padding: '6px 10px', background: 'none', border: 'none' }}
                   >
-                    {isWatched ? '🔔' : '📉'}
+                    <Bell size={18} strokeWidth={2} fill={isWatched ? 'currentColor' : 'none'} aria-hidden />
                   </button>
                 </div>
               </>

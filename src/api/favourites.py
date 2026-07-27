@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from api.auth import Principal, verify_api_key
+from api.property_refs import resolve_property_uuid
 from infra.db import SessionLocal
 from infra.logging import get_logger
 
@@ -116,20 +119,12 @@ def list_favourites(
 
 @router.post("", status_code=201, responses={**_RESP_404, **_RESP_409, **_RESP_500})
 def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> FavouriteItem:
-    """Add a property to favourites for the authenticated principal."""
-    import uuid
-    from datetime import datetime, timezone
-
+    """Add a property to favourites (``property_id`` may be public_id or UUID)."""
     fav_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
         try:
-            prop = session.execute(
-                text("SELECT id FROM properties WHERE id = :pid"),
-                {"pid": req.property_id},
-            ).fetchone()
-            if prop is None:
-                raise HTTPException(status_code=404, detail="Property not found")
+            resolved_uuid = resolve_property_uuid(session, req.property_id)
 
             result = session.execute(
                 text(
@@ -140,7 +135,7 @@ def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> Favourit
                 ),
                 {
                     "id": fav_id,
-                    "pid": req.property_id,
+                    "pid": resolved_uuid,
                     "owner": principal.id,
                     "now": now,
                 },
@@ -150,12 +145,12 @@ def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> Favourit
             session.commit()
             logger.info(
                 "favourite_add",
-                property_id=req.property_id,
+                property_id=resolved_uuid,
                 owner=principal.id,
             )
             return FavouriteItem(
                 id=fav_id,
-                property_id=req.property_id,
+                property_id=resolved_uuid,
                 created_at=now.isoformat(),
             )
         except HTTPException:
@@ -169,25 +164,26 @@ def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> Favourit
 def remove_favourite(
     property_id: str, principal: CurrentPrincipal
 ) -> Dict[str, str]:
-    """Remove a property from favourites for the authenticated principal."""
+    """Remove a favourite (``property_id`` may be public_id or UUID)."""
     with SessionLocal() as session:
         try:
+            resolved_uuid = resolve_property_uuid(session, property_id)
             result = session.execute(
                 text(
                     "DELETE FROM favourites "
                     "WHERE property_id = :pid AND owner = :owner"
                 ),
-                {"pid": property_id, "owner": principal.id},
+                {"pid": resolved_uuid, "owner": principal.id},
             )
             session.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Property not in favourites")
             logger.info(
                 "favourite_remove",
-                property_id=property_id,
+                property_id=resolved_uuid,
                 owner=principal.id,
             )
-            return {"status": "removed", "property_id": property_id}
+            return {"status": "removed", "property_id": resolved_uuid}
         except HTTPException:
             raise
         except Exception as exc:
@@ -199,14 +195,15 @@ def remove_favourite(
 def check_favourite(
     property_id: str, principal: CurrentPrincipal
 ) -> Dict[str, Any]:
-    """Check if a specific property is favourited by the principal."""
+    """Check if a property is favourited (``property_id`` may be public_id or UUID)."""
     with SessionLocal() as session:
+        resolved_uuid = resolve_property_uuid(session, property_id)
         row = session.execute(
             text(
                 "SELECT id, created_at FROM favourites "
                 "WHERE property_id = :pid AND owner = :owner"
             ),
-            {"pid": property_id, "owner": principal.id},
+            {"pid": resolved_uuid, "owner": principal.id},
         ).fetchone()
         if row is None:
             return {"favourited": False}

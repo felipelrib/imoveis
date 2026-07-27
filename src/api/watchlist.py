@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from api.auth import Principal, verify_api_key
+from api.property_refs import resolve_property_uuid
 from infra.db import SessionLocal
 from infra.logging import get_logger
 
@@ -66,18 +69,10 @@ def list_watchlist(principal: CurrentPrincipal) -> List[WatchlistItem]:
 def add_to_watchlist(
     req: WatchlistCreate, principal: CurrentPrincipal
 ) -> WatchlistItem:
-    """Add a property to the watchlist for the authenticated principal."""
+    """Add a property to the watchlist (``property_id`` may be public_id or UUID)."""
     with SessionLocal() as session:
         try:
-            prop = session.execute(
-                text("SELECT id FROM properties WHERE id = :pid"),
-                {"pid": req.property_id},
-            ).fetchone()
-            if prop is None:
-                raise HTTPException(status_code=404, detail="Property not found")
-
-            import uuid
-            from datetime import datetime, timezone
+            resolved_uuid = resolve_property_uuid(session, req.property_id)
 
             now = datetime.now(timezone.utc)
             watchlist_id = str(uuid.uuid4())
@@ -91,7 +86,7 @@ def add_to_watchlist(
                 ),
                 {
                     "id": watchlist_id,
-                    "pid": req.property_id,
+                    "pid": resolved_uuid,
                     "min_drop": req.min_drop_pct,
                     "owner": principal.id,
                     "now": now,
@@ -103,13 +98,13 @@ def add_to_watchlist(
 
             logger.info(
                 "watchlist_add",
-                property_id=req.property_id,
+                property_id=resolved_uuid,
                 min_drop_pct=req.min_drop_pct,
                 owner=principal.id,
             )
             return WatchlistItem(
                 id=watchlist_id,
-                property_id=req.property_id,
+                property_id=resolved_uuid,
                 min_drop_pct=req.min_drop_pct,
                 created_at=now.isoformat(),
             )
@@ -124,25 +119,26 @@ def add_to_watchlist(
 def remove_from_watchlist(
     property_id: str, principal: CurrentPrincipal
 ) -> Dict[str, str]:
-    """Remove a property from the watchlist for the authenticated principal."""
+    """Remove from watchlist (``property_id`` may be public_id or UUID)."""
     with SessionLocal() as session:
         try:
+            resolved_uuid = resolve_property_uuid(session, property_id)
             result = session.execute(
                 text(
                     "DELETE FROM watchlist "
                     "WHERE property_id = :pid AND owner = :owner"
                 ),
-                {"pid": property_id, "owner": principal.id},
+                {"pid": resolved_uuid, "owner": principal.id},
             )
             session.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Property not in watchlist")
             logger.info(
                 "watchlist_remove",
-                property_id=property_id,
+                property_id=resolved_uuid,
                 owner=principal.id,
             )
-            return {"status": "removed", "property_id": property_id}
+            return {"status": "removed", "property_id": resolved_uuid}
         except HTTPException:
             raise
         except Exception as exc:
@@ -154,14 +150,15 @@ def remove_from_watchlist(
 def check_watchlist(
     property_id: str, principal: CurrentPrincipal
 ) -> Dict[str, Any]:
-    """Check if a specific property is in the principal's watchlist."""
+    """Check watchlist membership (``property_id`` may be public_id or UUID)."""
     with SessionLocal() as session:
+        resolved_uuid = resolve_property_uuid(session, property_id)
         row = session.execute(
             text(
                 "SELECT id, min_drop_pct, last_notified_price "
                 "FROM watchlist WHERE property_id = :pid AND owner = :owner"
             ),
-            {"pid": property_id, "owner": principal.id},
+            {"pid": resolved_uuid, "owner": principal.id},
         ).fetchone()
         if row is None:
             return {"watched": False}
