@@ -86,3 +86,8 @@ _bmad-output/planning-artifacts/architecture/**/reviews/
 
 # Local Ollama VRAM bench outputs
 data/bench/
+
+# Large municipal / OSM risk + neighbourhood dumps (tiny fixtures stay under
+# src/tests/fixtures/geo/). Operator paths for load_risk_overlays.py.
+data/geo/
+*.gpkg

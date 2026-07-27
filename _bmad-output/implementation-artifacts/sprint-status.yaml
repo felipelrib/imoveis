@@ -89,7 +89,7 @@ development_status:
   6-3-osm-amenity-density-for-neighbourhoods: backlog
   6-4-transit-proximity-gtfs-osm-stops: backlog
   6-5-access-travel-time-to-downtown-hubs: backlog
-  6-6-flood-environmental-risk-overlays: backlog
+  6-6-flood-environmental-risk-overlays: done
   6-7-crime-safety-open-data-optional: backlog
   6-8-aggregate-listing-sentiment-flags-by-neighbourhood: backlog
   6-9-blend-neighbourhood-profiles-into-scoring-ui: backlog
