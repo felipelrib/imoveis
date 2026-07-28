@@ -42,5 +42,5 @@ None.
 
 ## Notes / Follow-ups
 
-- Dual listings that store a single rent price as `sale` are reclassified to rent; long-term they should become two `property_listings` rows (sale + rent).
+- Dual listings that store a single rent price as `sale` are reclassified to rent; when **both** prices exist they now become two `property_listings` rows — see [88-olx-dual-rent-sale-listings](88-olx-dual-rent-sale-listings.md) (BIN-108).
 - Rebuild `worker_scraper` after merge so new scrapes pick up detect changes.

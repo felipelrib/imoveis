@@ -112,3 +112,21 @@ class TestOLXCassettes:
         assert result["image_urls"] == ["https://img.olx.com.br/img1.jpg"]
         # Flight search ads omit body — description enrich is a detail-page concern.
         assert (result.get("description") or "") == ""
+
+    def test_dual_pricing_cassette_emits_rent_and_sale(self, olx_scraper):
+        """BIN-108: dual pricingInfos → two active listing rows."""
+        data = _load_next_data("olx_dual_pricing.html")
+        listings = olx_scraper._extract_listings(data)
+        assert len(listings) == 1
+
+        result = olx_scraper.normalize(listings[0])
+        types = {row["listing_type"] for row in result["listings"]}
+        assert types == {"rent", "sale"}
+        rent = next(r for r in result["listings"] if r["listing_type"] == "rent")
+        sale = next(r for r in result["listings"] if r["listing_type"] == "sale")
+        assert rent["price"] == 3300.0  # 2800 + condo 500
+        assert rent["base_price"] == 2800.0
+        assert sale["price"] == 480000.0
+        assert result["props_json"]["available_for_rent"] is True
+        assert result["props_json"]["available_for_sale"] is True
+        assert result["price"] == 3300.0

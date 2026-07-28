@@ -167,7 +167,7 @@ class OLXScraper(BaseScraper):
             self._initial_windows(checkpoint)
         )
         visited: set[_OlxWindow] = set()
-        seen_ids: set[str] = set()
+        kept_by_id: dict[str, dict] = {}
 
         while queue:
             window = queue.popleft()
@@ -214,7 +214,7 @@ class OLXScraper(BaseScraper):
                     collected=len(collected),
                 )
 
-            for listing in unique_by(collected, listing_id_from_raw, seen=seen_ids):
+            for listing in self._yield_merged_listings(collected, kept_by_id):
                 yield listing
 
     def _initial_windows(self, checkpoint: dict) -> list[_OlxWindow]:
@@ -475,6 +475,55 @@ class OLXScraper(BaseScraper):
         return []
 
     # ------------------------------------------------------------------
+    # Cross-window dual rent+sale merge (BIN-108)
+    # ------------------------------------------------------------------
+
+    def _yield_merged_listings(
+        self,
+        collected: list[dict],
+        kept_by_id: dict[str, dict],
+    ) -> Iterator[Dict[str, Any]]:
+        """Yield new listings; re-yield when a second listing type merges in."""
+        for listing in unique_by(collected, listing_id_from_raw):
+            lid = listing_id_from_raw(listing)
+            if lid is None:
+                yield listing
+                continue
+            kept = kept_by_id.get(lid)
+            if kept is None:
+                kept_by_id[lid] = listing
+                yield listing
+                continue
+            if self._merge_dual_window_prices(kept, listing):
+                yield kept
+
+    @staticmethod
+    def _merge_dual_window_prices(kept: dict, incoming: dict) -> bool:
+        """Merge rent+sale prices when the same listId appears in both windows.
+
+        Mutates ``kept`` with ``_olx_prices`` and clears ``_olx_listing_type``
+        when both sides are present. Returns True when a merge happened.
+        """
+        kept_type = kept.get("_olx_listing_type")
+        incoming_type = incoming.get("_olx_listing_type")
+        if kept_type not in ("rent", "sale") or incoming_type not in ("rent", "sale"):
+            return False
+        if kept_type == incoming_type:
+            return False
+
+        prices = dict(kept.get("_olx_prices") or {})
+        for raw, kind in ((kept, kept_type), (incoming, incoming_type)):
+            try:
+                prices[kind] = OLXScraper._parse_price(raw)
+            except (TypeError, ValueError):
+                return False
+        if "rent" not in prices or "sale" not in prices:
+            return False
+        kept["_olx_prices"] = prices
+        kept.pop("_olx_listing_type", None)
+        return True
+
+    # ------------------------------------------------------------------
     # normalize — convert raw OLX listing to PropertyCandidate format
     # ------------------------------------------------------------------
 
@@ -499,9 +548,6 @@ class OLXScraper(BaseScraper):
         # Flight search ads omit body; detail enrich fills this later (BIN-105).
         description = (raw.get("body") or raw.get("description") or "").strip()
 
-        # --- Price ---
-        price = self._parse_price(raw)
-
         # --- Location ---
         location_dict, address_str = self._parse_location(raw)
 
@@ -511,32 +557,52 @@ class OLXScraper(BaseScraper):
         # --- Property attributes ---
         props = self._parse_properties(raw)
 
-        # --- Listing type ---
-        listing_type = self._detect_listing_type(raw)
+        rent_base, sale_price = self._prices_for_listing(raw)
+        condo = float(props.get("condo_fee") or 0.0)
+        iptu = float(props.get("iptu") or 0.0)
+        rent_total = (rent_base + condo + iptu) if rent_base is not None else None
 
-        # Calculate full rent price for rentals
-        base_price = price
-        if listing_type == "rent":
-            price = price + float(props.get("condo_fee") or 0.0) + float(props.get("iptu") or 0.0)
-
-        # --- Build listings array ---
-        listing_url = raw.get("url") or raw.get("_olx_url") or f"https://www.olx.com.br/detalhes/{platform_id}"
-        listings = []
-        listings.append(
-            {
-                "platform": "olx",
-                "platform_listing_id": platform_id,
-                "listing_type": listing_type,
-                "price": price,
-                "currency": "BRL",
-                "url": listing_url,
-                "is_furnished": props.get("is_furnished"),
-                "accepts_pets": props.get("accepts_pets"),
-                "condo_fee": props.get("condo_fee"),
-                "iptu": props.get("iptu"),
-                "base_price": base_price if listing_type == "rent" else None,
-            }
+        listing_url = (
+            raw.get("url") or raw.get("_olx_url") or f"https://www.olx.com.br/detalhes/{platform_id}"
         )
+        base_listing = {
+            "platform": "olx",
+            "platform_listing_id": platform_id,
+            "currency": "BRL",
+            "url": listing_url,
+            "is_furnished": props.get("is_furnished"),
+            "accepts_pets": props.get("accepts_pets"),
+            "condo_fee": props.get("condo_fee"),
+            "iptu": props.get("iptu"),
+        }
+        listings: list[dict] = []
+        if rent_total is not None and rent_total > 0:
+            listings.append(
+                {
+                    **base_listing,
+                    "listing_type": "rent",
+                    "price": rent_total,
+                    "base_price": rent_base,
+                }
+            )
+        if sale_price is not None and sale_price > 0:
+            listings.append(
+                {
+                    **base_listing,
+                    "listing_type": "sale",
+                    "price": sale_price,
+                    "base_price": None,
+                }
+            )
+        if not listings:
+            raise ValueError(
+                "Could not parse price from OLX listing: "
+                f"{raw.get('listId', raw.get('list_id', raw.get('id', '?')))}"
+            )
+
+        is_rent = rent_total is not None and rent_total > 0
+        is_sale = sale_price is not None and sale_price > 0
+        price = rent_total if is_rent else sale_price
 
         # --- Neighborhood name ---
         neighborhood = (
@@ -569,8 +635,8 @@ class OLXScraper(BaseScraper):
                 "neighborhood": neighborhood,
                 "city": city,
                 "state": state,
-                "available_for_rent": listing_type == "rent",
-                "available_for_sale": listing_type == "sale",
+                "available_for_rent": is_rent,
+                "available_for_sale": is_sale,
                 "isFurnished": props.get("is_furnished"),
                 "amenities": [],
             },
@@ -580,6 +646,94 @@ class OLXScraper(BaseScraper):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prices_for_listing(raw: dict) -> tuple[float | None, float | None]:
+        """Return ``(rent_base, sale)`` when known; either side may be None.
+
+        Prefer cross-window ``_olx_prices``, then multi-entry ``pricingInfos``,
+        else a single price typed via ``_detect_listing_type``.
+        """
+        dual = raw.get("_olx_prices")
+        if isinstance(dual, dict):
+            rent = OLXScraper._positive_number([dual.get("rent")])
+            sale = OLXScraper._positive_number([dual.get("sale")])
+            if rent is not None or sale is not None:
+                return rent, sale
+
+        from_infos = OLXScraper._prices_from_pricing_infos(raw.get("pricingInfos"))
+        if from_infos is not None:
+            rent, sale = from_infos
+            if rent is not None and sale is not None:
+                return rent, sale
+            if rent is not None or sale is not None:
+                # One typed entry — still prefer stamp/path detection when only
+                # one side exists so single-entry monthly keeps rent semantics.
+                if rent is not None and sale is None:
+                    return rent, None
+                if sale is not None and rent is None:
+                    return None, sale
+
+        price = OLXScraper._parse_price(raw)
+        listing_type = OLXScraper._detect_listing_type(raw)
+        if listing_type == "rent":
+            return price, None
+        return None, price
+
+    @staticmethod
+    def _prices_from_pricing_infos(
+        pricing_infos: Any,
+    ) -> tuple[float | None, float | None] | None:
+        if not isinstance(pricing_infos, list) or not pricing_infos:
+            return None
+        rent: float | None = None
+        sale: float | None = None
+        typed_any = False
+        for entry in pricing_infos:
+            if not isinstance(entry, dict):
+                continue
+            amount = OLXScraper._positive_number(
+                entry.get(key) for key in ("value", "price")
+            )
+            if amount is None:
+                continue
+            kind = OLXScraper._listing_type_from_pricing_entry(entry)
+            if kind is None:
+                continue
+            typed_any = True
+            if kind == "rent" and rent is None:
+                rent = amount
+            elif kind == "sale" and sale is None:
+                sale = amount
+        if not typed_any:
+            return None
+        return rent, sale
+
+    @staticmethod
+    def _listing_type_from_pricing_entry(entry: dict) -> str | None:
+        period = str(entry.get("period") or "").lower()
+        business = str(
+            entry.get("businessType")
+            or entry.get("business_type")
+            or entry.get("priceType")
+            or ""
+        ).lower()
+        blob = f"{period} {business}"
+        if any(token in blob for token in ("month", "mês", "mes", "rent", "aluguel")):
+            return "rent"
+        if any(token in blob for token in ("sale", "sell", "venda", "year", "ano")):
+            return "sale"
+        # Empty period with a sale-band price is treated as sale by callers that
+        # already have a second monthly entry; bare empty → sale when alone.
+        if period == "" and business == "":
+            amount = OLXScraper._positive_number(
+                entry.get(key) for key in ("value", "price")
+            )
+            if amount is not None and amount >= 80_000:
+                return "sale"
+            if amount is not None and 0 < amount < 30_000:
+                return "rent"
+        return None
 
     @staticmethod
     def _parse_price(raw: dict) -> float:
