@@ -550,6 +550,7 @@ _CRITICAL_APP_CONFIG_SECTIONS = (
     "pipeline_metrics",
     "neighbourhood_quality",
     "neighbourhood_access",
+    "ui",
 )
 
 
@@ -620,3 +621,57 @@ def test_proxy_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     cfg = load_config(cfg_file)
 
     assert cfg.proxy.enabled is True
+
+
+@pytest.mark.unit
+def test_ui_locale_defaults(tmp_path: Path):
+    """Absent ui: section yields en default and supported list."""
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    assert cfg.ui.locale == "en"
+    assert list(cfg.ui.supported_locales) == ["en", "pt-BR"]
+
+
+@pytest.mark.unit
+def test_ui_locale_from_yaml(tmp_path: Path):
+    """YAML ui.locale is parsed into UiConfig."""
+    yaml_content = MINIMAL_YAML + """\
+ui:
+  locale: pt-BR
+  supported_locales:
+    - en
+    - pt-BR
+"""
+    cfg = load_config(_write_yaml(tmp_path, yaml_content))
+    assert cfg.ui.locale == "pt-BR"
+    assert "pt-BR" in cfg.ui.supported_locales
+
+
+@pytest.mark.unit
+def test_ui_locale_invalid_raises(tmp_path: Path):
+    """Unknown ui.locale fails AppConfig validation."""
+    yaml_content = MINIMAL_YAML + """\
+ui:
+  locale: fr
+"""
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_ui_locale_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """IMOVEIS_UI__LOCALE overrides ui.locale."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("IMOVEIS_UI__LOCALE", "pt-BR")
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.ui.locale == "pt-BR"
+
+
+@pytest.mark.unit
+def test_real_config_exposes_ui_locale():
+    """Committed app_config.yaml must expose ui.locale for SPA preference."""
+    cfg = get_config()
+    assert cfg.ui.locale in ("en", "pt-BR")
+    assert "en" in cfg.ui.supported_locales
+    assert "pt-BR" in cfg.ui.supported_locales

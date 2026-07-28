@@ -1,0 +1,23 @@
+{
+  "nav": {
+    "label": "Navegação",
+    "dashboard": "Painel",
+    "scraper": "Controle de Scrapers",
+    "properties": "Imóveis"
+  },
+  "chrome": {
+    "system": "Sistema",
+    "loading": "Carregando...",
+    "database": "Banco de dados",
+    "redis": "Redis",
+    "ollama": "Ollama",
+    "aiWorker": "Worker de IA"
+  },
+  "locale": {
+    "label": "Idioma",
+    "en": "English",
+    "ptBR": "Português (Brasil)",
+    "saveFailed": "Não foi possível salvar o idioma",
+    "needCredential": "Defina uma credencial de API para persistir o idioma"
+  }
+}

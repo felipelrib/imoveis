@@ -464,3 +464,22 @@ class TestAdminEndpoints:
                 assert isinstance(entry["interval_minutes"], int)
         elif response.status_code == 403:
             assert "detail" in data
+
+    def test_locale_get_returns_shape(self, client, admin_headers):
+        """GET /admin/locale must return locale, default, and supported list."""
+        response = client.get(
+            "/admin/locale",
+            headers=admin_headers,
+        )
+        data = response.json()
+        if response.status_code == 200:
+            assert "locale" in data
+            assert "default" in data
+            assert "supported" in data
+            assert isinstance(data["locale"], str)
+            assert isinstance(data["default"], str)
+            assert isinstance(data["supported"], list)
+            assert data["locale"] in data["supported"]
+            assert data["default"] in data["supported"]
+        elif response.status_code == 403:
+            assert "detail" in data

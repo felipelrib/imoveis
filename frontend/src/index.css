@@ -193,6 +193,23 @@ body {
   font-size: 12px;
   color: var(--text-muted);
 }
+.locale-switcher {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.locale-switcher-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.locale-switcher-select {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
 .credential-gate {
   margin-top: 14px;
   padding-top: 12px;
