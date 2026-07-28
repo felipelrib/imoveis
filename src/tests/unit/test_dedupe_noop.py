@@ -17,6 +17,9 @@ class TestIsUnchanged:
         obj.title = overrides.get("title", "Apartamento 2 quartos")
         obj.description = overrides.get("description", "Descrição do imóvel")
         obj.image_urls = overrides.get("image_urls", ["https://img.example.com/1.jpg"])
+        obj.address = overrides.get("address", "Savassi, Belo Horizonte")
+        obj.props_json = overrides.get("props_json", {})
+        obj.location = overrides.get("location", None)
         return obj
 
     def _make_candidate(self, **overrides):
@@ -27,6 +30,9 @@ class TestIsUnchanged:
         obj.description = overrides.get("description", "Descrição do imóvel")
         obj.image_urls = overrides.get("image_urls", ["https://img.example.com/1.jpg"])
         obj.listings = overrides.get("listings", [])
+        obj.address = overrides.get("address", "Savassi, Belo Horizonte")
+        obj.props_json = overrides.get("props_json", {})
+        obj.location = overrides.get("location", None)
         return obj
 
     def _make_session_with_listings(self, listings=None):

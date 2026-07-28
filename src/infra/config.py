@@ -189,6 +189,17 @@ class AvailabilityRecheckConfig(BaseModel, frozen=True):
     request_timeout_sec: float = 20.0
 
 
+class OlxLocationConfig(BaseModel, frozen=True):
+    """OLX seller-vs-property location reconcile follow-ups (BIN-72 / BIN-112).
+
+    When neighbourhood text is corrected and seller coords are cleared,
+    ``backfill_coords_from_neighbourhood`` fills a low-precision pin from
+    the matched polygon's ``ST_PointOnSurface`` (not street geocoding).
+    """
+
+    backfill_coords_from_neighbourhood: bool = True
+
+
 class ScrapingConfig(BaseModel, frozen=True):
     """Web scraping defaults and per-platform overrides."""
 
@@ -200,6 +211,7 @@ class ScrapingConfig(BaseModel, frozen=True):
     availability_recheck: AvailabilityRecheckConfig = Field(
         default_factory=AvailabilityRecheckConfig
     )
+    olx_location: OlxLocationConfig = Field(default_factory=OlxLocationConfig)
 
 
 class FeaturesConfig(BaseModel, frozen=True):

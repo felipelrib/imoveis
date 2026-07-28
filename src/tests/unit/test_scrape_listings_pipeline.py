@@ -82,6 +82,9 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
         ) as match_fn,
         patch.object(tasks_mod, "assign_property_neighbourhood") as assign_fn,
         patch.object(tasks_mod, "assign_property_neighbourhood_by_name") as assign_by_name,
+        patch.object(
+            tasks_mod, "apply_neighbourhood_representative_point"
+        ) as backfill_fn,
         patch.object(tasks_mod, "_enqueue_post_scrape_jobs") as enqueue_fn,
         patch.object(tasks_mod, "sync_ai_extract", return_value=None),
         patch.object(
@@ -104,6 +107,7 @@ def test_scrape_listings_processes_one_item_with_real_dedup_config():
     # Candidate has no lat/lon → name-based neighbourhood assign.
     assign_by_name.assert_called_once()
     assign_fn.assert_not_called()
+    backfill_fn.assert_called_once_with(session, "prop-1")
     enqueue_fn.assert_called_once()
     assert enqueue_fn.call_args.kwargs.get("skip_ai_enrich") is False
 
@@ -184,6 +188,7 @@ def test_scrape_listings_deactivates_and_skips_ai_for_thin_gallery():
         ),
         patch.object(tasks_mod, "assign_property_neighbourhood"),
         patch.object(tasks_mod, "assign_property_neighbourhood_by_name"),
+        patch.object(tasks_mod, "apply_neighbourhood_representative_point"),
         patch.object(tasks_mod, "_enqueue_post_scrape_jobs") as enqueue_fn,
         patch.object(tasks_mod, "_set_property_active") as set_active,
         patch.object(tasks_mod, "sync_ai_extract", return_value=None),

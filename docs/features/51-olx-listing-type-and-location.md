@@ -56,6 +56,6 @@ None.
 
 ## Notes / Follow-ups
 
-- Geocoding corrected neighbourhoods to new lat/lon is out of scope; spatial cohorts may be null until coords exist (props_json neighbourhood + optional `neighborhood_id` by name remain).
+- Geocoding corrected neighbourhoods to new lat/lon: shipped as BIN-112 (`docs/features/89-geocode-corrected-neighbourhoods.md` — neighbourhood `ST_PointOnSurface`, not street geocoding).
 - Live Ollama is required for best location corrections during scrape and `--apply` without `--skip-ai`.
 - Related: BIN-68 / BIN-70 geo allowlist; BIN-9 original OLX scraper.

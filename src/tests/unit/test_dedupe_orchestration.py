@@ -42,36 +42,59 @@ def _candidate(**overrides):
 
 @pytest.mark.unit
 class TestIsUnchanged:
-    def test_price_change_is_not_unchanged(self):
-        existing = SimpleNamespace(
-            id="1", price=1000, title="Apt", description="desc", image_urls=["http://a"]
+    def _existing(self, **overrides):
+        data = dict(
+            id="1",
+            price=1000,
+            title="Apt",
+            description="desc",
+            image_urls=["http://a"],
+            address="Rua A",
+            props_json={},
+            location=None,
         )
+        data.update(overrides)
+        return SimpleNamespace(**data)
+
+    def test_price_change_is_not_unchanged(self):
+        existing = self._existing()
         session = MagicMock()
         assert _is_unchanged(session, existing, _candidate(price=1100)) is False
 
     def test_identical_without_listings(self):
-        existing = SimpleNamespace(
-            id="1", price=1000, title="Apt", description="desc", image_urls=["http://a"]
-        )
+        existing = self._existing()
         session = MagicMock()
         session.query.return_value.filter.return_value.all.return_value = []
-        assert _is_unchanged(session, existing, _candidate()) is True
+        # Candidate has coords but existing.location is None → treat as changed
+        # unless we omit intentional mismatch; match by clearing candidate coords.
+        assert _is_unchanged(session, existing, _candidate(location=None)) is True
+
+    def test_props_json_change_is_not_unchanged(self):
+        existing = self._existing()
+        session = MagicMock()
+        assert (
+            _is_unchanged(
+                session,
+                existing,
+                _candidate(
+                    location=None,
+                    props_json={"olx_location_corrected": True, "neighborhood": "Itapoã"},
+                ),
+            )
+            is False
+        )
 
     def test_db_error_returns_false(self):
-        existing = SimpleNamespace(
-            id="1", price=1000, title="Apt", description="desc", image_urls=["http://a"]
-        )
+        existing = self._existing()
         session = MagicMock()
         session.query.side_effect = RuntimeError("db")
-        assert _is_unchanged(session, existing, _candidate()) is False
+        assert _is_unchanged(session, existing, _candidate(location=None)) is False
 
     def test_existing_listings_missing_from_candidate(self):
-        existing = SimpleNamespace(
-            id="1", price=1000, title="Apt", description="desc", image_urls=["http://a"]
-        )
+        existing = self._existing()
         session = MagicMock()
         session.query.return_value.filter.return_value.all.return_value = [MagicMock()]
-        assert _is_unchanged(session, existing, _candidate(listings=[])) is False
+        assert _is_unchanged(session, existing, _candidate(location=None, listings=[])) is False
 
 
 @pytest.mark.unit
@@ -136,7 +159,15 @@ class TestUpdateOrNoop:
     def test_updated_when_changed(self):
         session = MagicMock()
         existing = SimpleNamespace(
-            id="1", price=1, title="", description="", image_urls=[], props_json={}, active=False
+            id="1",
+            price=1,
+            title="",
+            description="",
+            image_urls=[],
+            props_json={},
+            address=None,
+            location=None,
+            active=False,
         )
         with patch("core.dedupe._is_unchanged", return_value=False):
             with patch("core.dedupe._record_candidate_listings"):
@@ -153,6 +184,8 @@ class TestUpdateOrNoop:
             description="Keep me",
             image_urls=["http://a"],
             props_json={},
+            address="Savassi",
+            location="OLD_POINT",
             active=True,
         )
         candidate = _candidate(description="", price=1100.0)
@@ -162,6 +195,57 @@ class TestUpdateOrNoop:
         assert result.action == "updated"
         assert existing.description == "Keep me"
         assert existing.price == 1100.0
+
+    def test_olx_correction_clears_stale_seller_pin(self):
+        session = MagicMock()
+        existing = SimpleNamespace(
+            id="1",
+            price=1000.0,
+            title="Apt",
+            description="x",
+            image_urls=[],
+            props_json={},
+            address="São Tomáz, Belo Horizonte",
+            location="SELLER_PIN",
+            active=True,
+        )
+        candidate = _candidate(
+            address="Itapoã, Belo Horizonte, MG",
+            location=None,
+            props_json={
+                "neighborhood": "Itapoã",
+                "city": "Belo Horizonte",
+                "state": "MG",
+                "olx_location_corrected": True,
+            },
+        )
+        with patch("core.dedupe._is_unchanged", return_value=False):
+            with patch("core.dedupe._record_candidate_listings"):
+                result = _update_or_noop(session, existing, candidate)
+        assert result.action == "updated"
+        assert existing.location is None
+        assert existing.address == "Itapoã, Belo Horizonte, MG"
+        assert existing.props_json["olx_location_corrected"] is True
+
+    def test_missing_coords_without_correction_keeps_pin(self):
+        session = MagicMock()
+        existing = SimpleNamespace(
+            id="1",
+            price=1000.0,
+            title="Apt",
+            description="x",
+            image_urls=[],
+            props_json={"city": "Belo Horizonte"},
+            address="Savassi",
+            location="KEEP_ME",
+            active=True,
+        )
+        candidate = _candidate(location=None, price=1100.0)
+        with patch("core.dedupe._is_unchanged", return_value=False):
+            with patch("core.dedupe._record_candidate_listings"):
+                result = _update_or_noop(session, existing, candidate)
+        assert result.action == "updated"
+        assert existing.location == "KEEP_ME"
 
 
 @pytest.mark.unit
