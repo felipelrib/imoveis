@@ -5,6 +5,7 @@ import { ToastProvider } from './components/ToastProvider.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CredentialGate from './components/CredentialGate.jsx'
 import { LocaleProvider, useLocale } from './i18n/LocaleContext.jsx'
+import { localeLabelKey } from './i18n/index.js'
 import { isPropertiesSurface } from './routes/propertyPaths.js'
 
 const Dashboard = React.lazy(() => import('./pages/Dashboard.jsx'))
@@ -89,7 +90,7 @@ function AppShell() {
             >
               {supported.map((code) => (
                 <option key={code} value={code}>
-                  {code === 'pt-BR' ? t('locale.ptBR') : t('locale.en')}
+                  {t(localeLabelKey(code))}
                 </option>
               ))}
             </select>

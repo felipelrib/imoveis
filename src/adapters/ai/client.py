@@ -75,11 +75,44 @@ _TEMPLATE_EMPTY = {
     "pt-BR": "Dados insuficientes para um veredito",
 }
 
+# Listing ad-claim phrases (closed templates — extend by locale key, not if/else)
+_TEMPLATE_SENTIMENT = {
+    "en": {
+        "claims_none": "no listing claim alerts",
+        "claims_one": "1 listing claim concern",
+        "claims_many": "{n} listing claim concerns",
+        "green_many": "{n} positive listing claims",
+    },
+    "pt-BR": {
+        "claims_none": "sem alertas nas reivindicações do anúncio",
+        "claims_one": "1 preocupação nas reivindicações do anúncio",
+        "claims_many": "{n} preocupações nas reivindicações do anúncio",
+        "green_many": "{n} reivindicações positivas do anúncio",
+    },
+}
+
+_TEMPLATE_NEIGHBOURHOOD = {
+    "en": {
+        "quality": "neighbourhood quality {pct}",
+        "risk_one": "1 neighbourhood risk ({flag})",
+        "risk_many": "{n} neighbourhood risks",
+    },
+    "pt-BR": {
+        "quality": "qualidade do bairro {pct}",
+        "risk_one": "1 risco de bairro ({flag})",
+        "risk_many": "{n} riscos de bairro",
+    },
+}
+
 
 def _locale_key(output_language: str | None) -> str:
     if output_language in _TEMPLATE_STAT:
         return output_language  # type: ignore[return-value]
     return "en"
+
+
+def _phrases(registry: dict[str, dict[str, str]], locale: str) -> dict[str, str]:
+    return registry.get(locale) or registry["en"]
 
 
 def _template_stat_part(stat_analysis: dict | None, locale: str) -> str | None:
@@ -107,29 +140,18 @@ def _template_sentiment_parts(sentiment: dict | None, locale: str) -> list[str]:
     green_flags = sentiment.get("green_flags")
     red_flags = red_flags if isinstance(red_flags, list) else []
     green_flags = green_flags if isinstance(green_flags, list) else []
-    if locale == "pt-BR":
-        if not red_flags:
-            claims_part = "sem alertas nas reivindicações do anúncio"
-        elif len(red_flags) == 1:
-            claims_part = "1 preocupação nas reivindicações do anúncio"
-        else:
-            claims_part = f"{len(red_flags)} preocupações nas reivindicações do anúncio"
-        green_part = (
-            [f"{len(green_flags)} reivindicações positivas do anúncio"]
-            if len(green_flags) >= 2
-            else []
-        )
+    phrases = _phrases(_TEMPLATE_SENTIMENT, locale)
+    if not red_flags:
+        claims_part = phrases["claims_none"]
+    elif len(red_flags) == 1:
+        claims_part = phrases["claims_one"]
     else:
-        claims_part = (
-            "no listing claim alerts" if not red_flags
-            else "1 listing claim concern" if len(red_flags) == 1
-            else f"{len(red_flags)} listing claim concerns"
-        )
-        green_part = (
-            [f"{len(green_flags)} positive listing claims"]
-            if len(green_flags) >= 2
-            else []
-        )
+        claims_part = phrases["claims_many"].format(n=len(red_flags))
+    green_part = (
+        [phrases["green_many"].format(n=len(green_flags))]
+        if len(green_flags) >= 2
+        else []
+    )
     return [claims_part, *green_part]
 
 
@@ -144,27 +166,19 @@ def _template_neighbourhood_parts(
     risk_flags = neighbourhood_quality.get("risk_flags") or []
     if not isinstance(risk_flags, list):
         risk_flags = []
+    phrases = _phrases(_TEMPLATE_NEIGHBOURHOOD, locale)
     parts: list[str] = []
     if score is not None:
         try:
             pct = f"{float(score):.0%}"
-            if locale == "pt-BR":
-                parts.append(f"qualidade do bairro {pct}")
-            else:
-                parts.append(f"neighbourhood quality {pct}")
+            parts.append(phrases["quality"].format(pct=pct))
         except (TypeError, ValueError):
             pass
     if risk_flags:
-        if locale == "pt-BR":
-            if len(risk_flags) == 1:
-                parts.append(f"1 risco de bairro ({risk_flags[0]})")
-            else:
-                parts.append(f"{len(risk_flags)} riscos de bairro")
+        if len(risk_flags) == 1:
+            parts.append(phrases["risk_one"].format(flag=risk_flags[0]))
         else:
-            if len(risk_flags) == 1:
-                parts.append(f"1 neighbourhood risk ({risk_flags[0]})")
-            else:
-                parts.append(f"{len(risk_flags)} neighbourhood risks")
+            parts.append(phrases["risk_many"].format(n=len(risk_flags)))
     return parts
 
 
