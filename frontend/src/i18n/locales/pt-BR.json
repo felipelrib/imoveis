@@ -441,6 +441,50 @@
     "toastInvalid": "Credencial de API inválida ou ausente",
     "toastCleared": "Credencial de API removida"
   },
+  "ai": {
+    "statBand": {
+      "highly_undervalued": {
+        "label": "Muito abaixo do mercado",
+        "reasoning": "Significativamente mais barato que imóveis semelhantes na região."
+      },
+      "slightly_undervalued": {
+        "label": "Ligeiramente abaixo do mercado",
+        "reasoning": "Preço um pouco abaixo da média do bairro."
+      },
+      "average": {
+        "label": "Na média",
+        "reasoning": "Preço próximo à média do bairro."
+      },
+      "slightly_overvalued": {
+        "label": "Ligeiramente acima do mercado",
+        "reasoning": "Preço um pouco acima da média do bairro."
+      },
+      "highly_overvalued": {
+        "label": "Muito acima do mercado",
+        "reasoning": "Significativamente mais caro que imóveis semelhantes na região."
+      }
+    },
+    "visualCategory": {
+      "pristine": "Impecável",
+      "good": "Bom",
+      "average": "Médio",
+      "needs_renovation": "Precisa de reforma",
+      "poor": "Ruim"
+    },
+    "sentimentCategory": {
+      "highly_desirable": "Muito desejável",
+      "good": "Bom",
+      "average": "Médio",
+      "undesirable": "Indesejável",
+      "poor": "Ruim"
+    },
+    "riskFlags": {
+      "flood_zone": "Zona de inundação",
+      "industrial_adjacent": "Próximo a área industrial",
+      "flood": "Inundação",
+      "seller_reported_noise": "Ruído relatado pelo anunciante"
+    }
+  },
   "errors": {
     "somethingWrong": "Algo deu errado",
     "reloadPage": "Recarregar página",

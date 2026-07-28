@@ -21,6 +21,8 @@ import aiohttp
 import anyio
 from pydantic import BaseModel
 
+from core.ai_locale import normalize_sentiment_category, normalize_stat_category, normalize_visual_category
+
 logger = logging.getLogger(__name__)
 
 _INVALID_JSON_RETRY_HINT = "\n\nYour last response was invalid JSON. Return ONLY valid JSON."
@@ -33,51 +35,71 @@ _MEDIA_TYPE_BY_EXT = {
     "webp": "image/webp",
 }
 
+# Template phrase catalogs (closed vocab → localized free-text fallback)
+_TEMPLATE_STAT = {
+    "en": {
+        "highly_undervalued": "Highly undervalued",
+        "slightly_undervalued": "Slightly undervalued",
+        "average": "Priced near the neighbourhood average",
+        "slightly_overvalued": "Slightly above neighbourhood average",
+        "highly_overvalued": "Highly above neighbourhood average",
+    },
+    "pt-BR": {
+        "highly_undervalued": "Muito abaixo do mercado",
+        "slightly_undervalued": "Ligeiramente abaixo do mercado",
+        "average": "Preço próximo à média do bairro",
+        "slightly_overvalued": "Ligeiramente acima da média do bairro",
+        "highly_overvalued": "Muito acima da média do bairro",
+    },
+}
 
-class AIClientError(RuntimeError):
-    """Raised when a local AI backend returns a non-success response."""
+_TEMPLATE_VISUAL = {
+    "en": {
+        "pristine": "excellent condition",
+        "good": "good condition",
+        "average": "average condition",
+        "needs_renovation": "needs renovation",
+        "poor": "poor condition",
+    },
+    "pt-BR": {
+        "pristine": "excelente estado",
+        "good": "bom estado",
+        "average": "estado médio",
+        "needs_renovation": "precisa de reforma",
+        "poor": "mau estado",
+    },
+}
 
-
-class VisualResult(BaseModel):
-    condition_score: float
-    analysis: str = ""
-    category: str = "Standard"
-    reasoning: str = ""
-    features_detected: List[str] = []
-    issues_detected: List[str] = []
-
-
-class DealVerdictResult(BaseModel):
-    """Result of deal verdict synthesis combining all scoring signals."""
-    verdict: str = ""
-    confidence: float = 0.0
-
-
-def _template_stat_part(stat_analysis: dict | None) -> str | None:
-    category = (stat_analysis or {}).get("category")
-    labels = {
-        "Highly Undervalued": "Highly undervalued",
-        "Slightly Undervalued": "Slightly undervalued",
-        "Average": "Priced near the neighbourhood average",
-        "Slightly Overvalued": "Slightly above neighbourhood average",
-        "Highly Overvalued": "Highly above neighbourhood average",
-    }
-    return labels.get(category, category) if category else None
-
-
-def _template_visual_part(visual: dict | None) -> str | None:
-    category = (visual or {}).get("category")
-    labels = {
-        "Pristine": "excellent condition",
-        "Good": "good condition",
-        "Average": "average condition",
-        "Needs Renovation": "needs renovation",
-        "Poor": "poor condition",
-    }
-    return labels.get(category, category.lower()) if category else None
+_TEMPLATE_EMPTY = {
+    "en": "Not enough data for a deal verdict",
+    "pt-BR": "Dados insuficientes para um veredito",
+}
 
 
-def _template_sentiment_parts(sentiment: dict | None) -> list[str]:
+def _locale_key(output_language: str | None) -> str:
+    if output_language in _TEMPLATE_STAT:
+        return output_language  # type: ignore[return-value]
+    return "en"
+
+
+def _template_stat_part(stat_analysis: dict | None, locale: str) -> str | None:
+    category = normalize_stat_category((stat_analysis or {}).get("category"))
+    if not category:
+        return None
+    labels = _TEMPLATE_STAT.get(locale) or _TEMPLATE_STAT["en"]
+    return labels.get(category, category)
+
+
+def _template_visual_part(visual: dict | None, locale: str) -> str | None:
+    raw = (visual or {}).get("category")
+    if not raw:
+        return None
+    category = normalize_visual_category(raw if isinstance(raw, str) else None)
+    labels = _TEMPLATE_VISUAL.get(locale) or _TEMPLATE_VISUAL["en"]
+    return labels.get(category, category)
+
+
+def _template_sentiment_parts(sentiment: dict | None, locale: str) -> list[str]:
     """Listing ad-claim signals (not objective neighbourhood truth)."""
     if not sentiment:
         return []
@@ -85,22 +107,36 @@ def _template_sentiment_parts(sentiment: dict | None) -> list[str]:
     green_flags = sentiment.get("green_flags")
     red_flags = red_flags if isinstance(red_flags, list) else []
     green_flags = green_flags if isinstance(green_flags, list) else []
-    claims_part = (
-        "no listing claim alerts" if not red_flags
-        else "1 listing claim concern" if len(red_flags) == 1
-        else f"{len(red_flags)} listing claim concerns"
-    )
-    return [
-        claims_part,
-        *(
+    if locale == "pt-BR":
+        if not red_flags:
+            claims_part = "sem alertas nas reivindicações do anúncio"
+        elif len(red_flags) == 1:
+            claims_part = "1 preocupação nas reivindicações do anúncio"
+        else:
+            claims_part = f"{len(red_flags)} preocupações nas reivindicações do anúncio"
+        green_part = (
+            [f"{len(green_flags)} reivindicações positivas do anúncio"]
+            if len(green_flags) >= 2
+            else []
+        )
+    else:
+        claims_part = (
+            "no listing claim alerts" if not red_flags
+            else "1 listing claim concern" if len(red_flags) == 1
+            else f"{len(red_flags)} listing claim concerns"
+        )
+        green_part = (
             [f"{len(green_flags)} positive listing claims"]
             if len(green_flags) >= 2
             else []
-        ),
-    ]
+        )
+    return [claims_part, *green_part]
 
 
-def _template_neighbourhood_parts(neighbourhood_quality: dict | None) -> list[str]:
+def _template_neighbourhood_parts(
+    neighbourhood_quality: dict | None,
+    locale: str,
+) -> list[str]:
     """Objective neighbourhood quality summary for the template path."""
     if not neighbourhood_quality:
         return []
@@ -111,14 +147,24 @@ def _template_neighbourhood_parts(neighbourhood_quality: dict | None) -> list[st
     parts: list[str] = []
     if score is not None:
         try:
-            parts.append(f"neighbourhood quality {float(score):.0%}")
+            pct = f"{float(score):.0%}"
+            if locale == "pt-BR":
+                parts.append(f"qualidade do bairro {pct}")
+            else:
+                parts.append(f"neighbourhood quality {pct}")
         except (TypeError, ValueError):
             pass
     if risk_flags:
-        if len(risk_flags) == 1:
-            parts.append(f"1 neighbourhood risk ({risk_flags[0]})")
+        if locale == "pt-BR":
+            if len(risk_flags) == 1:
+                parts.append(f"1 risco de bairro ({risk_flags[0]})")
+            else:
+                parts.append(f"{len(risk_flags)} riscos de bairro")
         else:
-            parts.append(f"{len(risk_flags)} neighbourhood risks")
+            if len(risk_flags) == 1:
+                parts.append(f"1 neighbourhood risk ({risk_flags[0]})")
+            else:
+                parts.append(f"{len(risk_flags)} neighbourhood risks")
     return parts
 
 
@@ -128,47 +174,58 @@ def template_deal_verdict(
     sentiment: dict | None = None,
     neighborhood_name: str | None = None,
     neighbourhood_quality: dict | None = None,
+    output_language: str = "en",
 ) -> str:
-    """Deterministic English deal verdict from scoring signals.
+    """Deterministic deal verdict from scoring signals (no GPU/LLM).
 
-    Works without GPU/LLM.  Returns a concise sentence combining:
-    - Statistical positioning relative to neighbourhood median
-    - Visual condition assessment
-    - Objective neighbourhood quality (when available)
-    - Listing ad-claims / red-flag count
-
-    Examples
-    --------
-    >>> template_deal_verdict(
-    ...     stat_analysis={"category": "Slightly Undervalued", "reasoning": "..."},
-    ...     visual={"category": "Good", "reasoning": "..."},
-    ...     sentiment={"category": "Highly Desirable", "reasoning": "...", "red_flags": []},
-    ...     neighborhood_name="Savassi",
-    ... )
-    'Slightly undervalued — good condition, no listing claim alerts'
+    Accepts legacy EN category titles or snake_case codes. Phrases follow
+    ``output_language`` (``en`` / ``pt-BR``).
     """
     del neighborhood_name  # Name is context for the LLM path; template stays place-agnostic.
+    locale = _locale_key(output_language)
     parts = [
         part
-        for part in (_template_stat_part(stat_analysis), _template_visual_part(visual))
+        for part in (
+            _template_stat_part(stat_analysis, locale),
+            _template_visual_part(visual, locale),
+        )
         if part
     ]
-    parts.extend(_template_neighbourhood_parts(neighbourhood_quality))
-    parts.extend(_template_sentiment_parts(sentiment))
+    parts.extend(_template_neighbourhood_parts(neighbourhood_quality, locale))
+    parts.extend(_template_sentiment_parts(sentiment, locale))
 
     if not parts:
-        return "Not enough data for a deal verdict"
+        return _TEMPLATE_EMPTY.get(locale, _TEMPLATE_EMPTY["en"])
 
-    # Join with em-dash for first part, commas for rest
     if len(parts) == 1:
         return parts[0]
     return parts[0] + " — " + ", ".join(parts[1:])
 
 
+class AIClientError(RuntimeError):
+    """Raised when a local AI backend returns a non-success response."""
+
+
+class VisualResult(BaseModel):
+    condition_score: float
+    analysis: str = ""
+    category: str = "average"
+    reasoning: str = ""
+    features_detected: List[str] = []
+    issues_detected: List[str] = []
+
+
+class DealVerdictResult(BaseModel):
+    """Result of deal verdict synthesis combining all scoring signals."""
+
+    verdict: str = ""
+    confidence: float = 0.0
+
+
 class SentimentResult(BaseModel):
     sentiment_score: float
     analysis: str = ""
-    category: str = "Standard"
+    category: str = "average"
     reasoning: str = ""
     green_flags: List[str] = []
     red_flags: List[str] = []
@@ -202,28 +259,37 @@ class LocalAIClient(ABC):
         sentiment: dict | None = None,
         neighborhood_name: str | None = None,
         neighbourhood_quality: dict | None = None,
+        output_language: str | None = None,
     ) -> DealVerdictResult:
         """Generate a natural-language deal verdict.
 
         Tries the LLM first; falls back to deterministic template on failure.
+        Language defaults to the active UI locale (BIN-101).
         """
         try:
             from adapters.ai.prompts import build_deal_verdict_prompt
-            from infra.config import get_config
-            cfg = get_config()
+            from infra.ui_locale import resolve_ai_output_language
+
+            lang = output_language or resolve_ai_output_language()
             prompt = build_deal_verdict_prompt(
                 stat_analysis=stat_analysis,
                 visual=visual,
                 sentiment=sentiment,
                 neighborhood_name=neighborhood_name,
                 neighbourhood_quality=neighbourhood_quality,
-                output_language=cfg.ai.output_language,
+                output_language=lang,
             )
             # Subclasses override to call their specific LLM endpoint
             result = await self._llm_verdict(prompt)
             return result
         except Exception as exc:
             logger.warning("deal_verdict_llm_fallback: %s", str(exc))
+            try:
+                from infra.ui_locale import resolve_ai_output_language
+
+                lang = output_language or resolve_ai_output_language()
+            except Exception:  # noqa: BLE001
+                lang = output_language or "en"
             return DealVerdictResult(
                 verdict=template_deal_verdict(
                     stat_analysis,
@@ -231,6 +297,7 @@ class LocalAIClient(ABC):
                     sentiment,
                     neighborhood_name,
                     neighbourhood_quality=neighbourhood_quality,
+                    output_language=lang,
                 ),
                 confidence=0.0,
             )
@@ -373,7 +440,7 @@ class OllamaClient(LocalAIClient):
                     return VisualResult(
                         condition_score=data.get("condition_score", 0.5),
                         analysis=res.get("response", ""),
-                        category=data.get("category", "Average"),
+                        category=normalize_visual_category(data.get("category", "average")),
                         reasoning=data.get("reasoning", ""),
                         features_detected=data.get("features_detected", []),
                         issues_detected=data.get("issues_detected", []),
@@ -396,7 +463,7 @@ class OllamaClient(LocalAIClient):
                     return SentimentResult(
                         sentiment_score=data.get("sentiment_score", 0.5),
                         analysis=res.get("response", ""),
-                        category=data.get("category", "Average"),
+                        category=normalize_sentiment_category(data.get("category", "average")),
                         reasoning=data.get("reasoning", ""),
                         green_flags=data.get("green_flags", []),
                         red_flags=data.get("red_flags", []),
@@ -545,7 +612,7 @@ class LMStudioClient(LocalAIClient):
                     return VisualResult(
                         condition_score=data.get("condition_score", 0.5),
                         analysis=data.get("analysis", text),
-                        category=data.get("category", "Average"),
+                        category=normalize_visual_category(data.get("category", "average")),
                         reasoning=data.get("reasoning", ""),
                         features_detected=data.get("features_detected", []),
                         issues_detected=data.get("issues_detected", []),
@@ -577,7 +644,7 @@ class LMStudioClient(LocalAIClient):
                     return SentimentResult(
                         sentiment_score=data.get("sentiment_score", 0.5),
                         analysis=data.get("analysis", text),
-                        category=data.get("category", "Average"),
+                        category=normalize_sentiment_category(data.get("category", "average")),
                         reasoning=data.get("reasoning", ""),
                         green_flags=data.get("green_flags", []),
                         red_flags=data.get("red_flags", []),

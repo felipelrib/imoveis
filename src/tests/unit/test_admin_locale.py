@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from api.admin import REDIS_KEY_UI_LOCALE, resolve_active_locale
+from infra.ui_locale import REDIS_KEY_UI_LOCALE, resolve_active_locale
 
 
 def _ui_cfg(locale: str = "en", supported: list[str] | None = None):

@@ -61,7 +61,7 @@ test.describe("Neighbourhood quality vs ad claims labels (BIN-94)", () => {
     await expect(page.getByTestId("neighbourhood-quality-section")).toContainText(
       "Neighbourhood quality"
     );
-    await expect(page.getByTestId("neighbourhood-quality-section")).toContainText("flood");
+    await expect(page.getByTestId("neighbourhood-quality-section")).toContainText("Flood");
     await expect(page.getByTestId("ad-claims-section")).toBeVisible();
     await expect(page.getByTestId("ad-claims-section")).toContainText("Ad claims (listing)");
     await expect(page.getByText("Location Sentiment")).toHaveCount(0);

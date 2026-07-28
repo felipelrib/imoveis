@@ -37,6 +37,7 @@ from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
 from infra.redis_client import get_redis
+from infra.ui_locale import REDIS_KEY_UI_LOCALE, resolve_active_locale
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_admin_access)])
@@ -247,10 +248,8 @@ def update_schedule(payload: ScheduleUpdateRequest):
 
 
 # ---------------------------------------------------------------------------
-# UI locale preference (BIN-98)
+# UI locale preference (BIN-98 / BIN-101)
 # ---------------------------------------------------------------------------
-
-REDIS_KEY_UI_LOCALE = "ui:locale"
 
 
 class LocaleUpdateRequest(BaseModel):
@@ -267,23 +266,6 @@ def _locale_response(active: str, cfg) -> dict:
     }
 
 
-def resolve_active_locale(cfg, redis_client) -> str:
-    """Return Redis override if it is in the allowlist, else YAML default.
-
-    Raises ``ValueError`` only for programmer misuse (missing ui config);
-    invalid Redis values fall back silently to the YAML default.
-    """
-    supported = list(cfg.ui.supported_locales)
-    default = cfg.ui.locale
-    raw = redis_client.get(REDIS_KEY_UI_LOCALE)
-    if raw is None:
-        return default
-    value = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-    if value in supported:
-        return value
-    return default
-
-
 @router.get("/locale")
 def get_locale():
     """Return active UI locale (Redis override ?? AppConfig ui.locale)."""
@@ -295,7 +277,11 @@ def get_locale():
 
 @router.post("/locale", responses=_RESP_400)
 def update_locale(payload: LocaleUpdateRequest):
-    """Persist operator UI locale preference in Redis (does not touch AI)."""
+    """Persist operator UI locale preference in Redis.
+
+    AI free-text generation also reads this active locale (BIN-101); closed
+    vocab labels flip via the SPA catalog without touching stored codes.
+    """
     cfg = get_config()
     supported = list(cfg.ui.supported_locales)
     if payload.locale not in supported:

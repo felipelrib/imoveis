@@ -6,6 +6,13 @@ import {
 } from 'recharts'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
+import {
+  labelRiskFlag,
+  labelSentimentCategory,
+  labelStatBand,
+  labelVisualCategory,
+  reasoningStatBand,
+} from '../i18n/index.js'
 import { formatCurrency, formatDate, formatPricePerM2, formatNumber } from '../i18n/format.js'
 
 /**
@@ -448,13 +455,13 @@ export default function PropertyModal({ id, onClose }) {
               <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {statAnalysis.category && (
                   <div style={{ padding: '12px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0891b2', marginBottom: 4 }}>{t('modal.statisticalCategory', { category: statAnalysis.category })}</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{statAnalysis.reasoning}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0891b2', marginBottom: 4 }}>{t('modal.statisticalCategory', { category: labelStatBand(locale, statAnalysis.category) })}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{reasoningStatBand(locale, statAnalysis.category, statAnalysis.reasoning)}</div>
                   </div>
                 )}
                 {visual.category && (
                   <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>{t('modal.visualCondition', { category: visual.category })}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>{t('modal.visualCondition', { category: labelVisualCategory(locale, visual.category) })}</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{visual.reasoning}</div>
                   </div>
                 )}
@@ -486,7 +493,7 @@ export default function PropertyModal({ id, onClose }) {
                     {(p.neighbourhood_quality.risk_flags || []).length > 0 && (
                       <div className="flags">
                         {p.neighbourhood_quality.risk_flags.map((f) => (
-                          <span key={f} className="flag red">⚠ {f}</span>
+                          <span key={f} className="flag red">⚠ {labelRiskFlag(locale, f)}</span>
                         ))}
                       </div>
                     )}
@@ -503,7 +510,7 @@ export default function PropertyModal({ id, onClose }) {
                     style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}
                   >
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>
-                      {t('modal.adClaimsListing', { category: sentiment.category })}
+                      {t('modal.adClaimsListing', { category: labelSentimentCategory(locale, sentiment.category) })}
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sentiment.reasoning}</div>
                   </div>

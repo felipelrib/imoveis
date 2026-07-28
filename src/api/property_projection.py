@@ -10,6 +10,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from core.ai_locale import (
+    normalize_sentiment_category,
+    normalize_sentiment_meta,
+    normalize_stat_analysis_meta,
+    normalize_stat_category,
+    normalize_visual_category,
+    normalize_visual_meta,
+)
 from core.neighbourhood_quality import quality_profile_fields
 
 _LISTING_TYPE_RANK = {"rent": 0, "sale": 1}
@@ -188,12 +196,21 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "ai_red_flags": sentiment.get("red_flags", []),
         "condition_score": visual.get("condition_score"),
         "sentiment_score": sentiment.get("sentiment_score"),
-        "stat_category": meta.get("stat_analysis", {}).get("category"),
-        "stat_reasoning": meta.get("stat_analysis", {}).get("reasoning"),
+        "stat_category": normalize_stat_category(
+            meta.get("stat_analysis", {}).get("category")
+        ),
+        "stat_reasoning": normalize_stat_analysis_meta(
+            meta.get("stat_analysis", {})
+        ).get("reasoning")
+        or None,
         "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
-        "visual_category": visual.get("category"),
+        "visual_category": normalize_visual_category(visual.get("category"))
+        if visual.get("category")
+        else None,
         "visual_reasoning": visual.get("reasoning"),
-        "sentiment_category": sentiment.get("category"),
+        "sentiment_category": normalize_sentiment_category(sentiment.get("category"))
+        if sentiment.get("category")
+        else None,
         "sentiment_reasoning": sentiment.get("reasoning"),
         "listings": listings,
         "primary_listing": primary,
@@ -264,10 +281,10 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
         "listings": listings,
         "primary_listing": primary,
         "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
-        "stat_analysis": meta.get("stat_analysis", {}),
+        "stat_analysis": normalize_stat_analysis_meta(meta.get("stat_analysis", {})),
         "ai_analysis": {
-            "visual": meta.get("visual", {}),
-            "sentiment": meta.get("sentiment", {}),
+            "visual": normalize_visual_meta(meta.get("visual", {})),
+            "sentiment": normalize_sentiment_meta(meta.get("sentiment", {})),
         },
         "neighbourhood_quality": neighbourhood_quality_fields(row),
     }

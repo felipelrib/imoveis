@@ -5,6 +5,7 @@ import {
 import { fetchPropertiesByIds, fetchPriceHistory } from '../api.js'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
+import { labelRiskFlag } from '../i18n/index.js'
 import { formatCurrency, formatDate, formatPricePerM2 } from '../i18n/format.js'
 
 function formatScore(value) {
@@ -74,9 +75,11 @@ const ATTR_ROWS = [
   {
     key: 'risk_flags',
     labelKey: 'attr.neighbourhoodRisks',
-    get: (p) => {
+    get: (p, { locale }) => {
       const flags = p.neighbourhood_quality?.risk_flags
-      return Array.isArray(flags) && flags.length ? flags.join(', ') : '—'
+      return Array.isArray(flags) && flags.length
+        ? flags.map((f) => labelRiskFlag(locale, f)).join(', ')
+        : '—'
     },
   },
   { key: 'platform', labelKey: 'attr.platform', get: (p) => formatPlatform(p.platform || p.primary_listing?.platform) },
