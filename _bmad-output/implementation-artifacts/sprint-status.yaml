@@ -96,7 +96,7 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 8 = BIN-63 (BIN-97..103) — Product i18n (pt-BR first)
-  epic-8: in-progress
+  epic-8: done
   8-1-audit-pt-listing-corpus-vs-ai-stats-embeddings: done
   8-2-locale-foundation-catalog-persisted-preference: done
   8-3-full-ui-string-catalog-en-pt-br: done
