@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from adapters.scrapers.quintoandar import QuintoAndarScraper
+from adapters.scrapers.quintoandar import _SSR_PAGE_CEILING, QuintoAndarScraper
 from core.exceptions import CircuitBreakerOpenError
 
 
@@ -80,7 +80,7 @@ class TestQuintoAndarFetch:
 
     def test_split_window(self):
         q: deque = deque()
-        houses = {str(i): {} for i in range(12)}
+        houses = {str(i): {} for i in range(_SSR_PAGE_CEILING)}
         assert QuintoAndarScraper._split_window(q, "alugar", 100, 200, houses) is True
         assert len(q) == 2
         assert QuintoAndarScraper._split_window(q, "alugar", 100, 100, houses) is False
@@ -150,7 +150,7 @@ class TestQuintoAndarFetch:
             if "lourdes-" in url:
                 return {"2": {"id": "l1"}}
             # City-wide atomic band returns a full page
-            return {str(i): {"id": f"c{i}"} for i in range(12)}
+            return {str(i): {"id": f"c{i}"} for i in range(_SSR_PAGE_CEILING)}
 
         s._fetch_window_houses = MagicMock(side_effect=fake_houses)
         with patch.object(
@@ -183,7 +183,7 @@ class TestQuintoAndarFetch:
                 return {"2": {"id": "casa1"}}
             # Neighborhood + atomic price still full SSR page
             if "savassi-" in url:
-                return {str(i): {"id": f"nb{i}"} for i in range(12)}
+                return {str(i): {"id": f"nb{i}"} for i in range(_SSR_PAGE_CEILING)}
             return {}
 
         s._fetch_window_houses = MagicMock(side_effect=fake_houses)
@@ -198,6 +198,44 @@ class TestQuintoAndarFetch:
         urls = [c.args[0] for c in s._fetch_window_houses.call_args_list]
         assert any("/apartamento/de-100-a-100-reais" in u for u in urls)
         assert any("/casa/de-100-a-100-reais" in u for u in urls)
+
+    def test_fetch_pages_truncates_at_ssr_ceiling_after_house_type(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {
+                "extra": {
+                    "city_slug": "belo-horizonte-mg-brasil",
+                    "neighborhoods": [{"slug": "savassi"}],
+                }
+            },
+        )
+        full = {str(i): {"id": f"t{i}"} for i in range(_SSR_PAGE_CEILING)}
+        s._fetch_window_houses = MagicMock(return_value=full)
+        with (
+            patch.object(
+                QuintoAndarScraper,
+                "_initial_price_windows",
+                return_value=[("alugar", 100, 100, "savassi", "apartamento")],
+            ),
+            patch("adapters.scrapers.quintoandar.logger") as log,
+        ):
+            items = list(s.fetch_pages({"scrape_type": "rent"}))
+        assert len(items) == _SSR_PAGE_CEILING
+        assert {item["id"] for item in items} == {f"t{i}" for i in range(_SSR_PAGE_CEILING)}
+        assert s.ssr_truncated_windows == 1
+        assert s.ssr_truncated_houses_yielded == _SSR_PAGE_CEILING
+        warn_names = [c.args[0] for c in log.warning.call_args_list]
+        assert "quintoandar_window_truncated" in warn_names
+        info_names = [c.args[0] for c in log.info.call_args_list]
+        assert "quintoandar_ssr_ceiling_summary" in info_names
+        summary_kwargs = next(
+            c.kwargs
+            for c in log.info.call_args_list
+            if c.args and c.args[0] == "quintoandar_ssr_ceiling_summary"
+        )
+        assert summary_kwargs["truncated_windows"] == 1
+        assert summary_kwargs["truncated_houses_yielded"] == _SSR_PAGE_CEILING
+        assert summary_kwargs["ssr_page_ceiling"] == _SSR_PAGE_CEILING
 
 
 @pytest.mark.unit
