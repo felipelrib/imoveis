@@ -30,7 +30,7 @@ Files touched:
  scripts/agent/validate.sh                            | Unit gate: ``-m "not slow"``
  .github/workflows/ci.yml / nightly.yml               | Same ``not slow`` exclusion
  _bmad-output/implementation-artifacts/sprint-status.yaml | Epic 8 + 8.1 tracking
- docs/features/77-pt-corpus-ai-locale-audit.md        | NEW — this findings note
+ docs/features/78-pt-corpus-ai-locale-audit.md        | NEW — this findings note
 ```
 
 ## New Dependencies
