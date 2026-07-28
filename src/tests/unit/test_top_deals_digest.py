@@ -10,7 +10,12 @@ import pytest
 
 from adapters.notify.base import TopDealsDigest
 from adapters.notify.log_notifier import LogNotifier
-from core.top_deals_digest import TOP_DEALS_RULE, select_top_deals
+from core.top_deals_digest import (
+    TOP_DEALS_RULE,
+    score_column_for_target,
+    select_top_deals,
+    top_deals_rule,
+)
 
 
 def _row(
@@ -66,6 +71,23 @@ def _row(
 
 
 @pytest.mark.unit
+class TestScoreTargetColumn:
+    def test_maps_primary_rent_sale(self):
+        assert score_column_for_target("primary") == "ms.combined_score"
+        assert score_column_for_target("rent") == "ms.combined_score_rent"
+        assert score_column_for_target("sale") == "ms.combined_score_sale"
+
+    def test_rejects_unknown_target(self):
+        with pytest.raises(ValueError, match="score_target"):
+            score_column_for_target("both")
+
+    def test_rule_string_includes_column(self):
+        assert "combined_score_rent" in top_deals_rule("rent")
+        assert "combined_score_sale" in top_deals_rule("sale")
+        assert top_deals_rule("primary") == TOP_DEALS_RULE
+
+
+@pytest.mark.unit
 class TestSelectTopDeals:
     def test_empty_result(self):
         session = MagicMock()
@@ -109,6 +131,35 @@ class TestSelectTopDeals:
         assert params["min_score"] == 0.0
         assert params["limit"] == 10
         assert params["since"] == datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+        sql = str(session.execute.call_args.args[0])
+        assert "ms.combined_score IS NOT NULL" in sql
+        assert "ORDER BY ms.combined_score DESC" in sql
+
+    @pytest.mark.parametrize(
+        "score_target,column",
+        [
+            ("primary", "ms.combined_score"),
+            ("rent", "ms.combined_score_rent"),
+            ("sale", "ms.combined_score_sale"),
+        ],
+    )
+    def test_ranking_uses_score_target_column(self, score_target, column):
+        session = MagicMock()
+        result = MagicMock()
+        result.mappings.return_value.fetchall.return_value = []
+        session.execute.return_value = result
+
+        select_top_deals(session, limit=5, score_target=score_target)
+
+        sql = str(session.execute.call_args.args[0])
+        assert f"{column} IS NOT NULL" in sql
+        assert f"{column} >= :min_score" in sql
+        assert f"ORDER BY {column} DESC" in sql
+        # Typed targets must not fall back to primary for inclusion/order.
+        if score_target != "primary":
+            assert "ms.combined_score IS NOT NULL" not in sql
+            assert "ORDER BY ms.combined_score DESC" not in sql
 
 
 @pytest.mark.unit
@@ -157,6 +208,7 @@ class TestSendTopDealsDigestTask:
             lookback_hours=168,
             min_combined_score=0.0,
             limit=10,
+            score_target="primary",
         )
         cfg = MagicMock()
         cfg.alerts.top_deals = top
@@ -165,12 +217,14 @@ class TestSendTopDealsDigestTask:
         mock_session_local.return_value.__enter__.return_value = MagicMock()
 
         notifier = MagicMock()
-        with patch("core.top_deals_digest.select_top_deals", return_value=[]):
+        with patch("core.top_deals_digest.select_top_deals", return_value=[]) as select:
             with patch("adapters.notify.get_notifiers", return_value=[notifier]) as gn:
                 with patch("smtplib.SMTP") as smtp:
                     result = send_top_deals_digest.run()
 
         assert result == {"status": "empty", "sent": 0}
+        select.assert_called_once()
+        assert select.call_args.kwargs["score_target"] == "primary"
         gn.assert_not_called()
         notifier.send_digest.assert_not_called()
         smtp.assert_not_called()
@@ -185,6 +239,7 @@ class TestSendTopDealsDigestTask:
             lookback_hours=24,
             min_combined_score=0.5,
             limit=5,
+            score_target="rent",
         )
         cfg = MagicMock()
         cfg.alerts.top_deals = top
@@ -195,17 +250,20 @@ class TestSendTopDealsDigestTask:
         props = [{"id": "p1", "title": "Nice", "combined_score": 0.8, "price": 2000}]
         notifier = MagicMock()
 
-        with patch("core.top_deals_digest.select_top_deals", return_value=props):
+        with patch("core.top_deals_digest.select_top_deals", return_value=props) as select:
             with patch("adapters.notify.get_notifiers", return_value=[notifier]):
                 result = send_top_deals_digest.run()
 
         assert result == {"status": "sent", "sent": 1}
+        select.assert_called_once()
+        assert select.call_args.kwargs["score_target"] == "rent"
         notifier.send_digest.assert_called_once()
         digest = notifier.send_digest.call_args.args[0]
         assert isinstance(digest, TopDealsDigest)
         assert digest.principal_id == "default"
         assert digest.properties == props
-        assert digest.rule == TOP_DEALS_RULE
+        assert digest.rule == top_deals_rule("rent")
+        assert "combined_score_rent" in digest.rule
 
 
 @pytest.mark.unit

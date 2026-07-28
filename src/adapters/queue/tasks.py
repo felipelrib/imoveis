@@ -1076,7 +1076,7 @@ def send_top_deals_digest(self):
 
     from adapters.notify import get_notifiers
     from adapters.notify.base import TopDealsDigest
-    from core.top_deals_digest import TOP_DEALS_RULE, select_top_deals
+    from core.top_deals_digest import select_top_deals, top_deals_rule
 
     cfg = get_config()
     top_deals = cfg.alerts.top_deals
@@ -1084,12 +1084,14 @@ def send_top_deals_digest(self):
         logger.info("top_deals_digest_skipped", reason="disabled")
         return {"status": "skipped", "sent": 0}
 
+    score_target = top_deals.score_target
     with SessionLocal() as session:
         properties = select_top_deals(
             session,
             lookback_hours=top_deals.lookback_hours,
             min_combined_score=top_deals.min_combined_score,
             limit=top_deals.limit,
+            score_target=score_target,
         )
 
     if not properties:
@@ -1100,7 +1102,7 @@ def send_top_deals_digest(self):
         principal_id=cfg.auth.principal_id,
         generated_at=datetime.now(timezone.utc),
         properties=properties,
-        rule=TOP_DEALS_RULE,
+        rule=top_deals_rule(score_target),
     )
     for notifier in get_notifiers():
         try:
