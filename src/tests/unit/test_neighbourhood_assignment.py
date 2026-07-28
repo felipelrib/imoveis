@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from core.neighbourhood_assignment import assign_property_neighbourhood
@@ -107,3 +107,73 @@ class TestAssignPropertyNeighbourhoodByName:
         )
         assert result == nb_id
         assert prop.neighborhood_id == nb_id
+
+
+class TestApplyNeighbourhoodRepresentativePoint:
+    def test_missing_property_returns_none(self):
+        from core.neighbourhood_assignment import apply_neighbourhood_representative_point
+
+        session = MagicMock()
+        session.get.return_value = None
+        assert apply_neighbourhood_representative_point(session, uuid4()) is None
+        session.execute.assert_not_called()
+
+    def test_no_neighborhood_id_returns_none(self):
+        from core.neighbourhood_assignment import apply_neighbourhood_representative_point
+
+        prop = MagicMock()
+        prop.neighborhood_id = None
+        session = MagicMock()
+        session.get.return_value = prop
+        assert apply_neighbourhood_representative_point(session, uuid4()) is None
+        session.execute.assert_not_called()
+
+    def test_null_geometry_returns_none(self):
+        from core.neighbourhood_assignment import apply_neighbourhood_representative_point
+
+        prop = MagicMock()
+        prop.neighborhood_id = uuid4()
+        prop.location = None
+        prop.props_json = {"neighborhood": "Savassi"}
+        session = MagicMock()
+        session.get.return_value = prop
+        session.execute.return_value.fetchone.return_value = None
+
+        assert apply_neighbourhood_representative_point(session, uuid4()) is None
+        assert prop.location is None
+        session.flush.assert_not_called()
+
+    def test_writes_point_and_stamps_precision(self):
+        from core.neighbourhood_assignment import (
+            LOCATION_PRECISION_NEIGHBOURHOOD,
+            LOCATION_SOURCE_NEIGHBOURHOOD,
+            apply_neighbourhood_representative_point,
+        )
+
+        prop = MagicMock()
+        prop.neighborhood_id = uuid4()
+        prop.location = None
+        prop.props_json = {"neighborhood": "Savassi", "city": "Belo Horizonte"}
+        session = MagicMock()
+        session.get.return_value = prop
+        row = MagicMock()
+        row.lon = -43.9375
+        row.lat = -19.9175
+        session.execute.return_value.fetchone.return_value = row
+
+        with (
+            patch(
+                "geoalchemy2.shape.from_shape", return_value="POINT_WKB"
+            ) as from_shape,
+            patch("shapely.geometry.Point") as point_cls,
+        ):
+            point_cls.return_value = "pt"
+            result = apply_neighbourhood_representative_point(session, uuid4())
+
+        assert result == (-43.9375, -19.9175)
+        point_cls.assert_called_once_with(-43.9375, -19.9175)
+        from_shape.assert_called_once()
+        assert prop.location == "POINT_WKB"
+        assert prop.props_json["location_source"] == LOCATION_SOURCE_NEIGHBOURHOOD
+        assert prop.props_json["location_precision"] == LOCATION_PRECISION_NEIGHBOURHOOD
+        session.flush.assert_called_once()

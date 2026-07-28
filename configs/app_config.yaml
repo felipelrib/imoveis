@@ -64,6 +64,11 @@ scraping:
     batch_size: 50          # listings per run (oldest last_seen first)
     stale_after_hours: 24   # skip listings seen more recently than this
     request_timeout_sec: 20
+  # After OLX location reconcile clears seller coords and name-assigns a
+  # neighbourhood, optionally fill a neighbourhood-level pin (BIN-112).
+  # Never invents street precision — uses ST_PointOnSurface of the polygon.
+  olx_location:
+    backfill_coords_from_neighbourhood: true
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil

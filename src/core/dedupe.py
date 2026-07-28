@@ -104,10 +104,57 @@ def _description_effectively_unchanged(existing_desc: str, candidate_desc: str) 
     return existing == incoming
 
 
+def _apply_candidate_location(existing, candidate: PropertyCandidate) -> None:
+    """Sync ``existing.location`` from the candidate.
+
+    Sets a PostGIS point when the candidate has lat/lon. Clears location when
+    the candidate has no coords **and** OLX reconcile stamped a correction
+    (seller pin was intentionally dropped). Omitting coords without that flag
+    leaves the existing pin unchanged so platforms that occasionally skip
+    geodata do not wipe a good point.
+    """
+    from geoalchemy2.shape import from_shape
+    from shapely.geometry import Point
+
+    loc = candidate.location
+    if loc and loc.get("lat") is not None and loc.get("lon") is not None:
+        existing.location = from_shape(
+            Point(float(loc["lon"]), float(loc["lat"])), srid=4326
+        )
+        return
+    props = candidate.props_json or {}
+    if props.get("olx_location_corrected"):
+        existing.location = None
+
+
+def _location_effectively_unchanged(existing, candidate: PropertyCandidate) -> bool:
+    """Compare candidate lat/lon (or intentional clear) to the stored point."""
+    loc = candidate.location
+    has_cand = bool(loc and loc.get("lat") is not None and loc.get("lon") is not None)
+    has_exist = existing.location is not None
+    props = candidate.props_json or {}
+    if not has_cand:
+        if props.get("olx_location_corrected"):
+            return not has_exist
+        return True
+    if not has_exist:
+        return False
+    try:
+        from geoalchemy2.shape import to_shape
+
+        point = to_shape(existing.location)
+        return (
+            abs(float(point.y) - float(loc["lat"])) < 1e-7
+            and abs(float(point.x) - float(loc["lon"])) < 1e-7
+        )
+    except Exception:
+        return False
+
+
 def _update_or_noop(session: Session, existing, candidate: PropertyCandidate) -> DedupeMatchResult:
     if _is_unchanged(session, existing, candidate):
         return DedupeMatchResult(property_id=str(existing.id), action="noop")
-    for field in ("price", "title", "description", "image_urls", "props_json"):
+    for field in ("price", "title", "description", "image_urls", "props_json", "address"):
         new_val = getattr(candidate, field)
         if (
             field == "description"
@@ -116,6 +163,7 @@ def _update_or_noop(session: Session, existing, candidate: PropertyCandidate) ->
         ):
             continue
         setattr(existing, field, new_val)
+    _apply_candidate_location(existing, candidate)
     existing.active = True
     _record_candidate_listings(session, str(existing.id), candidate)
     session.flush()
@@ -202,6 +250,9 @@ def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> b
             existing.description or "", candidate.description or ""
         ),
         sorted(existing.image_urls or []) != sorted(candidate.image_urls or []),
+        (existing.address or "") != (candidate.address or ""),
+        (existing.props_json or {}) != (candidate.props_json or {}),
+        not _location_effectively_unchanged(existing, candidate),
     )):
         return False
 

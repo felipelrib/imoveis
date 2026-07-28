@@ -154,6 +154,7 @@ def test_scrape_listings_records_completed_telemetry():
         ),
         patch.object(tasks_mod, "assign_property_neighbourhood"),
         patch.object(tasks_mod, "assign_property_neighbourhood_by_name"),
+        patch.object(tasks_mod, "apply_neighbourhood_representative_point"),
         patch.object(tasks_mod, "_enqueue_post_scrape_jobs"),
         patch.object(tasks_mod, "sync_ai_extract", return_value=None),
         patch.object(tasks_mod, "load_neighborhood_names", return_value=["Savassi"]),

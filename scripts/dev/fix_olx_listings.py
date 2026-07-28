@@ -38,6 +38,7 @@ from adapters.scrapers.olx import OLXScraper  # noqa: E402
 from core.dedupe import text_similarity  # noqa: E402
 from core.geo_allowlist import _fold, passes_geo_allowlist  # noqa: E402
 from core.neighbourhood_assignment import (  # noqa: E402
+    apply_neighbourhood_representative_point,
     assign_property_neighbourhood_by_name,
     load_neighborhood_names,
 )
@@ -218,6 +219,8 @@ def _apply_location(
                 name=result.neighborhood,
                 city=result.city,
             )
+            if get_config().scraping.olx_location.backfill_coords_from_neighbourhood:
+                apply_neighbourhood_representative_point(session, prop.id)
     return result.action
 
 

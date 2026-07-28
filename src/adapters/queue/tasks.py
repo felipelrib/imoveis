@@ -38,6 +38,7 @@ from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
 from core.geo_allowlist import passes_geo_allowlist
 from core.neighbourhood_assignment import (
+    apply_neighbourhood_representative_point,
     assign_property_neighbourhood,
     assign_property_neighbourhood_by_name,
     load_neighborhood_names,
@@ -417,6 +418,11 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                                 name=props.get("neighborhood"),
                                 city=props.get("city"),
                             )
+                            # BIN-112: neighbourhood-level pin after seller coords cleared
+                            if cfg.scraping.olx_location.backfill_coords_from_neighbourhood:
+                                apply_neighbourhood_representative_point(
+                                    session, result.property_id
+                                )
                         else:
                             assign_property_neighbourhood(session, result.property_id)
                     # BIN-78: keep thin galleries for offline stats, hide from deal feed.
