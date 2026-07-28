@@ -46,5 +46,5 @@ None.
 
 ## Notes / Follow-ups
 
-- Sort-by-price still uses decisioning `p.price` (lowest listing); only the max-price *filter* is listing-type aware.
+- ~~Sort-by-price still uses decisioning `p.price` (lowest listing); only the max-price *filter* is listing-type aware.~~ Resolved by [BIN-106](https://linear.app/felipelrib/issue/BIN-106/listing-type-aware-sort-by-price-not-decisioning-pprice) / feature 84.
 - Saved-search create still validates through a snake_case filter model; frontend currently sends camelCase (pre-existing). `price_type` is available on the schema when sent correctly.

@@ -73,6 +73,38 @@ def _effective_combined_score_expr(listing_type: Optional[str]) -> str:
     return "COALESCE(ms.combined_score, 0)"
 
 
+def _effective_sort_price_type(
+    price_type: Optional[str],
+    listing_type: Optional[str],
+) -> Optional[str]:
+    """Resolve rent/sale for sort-by-price (BIN-106).
+
+    Explicit ``price_type`` wins; else inherit ``listing_type`` when rent/sale.
+    Unlike max_price, omitted type does **not** default to rent — callers keep
+    decisioning ``p.price`` for ``both`` / no type filter.
+    """
+    if price_type in ("rent", "sale"):
+        return price_type
+    if listing_type in ("rent", "sale"):
+        return listing_type
+    return None
+
+
+def _sort_price_expr(filters_in: "PropertyListFilters") -> tuple[str, Optional[str]]:
+    """SQL ORDER BY expression for price + optional ``:sort_price_type`` bind."""
+    sort_type = _effective_sort_price_type(filters_in.price_type, filters_in.listing_type)
+    if sort_type is None:
+        return "p.price", None
+    expr = (
+        "COALESCE("
+        "(SELECT MIN(pl.price) FROM property_listings pl "
+        "WHERE pl.property_id = p.id AND pl.active = true "
+        "AND pl.listing_type = :sort_price_type AND pl.price IS NOT NULL), "
+        "p.price)"
+    )
+    return expr, sort_type
+
+
 class PropertyListFilters(BaseModel):
     """Query filters for ``GET /properties`` (keeps FastAPI query params under the S107 limit)."""
 
@@ -280,9 +312,12 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         order = "p.embedding <=> CAST(:q_vec AS vector)"
     else:
         score_expr = _effective_combined_score_expr(filters_in.listing_type)
+        price_expr, sort_price_type = _sort_price_expr(filters_in)
+        if sort_price_type is not None and filters_in.sort_by == "price":
+            params["sort_price_type"] = sort_price_type
         sort_col_map = {
             "combined_score": score_expr,
-            "price": "p.price",
+            "price": price_expr,
             "first_seen": "p.first_seen",
             "created_at": "p.first_seen",
             "area_m2": "p.area_m2",

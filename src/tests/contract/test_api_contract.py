@@ -113,6 +113,16 @@ class TestHealthEndpoint:
                 if val is not None:
                     assert isinstance(val, (int, float)), f"{score_key} must be numeric"
 
+    def test_properties_sort_by_price_listing_type_sale(self, client):
+        """GET /properties with sort_by=price + listing_type=sale must succeed (BIN-106)."""
+        response = client.get(
+            "/properties?page=1&page_size=5&sort_by=price&sort_dir=asc&listing_type=sale"
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties sort price sale")
+        data = response.json()
+        assert "properties" in data
+        assert isinstance(data["properties"], list)
+
 
 class TestPlatformsEndpoint:
     def test_platforms_returns_list(self, client):
