@@ -240,6 +240,114 @@ class TestOLXNormalize:
         result = scraper.normalize(SAMPLE_OLX_LISTING)
         assert result["listings"][0]["accepts_pets"] is None
 
+    def test_dual_olx_prices_emits_rent_and_sale(self, scraper):
+        """BIN-108: both prices on raw → two property_listings rows."""
+        raw = {
+            "list_id": "dual-1",
+            "subject": "Casa venda ou locação",
+            "value": 2500.0,
+            "_olx_prices": {"rent": 2500.0, "sale": 450000.0},
+            "properties": [
+                {"label": "Condomínio", "value": "400"},
+                {"label": "IPTU", "value": "100"},
+            ],
+            "url": "https://mg.olx.com.br/belo-horizonte-e-regiao/imoveis/casa-dual-1",
+        }
+        result = scraper.normalize(raw)
+        types = {row["listing_type"] for row in result["listings"]}
+        assert types == {"rent", "sale"}
+        assert len(result["listings"]) == 2
+        rent = next(r for r in result["listings"] if r["listing_type"] == "rent")
+        sale = next(r for r in result["listings"] if r["listing_type"] == "sale")
+        assert rent["price"] == 3000.0  # 2500 + condo 400 + iptu 100
+        assert rent["base_price"] == 2500.0
+        assert sale["price"] == 450000.0
+        assert sale["base_price"] is None
+        assert result["price"] == 3000.0  # rent preferred for decisioning
+        assert result["props_json"]["available_for_rent"] is True
+        assert result["props_json"]["available_for_sale"] is True
+
+    def test_dual_pricing_infos_emits_rent_and_sale(self, scraper):
+        raw = {
+            "list_id": "dual-2",
+            "subject": "Apto",
+            "pricingInfos": [
+                {"value": 3200.0, "period": "monthly"},
+                {"value": 520000.0, "period": ""},
+            ],
+        }
+        result = scraper.normalize(raw)
+        types = {row["listing_type"] for row in result["listings"]}
+        assert types == {"rent", "sale"}
+        rent = next(r for r in result["listings"] if r["listing_type"] == "rent")
+        sale = next(r for r in result["listings"] if r["listing_type"] == "sale")
+        assert rent["price"] == 3200.0
+        assert sale["price"] == 520000.0
+
+    def test_single_price_still_one_listing(self, scraper):
+        result = scraper.normalize(SAMPLE_OLX_LISTING)
+        assert len(result["listings"]) == 1
+        assert result["listings"][0]["listing_type"] == "rent"
+
+
+# ---------------------------------------------------------------------------
+# Cross-window dual price merge (BIN-108)
+# ---------------------------------------------------------------------------
+
+
+class TestOLXDualPriceMerge:
+    def test_merge_dual_prices_into_kept(self):
+        kept = {
+            "list_id": "99",
+            "priceValue": "2.500",
+            "_olx_listing_type": "rent",
+        }
+        incoming = {
+            "list_id": "99",
+            "priceValue": "450.000",
+            "_olx_listing_type": "sale",
+        }
+        assert OLXScraper._merge_dual_window_prices(kept, incoming) is True
+        assert kept["_olx_prices"] == {"rent": 2500.0, "sale": 450000.0}
+        assert "_olx_listing_type" not in kept
+
+    def test_merge_same_type_is_noop(self):
+        kept = {
+            "list_id": "99",
+            "value": 2500.0,
+            "_olx_listing_type": "rent",
+        }
+        incoming = {
+            "list_id": "99",
+            "value": 2600.0,
+            "_olx_listing_type": "rent",
+        }
+        assert OLXScraper._merge_dual_window_prices(kept, incoming) is False
+        assert "_olx_prices" not in kept
+
+    def test_fetch_pages_merges_rent_and_sale_windows(self, scraper):
+        scraper._RENT_PATHS = ["aluguel/apartamentos/estado-mg/bh"]
+        scraper._SALE_PATHS = ["venda/apartamentos/estado-mg/bh"]
+        scraper._price_rent = (500, 5000)
+        scraper._price_sale = (80000, 900000)
+        scraper._max_pages = 1
+        scraper._page_size_hint = 50
+        scraper._neighborhoods = []
+
+        def fake_fetch(url, page):
+            if "/aluguel/" in url:
+                return [{"list_id": "dual", "priceValue": "2.500"}]
+            return [{"list_id": "dual", "priceValue": "450.000"}]
+
+        scraper._fetch_page_listings = MagicMock(side_effect=fake_fetch)
+        listings = list(scraper.fetch_pages({"scrape_type": "both"}))
+        # First yield is rent-only; re-yield after sale window merges dual prices
+        # onto the same kept dict (so both list entries share that object).
+        assert len(listings) == 2
+        assert listings[0] is listings[1]
+        assert listings[0]["_olx_prices"] == {"rent": 2500.0, "sale": 450000.0}
+        assert "_olx_listing_type" not in listings[0]
+
 
 # ---------------------------------------------------------------------------
 # _extract_listings() tests

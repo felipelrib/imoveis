@@ -164,6 +164,34 @@ class TestIsUnchanged:
 
         assert _is_unchanged(session, self._make_existing(), candidate) is True
 
+    def test_new_listing_type_not_noop(self):
+        """BIN-108: adding sale when DB only has rent must not look unchanged."""
+        existing_listing = MagicMock()
+        existing_listing.platform = "olx"
+        existing_listing.platform_listing_id = "12345"
+        existing_listing.listing_type = "rent"
+        existing_listing.price = 2000.0
+
+        session = self._make_session_with_listings([existing_listing])
+        candidate = self._make_candidate(
+            listings=[
+                {
+                    "platform": "olx",
+                    "platform_listing_id": "12345",
+                    "listing_type": "rent",
+                    "price": 2000.0,
+                },
+                {
+                    "platform": "olx",
+                    "platform_listing_id": "12345",
+                    "listing_type": "sale",
+                    "price": 450000.0,
+                },
+            ]
+        )
+
+        assert _is_unchanged(session, self._make_existing(), candidate) is False
+
     def test_fallback_on_exception_returns_false(self):
         """If PropertyListing query fails, treat as changed to ensure re-enrichment."""
         session = MagicMock()

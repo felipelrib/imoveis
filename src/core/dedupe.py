@@ -228,11 +228,14 @@ def _listings_prices_unchanged(existing_listings, candidate_listings) -> bool:
         (cl.get("platform"), cl.get("platform_listing_id"), cl.get("listing_type")): float(cl.get("price", 0))
         for cl in candidate_listings
     }
-    for el in existing_listings:
-        key = (el.platform, el.platform_listing_id, el.listing_type)
-        if key in candidate_map and float(el.price or 0) != candidate_map[key]:
-            return False
-    return True
+    existing_map = {
+        (el.platform, el.platform_listing_id, el.listing_type): float(el.price or 0)
+        for el in existing_listings
+    }
+    # Adding/removing a listing type (e.g. rent-only → rent+sale) is a change.
+    if set(existing_map) != set(candidate_map):
+        return False
+    return all(existing_map[key] == candidate_map[key] for key in existing_map)
 
 
 def _record_price_change(
