@@ -114,7 +114,8 @@ run_lint() {
 run_unit() {
   log "Unit: pytest (SQLite, no external services)"
   if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
-    "$PYTHON_BIN" -m pytest src/tests/unit/ -v --timeout=30 && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
+    # Exclude ``slow`` (live Ollama golden in test_ai_quality) — validate-ai.sh owns that.
+    "$PYTHON_BIN" -m pytest src/tests/unit/ -v --timeout=30 -m "not slow" && ok "unit tests passed" || { warn "unit tests FAILED"; rc=1; }
   else
     warn "python not installed — skipping unit tests"
     rc=1

@@ -102,8 +102,14 @@ def golden_samples():
 class TestAIGoldenFiles:
     """Regression tests comparing AI output to golden baseline scores."""
 
+    @pytest.mark.slow
     def test_sentiment_scores_within_tolerance(self, golden_samples):
-        """Each golden sample's sentiment score must be within ±0.15."""
+        """Each golden sample's sentiment score must be within ±0.15.
+
+        Live Ollama — owned by ``scripts/agent/validate-ai.sh`` (120s timeout).
+        Excluded from ``validate.sh`` unit via ``-m 'not slow'`` so a warm GPU
+        after probes cannot flake the 30s unit gate (BIN-97).
+        """
         from adapters.ai.client import OllamaClient
         from adapters.ai.prompts import build_sentiment_prompt
         from infra.config import get_config

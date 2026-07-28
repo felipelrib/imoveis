@@ -1,5 +1,5 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-27T05:45:00-03:00
+# last_updated: 2026-07-27T21:10:00-03:00
 # project: Imoveis — Deal Tracker
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,12 +41,11 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 # - Linear SoR for ticket status: Epic 1=BIN-19 (BIN-41..43), Epic 2=BIN-20 (BIN-44,46,45),
 #   Epic 3=BIN-21 (BIN-47..49), Epic 4=BIN-22 (BIN-50..52), Epic 5=BIN-23 (BIN-53..55),
-#   Epic 6=BIN-85 (BIN-86..95)
-# - Recommended delivery order: Epic 6 foundation 6.1 first, then 6.2–6.6 fill jobs in parallel,
-#   then 6.9 blend, 6.10 selective AI re-run last. Optional 6.7/6.8 may park.
+#   Epic 6=BIN-85 (BIN-86..95), Epic 8=BIN-63 (BIN-97..103)
+# - Epic 8 order: 8.1 ∥ 8.2 → 8.3 → 8.4 → 8.5/8.6 (after 8.1) → 8.7 last.
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-27T05:45:00-03:00
+last_updated: 2026-07-27T21:10:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -95,3 +94,14 @@ development_status:
   6-9-blend-neighbourhood-profiles-into-scoring-ui: done
   6-10-selective-ai-enrichment-re-run-controls: done
   epic-6-retrospective: optional
+
+  # Epic 8 = BIN-63 (BIN-97..103) — Product i18n (pt-BR first)
+  epic-8: in-progress
+  8-1-audit-pt-listing-corpus-vs-ai-stats-embeddings: in-progress
+  8-2-locale-foundation-catalog-persisted-preference: backlog
+  8-3-full-ui-string-catalog-en-pt-br: backlog
+  8-4-locale-aware-filters-pt-labels-en-wire: backlog
+  8-5-localize-ai-tags-verdicts-score-copy: backlog
+  8-6-embeddings-semantic-search-locale-behaviour: backlog
+  8-7-multi-locale-extensibility-checklist-nfr7: backlog
+  epic-8-retrospective: optional

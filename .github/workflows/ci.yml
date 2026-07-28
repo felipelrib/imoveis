@@ -66,7 +66,7 @@ jobs:
         run: pip install -r requirements.txt pytest pytest-cov pytest-timeout
 
       - name: Run unit tests
-        run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30
+        run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30 -m "not slow"
 
       # Prefer CI-based Sonar (with coverage) over Automatic Analysis.
       - name: Disable SonarCloud Automatic Analysis
