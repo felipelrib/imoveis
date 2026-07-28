@@ -210,6 +210,36 @@ class TestOLXNormalize:
         assert result["listings"][0]["accepts_pets"] is True
         assert result["listings"][0]["is_furnished"] is True
 
+    def test_pets_name_key_and_permitido_value(self, scraper):
+        """OLX detail attrs often use ``name`` + ``Permitido`` (BIN-110)."""
+        raw = {
+            "list_id": "601",
+            "subject": "Apt pets",
+            "value": 1800.0,
+            "properties": [
+                {"name": "aceita_animais", "value": "Permitido"},
+            ],
+        }
+        result = scraper.normalize(raw)
+        assert result["listings"][0]["accepts_pets"] is True
+
+    def test_pets_dict_properties_format(self, scraper):
+        raw = {
+            "list_id": "602",
+            "subject": "Casa",
+            "value": 2200.0,
+            "properties": {
+                "Aceita pets": "Sim",
+                "Quartos": "2",
+            },
+        }
+        result = scraper.normalize(raw)
+        assert result["listings"][0]["accepts_pets"] is True
+
+    def test_pets_absent_leaves_accepts_pets_none(self, scraper):
+        result = scraper.normalize(SAMPLE_OLX_LISTING)
+        assert result["listings"][0]["accepts_pets"] is None
+
 
 # ---------------------------------------------------------------------------
 # _extract_listings() tests

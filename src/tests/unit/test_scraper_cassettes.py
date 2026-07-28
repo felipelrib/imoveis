@@ -79,6 +79,8 @@ class TestOLXCassettes:
         assert result["bedrooms"] == 2
         assert result["area_m2"] == 75.0
         assert result["location"] == {"lat": -19.9320, "lon": -43.9380}
+        assert result["listings"][0]["accepts_pets"] is True
+        assert result["listings"][0]["is_furnished"] is False
 
     def test_flight_search_cassette_extracts_and_normalizes(self, olx_scraper):
         """OLX listing pages ship Flight RSC ads (no __NEXT_DATA__)."""
@@ -98,4 +100,5 @@ class TestOLXCassettes:
         assert result["parking"] == 1
         assert result["props_json"]["neighborhood"] == "Savassi"
         assert result["listings"][0]["listing_type"] == "rent"
+        assert result["listings"][0]["accepts_pets"] is True
         assert result["image_urls"] == ["https://img.olx.com.br/img1.jpg"]
