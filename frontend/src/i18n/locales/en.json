@@ -1,0 +1,23 @@
+{
+  "nav": {
+    "label": "Navigation",
+    "dashboard": "Dashboard",
+    "scraper": "Scraper Control",
+    "properties": "Properties"
+  },
+  "chrome": {
+    "system": "System",
+    "loading": "Loading...",
+    "database": "Database",
+    "redis": "Redis",
+    "ollama": "Ollama",
+    "aiWorker": "AI Worker"
+  },
+  "locale": {
+    "label": "Language",
+    "en": "English",
+    "ptBR": "Português (Brasil)",
+    "saveFailed": "Could not save language preference",
+    "needCredential": "Set an API credential to persist language"
+  }
+}

@@ -247,6 +247,71 @@ def update_schedule(payload: ScheduleUpdateRequest):
 
 
 # ---------------------------------------------------------------------------
+# UI locale preference (BIN-98)
+# ---------------------------------------------------------------------------
+
+REDIS_KEY_UI_LOCALE = "ui:locale"
+
+
+class LocaleUpdateRequest(BaseModel):
+    """Body for ``POST /admin/locale``."""
+
+    locale: str
+
+
+def _locale_response(active: str, cfg) -> dict:
+    return {
+        "locale": active,
+        "default": cfg.ui.locale,
+        "supported": list(cfg.ui.supported_locales),
+    }
+
+
+def resolve_active_locale(cfg, redis_client) -> str:
+    """Return Redis override if it is in the allowlist, else YAML default.
+
+    Raises ``ValueError`` only for programmer misuse (missing ui config);
+    invalid Redis values fall back silently to the YAML default.
+    """
+    supported = list(cfg.ui.supported_locales)
+    default = cfg.ui.locale
+    raw = redis_client.get(REDIS_KEY_UI_LOCALE)
+    if raw is None:
+        return default
+    value = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    if value in supported:
+        return value
+    return default
+
+
+@router.get("/locale")
+def get_locale():
+    """Return active UI locale (Redis override ?? AppConfig ui.locale)."""
+    cfg = get_config()
+    r = get_redis()
+    active = resolve_active_locale(cfg, r)
+    return _locale_response(active, cfg)
+
+
+@router.post("/locale", responses=_RESP_400)
+def update_locale(payload: LocaleUpdateRequest):
+    """Persist operator UI locale preference in Redis (does not touch AI)."""
+    cfg = get_config()
+    supported = list(cfg.ui.supported_locales)
+    if payload.locale not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported locale '{payload.locale}'. Valid: {supported}",
+        )
+
+    r = get_redis()
+    r.set(REDIS_KEY_UI_LOCALE, payload.locale)
+    logger.info("ui_locale_updated", locale=payload.locale)
+    log_audit_action("update_locale", {"locale": payload.locale})
+    return _locale_response(payload.locale, cfg)
+
+
+# ---------------------------------------------------------------------------
 # AI enrichment backfill / selective re-run (BIN-95)
 # ---------------------------------------------------------------------------
 

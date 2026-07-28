@@ -344,6 +344,17 @@ export async function updateSchedule(platform, intervalMinutes) {
   })
 }
 
+export async function fetchLocale() {
+  return apiFetch('/admin/locale')
+}
+
+export async function updateLocale(locale) {
+  return apiFetch('/admin/locale', {
+    method: 'POST',
+    body: { locale },
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Alerts API
 // ---------------------------------------------------------------------------

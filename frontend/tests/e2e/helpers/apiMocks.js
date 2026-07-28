@@ -605,3 +605,57 @@ export async function mockAdminSchedule(page, opts = {}) {
     });
   });
 }
+
+/**
+ * Mock GET/POST /admin/locale with in-memory preference (BIN-98).
+ * @param {Page} page
+ * @param {object} [opts]
+ * @param {string} [opts.initial]
+ * @param {string} [opts.defaultLocale]
+ * @param {string[]} [opts.supported]
+ * @param {string[]} [opts.posted]
+ */
+export async function mockAdminLocale(page, opts = {}) {
+  let active = opts.initial ?? "en";
+  const defaultLocale = opts.defaultLocale ?? "en";
+  const supported = opts.supported ?? ["en", "pt-BR"];
+  const posted = opts.posted;
+
+  await page.route("**/api/admin/locale**", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          locale: active,
+          default: defaultLocale,
+          supported,
+        }),
+      });
+    }
+    if (method === "POST") {
+      const body = route.request().postDataJSON() || {};
+      const next = body.locale;
+      if (!supported.includes(next)) {
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: `Unsupported locale '${next}'` }),
+        });
+      }
+      active = next;
+      if (posted) posted.push(next);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          locale: active,
+          default: defaultLocale,
+          supported,
+        }),
+      });
+    }
+    return route.fulfill({ status: 405, body: "" });
+  });
+}

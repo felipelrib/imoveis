@@ -264,6 +264,18 @@ class AuthConfig(BaseModel, frozen=True):
     admin_pass: str = "admin"
 
 
+class UiConfig(BaseModel, frozen=True):
+    """Operator UI locale defaults (BIN-98 / product i18n).
+
+    Independent of ``ai.output_language`` — chrome uses ``ui.locale``; AI prompts
+    keep ``ai.output_language``. Runtime preference may override via Redis
+    (``ui:locale``); YAML remains the install default.
+    """
+
+    locale: Literal["en", "pt-BR"] = "en"
+    supported_locales: list[str] = Field(default_factory=lambda: ["en", "pt-BR"])
+
+
 class ProxyConfig(BaseModel, frozen=True):
     """HTTP proxy pool settings for scrapers (AD-2 / FR-20).
 
@@ -422,6 +434,7 @@ class AppConfig(BaseModel, frozen=True):
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    ui: UiConfig = Field(default_factory=UiConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     pipeline_metrics: PipelineMetricsConfig = Field(default_factory=PipelineMetricsConfig)
