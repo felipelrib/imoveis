@@ -11,6 +11,7 @@ Usage (from repo root, Ollama reachable)::
     export OLLAMA_HOST=http://$(ip route show default | awk '/default/{print $3}'):11434
     PYTHONPATH=src .venv/bin/python scripts/dev/probe_pt_en_locale_audit.py
     PYTHONPATH=src .venv/bin/python scripts/dev/probe_pt_en_locale_audit.py --db
+    PYTHONPATH=src .venv/bin/python scripts/dev/probe_pt_en_locale_audit.py --normalize
 """
 
 from __future__ import annotations
@@ -164,12 +165,27 @@ async def _embed_all(client: Any, texts: dict[str, str]) -> dict[str, list[float
     return out
 
 
-async def run_embedding_probe(client: Any) -> dict[str, Any]:
+async def run_embedding_probe(client: Any, *, normalize: bool = False) -> dict[str, Any]:
+    from core.semantic_query import normalize_semantic_query
+
     corpus_vecs = await _embed_all(client, {c["id"]: c["text"] for c in CORPUS})
     pairs: list[PairResult] = []
+    expansions: list[dict[str, str]] = []
     for pair in QUERY_PAIRS:
-        en_vec = await client.embed(pair["en"])
-        pt_vec = await client.embed(pair["pt"])
+        en_q = normalize_semantic_query(pair["en"]) if normalize else pair["en"]
+        pt_q = normalize_semantic_query(pair["pt"]) if normalize else pair["pt"]
+        if normalize:
+            expansions.append(
+                {
+                    "relevant": pair["relevant"],
+                    "en_raw": pair["en"],
+                    "en_norm": en_q,
+                    "pt_raw": pair["pt"],
+                    "pt_norm": pt_q,
+                }
+            )
+        en_vec = await client.embed(en_q)
+        pt_vec = await client.embed(pt_q)
         en_rank = _rank(en_vec, corpus_vecs)
         pt_rank = _rank(pt_vec, corpus_vecs)
         relevant = pair["relevant"]
@@ -194,8 +210,9 @@ async def run_embedding_probe(client: Any) -> dict[str, Any]:
     en_top1 = sum(1 for p in pairs if p.en_hit_at == 1) / len(pairs)
     pt_top1 = sum(1 for p in pairs if p.pt_hit_at == 1) / len(pairs)
 
-    return {
+    out: dict[str, Any] = {
         "model": getattr(client, "embedding_model", "unknown"),
+        "normalize": normalize,
         "n_pairs": len(pairs),
         "en_top1": round(en_top1, 3),
         "pt_top1": round(pt_top1, 3),
@@ -214,6 +231,9 @@ async def run_embedding_probe(client: Any) -> dict[str, Any]:
             for p in pairs
         ],
     }
+    if expansions:
+        out["expansions"] = expansions
+    return out
 
 
 async def run_sentiment_probe(client: Any) -> dict[str, Any]:
@@ -254,10 +274,13 @@ async def run_sentiment_probe(client: Any) -> dict[str, Any]:
     }
 
 
-async def run_db_probe(client: Any, database_url: str) -> dict[str, Any]:
+async def run_db_probe(
+    client: Any, database_url: str, *, normalize: bool = False
+) -> dict[str, Any]:
     from sqlalchemy import create_engine, text
 
     from adapters.ai.embeddings import vector_literal
+    from core.semantic_query import normalize_semantic_query
 
     url = database_url.replace("postgresql+psycopg://", "postgresql://")
     engine = create_engine(url)
@@ -290,7 +313,8 @@ async def run_db_probe(client: Any, database_url: str) -> dict[str, Any]:
     anecdotes: list[dict[str, Any]] = []
     with engine.connect() as conn:
         for lang, q in query_specs:
-            vec = await client.embed(q)
+            embed_q = normalize_semantic_query(q) if normalize else q
+            vec = await client.embed(embed_q)
             lit = vector_literal(vec)
             rows = conn.execute(
                 text(
@@ -310,6 +334,8 @@ async def run_db_probe(client: Any, database_url: str) -> dict[str, Any]:
                 {
                     "lang": lang,
                     "q": q,
+                    "q_embed": embed_q,
+                    "normalize": normalize,
                     "top": [
                         {
                             "public_id": r["public_id"],
@@ -366,9 +392,28 @@ async def async_main(args: argparse.Namespace) -> int:
 
     try:
         print("== Embedding cross-lingual probe (fixture PT corpus) ==", flush=True)
-        emb = await run_embedding_probe(client)
+        emb = await run_embedding_probe(client, normalize=False)
         report["embeddings"] = emb
         print(json.dumps(emb, ensure_ascii=False, indent=2), flush=True)
+
+        if args.normalize:
+            print(
+                "\n== Embedding probe with BIN-102 query normalize ==",
+                flush=True,
+            )
+            emb_norm = await run_embedding_probe(client, normalize=True)
+            report["embeddings_normalized"] = emb_norm
+            print(json.dumps(emb_norm, ensure_ascii=False, indent=2), flush=True)
+            print(
+                "\nEN MRR raw={:.3f} normalized={:.3f} | EN top1 raw={:.3f} "
+                "normalized={:.3f}".format(
+                    emb["en_mrr"],
+                    emb_norm["en_mrr"],
+                    emb["en_top1"],
+                    emb_norm["en_top1"],
+                ),
+                flush=True,
+            )
 
         print("\n== Sentiment language probe (PT ads → EN tags) ==", flush=True)
         sent = await run_sentiment_probe(client)
@@ -384,7 +429,9 @@ async def async_main(args: argparse.Namespace) -> int:
                 db = os.environ.get("POSTGRES_DB", "realestate")
                 db_url = f"postgresql://{user}:{password}@localhost:{port}/{db}"
             print("\n== Live DB semantic q= anecdotes ==", flush=True)
-            db_report = await run_db_probe(client, db_url)
+            db_report = await run_db_probe(
+                client, db_url, normalize=bool(args.normalize)
+            )
             report["db"] = db_report
             print(json.dumps(db_report, ensure_ascii=False, indent=2), flush=True)
     finally:
@@ -405,6 +452,11 @@ def main() -> int:
         "--db",
         action="store_true",
         help="Also probe live Postgres embeddings (needs DATABASE_URL or .env.local ports)",
+    )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Also run embedding probe with BIN-102 PT↔EN query synonym expansion",
     )
     parser.add_argument(
         "--out",

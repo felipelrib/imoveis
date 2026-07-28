@@ -133,11 +133,14 @@ def _embed_query_literal(query_text: str) -> str:
 
     from adapters.ai.client import create_ai_client
     from adapters.ai.embeddings import vector_literal
+    from core.semantic_query import normalize_semantic_query
     from infra.config import get_config
 
     cfg = get_config()
     max_chars = cfg.ai.max_description_chars
-    embed_input = query_text[:max_chars] if max_chars > 0 else query_text
+    embed_input = normalize_semantic_query(query_text)
+    if max_chars > 0:
+        embed_input = embed_input[:max_chars]
     client = create_ai_client()
 
     async def _embed_query():
