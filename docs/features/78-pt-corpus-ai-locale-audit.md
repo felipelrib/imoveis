@@ -153,7 +153,9 @@ Numeric path (z-score → sigmoid → blend with AI / neighbourhood weights) is
 
 - Probe script is intentionally offline-safe without `--db`; CI does not call Ollama.
 - Stale docs: `docs/features/15-deal-summary-enrichment.md` still mentions PT-BR verdicts;
-  `20-semantic-search.md` still mentions nomic 768 — treat 48 + 52 + this note as current.
+  `20-semantic-search.md` locale/model notes updated in BIN-102 (`81-semantic-search-locale.md`).
 - Related: BIN-63 epic · BIN-101 · BIN-102 · BIN-73 (`bge-m3`) · BIN-64/69 English baseline.
+- **BIN-102 (8.6) shipped:** query synonym expansion for known PT↔EN housing terms
+  (`core.semantic_query`); probe via `--normalize`. No re-embed / no AI-tag index.
 - **BUG (Medium)**: live corpus has empty `description` for all active rows — sentiment and
   embeddings are title-starved; fix in scraper/detail enrichment (not this ticket).
