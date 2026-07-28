@@ -269,8 +269,19 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         params["is_furnished"] = filters_in.is_furnished
 
     if filters_in.accepts_pets is not None:
-        amenity = "p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'"
-        filters.append(amenity if filters_in.accepts_pets else f"NOT ({amenity})")
+        # Prefer listing.accepts_pets (OLX + QuintoAndar); keep QA amenity for legacy rows.
+        pets_match = (
+            "("
+            "EXISTS ("
+            "SELECT 1 FROM property_listings pl "
+            "WHERE pl.property_id = p.id "
+            "AND pl.active = true "
+            "AND pl.accepts_pets IS TRUE"
+            ") "
+            "OR p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'"
+            ")"
+        )
+        filters.append(pets_match if filters_in.accepts_pets else f"NOT {pets_match}")
 
     if filters_in.bbox:
         _append_bbox_filter(filters, params, filters_in.bbox)

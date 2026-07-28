@@ -55,4 +55,4 @@ None.
 
 - BIN-101: localize AI tags / verdicts / score payload copy.
 - BIN-103: multi-locale extensibility checklist — see `docs/i18n/add-a-locale.md` / `docs/features/83-product-i18n.md`.
-- Pets SQL still QuintoAndar-amenity-only; OLX `accepts_pets` column is out of scope for this ticket.
+- Pets SQL QuintoAndar-amenity-only follow-up shipped in BIN-110 / `docs/features/84-olx-accepts-pets-filter.md`.

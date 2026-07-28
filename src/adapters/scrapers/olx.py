@@ -786,7 +786,13 @@ class OLXScraper(BaseScraper):
         OLXScraper._set_bool_prop(
             props,
             prop_map,
-            ("aceita animais", "aceita_animais", "pets", "re_complex_features"),
+            (
+                "aceita animais",
+                "aceita pets",
+                "aceita_animais",
+                "pets",
+                "re_complex_features",
+            ),
             "accepts_pets",
         )
         OLXScraper._set_bool_prop(props, prop_map, ("mobiliado", "furnished"), "is_furnished")
