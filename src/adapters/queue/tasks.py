@@ -52,6 +52,7 @@ from infra.config import get_config
 from infra.db import SessionLocal
 from infra.logging import get_logger
 from infra.redis_client import get_redis
+from infra.ui_locale import resolve_ai_output_language
 
 logger = get_logger(__name__)
 
@@ -643,9 +644,13 @@ def ai_enrich(
                 paths: List[str] = await image_store.download_images(
                     property_id, image_urls, max_images=cfg.ai.max_images_per_property
                 )
-                visual_prompt = build_visual_condition_prompt(len(paths))
+                visual_prompt = build_visual_condition_prompt(
+                    len(paths), output_language=resolve_ai_output_language()
+                )
                 sentiment_prompt = build_sentiment_prompt(
-                    description, max_chars=cfg.ai.max_description_chars
+                    description,
+                    max_chars=cfg.ai.max_description_chars,
+                    output_language=resolve_ai_output_language(),
                 )
                 v_res, s_res = await analyze_visual_and_sentiment(
                     client,

@@ -441,6 +441,50 @@
     "toastInvalid": "Invalid or missing API credential",
     "toastCleared": "API credential cleared"
   },
+  "ai": {
+    "statBand": {
+      "highly_undervalued": {
+        "label": "Highly Undervalued",
+        "reasoning": "Significantly cheaper than similar properties in the area."
+      },
+      "slightly_undervalued": {
+        "label": "Slightly Undervalued",
+        "reasoning": "Priced slightly below the neighborhood average."
+      },
+      "average": {
+        "label": "Average",
+        "reasoning": "Priced closely to the neighborhood average."
+      },
+      "slightly_overvalued": {
+        "label": "Slightly Overvalued",
+        "reasoning": "Priced slightly above the neighborhood average."
+      },
+      "highly_overvalued": {
+        "label": "Highly Overvalued",
+        "reasoning": "Significantly more expensive than similar properties in the area."
+      }
+    },
+    "visualCategory": {
+      "pristine": "Pristine",
+      "good": "Good",
+      "average": "Average",
+      "needs_renovation": "Needs Renovation",
+      "poor": "Poor"
+    },
+    "sentimentCategory": {
+      "highly_desirable": "Highly Desirable",
+      "good": "Good",
+      "average": "Average",
+      "undesirable": "Undesirable",
+      "poor": "Poor"
+    },
+    "riskFlags": {
+      "flood_zone": "Flood zone",
+      "industrial_adjacent": "Industrial adjacent",
+      "flood": "Flood",
+      "seller_reported_noise": "Seller-reported noise"
+    }
+  },
   "errors": {
     "somethingWrong": "Something went wrong",
     "reloadPage": "Reload Page",

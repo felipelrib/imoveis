@@ -1,4 +1,4 @@
-"""English deal verdict template tests (BIN-69 / NFR-7)."""
+"""Deal verdict template tests (BIN-69 / BIN-101)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from adapters.ai.client import DealVerdictResult, OllamaClient, template_deal_ve
 
 @pytest.mark.unit
 class TestTemplateDealVerdict:
-    """Unit tests for the deterministic English verdict template."""
+    """Unit tests for the deterministic verdict template (codes + legacy EN)."""
 
     def test_full_signals(self):
         result = template_deal_verdict(
@@ -22,6 +22,26 @@ class TestTemplateDealVerdict:
         assert "Slightly undervalued" in result
         assert "good condition" in result
         assert "no listing claim alerts" in result
+
+    def test_full_signals_with_codes(self):
+        result = template_deal_verdict(
+            stat_analysis={"category": "slightly_undervalued"},
+            visual={"category": "good"},
+            sentiment={"green_flags": ["metro"], "red_flags": []},
+        )
+        assert "Slightly undervalued" in result
+        assert "good condition" in result
+
+    def test_pt_br_template(self):
+        result = template_deal_verdict(
+            stat_analysis={"category": "highly_undervalued"},
+            visual={"category": "needs_renovation"},
+            sentiment={"red_flags": [], "green_flags": []},
+            output_language="pt-BR",
+        )
+        assert "Muito abaixo do mercado" in result
+        assert "precisa de reforma" in result
+        assert "sem alertas" in result
 
     def test_stat_only(self):
         result = template_deal_verdict(
@@ -140,8 +160,6 @@ class TestSummarizeDeal:
     @pytest.mark.asyncio
     async def test_ollama_verdict_calls_llm(self, monkeypatch: pytest.MonkeyPatch):
         """OllamaClient.summarize_deal calls the LLM and returns its verdict."""
-        from unittest.mock import MagicMock
-
         client = OllamaClient.__new__(OllamaClient)
         client.base_url = "http://fake"
         client.timeout = None
@@ -154,9 +172,10 @@ class TestSummarizeDeal:
 
         client._llm_verdict = mock_llm
 
-        cfg = MagicMock()
-        cfg.ai.output_language = "en"
-        monkeypatch.setattr("infra.config.get_config", lambda: cfg)
+        monkeypatch.setattr(
+            "infra.ui_locale.resolve_ai_output_language",
+            lambda: "en",
+        )
 
         result = await client.summarize_deal(
             stat_analysis={"category": "Average", "reasoning": "..."},
@@ -167,7 +186,7 @@ class TestSummarizeDeal:
         assert result.confidence == 0.9
 
     @pytest.mark.asyncio
-    async def test_fallback_to_template_on_llm_error(self):
+    async def test_fallback_to_template_on_llm_error(self, monkeypatch: pytest.MonkeyPatch):
         """When LLM fails, summarize_deal falls back to the deterministic template."""
         client = OllamaClient.__new__(OllamaClient)
         client.base_url = "http://fake"
@@ -180,6 +199,10 @@ class TestSummarizeDeal:
             raise ConnectionError("LLM unavailable")
 
         client._llm_verdict = mock_llm_error
+        monkeypatch.setattr(
+            "infra.ui_locale.resolve_ai_output_language",
+            lambda: "en",
+        )
 
         result = await client.summarize_deal(
             stat_analysis={"category": "Slightly Undervalued", "reasoning": "..."},

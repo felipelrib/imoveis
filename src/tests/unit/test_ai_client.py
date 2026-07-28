@@ -558,12 +558,12 @@ class TestAIModels:
     def test_visual_result_defaults(self):
         v = VisualResult(condition_score=0.5)
         assert isinstance(v.condition_score, float)
-        assert v.category == "Standard"
+        assert v.category == "average"
 
     def test_sentiment_result_defaults(self):
         s = SentimentResult(sentiment_score=0.5)
         assert isinstance(s.sentiment_score, float)
-        assert s.category == "Standard"
+        assert s.category == "average"
 
     def test_issubclass_local_ai_client(self):
         assert issubclass(OllamaClient, LocalAIClient)
@@ -578,8 +578,7 @@ class TestSummarizeAndSession:
         client = OllamaClient()
         client._llm_verdict = AsyncMock(return_value=DealVerdictResult(verdict="ok", confidence=0.9))
         with patch("adapters.ai.prompts.build_deal_verdict_prompt", return_value="prompt"):
-            with patch("infra.config.get_config") as cfg:
-                cfg.return_value.ai.output_language = "pt-BR"
+            with patch("infra.ui_locale.resolve_ai_output_language", return_value="pt-BR"):
                 result = asyncio.run(client.summarize_deal({"category": "Average"}, None, None, "Centro"))
         assert result.verdict == "ok"
         assert result.confidence == 0.9
@@ -590,7 +589,8 @@ class TestSummarizeAndSession:
         client = OllamaClient()
         client._llm_verdict = AsyncMock(side_effect=RuntimeError("llm down"))
         with patch("adapters.ai.prompts.build_deal_verdict_prompt", side_effect=RuntimeError("boom")):
-            result = asyncio.run(client.summarize_deal(None, None, None, None))
+            with patch("infra.ui_locale.resolve_ai_output_language", return_value="en"):
+                result = asyncio.run(client.summarize_deal(None, None, None, None))
         assert result.confidence == 0.0
         assert "Not enough data" in result.verdict
 

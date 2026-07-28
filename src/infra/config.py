@@ -267,9 +267,10 @@ class AuthConfig(BaseModel, frozen=True):
 class UiConfig(BaseModel, frozen=True):
     """Operator UI locale defaults (BIN-98 / product i18n).
 
-    Independent of ``ai.output_language`` — chrome uses ``ui.locale``; AI prompts
-    keep ``ai.output_language``. Runtime preference may override via Redis
-    (``ui:locale``); YAML remains the install default.
+    Active locale (Redis ``ui:locale`` → ``ui.locale``) drives SPA chrome and
+    new AI free-text generation (BIN-101). ``ai.output_language`` remains a
+    config fallback when the UI locale resolver is unavailable. YAML remains
+    the install default.
     """
 
     locale: Literal["en", "pt-BR"] = "en"

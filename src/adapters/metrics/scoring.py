@@ -69,16 +69,21 @@ def _sigmoid_undervalued(z_score: float) -> float:
 
 
 def _stat_analysis(z_score: float) -> dict:
+    """Return a locale-stable stat band code (BIN-101).
+
+    Display labels/reasoning live in the SPA catalog; reasoning is empty on
+    new writes so operators are not stuck with English prose after a locale flip.
+    """
     bands = (
-        (-1.0, "Highly Undervalued", "Significantly cheaper than similar properties in the area."),
-        (-0.2, "Slightly Undervalued", "Priced slightly below the neighborhood average."),
-        (0.2, "Average", "Priced closely to the neighborhood average."),
-        (1.0, "Slightly Overvalued", "Priced slightly above the neighborhood average."),
+        (-1.0, "highly_undervalued"),
+        (-0.2, "slightly_undervalued"),
+        (0.2, "average"),
+        (1.0, "slightly_overvalued"),
     )
-    for threshold, category, reasoning in bands:
+    for threshold, category in bands:
         if z_score < threshold:
-            return {"category": category, "reasoning": reasoning}
-    return {"category": "Highly Overvalued", "reasoning": "Significantly more expensive than similar properties in the area."}
+            return {"category": category, "reasoning": ""}
+    return {"category": "highly_overvalued", "reasoning": ""}
 
 
 def _scoring_weights() -> ScoringWeights:
