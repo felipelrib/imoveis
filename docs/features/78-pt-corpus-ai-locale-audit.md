@@ -152,8 +152,10 @@ Numeric path (z-score → sigmoid → blend with AI / neighbourhood weights) is
 ## Notes / Follow-ups
 
 - Probe script is intentionally offline-safe without `--db`; CI does not call Ollama.
-- Stale docs: `docs/features/15-deal-summary-enrichment.md` still mentions PT-BR verdicts;
-  `20-semantic-search.md` locale/model notes updated in BIN-102 (`81-semantic-search-locale.md`).
+- Stale docs: `docs/features/15-deal-summary-enrichment.md` refreshed in BIN-126
+  (`84-refresh-deal-summary-feature-doc.md`) to match EN default + locale-aware verdicts
+  (SoT: `82-localize-ai-tags-verdicts.md` / BIN-101). `20-semantic-search.md` locale/model
+  notes updated in BIN-102 (`81-semantic-search-locale.md`).
 - Related: BIN-63 epic · BIN-101 · BIN-102 · BIN-73 (`bge-m3`) · BIN-64/69 English baseline.
 - **BIN-102 (8.6) shipped:** query synonym expansion for known PT↔EN housing terms
   (`core.semantic_query`); probe via `--normalize`. No re-embed / no AI-tag index.
