@@ -5,6 +5,7 @@ import {
   setApiKey,
   validateApiCredential,
 } from '../api.js'
+import { useT } from '../i18n/LocaleContext.jsx'
 import { useToast } from './ToastProvider.jsx'
 
 /**
@@ -13,6 +14,7 @@ import { useToast } from './ToastProvider.jsx'
  */
 export default function CredentialGate() {
   const showToast = useToast()
+  const t = useT()
   const [draft, setDraft] = useState('')
   const [configured, setConfigured] = useState(() => hasApiKey())
   const [busy, setBusy] = useState(false)
@@ -21,7 +23,7 @@ export default function CredentialGate() {
     e.preventDefault()
     const value = draft.trim()
     if (!value) {
-      showToast('Paste an API credential first', { type: 'warning' })
+      showToast(t('credential.toastPasteFirst'), { type: 'warning' })
       return
     }
     setBusy(true)
@@ -30,11 +32,11 @@ export default function CredentialGate() {
       await validateApiCredential()
       setConfigured(true)
       setDraft('')
-      showToast('API credential saved for this session', { type: 'success' })
+      showToast(t('credential.toastSaved'), { type: 'success' })
     } catch (err) {
       clearApiKey()
       setConfigured(false)
-      showToast(err.message || 'Invalid or missing API credential', { type: 'error' })
+      showToast(err.message || t('credential.toastInvalid'), { type: 'error' })
     } finally {
       setBusy(false)
     }
@@ -44,29 +46,29 @@ export default function CredentialGate() {
     clearApiKey()
     setConfigured(false)
     setDraft('')
-    showToast('API credential cleared', { type: 'info' })
+    showToast(t('credential.toastCleared'), { type: 'info' })
   }
 
   return (
     <div className="credential-gate" data-testid="credential-gate">
       <div className="credential-gate-header">
-        <span>API credential</span>
+        <span>{t('credential.label')}</span>
         <span
           className={`credential-gate-status ${configured ? 'set' : 'missing'}`}
           data-testid="credential-status"
         >
-          {configured ? 'set' : 'missing'}
+          {configured ? t('credential.statusSet') : t('credential.statusMissing')}
         </span>
       </div>
       <form className="credential-gate-form" onSubmit={handleSave}>
         <input
           type="password"
           className="form-input"
-          placeholder="Paste API key"
+          placeholder={t('credential.placeholder')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           autoComplete="off"
-          aria-label="API credential"
+          aria-label={t('credential.ariaLabel')}
           data-testid="credential-input"
           disabled={busy}
         />
@@ -77,7 +79,7 @@ export default function CredentialGate() {
             disabled={busy}
             data-testid="credential-save"
           >
-            {busy ? '…' : 'Save'}
+            {busy ? t('common.ellipsis') : t('credential.save')}
           </button>
           <button
             type="button"
@@ -86,7 +88,7 @@ export default function CredentialGate() {
             disabled={busy || !configured}
             data-testid="credential-clear"
           >
-            Clear
+            {t('credential.clear')}
           </button>
         </div>
       </form>

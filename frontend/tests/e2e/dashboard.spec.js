@@ -222,7 +222,7 @@ test.describe("Properties critical path", () => {
     await page.locator("text=2BR Apartment Savassi").click();
     await expect(page.locator(".modal")).toBeVisible();
     await expect(page.locator(".modal")).toContainText("2BR Apartment Savassi");
-    await expect(page.locator(".modal")).toContainText("3.500");
+    await expect(page.locator(".modal")).toContainText("3,500");
   });
 });
 

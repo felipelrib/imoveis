@@ -334,6 +334,16 @@ export async function installCommonMocks(page, opts = {}) {
       ]),
     })
   );
+
+  // Default locale mock so suites that seed API keys do not hit the real admin API.
+  if (opts.locale !== false) {
+    await mockAdminLocale(page, {
+      initial: opts.locale?.initial ?? "en",
+      defaultLocale: opts.locale?.defaultLocale ?? "en",
+      supported: opts.locale?.supported,
+      posted: opts.locale?.posted,
+    });
+  }
 }
 
 /**

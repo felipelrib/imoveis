@@ -53,7 +53,7 @@ test.describe("Property modal listings (BIN-65/66/67)", () => {
     await expect(page.getByRole("columnheader", { name: "Furnished" })).toHaveCount(0);
     await expect(page.getByTestId("attr-chip-furnished")).toBeVisible();
     await expect(page.getByTestId("attr-chip-pets-ok")).toBeVisible();
-    await expect(page.getByText("R$ 3.000")).toBeVisible();
+    await expect(page.getByText("R$ 3,000")).toBeVisible();
     await expect(page.getByText("Deal verdict")).toBeVisible();
   });
 });

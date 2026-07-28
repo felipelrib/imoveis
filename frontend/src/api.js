@@ -1,9 +1,19 @@
+import { getActiveLocale } from './i18n/activeLocale.js'
+import { t } from './i18n/index.js'
+
 const BASE = '/api'
 
 /** sessionStorage key for the paste-once API credential (never committed). */
 export const API_KEY_STORAGE = 'api_key'
 
-const AUTH_ERROR_MESSAGE = 'Invalid or missing API credential'
+function authErrorMessage() {
+  return t(getActiveLocale(), 'errors.invalidCredential')
+}
+
+function apiError(key, fallbackDetail) {
+  if (fallbackDetail) return String(fallbackDetail)
+  return t(getActiveLocale(), key)
+}
 
 export function getApiKey() {
   return sessionStorage.getItem(API_KEY_STORAGE) || ''
@@ -54,35 +64,35 @@ async function apiFetch(endpoint, options = {}) {
   const r = await fetch(`${BASE}${endpoint}`, { ...options, headers })
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) {
-      throw new Error(AUTH_ERROR_MESSAGE)
+      throw new Error(authErrorMessage())
     }
     const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'API request failed')
+    throw new Error(apiError('errors.apiRequestFailed', err.detail))
   }
   return r.json()
 }
 
 export async function fetchStatus() {
   const r = await fetch(`${BASE}/system/status`)
-  if (!r.ok) throw new Error('Status fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.statusFetchFailed'))
   return r.json()
 }
 
 export async function fetchPipeline() {
   const r = await fetch(`${BASE}/system/pipeline`)
-  if (!r.ok) throw new Error('Pipeline fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.pipelineFetchFailed'))
   return r.json()
 }
 
 export async function fetchPipelineHistory(minutes = 60) {
   const r = await fetch(`${BASE}/system/pipeline/history?minutes=${minutes}`)
-  if (!r.ok) throw new Error('Pipeline history fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.pipelineHistoryFetchFailed'))
   return r.json()
 }
 
 export async function fetchPlatforms() {
   const r = await fetch(`${BASE}/platforms`)
-  if (!r.ok) throw new Error('Platforms fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.platformsFetchFailed'))
   return r.json()
 }
 
@@ -94,7 +104,7 @@ export async function triggerScrape(platform, checkpoint = {}, scrapeType = 'bot
   })
   if (!r.ok) {
     const err = await r.json().catch(() => ({}))
-    throw new Error(err.detail || 'Scrape trigger failed')
+    throw new Error(apiError('errors.scrapeTriggerFailed', err.detail))
   }
   return r.json()
 }
@@ -169,7 +179,7 @@ export async function fetchProperties({
   })
 
   const r = await fetch(`${BASE}/properties?${params}`)
-  if (!r.ok) throw new Error('Properties fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.propertiesFetchFailed'))
   return r.json()
 }
 
@@ -201,7 +211,7 @@ export async function exportProperties({
   q,
 } = {}) {
   if (format !== 'csv' && format !== 'json') {
-    throw new Error('Export format must be csv or json')
+    throw new Error(t(getActiveLocale(), 'errors.exportFormatInvalid'))
   }
 
   const params = buildPropertyFilterParams({
@@ -220,14 +230,14 @@ export async function exportProperties({
   const r = await fetch(`${BASE}/properties/export?${params}`, { headers })
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) {
-      throw new Error(AUTH_ERROR_MESSAGE)
+      throw new Error(authErrorMessage())
     }
     const err = await r.json().catch(() => ({}))
     const detail = err.detail
     const message = typeof detail === 'string'
       ? detail
       : (Array.isArray(detail) ? detail.map(d => d.msg || d).join('; ') : null)
-    throw new Error(message || 'Export failed')
+    throw new Error(message || t(getActiveLocale(), 'errors.exportFailed'))
   }
 
   if (format === 'csv') {
@@ -254,18 +264,18 @@ export async function exportProperties({
 
 export async function fetchProperty(id) {
   const r = await fetch(`${BASE}/properties/${id}`)
-  if (!r.ok) throw new Error('Property fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.propertyFetchFailed'))
   return r.json()
 }
 
 export async function fetchPropertiesByIds(ids) {
   const list = Array.isArray(ids) ? ids.filter(Boolean) : []
   if (list.length < 1 || list.length > 4) {
-    throw new Error('fetchPropertiesByIds requires 1–4 ids')
+    throw new Error(t(getActiveLocale(), 'errors.batchIdsInvalid'))
   }
   const params = new URLSearchParams({ ids: list.join(',') })
   const r = await fetch(`${BASE}/properties/by-ids?${params}`)
-  if (!r.ok) throw new Error('Properties batch fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.batchFetchFailed'))
   return r.json()
 }
 
@@ -361,7 +371,7 @@ export async function updateLocale(locale) {
 
 export async function fetchAlerts() {
   const r = await fetch(`${BASE}/system/alerts`)
-  if (!r.ok) throw new Error('Alerts fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.alertsFetchFailed'))
   return r.json()
 }
 
@@ -438,13 +448,13 @@ export async function checkFavourite(propertyId) {
 
 export async function fetchNeighborhoods() {
   const r = await fetch(`${BASE}/properties/neighborhoods`)
-  if (!r.ok) throw new Error('Neighborhoods fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.neighborhoodsFetchFailed'))
   return r.json()
 }
 
 export async function fetchCities() {
   const r = await fetch(`${BASE}/properties/cities`)
-  if (!r.ok) throw new Error('Cities fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.citiesFetchFailed'))
   return r.json()
 }
 
@@ -454,6 +464,6 @@ export async function fetchCities() {
 
 export async function fetchPriceHistory(propertyId) {
   const r = await fetch(`${BASE}/properties/${propertyId}/price-history`)
-  if (!r.ok) throw new Error('Price history fetch failed')
+  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.priceHistoryFetchFailed'))
   return r.json()
 }
