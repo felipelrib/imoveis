@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
+from adapters.scrapers.listing_description import extract_olx_description
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
@@ -123,6 +124,30 @@ class OLXScraper(BaseScraper):
         elif response.status_code >= 500 or response.status_code == 429:
             self._cb.record_failure()
         return response
+
+    def fetch_description(self, url: str) -> str:
+        """GET a detail page and extract the ad body / description."""
+        if not (url or "").strip():
+            return ""
+        try:
+            response = self._throttled_request(url)
+        except CircuitBreakerOpenError:
+            logger.warning("olx_description_circuit_open", url=url)
+            return ""
+        except Exception as exc:  # noqa: BLE001 — detail enrich must not abort scrape
+            logger.warning("olx_description_fetch_error", url=url, error=str(exc))
+            return ""
+        if response.status_code != 200:
+            logger.info(
+                "olx_description_http",
+                url=url,
+                status_code=response.status_code,
+            )
+            return ""
+        text = extract_olx_description(response.text or "")
+        if not text:
+            logger.info("olx_description_empty", url=url)
+        return text
 
     # ------------------------------------------------------------------
     # fetch_pages — adaptive price / geo funnel
@@ -471,7 +496,8 @@ class OLXScraper(BaseScraper):
         title = raw.get("subject") or raw.get("title") or "Imóvel"
 
         # --- Description ---
-        description = raw.get("body") or raw.get("description") or ""
+        # Flight search ads omit body; detail enrich fills this later (BIN-105).
+        description = (raw.get("body") or raw.get("description") or "").strip()
 
         # --- Price ---
         price = self._parse_price(raw)

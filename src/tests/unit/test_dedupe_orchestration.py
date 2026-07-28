@@ -144,6 +144,25 @@ class TestUpdateOrNoop:
         assert result.action == "updated"
         assert existing.active is True
 
+    def test_blank_candidate_does_not_wipe_description(self):
+        session = MagicMock()
+        existing = SimpleNamespace(
+            id="1",
+            price=1000.0,
+            title="Apt",
+            description="Keep me",
+            image_urls=["http://a"],
+            props_json={},
+            active=True,
+        )
+        candidate = _candidate(description="", price=1100.0)
+        with patch("core.dedupe._is_unchanged", return_value=False):
+            with patch("core.dedupe._record_candidate_listings"):
+                result = _update_or_noop(session, existing, candidate)
+        assert result.action == "updated"
+        assert existing.description == "Keep me"
+        assert existing.price == 1100.0
+
 
 @pytest.mark.unit
 class TestCreateAndFuzzyUpdate:

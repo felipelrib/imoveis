@@ -59,8 +59,8 @@ None.
 ## Notes / Follow-ups
 
 - No forced embedding backfill — index text unchanged.
-- Description coverage still ~0% on live corpus (BIN-97 BUG) — restore scrape/
-  persist descriptions outside this ticket for larger search+sentiment gains.
+- Description coverage restored via BIN-105 (`docs/features/87-listing-description-scrape.md`);
+  re-run backfill + embeddings after deploy for full search+sentiment gains.
 - Lexicon is intentionally small (audit misses); extend pairs in
   `semantic_query.py` when new EN↔PT gaps appear.
 - Related: BIN-63 epic · BIN-97 audit · BIN-73 (`bge-m3`) · `20-semantic-search.md`.

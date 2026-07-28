@@ -159,5 +159,5 @@ Numeric path (z-score → sigmoid → blend with AI / neighbourhood weights) is
 - Related: BIN-63 epic · BIN-101 · BIN-102 · BIN-73 (`bge-m3`) · BIN-64/69 English baseline.
 - **BIN-102 (8.6) shipped:** query synonym expansion for known PT↔EN housing terms
   (`core.semantic_query`); probe via `--normalize`. No re-embed / no AI-tag index.
-- **BUG (Medium)**: live corpus has empty `description` for all active rows — sentiment and
-  embeddings are title-starved; fix in scraper/detail enrichment (not this ticket).
+- **BUG (Medium)**: live corpus had empty `description` for all active rows — fixed in
+  BIN-105 (`docs/features/87-listing-description-scrape.md`: detail enrich + backfill).

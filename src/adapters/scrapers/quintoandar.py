@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
+from adapters.scrapers.listing_description import extract_quintoandar_description
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
@@ -262,6 +263,32 @@ class QuintoAndarScraper(BaseScraper):
             queue, action, min_p, max_p, None, None
         )
 
+    def fetch_description(self, url: str) -> str:
+        """GET a detail page and extract seller remarks / generated description."""
+        if not (url or "").strip():
+            return ""
+        try:
+            response = self._throttled_request("GET", url, follow_redirects=True)
+        except CircuitBreakerOpenError:
+            logger.warning("quintoandar_description_circuit_open", url=url)
+            return ""
+        except Exception as exc:  # noqa: BLE001 — detail enrich must not abort scrape
+            logger.warning(
+                "quintoandar_description_fetch_error", url=url, error=str(exc)
+            )
+            return ""
+        if response.status_code != 200:
+            logger.info(
+                "quintoandar_description_http",
+                url=url,
+                status_code=response.status_code,
+            )
+            return ""
+        text = extract_quintoandar_description(response.text or "")
+        if not text:
+            logger.info("quintoandar_description_empty", url=url)
+        return text
+
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """Convert QuintoAndar JSON into our internal PropertyCandidate format."""
         neighbourhood = raw.get("neighbourhood")
@@ -297,7 +324,9 @@ class QuintoAndarScraper(BaseScraper):
             "platform": "quintoandar",
             "platform_id": str(raw.get("id", "")),
             "title": raw.get("type", "Property") + f" in {neighbourhood or 'Belo Horizonte'}",
-            "description": raw.get("description", ""),
+            "description": (
+                (raw.get("description") or raw.get("remarks") or "").strip()
+            ),
             "price": price,
             "area_m2": float(raw.get("area") or 0.0),
             "bedrooms": int(raw.get("bedrooms") or 0),
