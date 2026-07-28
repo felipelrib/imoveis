@@ -105,7 +105,7 @@ NFR-5: Testability — Merge requires green CI (lint, unit, integration, contrac
 
 NFR-6: Observability — Pipeline telemetry and system health endpoints support unattended operation (UJ-3).
 
-NFR-7: i18n — User-facing product language (UI + AI) defaults to English; planning docs in English. Second locales deferred (BIN-63). Correct-course 2026-07-24 (BIN-64).
+NFR-7: i18n — User-facing product language (UI + AI) defaults to English; pt-BR supported; further locales via docs/i18n/add-a-locale.md (BIN-63 / BIN-103). Planning docs stay English. Correct-course 2026-07-24 (BIN-64); multi-locale ship 2026-07-28.
 
 NFR-8: Single-operator privacy posture — BH/MG geographic focus and single-tenant personalization until multi-city / multi-profile is explicitly productized. *(Aligned into PRD §8 during readiness.)*
 

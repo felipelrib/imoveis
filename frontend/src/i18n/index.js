@@ -16,6 +16,16 @@ export const CATALOGS = {
 export const SUPPORTED_LOCALES = Object.keys(CATALOGS)
 
 /**
+ * Catalog key for a locale switcher option label (`en` → `locale.en`,
+ * `pt-BR` → `locale.ptBR`). Prefer this over hardcoded `code === …` branches.
+ * @param {string} code BCP-47 tag from the preference allowlist
+ */
+export function localeLabelKey(code) {
+  const camel = String(code).replace(/-([A-Za-z]+)/g, (_, part) => part)
+  return `locale.${camel}`
+}
+
+/**
  * Resolve a dotted key in a nested catalog object.
  * @param {unknown} node
  * @param {string} path

@@ -16,11 +16,17 @@ Product UI chrome is hardcoded English while money/dates already use `pt-BR` for
 
 ### ADR: How to add a language
 
+Canonical checklist (message catalog, filters, AI maps, embeddings, tests):
+[`docs/i18n/add-a-locale.md`](../i18n/add-a-locale.md) (BIN-103 / epic close
+[`83-product-i18n.md`](83-product-i18n.md)).
+
+Seed steps (still valid):
+
 1. Add `frontend/src/i18n/locales/<tag>.json` (copy `en.json`, translate values).
 2. Register the catalog in `frontend/src/i18n/index.js` (`CATALOGS`).
 3. Add the BCP-47 tag to `ui.supported_locales` in `configs/app_config.yaml` (and keep `UiConfig.locale` Literal in sync if the default set expands).
-4. Extend switcher option labels in both catalogs (`locale.*` keys).
-5. (Later stories) add filter synonym maps / AI locale hooks — see BIN-100 / BIN-101 / BIN-103 checklist.
+4. Extend switcher option labels in every catalog (`locale.*` keys) — use `localeLabelKey`, no hardcoded ternaries.
+5. Follow the full checklist for synonym maps, AI template dicts, and semantic lexicon.
 
 ## Changes
 

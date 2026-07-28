@@ -19,7 +19,7 @@ Imoveis is a **local-first** deal tracker for Brazilian real-estate listings. It
 
 The product matters because house-hunting across QuintoAndar, OLX, and peers is fragmented: the same flat appears under different IDs, price drops are easy to miss, and raw listing copy/photos do not answer “is this actually a deal for this neighbourhood?” Imoveis turns that noise into a single score-coloured view with alerts.
 
-**Geographic focus (current):** Belo Horizonte / MG. **Product language:** English (UI + AI); second locales deferred (BIN-63). **Deployment posture:** single-operator, privacy-preserving, runs on the user’s machine (Docker + host Ollama).
+**Geographic focus (current):** Belo Horizonte / MG. **Product language:** English default (UI + AI) with `pt-BR` supported (BIN-63); further locales via the add-a-locale checklist. **Deployment posture:** single-operator, privacy-preserving, runs on the user’s machine (Docker + host Ollama).
 
 ## 2. Target User
 
@@ -236,7 +236,7 @@ FR-1 through FR-17 as implemented and documented in `docs/features/` (+ BIN-18 s
 - **NFR-4 Resilience:** Circuit breakers and checkpoints keep scrapes operable under partial platform failure.
 - **NFR-5 Testability:** Merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security).
 - **NFR-6 Observability:** Pipeline telemetry and system health endpoints support unattended operation (UJ-3).
-- **NFR-7 i18n:** User-facing product language (UI + AI) defaults to English; planning docs in English. Second locales (e.g. `pt-br`) deferred to AI translation (BIN-63). Correct-course 2026-07-24 (BIN-64).
+- **NFR-7 i18n:** User-facing product language (UI + AI) defaults to English; `pt-BR` is supported via catalogs + preference (`ui.locale` / Redis). Planning docs stay English. Further locales are additive via `docs/i18n/add-a-locale.md` (BIN-63 / BIN-103). Canonical DB/API wire values remain English. Correct-course 2026-07-24 (BIN-64); multi-locale ship 2026-07-28.
 - **NFR-8 Single-operator privacy posture:** BH/MG geographic focus and single-tenant personalization until multi-city / multi-profile is explicitly productized.
 
 ## 9. Open Questions

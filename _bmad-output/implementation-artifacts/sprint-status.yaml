@@ -103,5 +103,5 @@ development_status:
   8-4-locale-aware-filters-pt-labels-en-wire: done
   8-5-localize-ai-tags-verdicts-score-copy: done
   8-6-embeddings-semantic-search-locale-behaviour: done
-  8-7-multi-locale-extensibility-checklist-nfr7: backlog
+  8-7-multi-locale-extensibility-checklist-nfr7: done
   epic-8-retrospective: optional

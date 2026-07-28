@@ -62,7 +62,7 @@ NFR-3: Security — no hardcoded production secrets; forbid imoveis_secret / dev
 NFR-4: Resilience — circuit breakers and checkpoints keep scrapes operable under partial platform failure.
 NFR-5: Testability — merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security) via scripts/agent gates.
 NFR-6: Observability — pipeline telemetry and system health endpoints support unattended operation.
-NFR-7: i18n — user-facing product language (UI + AI) defaults to English; planning docs in English. Second locales (e.g. pt-br) deferred to AI translation epic (BIN-63). Correct-course 2026-07-24 (BIN-64).
+NFR-7: i18n — user-facing product language (UI + AI) defaults to English; pt-BR supported (catalogs + ui.locale preference). Planning docs stay English. Further locales via docs/i18n/add-a-locale.md (BIN-63 / BIN-103). Canonical DB/API wire remains English. Correct-course 2026-07-24 (BIN-64); multi-locale ship 2026-07-28.
 NFR-8: Single-operator privacy posture — BH/MG geographic focus until multi-city is explicitly productized.
 
 ### Additional Requirements
