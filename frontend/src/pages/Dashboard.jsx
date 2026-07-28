@@ -8,6 +8,8 @@ import {
   BarChart, Bar, Legend
 } from 'recharts'
 import { formatPlatform } from '../labels.js'
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { formatTime, formatCurrencyBRL, formatNumber } from '../i18n/format.js'
 
 const HISTORY_MAX_POINTS = 120
 
@@ -15,17 +17,23 @@ function toHistoryPoint(tsLabel, throughput, scraperQueue, aiQueue) {
   return { time: tsLabel, throughput, scraperQueue, aiQueue }
 }
 
-function formatTsLabel(isoOrDate) {
-  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
 const SERVICES = [
-  { key: 'database', icon: '🗄️', label: 'PostgreSQL',  sub: (s) => s?.database?.status === 'ok' ? 'Connected' : s?.database?.detail || 'Offline' },
-  { key: 'redis',    icon: '⚡', label: 'Redis',        sub: (s) => s?.redis?.status === 'ok' ? 'Connected' : 'Offline' },
-  { key: 'ollama',   icon: '🤖', label: 'Ollama VLM',   sub: (s) => s?.ollama?.status === 'ok' ? `${(s.ollama.models || []).length} model(s) loaded` : 'Offline' },
-  { key: 'workers',  icon: '⚙️', label: 'Celery Workers', sub: (s) => s?.workers?.status === 'ok' ? (s?.ai_workers_paused ? '⏸ Paused' : '▶ Running') : 'Offline' },
+  {
+    key: 'database', icon: '🗄️', labelKey: 'dashboard.svcPostgresql',
+    sub: (s, t) => s?.database?.status === 'ok' ? t('dashboard.connected') : (s?.database?.detail || t('dashboard.offline')),
+  },
+  {
+    key: 'redis', icon: '⚡', labelKey: 'dashboard.svcRedis',
+    sub: (s, t) => s?.redis?.status === 'ok' ? t('dashboard.connected') : t('dashboard.offline'),
+  },
+  {
+    key: 'ollama', icon: '🤖', labelKey: 'dashboard.svcOllama',
+    sub: (s, t) => s?.ollama?.status === 'ok' ? t('dashboard.modelsLoaded', { n: (s.ollama.models || []).length }) : t('dashboard.offline'),
+  },
+  {
+    key: 'workers', icon: '⚙️', labelKey: 'dashboard.svcCelery',
+    sub: (s, t) => s?.workers?.status === 'ok' ? (s?.ai_workers_paused ? t('dashboard.paused') : t('dashboard.running')) : t('dashboard.offline'),
+  },
 ]
 
 function svcStatus(key, s) {
@@ -38,6 +46,7 @@ function svcStatus(key, s) {
 }
 
 export default function Dashboard({ status, loading }) {
+  const { t, locale } = useLocale()
   const [recalculating, setRecalculating] = useState(false)
   const [recalcResult, setRecalcResult] = useState(null)
   const [enriching, setEnriching] = useState(false)
@@ -72,7 +81,7 @@ export default function Dashboard({ status, loading }) {
         if (cancelled || historyLoaded.current) return
         const points = (hist.points || []).map((p) =>
           toHistoryPoint(
-            formatTsLabel(p.ts),
+            formatTime(p.ts, locale),
             p.throughput_per_min || 0,
             p.scraper_queue || 0,
             p.ai_queue || 0,
@@ -91,7 +100,7 @@ export default function Dashboard({ status, loading }) {
         const data = await fetchPipeline()
         if (cancelled) return
         setPipeline(data)
-        const timeLabel = formatTsLabel(new Date())
+        const timeLabel = formatTime(new Date(), locale)
         setThroughputHistory((prev) => {
           const next = [
             ...prev,
@@ -122,9 +131,9 @@ export default function Dashboard({ status, loading }) {
     setOllamaLoading(true)
     try {
       const r = await ensureOllama()
-      showToast(r.status === 'already_running' ? 'Ollama is already running!' : 'Ollama started successfully!', { type: 'success' })
+      showToast(r.status === 'already_running' ? t('dashboard.toastOllamaAlready') : t('dashboard.toastOllamaStarted'), { type: 'success' })
     } catch (e) {
-      showToast('Error: ' + e.message, { type: 'error' })
+      showToast(t('dashboard.toastError', { message: e.message }), { type: 'error' })
     } finally {
       setOllamaLoading(false)
     }
@@ -134,12 +143,12 @@ export default function Dashboard({ status, loading }) {
     setRecalculating(true)
     setRecalcResult(null)
     try {
-      const r = await recalculateScores()
-      setRecalcResult(`✔ Recalculated ${r.combined_rows_updated} properties`)
-      showToast(`Recalculated ${r.combined_rows_updated} properties`, { type: 'success' })
+      await recalculateScores()
+      setRecalcResult(t('dashboard.recalcResultOk'))
+      showToast(t('dashboard.toastRecalculated'), { type: 'success' })
     } catch (e) {
-      setRecalcResult('✖ Error: ' + e.message)
-      showToast('Recalculation failed: ' + e.message, { type: 'error' })
+      setRecalcResult(t('common.errorCross', { message: e.message }))
+      showToast(t('dashboard.toastRecalcFailed'), { type: 'error' })
     } finally {
       setRecalculating(false)
     }
@@ -152,13 +161,13 @@ export default function Dashboard({ status, loading }) {
       const r = await enrichMissing()
       const skipped = r.skipped_no_images || 0
       const msg = skipped
-        ? `✔ Queued ${r.queued_enrichments} for enrichment (${skipped} skipped — no images)`
-        : `✔ Queued ${r.queued_enrichments} for enrichment`
+        ? t('dashboard.enrichResultOkSkipped', { n: r.queued_enrichments, skipped })
+        : t('dashboard.enrichResultOk', { n: r.queued_enrichments })
       setEnrichResult(msg)
-      showToast(`Queued ${r.queued_enrichments} properties for AI enrichment`, { type: 'success' })
+      showToast(t('dashboard.toastEnrichQueued'), { type: 'success' })
     } catch (e) {
-      setEnrichResult('✖ Error: ' + e.message)
-      showToast('Enrich missing failed: ' + e.message, { type: 'error' })
+      setEnrichResult(t('common.errorCross', { message: e.message }))
+      showToast(t('dashboard.toastEnrichFailed'), { type: 'error' })
     } finally {
       setEnriching(false)
     }
@@ -182,19 +191,18 @@ export default function Dashboard({ status, loading }) {
       }
       const r = await enrichmentRerun(payload)
       const n = dryRun ? r.would_queue : r.queued
-      const verb = dryRun ? 'Would queue' : 'Queued'
+      const verb = dryRun ? t('dashboard.verbWouldQueue') : t('dashboard.verbQueued')
       const skips = [
-        r.skipped_no_images ? `${r.skipped_no_images} no images` : null,
-        r.skipped_too_few_photos ? `${r.skipped_too_few_photos} photo gate` : null,
-        r.skipped_missing_prior_enrichment ? `${r.skipped_missing_prior_enrichment} missing prior AI` : null,
+        r.skipped_no_images ? t('dashboard.rerunSkipNoImages', { n: r.skipped_no_images }) : null,
+        r.skipped_too_few_photos ? t('dashboard.rerunSkipPhotoGate', { n: r.skipped_too_few_photos }) : null,
+        r.skipped_missing_prior_enrichment ? t('dashboard.rerunSkipMissingPrior', { n: r.skipped_missing_prior_enrichment }) : null,
       ].filter(Boolean)
       const skipNote = skips.length ? ` (${skips.join(', ')})` : ''
-      const msg = `✔ ${verb} ${n}${skipNote}`
-      setRerunResult(msg)
-      showToast(`${verb} ${n} for AI enrichment`, { type: 'success' })
+      setRerunResult(t('dashboard.rerunResultOk', { verb, n, skipNote }))
+      showToast(t('dashboard.toastRerunOk', { verb, n }), { type: 'success' })
     } catch (e) {
-      setRerunResult('✖ Error: ' + e.message)
-      showToast('Enrichment re-run failed: ' + e.message, { type: 'error' })
+      setRerunResult(t('common.errorCross', { message: e.message }))
+      showToast(t('dashboard.toastRerunFailed'), { type: 'error' })
     } finally {
       setRerunBusy(false)
     }
@@ -203,19 +211,19 @@ export default function Dashboard({ status, loading }) {
   return (
     <div>
       <div className="page-header">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Real-time overview of your data pipeline and system health</p>
+        <h1 className="page-title">{t('dashboard.title')}</h1>
+        <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
 
       {/* Charts row */}
       {throughputHistory.length >= 2 && (
         <>
           <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-            📈 Pipeline Metrics
+            {t('dashboard.pipelineMetrics')}
           </h2>
           <div className="chart-grid">
             <div className="chart-panel">
-              <div className="chart-title">AI Throughput (tasks/min)</div>
+              <div className="chart-title">{t('dashboard.aiThroughput')} ({t('dashboard.tasksPerMin')})</div>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={throughputHistory}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -225,12 +233,12 @@ export default function Dashboard({ status, loading }) {
                     contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
                     labelStyle={{ color: 'var(--text-secondary)' }}
                   />
-                  <Line type="monotone" dataKey="throughput" stroke="var(--accent-cyan)" strokeWidth={2} dot={false} name="Tasks/min" />
+                  <Line type="monotone" dataKey="throughput" stroke="var(--accent-cyan)" strokeWidth={2} dot={false} name={t('dashboard.tasksPerMin')} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <div className="chart-panel">
-              <div className="chart-title">Queue Depth</div>
+              <div className="chart-title">{t('dashboard.queueDepth')}</div>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={throughputHistory}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -241,8 +249,8 @@ export default function Dashboard({ status, loading }) {
                     labelStyle={{ color: 'var(--text-secondary)' }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
-                  <Bar dataKey="scraperQueue" fill="var(--accent-amber)" name="Scrapers" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="aiQueue" fill="var(--accent)" name="AI" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="scraperQueue" fill="var(--accent-amber)" name={t('dashboard.scrapers')} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="aiQueue" fill="var(--accent)" name={t('dashboard.ai')} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -250,31 +258,35 @@ export default function Dashboard({ status, loading }) {
         </>
       )}
       {throughputHistory.length > 0 && throughputHistory.length < 2 && (
-        <div className="chart-empty-state">Collecting pipeline data… charts appear after 2+ data points.</div>
+        <div className="chart-empty-state">{t('dashboard.collectingCharts')}</div>
       )}
 
       {/* Alerts row */}
       {!alertsLoading && alerts.length > 0 && (
         <>
           <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px', display: 'flex', justifyContent: 'space-between' }}>
-            <span>🚨 Price Drop Alerts</span>
+            <span>{t('dashboard.priceDropAlerts')}</span>
             <button
               className="btn btn-ghost"
               style={{ padding: '4px 8px', fontSize: 12, height: 'auto' }}
               onClick={() => setAlerts([])}
-              aria-label="Dismiss all alerts"
+              aria-label={t('dashboard.dismissAllAria')}
             >
-              Dismiss All
+              {t('dashboard.dismissAll')}
             </button>
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
             {alerts.slice(0, 10).map((alert, idx) => (
               <div key={idx} style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--accent-rose)' }}>
                 <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  📉 {alert.drop_pct?.toFixed(1)}% drop on {formatPlatform(alert.platform)}
+                  {t('dashboard.alertDrop', { pct: alert.drop_pct?.toFixed(1), platform: formatPlatform(alert.platform) })}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  {alert.title} — Was: {alert.old_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} | Now: <span style={{ color: 'var(--accent-emerald)', fontWeight: 600 }}>{alert.new_price?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                  {t('dashboard.alertPrices', {
+                    title: alert.title,
+                    oldPrice: formatCurrencyBRL(alert.old_price, locale),
+                    newPrice: formatCurrencyBRL(alert.new_price, locale),
+                  })}
                 </div>
               </div>
             ))}
@@ -285,45 +297,45 @@ export default function Dashboard({ status, loading }) {
       {/* Stats row — never show 0 when DB is unhealthy (BIN-60 false-zero) */}
       <div className="stats-grid">
         <StatCard
-          label="Total Properties"
-          value={formatPropertyCount(loading, dbOk, stats.total_properties)}
-          sub={dbOk ? 'in database' : 'database unavailable'}
+          label={t('dashboard.totalProperties')}
+          value={formatPropertyCount(loading, dbOk, stats.total_properties, t, locale)}
+          sub={dbOk ? t('dashboard.inDatabase') : t('dashboard.databaseUnavailable')}
         />
         <StatCard
-          label="AI Enriched"
-          value={formatPropertyCount(loading, dbOk, stats.enriched_properties)}
-          sub={dbOk ? 'VLM analysed' : 'database unavailable'}
+          label={t('dashboard.aiEnriched')}
+          value={formatPropertyCount(loading, dbOk, stats.enriched_properties, t, locale)}
+          sub={dbOk ? t('dashboard.vlmAnalysed') : t('dashboard.databaseUnavailable')}
         />
         <StatCard
-          label="Enrichment Rate"
+          label={t('dashboard.enrichmentRate')}
           value={
             loading || !dbOk || !stats.total_properties
-              ? '—'
+              ? t('common.emDash')
               : `${Math.round((stats.enriched_properties / stats.total_properties) * 100)}%`
           }
-          sub="of total scraped"
+          sub={t('dashboard.ofTotalScraped')}
         />
         <StatCard
-          label="Ollama Models"
-          value={loading ? '…' : (status?.ollama?.models?.length ?? 0)}
-          sub={status?.ollama?.models?.[0] ?? 'none loaded'}
+          label={t('dashboard.ollamaModels')}
+          value={loading ? t('common.ellipsis') : (status?.ollama?.models?.length ?? 0)}
+          sub={status?.ollama?.models?.[0] ?? t('dashboard.noneLoaded')}
         />
       </div>
 
       {/* Services */}
       <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-        Service Status
+        {t('dashboard.serviceStatus')}
       </h2>
       <div className="services-grid" style={{ marginBottom: 28 }}>
-        {SERVICES.map(({ key, icon, label, sub }) => {
+        {SERVICES.map(({ key, icon, labelKey, sub }) => {
           const st = svcStatus(key, status)
           return (
             <div key={key} className="service-card">
               <div className={`service-icon ${st === 'warn' ? 'loading' : st}`}>{icon}</div>
               <div className="service-info">
-                <div className="service-name">{label}</div>
+                <div className="service-name">{t(labelKey)}</div>
                 <div className={`service-status ${st === 'warn' ? 'loading' : st}`}>
-                  {loading ? 'Checking…' : sub(status)}
+                  {loading ? t('common.checking') : sub(status, t)}
                 </div>
               </div>
             </div>
@@ -333,14 +345,14 @@ export default function Dashboard({ status, loading }) {
 
       {/* Quick actions */}
       <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-        Quick Actions
+        {t('dashboard.quickActions')}
       </h2>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 32 }}>
         <button className="btn btn-primary" onClick={handleEnsureOllama} disabled={ollamaLoading}>
-          {ollamaLoading ? <span className="spinner" /> : '🤖'} Ensure Ollama Running
+          {ollamaLoading ? <span className="spinner" /> : '🤖'} {t('dashboard.ensureOllama')}
         </button>
         <button className="btn btn-ghost" onClick={handleRecalculate} disabled={recalculating}>
-          {recalculating ? <span className="spinner" /> : '📊'} Recalculate All Scores
+          {recalculating ? <span className="spinner" /> : '📊'} {t('dashboard.recalculateScores')}
         </button>
         <button
           className="btn btn-ghost"
@@ -348,7 +360,7 @@ export default function Dashboard({ status, loading }) {
           disabled={enriching}
           data-testid="enrich-missing"
         >
-          {enriching ? <span className="spinner" /> : '✨'} Enrich Missing
+          {enriching ? <span className="spinner" /> : '✨'} {t('dashboard.enrichMissing')}
         </button>
       </div>
       {(recalcResult || enrichResult) && (
@@ -371,60 +383,59 @@ export default function Dashboard({ status, loading }) {
 
       {/* Selective AI enrichment (BIN-95) */}
       <div className="card" data-testid="enrichment-rerun-panel" style={{ marginBottom: 28 }}>
-        <div className="panel-section-title">✨ AI Enrichment re-run</div>
+        <div className="panel-section-title">{t('dashboard.enrichmentRerunTitle')}</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.45 }}>
-          Use <strong>Recalculate</strong> after geo/neighbourhood profile or weight changes (no VLM).
-          Use this panel after prompt/model/verdict changes — optionally force-refresh or filter by city/platform.
+          {t('dashboard.enrichmentRerunHelp')}
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-            Mode
+            {t('common.mode')}
             <select
               className="form-select"
               data-testid="enrichment-rerun-mode"
               value={rerunForm.mode}
               onChange={(e) => setRerunForm((f) => ({ ...f, mode: e.target.value }))}
             >
-              <option value="missing">Missing only</option>
-              <option value="force">Force refresh</option>
-              <option value="stale_before">Stale before…</option>
+              <option value="missing">{t('dashboard.modeMissing')}</option>
+              <option value="force">{t('dashboard.modeForce')}</option>
+              <option value="stale_before">{t('dashboard.modeStaleBefore')}</option>
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-            Stages
+            {t('common.stages')}
             <select
               className="form-select"
               data-testid="enrichment-rerun-stages"
               value={rerunForm.stages}
               onChange={(e) => setRerunForm((f) => ({ ...f, stages: e.target.value }))}
             >
-              <option value="all">All (visual + sentiment + verdict)</option>
-              <option value="visual+sentiment">Visual + sentiment</option>
-              <option value="verdict_only">Verdict only</option>
+              <option value="all">{t('dashboard.stagesAll')}</option>
+              <option value="visual+sentiment">{t('dashboard.stagesVisualSentiment')}</option>
+              <option value="verdict_only">{t('dashboard.stagesVerdictOnly')}</option>
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-            City
+            {t('common.city')}
             <input
               className="form-input"
               data-testid="enrichment-rerun-city"
               value={rerunForm.city}
               onChange={(e) => setRerunForm((f) => ({ ...f, city: e.target.value }))}
-              placeholder="e.g. Belo Horizonte"
+              placeholder={t('dashboard.cityPlaceholder')}
             />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-            Platform
+            {t('common.platform')}
             <input
               className="form-input"
               data-testid="enrichment-rerun-platform"
               value={rerunForm.platform}
               onChange={(e) => setRerunForm((f) => ({ ...f, platform: e.target.value }))}
-              placeholder="olx / zap / …"
+              placeholder={t('dashboard.platformPlaceholder')}
             />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-            Limit
+            {t('common.limit')}
             <input
               className="form-input"
               data-testid="enrichment-rerun-limit"
@@ -432,12 +443,12 @@ export default function Dashboard({ status, loading }) {
               type="text"
               value={rerunForm.limit}
               onChange={(e) => setRerunForm((f) => ({ ...f, limit: e.target.value.replace(/\D/g, '') }))}
-              placeholder="max queue"
+              placeholder={t('dashboard.limitPlaceholder')}
             />
           </label>
           {rerunForm.mode === 'stale_before' && (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-              Stale before
+              {t('dashboard.staleBefore')}
               <input
                 className="form-input"
                 data-testid="enrichment-rerun-stale-before"
@@ -455,7 +466,7 @@ export default function Dashboard({ status, loading }) {
             checked={rerunForm.active_only}
             onChange={(e) => setRerunForm((f) => ({ ...f, active_only: e.target.checked }))}
           />
-          Active listings only
+          {t('dashboard.activeListingsOnly')}
         </label>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button
@@ -464,7 +475,7 @@ export default function Dashboard({ status, loading }) {
             disabled={rerunBusy}
             onClick={() => handleEnrichmentRerun(true)}
           >
-            {rerunBusy ? <span className="spinner" /> : null} Dry-run
+            {rerunBusy ? <span className="spinner" /> : null} {t('dashboard.dryRun')}
           </button>
           <button
             className="btn btn-primary"
@@ -472,7 +483,7 @@ export default function Dashboard({ status, loading }) {
             disabled={rerunBusy}
             onClick={() => handleEnrichmentRerun(false)}
           >
-            {rerunBusy ? <span className="spinner" /> : null} Run enrichment
+            {rerunBusy ? <span className="spinner" /> : null} {t('dashboard.runEnrichment')}
           </button>
         </div>
         {rerunResult && (
@@ -496,13 +507,13 @@ export default function Dashboard({ status, loading }) {
       {/* Ollama models list */}
       {status?.ollama?.status === 'ok' && (status.ollama.models || []).length > 0 && (
         <div className="card">
-          <div className="panel-section-title">🤖 Loaded Ollama Models</div>
+          <div className="panel-section-title">{t('dashboard.loadedModels')}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {status.ollama.models.map(m => (
               <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--border-subtle)', fontSize: 13 }}>
                 <span style={{ color: 'var(--accent-emerald)' }}>✔</span>
                 <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{m}</span>
-                {m.includes('vision') && <span className="flag feature">vision</span>}
+                {m.includes('vision') && <span className="flag feature">{t('common.visionBadge')}</span>}
               </div>
             ))}
           </div>
@@ -512,10 +523,10 @@ export default function Dashboard({ status, loading }) {
   )
 }
 
-function formatPropertyCount(loading, dbOk, value) {
-  if (loading) return '…'
-  if (!dbOk || value == null) return '—'
-  return Number(value).toLocaleString()
+function formatPropertyCount(loading, dbOk, value, t, locale) {
+  if (loading) return t('common.ellipsis')
+  if (!dbOk || value == null) return t('common.emDash')
+  return formatNumber(value, locale)
 }
 
 function StatCard({ label, value, sub }) {

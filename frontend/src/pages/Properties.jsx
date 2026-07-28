@@ -14,6 +14,8 @@ import {
 } from '../utils/scores.js'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { formatNumber, formatCurrency } from '../i18n/format.js'
 import {
   PROPERTIES_PATH,
   FAVOURITES_PATH,
@@ -25,11 +27,11 @@ import {
 } from '../routes/propertyPaths.js'
 
 const SORT_OPTIONS = [
-  { value: 'combined_score', label: '⭐ Best Score' },
-  { value: 'price', label: '💰 Price (asc)' },
-  { value: 'price_desc', label: '💰 Price (desc)' },
-  { value: 'created_at', label: '🕒 Newest' },
-  { value: 'area_m2', label: '📐 Area' },
+  { value: 'combined_score', labelKey: 'properties.sortBestScore' },
+  { value: 'price', labelKey: 'properties.sortPriceAsc' },
+  { value: 'price_desc', labelKey: 'properties.sortPriceDesc' },
+  { value: 'created_at', labelKey: 'properties.sortNewest' },
+  { value: 'area_m2', labelKey: 'properties.sortArea' },
 ]
 
 const DEFAULT_FILTERS = {
@@ -84,10 +86,11 @@ export default function Properties() {
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [favouriteIds, setFavouriteIds] = useState(new Set())
   const showToast = useToast()
+  const { t, locale } = useLocale()
 
   const onCompareLimitReached = useCallback(() => {
-    showToast('You can compare up to 4 properties', { type: 'warning' })
-  }, [showToast])
+    showToast(t('properties.toastCompareLimit'), { type: 'warning' })
+  }, [showToast, t])
 
   const {
     selectedIds: compareIds,
@@ -236,11 +239,11 @@ export default function Properties() {
       await exportProperties({ format, ...buildListQueryFilters() })
     } catch (err) {
       console.error('Export failed:', err)
-      showToast('Export failed: ' + (err.message || 'unknown error'), { type: 'error' })
+      showToast(t('properties.toastExportFailed', { message: err.message || t('common.unknownError') }), { type: 'error' })
     } finally {
       setExporting(false)
     }
-  }, [exporting, buildListQueryFilters, showToast])
+  }, [exporting, buildListQueryFilters, showToast, t])
 
   const handleBboxChange = useCallback(async (bboxStr) => {
     setMapLoading(true)
@@ -307,7 +310,7 @@ export default function Properties() {
         setFavouritesData(favs)
       } catch (e) {
         console.error(e)
-        setLoadError(e.message || 'Failed to load favourites')
+        setLoadError(e.message || t('properties.failedToLoadFavourites'))
       } finally {
         setLoading(false)
       }
@@ -342,7 +345,7 @@ export default function Properties() {
       setData(res)
     } catch (e) {
       console.error(e)
-      setLoadError(e.message || 'Failed to load properties')
+      setLoadError(e.message || t('properties.failedToLoad'))
       setData(null)
     } finally {
       setLoading(false)
@@ -385,9 +388,9 @@ export default function Properties() {
       }
     } catch (err) {
       console.error('Watchlist toggle failed:', err)
-      showToast('Failed to update watchlist: ' + err.message, { type: 'error' })
+      showToast(t('properties.toastWatchlistFailed'), { type: 'error' })
     }
-  }, [watchedIds, showToast])
+  }, [watchedIds, showToast, t])
 
   const toggleFavourite = useCallback(async (e, propertyId) => {
     e.stopPropagation()
@@ -401,9 +404,9 @@ export default function Properties() {
       }
     } catch (err) {
       console.error('Favourite toggle failed:', err)
-      showToast('Failed to update favourites: ' + err.message, { type: 'error' })
+      showToast(t('properties.toastFavouritesFailed'), { type: 'error' })
     }
-  }, [favouriteIds, showToast])
+  }, [favouriteIds, showToast, t])
 
   // Reload on filter changes; also enter favourites view via URL/sidebar
   useEffect(() => {
@@ -435,10 +438,10 @@ export default function Properties() {
       setSavedSearches(updated)
       setSaveName('')
       setShowSaveDialog(false)
-      showToast('Search saved!', { type: 'success' })
+      showToast(t('properties.toastSearchSaved'), { type: 'success' })
     } catch (err) {
       console.error('Save search failed:', err)
-      showToast('Failed to save search: ' + err.message, { type: 'error' })
+      showToast(t('properties.toastSaveSearchFailed'), { type: 'error' })
     }
   }
 
@@ -447,10 +450,10 @@ export default function Properties() {
     try {
       await deleteSavedSearch(id)
       setSavedSearches(prev => prev.filter(s => s.id !== id))
-      showToast('Saved search deleted', { type: 'info' })
+      showToast(t('properties.toastSavedSearchDeleted'), { type: 'info' })
     } catch (err) {
       console.error('Delete saved search failed:', err)
-      showToast('Failed to delete search: ' + err.message, { type: 'error' })
+      showToast(t('properties.toastDeleteSearchFailed'), { type: 'error' })
     }
   }
 
@@ -482,9 +485,9 @@ export default function Properties() {
       {/* Sidebar */}
       <aside className="saved-searches-sidebar">
         <div className="sidebar-section">
-          <div className="sidebar-header">Saved Searches</div>
+          <div className="sidebar-header">{t('properties.savedSearches')}</div>
           {savedSearches.length === 0 ? (
-            <div className="sidebar-empty">No saved searches yet</div>
+            <div className="sidebar-empty">{t('properties.noSavedSearches')}</div>
           ) : (
             <div className="sidebar-list">
               {savedSearches.map(ss => (
@@ -494,13 +497,13 @@ export default function Properties() {
                   onClick={() => handleApplySavedSearch(ss.filters)}
                 >
                   <span className="sidebar-item-name">{ss.name}</span>
-                  <button className="sidebar-item-delete" onClick={(e) => handleDeleteSavedSearch(e, ss.id)} title="Delete">✕</button>
+                  <button className="sidebar-item-delete" onClick={(e) => handleDeleteSavedSearch(e, ss.id)} title={t('common.delete')}>✕</button>
                 </div>
               ))}
             </div>
           )}
           <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={() => setShowSaveDialog(true)}>
-            💾 Save Current Filters
+            {t('properties.saveCurrentFilters')}
           </button>
         </div>
 
@@ -510,7 +513,7 @@ export default function Properties() {
             onClick={() => handleViewModeChange('favourites')}
             data-testid="favourites-nav"
           >
-            ★ Favourites {favouriteIds.size > 0 && <span className="badge">{favouriteIds.size}</span>}
+            {t('properties.favouritesTitle')} {favouriteIds.size > 0 && <span className="badge">{favouriteIds.size}</span>}
           </button>
           {viewMode === 'favourites' && (
             <button
@@ -519,7 +522,7 @@ export default function Properties() {
               onClick={() => handleViewModeChange('all')}
               data-testid="favourites-back"
             >
-              ← Back to All Properties
+              ← {t('properties.backToAll')}
             </button>
           )}
         </div>
@@ -528,11 +531,11 @@ export default function Properties() {
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="page-header">
-          <h1 className="page-title">{viewMode === 'favourites' ? '★ Favourites' : 'Properties'}</h1>
+          <h1 className="page-title">{viewMode === 'favourites' ? t('properties.favouritesTitle') : t('properties.title')}</h1>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {viewMode === 'favourites'
-                ? `${favouritesData.total} favourited`
-                : `${totalResults.toLocaleString('pt-BR')} properties`}
+                ? t('properties.countFavourited', { n: formatNumber(favouritesData.total, locale) })
+                : t('properties.countProperties', { n: formatNumber(totalResults, locale) })}
             </div>
         </div>
 
@@ -540,13 +543,13 @@ export default function Properties() {
           <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0, flex: '1 1 220px' }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }} htmlFor="semantic-search">Search</label>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }} htmlFor="semantic-search">{t('properties.searchLabel')}</label>
                 <input
                   id="semantic-search"
                   className="form-input"
                   style={{ flex: 1, minWidth: 160 }}
                   type="search"
-                  placeholder="e.g. apto perto do metro com varanda"
+                  placeholder={t('properties.searchPlaceholder')}
                   value={qDraft}
                   onChange={e => setQDraft(e.target.value)}
                   onKeyDown={e => {
@@ -561,14 +564,14 @@ export default function Properties() {
                   className="btn btn-primary btn-sm"
                   onClick={() => setQ(qDraft.trim())}
                 >
-                  Search
+                  {t('properties.searchButton')}
                 </button>
                 {q && (
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
                     onClick={() => { setQ(''); setQDraft('') }}
-                    title="Clear search"
+                    title={t('properties.clearSearch')}
                   >
                     ✕
                   </button>
@@ -576,14 +579,14 @@ export default function Properties() {
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Sort by</label>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.sortBy')}</label>
                 <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
-                  {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
                 </select>
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Transaction</label>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.transaction')}</label>
                 <select
                   className="form-select"
                   style={{ width: 110 }}
@@ -594,14 +597,14 @@ export default function Properties() {
                     if (next === 'rent' || next === 'sale') setPriceType(next)
                   }}
                 >
-                  <option value="both">Rent & Sale</option>
-                  <option value="rent">Rent Only</option>
-                  <option value="sale">Sale Only</option>
+                  <option value="both">{t('properties.rentAndSale')}</option>
+                  <option value="rent">{t('properties.rentOnly')}</option>
+                  <option value="sale">{t('properties.saleOnly')}</option>
                 </select>
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Source</label>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.source')}</label>
                 <select
                   className="form-select"
                   style={{ width: 130 }}
@@ -609,18 +612,18 @@ export default function Properties() {
                   onChange={e => setPlatform(e.target.value)}
                   data-testid="platform-filter"
                 >
-                  <option value="">Any</option>
+                  <option value="">{t('common.any')}</option>
                   <option value="olx">{formatPlatform('olx')}</option>
                   <option value="quintoandar">{formatPlatform('quintoandar')}</option>
                 </select>
               </div>
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Type</label>
+                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.type')}</label>
                 <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)} data-testid="property-type-filter">
-                  <option value="">Any</option>
+                  <option value="">{t('common.any')}</option>
                   {PROPERTY_TYPE_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                    <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
                   ))}
                 </select>
               </div>
@@ -632,9 +635,9 @@ export default function Properties() {
                   data-testid="export-csv"
                   disabled={exporting}
                   onClick={() => handleExport('csv')}
-                  title="Download filtered properties as CSV"
+                  title={t('properties.exportCsvTitle')}
                 >
-                  {exporting ? 'Exporting…' : 'Export CSV'}
+                  {exporting ? t('properties.exporting') : t('properties.exportCsv')}
                 </button>
                 <button
                   type="button"
@@ -642,9 +645,9 @@ export default function Properties() {
                   data-testid="export-json"
                   disabled={exporting}
                   onClick={() => handleExport('json')}
-                  title="Download filtered properties as JSON"
+                  title={t('properties.exportJsonTitle')}
                 >
-                  {exporting ? 'Exporting…' : 'Export JSON'}
+                  {exporting ? t('properties.exporting') : t('properties.exportJson')}
                 </button>
                 <div style={{ display: 'flex', border: '1px solid var(--border-subtle)', borderRadius: 6, overflow: 'hidden' }}>
                   <button
@@ -652,14 +655,14 @@ export default function Properties() {
                     style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'grid' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'grid' ? 'white' : 'var(--text-secondary)' }}
                     onClick={() => setViewType('grid')}
                   >
-                    ☷ List
+                    {t('properties.viewList')}
                   </button>
                   <button
                     className={`btn btn-sm ${viewType === 'map' ? '' : 'btn-ghost'}`}
                     style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'map' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'map' ? 'white' : 'var(--text-secondary)', borderLeft: '1px solid var(--border-subtle)' }}
                     onClick={() => setViewType('map')}
                   >
-                    🗺 Map
+                    {t('properties.viewMap')}
                   </button>
                 </div>
                 <button
@@ -667,17 +670,17 @@ export default function Properties() {
                   className={`btn btn-sm ${compareMode ? 'btn-primary' : 'btn-ghost'}`}
                   data-testid="compare-mode-toggle"
                   aria-pressed={compareMode}
-                  title={compareMode ? 'Exit comparison mode' : 'Select properties to compare'}
+                  title={compareMode ? t('properties.compareModeOn') : t('properties.compareModeOff')}
                   onClick={toggleCompareMode}
                 >
-                  {compareMode ? '✕ Exit compare' : '⇄ Compare'}
+                  {compareMode ? t('properties.exitCompare') : t('properties.compare')}
                 </button>
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   style={{ display: 'flex', alignItems: 'center', gap: 6 }}
                 >
-                  {showAdvanced ? '▲ Hide Advanced' : '▼ Advanced Filters'}
+                  {showAdvanced ? t('properties.hideAdvanced') : t('properties.showAdvanced')}
                 </button>
               </div>
             </div>
@@ -685,7 +688,7 @@ export default function Properties() {
             {showAdvanced && (
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'flex-start', background: 'rgba(0,0,0,0.1)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Max price R$</label>
+                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.maxPrice')} R$</label>
                   <input
                     className="form-input"
                     data-testid="max-price-input"
@@ -693,7 +696,7 @@ export default function Properties() {
                     type="text"
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    placeholder="Any"
+                    placeholder={t('common.any')}
                     value={maxPrice}
                     onChange={e => {
                       const raw = e.target.value.replace(/[^\d]/g, '')
@@ -706,54 +709,54 @@ export default function Properties() {
                     style={{ width: 90 }}
                     value={priceType}
                     onChange={e => setPriceType(e.target.value)}
-                    aria-label="Price type"
+                    aria-label={t('properties.priceType')}
                   >
-                    <option value="rent">Rent</option>
-                    <option value="sale">Sale</option>
+                    <option value="rent">{t('common.rent')}</option>
+                    <option value="sale">{t('common.sale')}</option>
                   </select>
                 </div>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Beds</label>
+                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.beds')}</label>
                   <select className="form-select" style={{ width: 70 }} value={minBedrooms} onChange={e => setMinBedrooms(e.target.value)}>
-                    <option value="">Any</option>
-                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}+</option>)}
+                    <option value="">{t('common.any')}</option>
+                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{t('properties.bedsPlus', { n })}</option>)}
                   </select>
                 </div>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Parking</label>
+                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.parking')}</label>
                   <select className="form-select" style={{ width: 70 }} value={minParking} onChange={e => setMinParking(e.target.value)}>
-                    <option value="">Any</option>
-                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}+</option>)}
+                    <option value="">{t('common.any')}</option>
+                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{t('properties.bedsPlus', { n })}</option>)}
                   </select>
                 </div>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Min combined score</label>
+                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.minCombinedScore')}</label>
                   <select className="form-select" style={{ width: 80 }} value={minScore} onChange={e => setMinScore(e.target.value)}>
-                    <option value="">Any</option>
-                    <option value="0.7">0.7+</option>
-                    <option value="0.8">0.8+</option>
-                    <option value="0.9">0.9+</option>
+                    <option value="">{t('common.any')}</option>
+                    <option value="0.7">{t('properties.scorePlus', { n: 0.7 })}</option>
+                    <option value="0.8">{t('properties.scorePlus', { n: 0.8 })}</option>
+                    <option value="0.9">{t('properties.scorePlus', { n: 0.9 })}</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 8 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
                     <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} />
-                    Furnished
+                    {t('properties.furnished')}
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
                     <input type="checkbox" checked={acceptsPets} onChange={e => setAcceptsPets(e.target.checked)} />
-                    Pet Friendly
+                    {t('properties.petFriendly')}
                   </label>
                 </div>
                 <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '200px' }}>
                   <label className="form-label" style={{ marginBottom: 0 }}>
-                    Cities
-                    {citiesLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Loading…</span>}
+                    {t('properties.cities')}
+                    {citiesLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{t('common.loading')}</span>}
                   </label>
                   <SearchableMultiSelect
                     data-testid="city-filter"
-                    placeholder="Select cities…"
-                    searchPlaceholder="Search cities…"
+                    placeholder={t('properties.selectCities')}
+                    searchPlaceholder={t('properties.searchCities')}
                     loading={citiesLoading}
                     value={city ? city.split(',') : []}
                     onChange={(vals) => setCity(vals.join(','))}
@@ -765,13 +768,13 @@ export default function Properties() {
                 </div>
                 <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '220px' }}>
                   <label className="form-label" style={{ marginBottom: 0 }}>
-                    Neighborhoods
-                    {neighborhoodsLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>Loading…</span>}
+                    {t('properties.neighborhoods')}
+                    {neighborhoodsLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{t('common.loading')}</span>}
                   </label>
                   <SearchableMultiSelect
                     data-testid="neighborhood-filter"
-                    placeholder="Select neighborhoods…"
-                    searchPlaceholder="Search neighborhoods…"
+                    placeholder={t('properties.selectNeighborhoods')}
+                    searchPlaceholder={t('properties.searchNeighborhoods')}
                     loading={neighborhoodsLoading}
                     groupByCity
                     value={neighborhood ? neighborhood.split(',') : []}
@@ -789,7 +792,7 @@ export default function Properties() {
                   setPlatform('');
                   setIsFurnished(false); setAcceptsPets(false);
                   setQ(''); setQDraft('');
-                }}>✕ Clear All</button>
+                }}>{t('properties.clearAll')}</button>
               </div>
             )}
           </div>
@@ -798,9 +801,9 @@ export default function Properties() {
         {loadError && !loading && (
           <div className="empty-state" style={{ borderColor: 'var(--accent-rose)', background: 'rgba(244,63,94,0.08)' }}>
             <div className="empty-state-icon">⚠️</div>
-            <h3 style={{ color: 'var(--accent-rose)' }}>Failed to load properties</h3>
+            <h3 style={{ color: 'var(--accent-rose)' }}>{t('properties.failedToLoad')}</h3>
             <p style={{ maxWidth: 600, margin: '0 auto' }}>{loadError}</p>
-            <button className="btn btn-primary" onClick={() => load(page)} style={{ marginTop: 16 }}>🔄 Retry</button>
+            <button className="btn btn-primary" onClick={() => load(page)} style={{ marginTop: 16 }}>{t('properties.retry')}</button>
           </div>
         )}
 
@@ -833,11 +836,11 @@ export default function Properties() {
           ) : properties.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon">{viewMode === 'favourites' ? '☆' : '🏚️'}</div>
-              <h3>{viewMode === 'favourites' ? 'No favourites yet' : 'No properties found'}</h3>
-              <p>{viewMode === 'favourites' ? 'Star a property to add it to your favourites.' : (
+              <h3>{viewMode === 'favourites' ? t('properties.emptyFavouritesTitle') : t('properties.emptyPropertiesTitle')}</h3>
+              <p>{viewMode === 'favourites' ? t('properties.emptyFavouritesBody') : (
                 hasActiveFilters
-                  ? 'Try adjusting your filters to see more results.'
-                  : 'Go to Scraper Control and trigger your first ingestion job to start building the database.'
+                  ? t('properties.emptyAdjustFilters')
+                  : t('properties.emptyFirstIngest')
               )}</p>
               {viewMode !== 'favourites' && (
                 hasActiveFilters
@@ -846,8 +849,8 @@ export default function Properties() {
                       setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
                       setPlatform('');
                       setIsFurnished(false); setAcceptsPets(false);
-                    }}>✕ Clear Filters</button>
-                  : <a href="/scraper" className="btn btn-primary">Go to Scraper Control →</a>
+                    }}>{t('properties.clearFilters')}</button>
+                  : <a href="/scraper" className="btn btn-primary">{t('properties.goToScraper')} →</a>
               )}
             </div>
           ) : (
@@ -866,6 +869,8 @@ export default function Properties() {
                     compareMode={compareMode}
                     isCompareSelected={isCompareSelected(linkIdForProperty(p))}
                     onToggleCompare={handleToggleCompare}
+                    t={t}
+                    locale={locale}
                   />
                 ))}
               </div>
@@ -891,10 +896,10 @@ export default function Properties() {
       {showSaveDialog && (
         <div className="modal-overlay" onClick={() => setShowSaveDialog(false)}>
           <div className="modal" style={{ maxWidth: 400, padding: 24 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginBottom: 16, fontSize: 18 }}>Save Current Filters</h3>
+            <h3 style={{ marginBottom: 16, fontSize: 18 }}>{t('properties.saveDialogTitle')}</h3>
             <input
               className="form-input"
-              placeholder="Search name..."
+              placeholder={t('properties.saveDialogPlaceholder')}
               value={saveName}
               onChange={e => setSaveName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSaveSearch()}
@@ -902,8 +907,8 @@ export default function Properties() {
               style={{ width: '100%', marginBottom: 16 }}
             />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowSaveDialog(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveSearch} disabled={!saveName.trim()}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowSaveDialog(false)}>{t('common.cancel')}</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveSearch} disabled={!saveName.trim()}>{t('common.save')}</button>
             </div>
           </div>
         </div>
@@ -920,9 +925,9 @@ export default function Properties() {
       )}
 
       {compareMode && compareIds.length > 0 && !compareOpen && (
-        <div className="compare-bar" data-testid="compare-bar" role="region" aria-label="Compare selection">
+        <div className="compare-bar" data-testid="compare-bar" role="region" aria-label={t('properties.compareBarLabel')}>
           <span className="compare-bar-count" data-testid="compare-count">
-            {compareIds.length} selected
+            {t('properties.compareSelected', { n: compareIds.length })}
           </span>
           <div className="compare-bar-actions">
             <button
@@ -931,7 +936,7 @@ export default function Properties() {
               data-testid="compare-clear"
               onClick={clearCompare}
             >
-              Clear
+              {t('properties.compareClear')}
             </button>
             <button
               type="button"
@@ -940,7 +945,7 @@ export default function Properties() {
               disabled={!canCompare}
               onClick={openCompare}
             >
-              Compare
+              {t('properties.compareOpen')}
             </button>
           </div>
         </div>
@@ -981,9 +986,9 @@ function getPlatformCount(listings) {
   return new Set(listings.map(l => l.platform)).size
 }
 
-function formatListingType(type) {
-  if (type === 'rent') return 'RENT'
-  return 'SALE'
+function formatListingType(type, t) {
+  if (type === 'rent') return t('common.rentUpper')
+  return t('common.saleUpper')
 }
 
 function listingTypeColor(type) {
@@ -1009,6 +1014,8 @@ function PropertyCard({
   compareMode = false,
   isCompareSelected,
   onToggleCompare,
+  t,
+  locale,
 }) {
   const img = (p.image_urls || [])[0]
   const listings = p.listings || []
@@ -1037,7 +1044,7 @@ function PropertyCard({
       {compareMode && (
         <label
           className="property-compare-select"
-          title="Select for comparison"
+          title={t('properties.selectForComparison')}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
@@ -1045,13 +1052,13 @@ function PropertyCard({
             type="checkbox"
             checked={!!isCompareSelected}
             onChange={(e) => onToggleCompare(e, p)}
-            aria-label={isCompareSelected ? 'Remove from comparison' : 'Select for comparison'}
+            aria-label={isCompareSelected ? t('properties.removeFromComparison') : t('properties.selectForComparison')}
             data-testid={`compare-select-${compareKey}`}
           />
         </label>
       )}
       {img
-        ? <img className="property-image" src={img} alt={p.title || 'property'} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
+        ? <img className="property-image" src={img} alt={p.title || t('common.propertyAlt')} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
         : null
       }
       <div className="property-image-placeholder" style={{ display: img ? 'none' : 'flex' }}>🏠</div>
@@ -1067,10 +1074,10 @@ function PropertyCard({
                   return (
                     <div key={type} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                       <span className="property-price" style={{ fontSize: groupKeys.length > 1 ? 16 : 20 }}>
-                        R$ {best.price ? best.price.toLocaleString('pt-BR') : '—'}
+                        {best.price ? formatCurrency(best.price, locale) : t('common.emDash')}
                       </span>
                       <span style={{ padding: '1px 5px', fontSize: 9, background: colors.bg, color: colors.color, borderRadius: 3, fontWeight: 700 }}>
-                        {formatListingType(type)}
+                        {formatListingType(type, t)}
                       </span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                         {formatPlatform(best.platform)}
@@ -1086,21 +1093,21 @@ function PropertyCard({
               </div>
             ) : (
               <div className="property-price">
-                R$ {p.price ? p.price.toLocaleString('pt-BR') : '—'}
+                {p.price ? formatCurrency(p.price, locale) : t('common.emDash')}
               </div>
             )}
           </div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {platformCount > 1 && (
               <span style={{ padding: '2px 6px', fontSize: 9, background: 'rgba(251,191,36,0.15)', color: '#fbbf24', borderRadius: 4, fontWeight: 700 }}>
-                {platformCount} platforms
+                {t('properties.platformsBadge', { n: platformCount })}
               </span>
             )}
             <div
               className={`icon-btn ${isFavourited ? 'active' : ''}`}
               data-testid={`favourite-toggle-${p.id}`}
-              title="Add to Favourites"
-              aria-label={isFavourited ? "Remove from Favourites" : "Add to Favourites"}
+              title={t('properties.addToFavourites')}
+              aria-label={isFavourited ? t('properties.removeFromFavourites') : t('properties.addToFavourites')}
               role="button"
               tabIndex={0}
               onClick={(e) => onToggleFavourite(e, p.id)}
@@ -1116,8 +1123,8 @@ function PropertyCard({
             <div
               className={`icon-btn icon-btn--watch ${isWatched ? 'active' : ''}`}
               data-testid={`watchlist-toggle-${p.id}`}
-              title="Watch for price drops"
-              aria-label={isWatched ? "Remove from Watchlist" : "Watch for price drops"}
+              title={t('properties.watchForPriceDrops')}
+              aria-label={isWatched ? t('properties.removeFromWatchlist') : t('properties.watchForPriceDrops')}
               role="button"
               tabIndex={0}
               onClick={(e) => onToggleWatchlist(e, p.id)}
@@ -1132,7 +1139,7 @@ function PropertyCard({
             </div>
           </div>
         </div>
-        <div className="property-title">{p.title || p.address || 'Untitled'}</div>
+        <div className="property-title">{p.title || p.address || t('common.untitled')}</div>
         {p.deal_summary && (
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent, #6366f1)', marginTop: 6, lineHeight: 1.4 }}>
             💡 {p.deal_summary}
@@ -1144,7 +1151,7 @@ function PropertyCard({
           {p.bathrooms != null && <span className="property-attr">🚿 {p.bathrooms}</span>}
           {p.parking != null   && <span className="property-attr">🚗 {p.parking}</span>}
           {p.area_m2 != null   && <span className="property-attr">📐 {p.area_m2}m²</span>}
-          {p.price_per_m2      && <span className="property-attr" style={{ color: 'var(--text-muted)' }}>R${Math.round(p.price_per_m2)}/m²</span>}
+          {p.price_per_m2      && <span className="property-attr" style={{ color: 'var(--text-muted)' }}>R${formatNumber(Math.round(p.price_per_m2), locale)}/m²</span>}
           {locationLabel && <span className="property-attr" style={{ color: 'var(--text-muted)' }} data-testid="property-location">📍 {locationLabel}</span>}
         </div>
 
@@ -1159,7 +1166,7 @@ function PropertyCard({
             <>
               {p.combined_score_rent != null && (
                 <div className="score-badge combined" style={{ borderColor: listingTypeColor('rent').color }}>
-                  <span className="score-badge-label">Score Rent</span>
+                  <span className="score-badge-label">{t('properties.score')} {t('properties.scoreRent')}</span>
                   <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_rent) }}>
                     {displayScore(p.combined_score_rent)}
                   </span>
@@ -1167,7 +1174,7 @@ function PropertyCard({
               )}
               {p.combined_score_sale != null && (
                 <div className="score-badge combined" style={{ borderColor: listingTypeColor('sale').color }}>
-                  <span className="score-badge-label">Score Sale</span>
+                  <span className="score-badge-label">{t('properties.score')} {t('properties.scoreSale')}</span>
                   <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_sale) }}>
                     {displayScore(p.combined_score_sale)}
                   </span>
@@ -1175,13 +1182,13 @@ function PropertyCard({
               )}
               {p.stat_score_rent != null && (
                 <div className="score-badge stat" style={{ borderColor: listingTypeColor('rent').color }}>
-                  <span className="score-badge-label">Stat Rent</span>
+                  <span className="score-badge-label">{t('properties.statRent')}</span>
                   <span className="score-badge-val">{displayScore(p.stat_score_rent)}</span>
                 </div>
               )}
               {p.stat_score_sale != null && (
                 <div className="score-badge stat" style={{ borderColor: listingTypeColor('sale').color }}>
-                  <span className="score-badge-label">Stat Sale</span>
+                  <span className="score-badge-label">{t('properties.statSale')}</span>
                   <span className="score-badge-val">{displayScore(p.stat_score_sale)}</span>
                 </div>
               )}
@@ -1190,29 +1197,29 @@ function PropertyCard({
             <>
               {combinedScoreForListingType(p, listingType) != null && (
                 <div className="score-badge combined">
-                  <span className="score-badge-label">Score</span>
+                  <span className="score-badge-label">{t('properties.score')}</span>
                   <span className="score-badge-val" style={{ color: scoreColor(combinedScoreForListingType(p, listingType)) }}>
                     {displayScore(combinedScoreForListingType(p, listingType))}
                   </span>
                 </div>
               )}
               <div className="score-badge stat">
-                <span className="score-badge-label">Stat</span>
+                <span className="score-badge-label">{t('properties.stat')}</span>
                 <span className="score-badge-val">
                   {statScoreForListingType(p, listingType) != null
                     ? displayScore(statScoreForListingType(p, listingType))
-                    : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}
+                    : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ {t('common.calcPending')}</span>}
                 </span>
               </div>
             </>
           )}
           <div className="score-badge ai">
-            <span className="score-badge-label">AI</span>
-            <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ Calc</span>}</span>
+            <span className="score-badge-label">{t('properties.ai')}</span>
+            <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ {t('common.calcPending')}</span>}</span>
           </div>
           {p.neighbourhood_quality?.neighbourhood_score != null && (
-            <div className="score-badge" data-testid="card-nhood-score" title="Neighbourhood quality">
-              <span className="score-badge-label">Nhood</span>
+            <div className="score-badge" data-testid="card-nhood-score" title={t('properties.nhoodTitle')}>
+              <span className="score-badge-label">{t('properties.nhood')}</span>
               <span className="score-badge-val">{displayScore(p.neighbourhood_quality.neighbourhood_score)}</span>
             </div>
           )}
@@ -1220,7 +1227,7 @@ function PropertyCard({
 
         {((p.ai_green_flags || []).length > 0 || (p.ai_red_flags || []).length > 0) && (
           <div className="flags" style={{ marginTop: 10 }} data-testid="card-ad-claims">
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 6 }}>Ad claims</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 6 }}>{t('properties.adClaims')}</span>
             {(p.ai_green_flags || []).slice(0, 2).map(f => <span key={f} className="flag green">✔ {f}</span>)}
             {(p.ai_red_flags || []).slice(0, 1).map(f => <span key={f} className="flag red">✖ {f}</span>)}
           </div>

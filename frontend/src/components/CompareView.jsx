@@ -4,11 +4,8 @@ import {
 } from 'recharts'
 import { fetchPropertiesByIds, fetchPriceHistory } from '../api.js'
 import { formatPlatform } from '../labels.js'
-
-function formatPrice(value) {
-  if (value == null || Number.isNaN(Number(value))) return '—'
-  return `R$ ${Number(value).toLocaleString('pt-BR')}`
-}
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { formatCurrency, formatDate, formatPricePerM2 } from '../i18n/format.js'
 
 function formatScore(value) {
   if (value == null || Number.isNaN(Number(value))) return '—'
@@ -21,27 +18,16 @@ function decisioningPrice(property) {
   return null
 }
 
-function formatPricePerM2(value) {
-  if (value == null || Number.isNaN(Number(value))) return '—'
-  return `R$ ${Math.round(Number(value)).toLocaleString('pt-BR')}/m²`
-}
-
-function buildChartData(priceHistory) {
+function buildChartData(priceHistory, locale) {
   const grouped = {}
   for (const ph of priceHistory) {
     const lineKey = `${ph.listing_type || 'sale'}|${ph.platform || 'unknown'}`
     if (!grouped[lineKey]) grouped[lineKey] = []
-    const date = ph.start_ts
-      ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-      : '?'
+    const date = ph.start_ts ? formatDate(ph.start_ts, locale) : '?'
     grouped[lineKey].push({ date, price: ph.price, lineKey })
   }
   const allDates = [...new Set(
-    priceHistory.map((ph) => (
-      ph.start_ts
-        ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-        : '?'
-    )),
+    priceHistory.map((ph) => (ph.start_ts ? formatDate(ph.start_ts, locale) : '?')),
   )]
   const chartData = allDates.map((date) => {
     const point = { date }
@@ -57,97 +43,97 @@ function buildChartData(priceHistory) {
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
 
 const ATTR_ROWS = [
-  { key: 'title', label: 'Title', get: (p) => p.title || '—' },
-  { key: 'address', label: 'Address', get: (p) => p.address || '—' },
-  { key: 'neighborhood', label: 'Neighbourhood', get: (p) => p.neighborhood_name || '—' },
+  { key: 'title', labelKey: 'attr.title', get: (p) => p.title || '—' },
+  { key: 'address', labelKey: 'attr.address', get: (p) => p.address || '—' },
+  { key: 'neighborhood', labelKey: 'attr.neighbourhood', get: (p) => p.neighborhood_name || '—' },
   {
     key: 'neighbourhood_score',
-    label: 'Neighbourhood quality',
+    labelKey: 'attr.neighbourhoodQuality',
     get: (p) => formatScore(p.neighbourhood_quality?.neighbourhood_score),
   },
   {
     key: 'amenity_score',
-    label: 'Amenity score',
+    labelKey: 'attr.amenityScore',
     get: (p) => formatScore(p.neighbourhood_quality?.amenity_score),
   },
   {
     key: 'transit_score',
-    label: 'Transit score',
+    labelKey: 'attr.transitScore',
     get: (p) => formatScore(p.neighbourhood_quality?.transit_score),
   },
   {
     key: 'access_score',
-    label: 'Access score',
+    labelKey: 'attr.accessScore',
     get: (p) => formatScore(p.neighbourhood_quality?.access_score),
   },
   {
     key: 'safety_score',
-    label: 'Safety score',
+    labelKey: 'attr.safetyScore',
     get: (p) => formatScore(p.neighbourhood_quality?.safety_score),
   },
   {
     key: 'risk_flags',
-    label: 'Neighbourhood risks',
+    labelKey: 'attr.neighbourhoodRisks',
     get: (p) => {
       const flags = p.neighbourhood_quality?.risk_flags
       return Array.isArray(flags) && flags.length ? flags.join(', ') : '—'
     },
   },
-  { key: 'platform', label: 'Platform', get: (p) => formatPlatform(p.platform || p.primary_listing?.platform) },
+  { key: 'platform', labelKey: 'attr.platform', get: (p) => formatPlatform(p.platform || p.primary_listing?.platform) },
   {
     key: 'listing_type',
-    label: 'Listing type',
-    get: (p) => {
-      const t = p.primary_listing?.listing_type
-      if (t === 'rent') return 'Rent'
-      if (t === 'sale') return 'Sale'
+    labelKey: 'attr.listingType',
+    get: (p, { t }) => {
+      const type = p.primary_listing?.listing_type
+      if (type === 'rent') return t('common.rent')
+      if (type === 'sale') return t('common.sale')
       return '—'
     },
   },
-  { key: 'price', label: 'Price', get: (p) => formatPrice(decisioningPrice(p)) },
-  { key: 'price_per_m2', label: 'Price / m²', get: (p) => formatPricePerM2(p.price_per_m2) },
+  { key: 'price', labelKey: 'attr.price', get: (p, { locale }) => formatCurrency(decisioningPrice(p), locale) },
+  { key: 'price_per_m2', labelKey: 'attr.pricePerM2', get: (p, { locale }) => formatPricePerM2(p.price_per_m2, locale) },
   {
     key: 'price_per_m2_rent',
-    label: 'Price / m² (rent)',
-    get: (p) => formatPricePerM2(p.price_per_m2_rent),
+    labelKey: 'attr.pricePerM2Rent',
+    get: (p, { locale }) => formatPricePerM2(p.price_per_m2_rent, locale),
   },
   {
     key: 'neighborhood_mean_rent',
-    label: 'Neighbourhood avg / m² (rent)',
-    get: (p) => formatPricePerM2(p.neighborhood_mean_rent),
+    labelKey: 'attr.neighbourhoodAvgPerM2Rent',
+    get: (p, { locale }) => formatPricePerM2(p.neighborhood_mean_rent, locale),
   },
   {
     key: 'price_per_m2_sale',
-    label: 'Price / m² (sale)',
-    get: (p) => formatPricePerM2(p.price_per_m2_sale),
+    labelKey: 'attr.pricePerM2Sale',
+    get: (p, { locale }) => formatPricePerM2(p.price_per_m2_sale, locale),
   },
   {
     key: 'neighborhood_mean_sale',
-    label: 'Neighbourhood avg / m² (sale)',
-    get: (p) => formatPricePerM2(p.neighborhood_mean_sale),
+    labelKey: 'attr.neighbourhoodAvgPerM2Sale',
+    get: (p, { locale }) => formatPricePerM2(p.neighborhood_mean_sale, locale),
   },
-  { key: 'area', label: 'Area', get: (p) => (p.area_m2 != null ? `${p.area_m2} m²` : '—') },
-  { key: 'bedrooms', label: 'Bedrooms', get: (p) => (p.bedrooms != null ? String(p.bedrooms) : '—') },
-  { key: 'bathrooms', label: 'Bathrooms', get: (p) => (p.bathrooms != null ? String(p.bathrooms) : '—') },
-  { key: 'parking', label: 'Parking', get: (p) => (p.parking != null ? String(p.parking) : '—') },
-  { key: 'combined_score', label: 'Combined score', get: (p) => formatScore(p.combined_score) },
-  { key: 'combined_score_rent', label: 'Combined score (rent)', get: (p) => formatScore(p.combined_score_rent) },
-  { key: 'combined_score_sale', label: 'Combined score (sale)', get: (p) => formatScore(p.combined_score_sale) },
-  { key: 'stat_score', label: 'Statistical score', get: (p) => formatScore(p.stat_score) },
-  { key: 'stat_score_rent', label: 'Statistical score (rent)', get: (p) => formatScore(p.stat_score_rent) },
-  { key: 'stat_score_sale', label: 'Statistical score (sale)', get: (p) => formatScore(p.stat_score_sale) },
+  { key: 'area', labelKey: 'attr.area', get: (p) => (p.area_m2 != null ? `${p.area_m2} m²` : '—') },
+  { key: 'bedrooms', labelKey: 'attr.bedrooms', get: (p) => (p.bedrooms != null ? String(p.bedrooms) : '—') },
+  { key: 'bathrooms', labelKey: 'attr.bathrooms', get: (p) => (p.bathrooms != null ? String(p.bathrooms) : '—') },
+  { key: 'parking', labelKey: 'attr.parking', get: (p) => (p.parking != null ? String(p.parking) : '—') },
+  { key: 'combined_score', labelKey: 'attr.combinedScore', get: (p) => formatScore(p.combined_score) },
+  { key: 'combined_score_rent', labelKey: 'attr.combinedScoreRent', get: (p) => formatScore(p.combined_score_rent) },
+  { key: 'combined_score_sale', labelKey: 'attr.combinedScoreSale', get: (p) => formatScore(p.combined_score_sale) },
+  { key: 'stat_score', labelKey: 'attr.statisticalScore', get: (p) => formatScore(p.stat_score) },
+  { key: 'stat_score_rent', labelKey: 'attr.statisticalScoreRent', get: (p) => formatScore(p.stat_score_rent) },
+  { key: 'stat_score_sale', labelKey: 'attr.statisticalScoreSale', get: (p) => formatScore(p.stat_score_sale) },
   {
     key: 'z_score_rent',
-    label: 'Z-score (rent)',
+    labelKey: 'attr.zScoreRent',
     get: (p) => (p.z_score_rent != null ? p.z_score_rent.toFixed(3) : '—'),
   },
   {
     key: 'z_score_sale',
-    label: 'Z-score (sale)',
+    labelKey: 'attr.zScoreSale',
     get: (p) => (p.z_score_sale != null ? p.z_score_sale.toFixed(3) : '—'),
   },
-  { key: 'ai_score', label: 'AI score', get: (p) => formatScore(p.ai_score) },
-  { key: 'deal_summary', label: 'Deal summary', get: (p) => p.deal_summary || '—' },
+  { key: 'ai_score', labelKey: 'attr.aiScore', get: (p) => formatScore(p.ai_score) },
+  { key: 'deal_summary', labelKey: 'attr.dealSummary', get: (p) => p.deal_summary || '—' },
 ]
 
 /**
@@ -155,6 +141,7 @@ const ATTR_ROWS = [
  * @param {{ ids: string[], onClose: () => void, onClearSelection: () => void }} props
  */
 export default function CompareView({ ids, onClose, onClearSelection }) {
+  const { t, locale } = useLocale()
   const [properties, setProperties] = useState([])
   const [histories, setHistories] = useState({})
   const [loading, setLoading] = useState(true)
@@ -185,7 +172,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
         setHistories(Object.fromEntries(entries))
       } catch (err) {
         if (!cancelled) {
-          setError(err?.message || 'Failed to load comparison')
+          setError(err?.message || t('compare.failedLoad'))
           setProperties([])
           setHistories({})
         }
@@ -195,12 +182,12 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
     }
     load()
     return () => { cancelled = true }
-  }, [ids])
+  }, [ids]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="compare-view" data-testid="compare-view" role="dialog" aria-modal="true" aria-label="Compare properties">
+    <div className="compare-view" data-testid="compare-view" role="dialog" aria-modal="true" aria-label={t('compare.ariaLabel')}>
       <div className="compare-view-header">
-        <h2 className="compare-view-title">Compare properties</h2>
+        <h2 className="compare-view-title">{t('compare.title')}</h2>
         <div className="compare-view-actions">
           <button
             type="button"
@@ -208,7 +195,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
             data-testid="compare-exit"
             onClick={onClose}
           >
-            Back to grid
+            {t('compare.backToGrid')}
           </button>
           <button
             type="button"
@@ -216,13 +203,13 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
             data-testid="compare-exit-clear"
             onClick={onClearSelection}
           >
-            Clear & exit
+            {t('compare.clearAndExit')}
           </button>
         </div>
       </div>
 
       {loading && (
-        <div className="compare-view-status" data-testid="compare-loading">Loading comparison…</div>
+        <div className="compare-view-status" data-testid="compare-loading">{t('compare.loading')}</div>
       )}
       {error && (
         <div className="compare-view-status compare-view-status--error" data-testid="compare-error">
@@ -232,7 +219,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
 
       {!loading && !error && properties.length === 0 && (
         <div className="compare-view-status" data-testid="compare-empty">
-          No properties found for the selected ids.
+          {t('compare.empty')}
         </div>
       )}
 
@@ -242,10 +229,10 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
             <table className="compare-table" data-testid="compare-table">
               <thead>
                 <tr>
-                  <th scope="col" className="compare-attr-col">Attribute</th>
+                  <th scope="col" className="compare-attr-col">{t('compare.attribute')}</th>
                   {properties.map((p) => (
                     <th key={p.id} scope="col" data-testid={`compare-col-${p.id}`}>
-                      {p.title || `Property ${p.id}`}
+                      {p.title || t('common.propertyFallback', { id: p.id })}
                     </th>
                   ))}
                 </tr>
@@ -253,21 +240,21 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
               <tbody>
                 {ATTR_ROWS.map((row) => (
                   <tr key={row.key} data-testid={`compare-row-${row.key}`}>
-                    <th scope="row">{row.label}</th>
+                    <th scope="row">{t(row.labelKey)}</th>
                     {properties.map((p) => (
-                      <td key={p.id}>{row.get(p)}</td>
+                      <td key={p.id}>{row.get(p, { t, locale })}</td>
                     ))}
                   </tr>
                 ))}
                 <tr data-testid="compare-row-price-history">
-                  <th scope="row">Price history</th>
+                  <th scope="row">{t('compare.priceHistory')}</th>
                   {properties.map((p) => {
                     const history = histories[p.id] || []
                     if (history.length === 0) {
                       return (
                         <td key={p.id}>
                           <span className="compare-placeholder" data-testid={`compare-history-empty-${p.id}`}>
-                            No price history
+                            {t('compare.noPriceHistory')}
                           </span>
                         </td>
                       )
@@ -276,12 +263,12 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                       return (
                         <td key={p.id}>
                           <span className="compare-placeholder" data-testid={`compare-history-short-${p.id}`}>
-                            Needs ≥2 points
+                            {t('compare.needsTwoPoints')}
                           </span>
                         </td>
                       )
                     }
-                    const { chartData, lineKeys } = buildChartData(history)
+                    const { chartData, lineKeys } = buildChartData(history, locale)
                     return (
                       <td key={p.id}>
                         <div className="compare-history-chart" data-testid={`compare-history-${p.id}`}>
@@ -309,12 +296,15 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                                   color: 'var(--text-primary)',
                                   fontSize: 11,
                                 }}
-                                formatter={(value) => `R$ ${Number(value).toLocaleString('pt-BR')}`}
+                                formatter={(value) => formatCurrency(value, locale)}
                               />
                               <Legend wrapperStyle={{ fontSize: 10, color: 'var(--text-muted)' }} />
                               {lineKeys.map((key, i) => {
                                 const [type, platform] = key.split('|')
-                                const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${formatPlatform(platform)})`
+                                const label = t('common.listingTypeRentSale', {
+                                  type: type === 'rent' ? t('common.rent') : t('common.sale'),
+                                  platform: formatPlatform(platform),
+                                })
                                 return (
                                   <Line
                                     key={key}

@@ -7,6 +7,7 @@ import React, {
 } from 'react'
 import { fetchLocale, hasApiKey, updateLocale } from '../api.js'
 import { useToast } from '../components/ToastProvider.jsx'
+import { setActiveLocale } from './activeLocale.js'
 import {
   DEFAULT_LOCALE,
   normalizeLocale,
@@ -34,6 +35,7 @@ export function LocaleProvider({ children }) {
     async function boot() {
       if (!hasApiKey()) {
         document.documentElement.lang = DEFAULT_LOCALE
+        setActiveLocale(DEFAULT_LOCALE)
         if (!cancelled) setReady(true)
         return
       }
@@ -46,8 +48,10 @@ export function LocaleProvider({ children }) {
           setSupported(data.supported.filter((code) => SUPPORTED_LOCALES.includes(code)))
         }
         document.documentElement.lang = next
+        setActiveLocale(next)
       } catch {
         document.documentElement.lang = DEFAULT_LOCALE
+        setActiveLocale(DEFAULT_LOCALE)
       } finally {
         if (!cancelled) setReady(true)
       }
@@ -74,6 +78,7 @@ export function LocaleProvider({ children }) {
         if (Array.isArray(data.supported) && data.supported.length) {
           setSupported(data.supported.filter((code) => SUPPORTED_LOCALES.includes(code)))
         }
+        setActiveLocale(applied)
       } catch (err) {
         showToast(err.message || translate(locale, 'locale.saveFailed'), { type: 'error' })
       }

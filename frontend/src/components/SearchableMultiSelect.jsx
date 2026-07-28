@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useT } from '../i18n/LocaleContext.jsx'
 
 /**
  * Ant Design–style searchable multi-select: closed until clicked, tags with ×,
@@ -18,12 +19,15 @@ export default function SearchableMultiSelect({
   options = [],
   value = [],
   onChange,
-  placeholder = 'Select…',
-  searchPlaceholder = 'Search…',
+  placeholder,
+  searchPlaceholder,
   loading = false,
   'data-testid': testId,
   groupByCity = false,
 }) {
+  const t = useT()
+  const resolvedPlaceholder = placeholder ?? t('common.selectEllipsis')
+  const resolvedSearchPlaceholder = searchPlaceholder ?? t('common.searchEllipsis')
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
@@ -63,12 +67,12 @@ export default function SearchableMultiSelect({
     }
     const map = new Map()
     for (const opt of filtered) {
-      const g = opt.group || 'Other'
+      const g = opt.group || t('common.otherGroup')
       if (!map.has(g)) map.set(g, [])
       map.get(g).push(opt)
     }
     return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
-  }, [filtered, groupByCity])
+  }, [filtered, groupByCity, t])
 
   const toggle = (optValue) => {
     if (selected.has(optValue)) {
@@ -97,7 +101,7 @@ export default function SearchableMultiSelect({
       >
         <div className="sms-tags">
           {value.length === 0 && (
-            <span className="sms-placeholder">{loading ? 'Loading…' : placeholder}</span>
+            <span className="sms-placeholder">{loading ? t('common.loading') : resolvedPlaceholder}</span>
           )}
           {value.map((v) => (
             <span key={v} className="sms-tag">
@@ -106,7 +110,7 @@ export default function SearchableMultiSelect({
                 role="button"
                 tabIndex={0}
                 className="sms-tag-remove"
-                aria-label={`Remove ${labelFor(v)}`}
+                aria-label={t('common.removeItem', { name: labelFor(v) })}
                 onClick={(e) => removeTag(e, v)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') removeTag(e, v)
@@ -127,7 +131,7 @@ export default function SearchableMultiSelect({
               ref={searchRef}
               type="search"
               className="sms-search"
-              placeholder={searchPlaceholder}
+              placeholder={resolvedSearchPlaceholder}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onClick={(e) => e.stopPropagation()}
@@ -136,7 +140,7 @@ export default function SearchableMultiSelect({
           </div>
           <div className="sms-options">
             {grouped.every((g) => g.items.length === 0) && (
-              <div className="sms-empty">No matches</div>
+              <div className="sms-empty">{t('common.noMatches')}</div>
             )}
             {grouped.map(({ group, items }) => (
               <div key={group ?? '__flat'} className="sms-group">

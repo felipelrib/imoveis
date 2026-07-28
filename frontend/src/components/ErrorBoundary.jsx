@@ -1,4 +1,6 @@
 import React from 'react';
+import { t as translate } from '../i18n/index.js';
+import { getActiveLocale } from '../i18n/activeLocale.js';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -17,9 +19,10 @@ class ErrorBoundary extends React.Component {
 
   render() {
     if (this.state.hasError) {
+      const t = (key) => translate(getActiveLocale(), key);
       return (
         <div style={{ padding: '24px', background: 'var(--bg-surface)', border: '1px solid var(--accent-rose)', borderRadius: '8px', margin: '24px' }}>
-          <h2 style={{ color: 'var(--accent-rose)', marginTop: 0 }}>Something went wrong.</h2>
+          <h2 style={{ color: 'var(--accent-rose)', marginTop: 0 }}>{t('errors.somethingWrong')}</h2>
           <details style={{ whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', fontSize: '13px' }}>
             {this.state.error && this.state.error.toString()}
             <br />
@@ -30,7 +33,7 @@ class ErrorBoundary extends React.Component {
             style={{ marginTop: '16px' }}
             onClick={() => window.location.reload()}
           >
-            Reload Page
+            {t('errors.reloadPage')}
           </button>
         </div>
       );

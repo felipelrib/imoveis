@@ -5,6 +5,8 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from 'recharts'
 import { formatPlatform } from '../labels.js'
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { formatCurrency, formatDate, formatPricePerM2, formatNumber } from '../i18n/format.js'
 
 /**
  * Returns the URL only if it starts with https:// and matches a known platform host.
@@ -24,6 +26,7 @@ function sanitizeListingUrl(url) {
 }
 
 export default function PropertyModal({ id, onClose }) {
+  const { t, locale } = useLocale()
   const [property, setProperty] = useState(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
@@ -91,6 +94,7 @@ export default function PropertyModal({ id, onClose }) {
   const visual = p?.ai_analysis?.visual || {}
   const sentiment = p?.ai_analysis?.sentiment || {}
   const statAnalysis = p?.stat_analysis || {}
+  const emDash = t('common.emDash')
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -98,10 +102,10 @@ export default function PropertyModal({ id, onClose }) {
         <div className="modal-header">
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, background: 'var(--grad-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              {loading ? '…' : `R$ ${p?.price?.toLocaleString('pt-BR') || '—'}`}
+              {loading ? t('common.ellipsis') : formatCurrency(p?.price, locale)}
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
-              {loading ? '' : (p?.title || p?.address || 'Untitled')}
+              {loading ? '' : (p?.title || p?.address || t('common.untitled'))}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -111,15 +115,15 @@ export default function PropertyModal({ id, onClose }) {
                   className={`favourite-btn ${isFavourited ? 'favourited' : ''}`}
                   data-testid="modal-favourite-toggle"
                   onClick={toggleFavourite}
-                  title={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
-                  aria-label={isFavourited ? 'Remove from favourites' : 'Add to favourites'}
+                  title={isFavourited ? t('properties.removeFromFavourites') : t('properties.addToFavourites')}
+                  aria-label={isFavourited ? t('properties.removeFromFavourites') : t('properties.addToFavourites')}
                 >
                   <Star size={18} strokeWidth={2} fill={isFavourited ? 'currentColor' : 'none'} aria-hidden />
                 </button>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', padding: '4px 12px', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
                   {!isWatched && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Alert at</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{t('modal.alertAt')}</span>
                       <input
                         type="number"
                         min="1" max="50"
@@ -127,15 +131,15 @@ export default function PropertyModal({ id, onClose }) {
                         onChange={e => setDropPct(Number(e.target.value))}
                         style={{ width: 44, padding: '2px 4px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 4, color: 'var(--text-primary)', textAlign: 'center' }}
                       />
-                      <span style={{ color: 'var(--text-secondary)' }}>% drop</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{t('modal.pctDrop')}</span>
                     </div>
                   )}
                   <button
                     className={`watchlist-btn ${isWatched ? 'watched' : ''}`}
                     data-testid="modal-watchlist-toggle"
                     onClick={toggleWatchlist}
-                    title={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
-                    aria-label={isWatched ? 'Remove from watchlist' : 'Watch for price drops'}
+                    title={isWatched ? t('properties.removeFromWatchlist') : t('properties.watchForPriceDrops')}
+                    aria-label={isWatched ? t('properties.removeFromWatchlist') : t('properties.watchForPriceDrops')}
                   >
                     <Bell size={18} strokeWidth={2} fill={isWatched ? 'currentColor' : 'none'} aria-hidden />
                   </button>
@@ -154,7 +158,11 @@ export default function PropertyModal({ id, onClose }) {
                   className="btn btn-ghost btn-sm"
                   style={{ fontSize: 13 }}
                 >
-                  🔗 {formatPlatform(l.platform)} ({l.listing_type === 'rent' ? 'Rent' : 'Sale'}) - R$ {l.price?.toLocaleString('pt-BR')}
+                  {t('modal.listingLink', {
+                    platform: formatPlatform(l.platform),
+                    type: l.listing_type === 'rent' ? t('common.rent') : t('common.sale'),
+                    price: formatNumber(l.price, locale),
+                  })}
                 </a>
               )
             })}
@@ -166,10 +174,10 @@ export default function PropertyModal({ id, onClose }) {
                 className="btn btn-ghost btn-sm"
                 style={{ fontSize: 13 }}
               >
-                🔗 View original
+                🔗 {t('modal.viewOriginal')}
               </a>
             )}
-            <button className="modal-close" onClick={onClose} aria-label="Close modal">✕</button>
+            <button className="modal-close" onClick={onClose} aria-label={t('modal.closeModal')}>✕</button>
           </div>
         </div>
 
@@ -194,7 +202,7 @@ export default function PropertyModal({ id, onClose }) {
                         <img
                           key={i}
                           src={url}
-                          alt={`Thumbnail ${i + 1}`}
+                          alt={t('common.thumbnailAlt', { n: i + 1 })}
                           onClick={() => setImgIndex(i)}
                           role="button"
                           tabIndex={0}
@@ -215,73 +223,76 @@ export default function PropertyModal({ id, onClose }) {
 
               <div style={{ marginBottom: 20 }}>
                 {[
-                  ['Platform', formatPlatform(p.platform)],
-                  ['Address', p.address],
-                  ['Neighbourhood', p.neighborhood_name],
-                  ['Area', p.area_m2 ? `${p.area_m2} m²` : '—'],
-                  ['Bedrooms', p.bedrooms ?? '—'],
-                  ['Bathrooms', p.bathrooms ?? '—'],
-                  ['Parking', p.parking ?? '—'],
+                  [t('attr.platform'), formatPlatform(p.platform)],
+                  [t('attr.address'), p.address],
+                  [t('attr.neighbourhood'), p.neighborhood_name],
+                  [t('attr.area'), p.area_m2 ? t('common.areaM2', { n: p.area_m2 }) : emDash],
+                  [t('attr.bedrooms'), p.bedrooms ?? emDash],
+                  [t('attr.bathrooms'), p.bathrooms ?? emDash],
+                  [t('attr.parking'), p.parking ?? emDash],
                   ...(p.price_per_m2_rent != null
                     ? [
-                      ['Price / m² (rent)', `R$ ${Math.round(p.price_per_m2_rent)}/m²`],
+                      [t('attr.pricePerM2Rent'), formatPricePerM2(p.price_per_m2_rent, locale)],
                       [
-                        'Neighbourhood avg / m² (rent)',
+                        t('attr.neighbourhoodAvgPerM2Rent'),
                         p.neighborhood_mean_rent != null
-                          ? `R$ ${Math.round(p.neighborhood_mean_rent)}/m²`
-                          : '—',
+                          ? formatPricePerM2(p.neighborhood_mean_rent, locale)
+                          : emDash,
                       ],
                     ]
                     : []),
                   ...(p.price_per_m2_sale != null
                     ? [
-                      ['Price / m² (sale)', `R$ ${Math.round(p.price_per_m2_sale)}/m²`],
+                      [t('attr.pricePerM2Sale'), formatPricePerM2(p.price_per_m2_sale, locale)],
                       [
-                        'Neighbourhood avg / m² (sale)',
+                        t('attr.neighbourhoodAvgPerM2Sale'),
                         p.neighborhood_mean_sale != null
-                          ? `R$ ${Math.round(p.neighborhood_mean_sale)}/m²`
-                          : '—',
+                          ? formatPricePerM2(p.neighborhood_mean_sale, locale)
+                          : emDash,
                       ],
                     ]
                     : []),
                   ...(p.price_per_m2_rent == null && p.price_per_m2_sale == null
                     ? [
-                      ['Price / m²', p.price_per_m2 ? `R$ ${Math.round(p.price_per_m2)}/m²` : '—'],
+                      [t('attr.pricePerM2'), p.price_per_m2 ? formatPricePerM2(p.price_per_m2, locale) : emDash],
                       [
-                        'Neighbourhood avg / m²',
-                        p.neighborhood_mean ? `R$ ${Math.round(p.neighborhood_mean)}/m²` : '—',
+                        t('attr.neighbourhoodAvgPerM2'),
+                        p.neighborhood_mean ? formatPricePerM2(p.neighborhood_mean, locale) : emDash,
                       ],
                     ]
                     : []),
                   ...(p.combined_score_rent != null
                     ? [
-                      ['Combined score (rent)', p.combined_score_rent != null ? `${(p.combined_score_rent * 100).toFixed(0)}` : '—'],
-                      ['Statistical score (rent)', p.stat_score_rent != null ? `${(p.stat_score_rent * 100).toFixed(0)}` : '—'],
-                      ['Z-score (rent)', p.z_score_rent != null ? p.z_score_rent.toFixed(3) : '—'],
+                      [t('attr.combinedScoreRent'), p.combined_score_rent != null ? `${(p.combined_score_rent * 100).toFixed(0)}` : emDash],
+                      [t('attr.statisticalScoreRent'), p.stat_score_rent != null ? `${(p.stat_score_rent * 100).toFixed(0)}` : emDash],
+                      [t('attr.zScoreRent'), p.z_score_rent != null ? p.z_score_rent.toFixed(3) : emDash],
                       [
-                        'Percentile (rent)',
-                        p.percentile_rank_rent != null ? `${(p.percentile_rank_rent * 100).toFixed(1)}th pct` : '—',
+                        t('attr.percentileRent'),
+                        p.percentile_rank_rent != null ? t('common.percentile', { n: (p.percentile_rank_rent * 100).toFixed(1) }) : emDash,
                       ],
                     ]
                     : []),
                   ...(p.combined_score_sale != null
                     ? [
-                      ['Combined score (sale)', p.combined_score_sale != null ? `${(p.combined_score_sale * 100).toFixed(0)}` : '—'],
-                      ['Statistical score (sale)', p.stat_score_sale != null ? `${(p.stat_score_sale * 100).toFixed(0)}` : '—'],
-                      ['Z-score (sale)', p.z_score_sale != null ? p.z_score_sale.toFixed(3) : '—'],
+                      [t('attr.combinedScoreSale'), p.combined_score_sale != null ? `${(p.combined_score_sale * 100).toFixed(0)}` : emDash],
+                      [t('attr.statisticalScoreSale'), p.stat_score_sale != null ? `${(p.stat_score_sale * 100).toFixed(0)}` : emDash],
+                      [t('attr.zScoreSale'), p.z_score_sale != null ? p.z_score_sale.toFixed(3) : emDash],
                       [
-                        'Percentile (sale)',
-                        p.percentile_rank_sale != null ? `${(p.percentile_rank_sale * 100).toFixed(1)}th pct` : '—',
+                        t('attr.percentileSale'),
+                        p.percentile_rank_sale != null ? t('common.percentile', { n: (p.percentile_rank_sale * 100).toFixed(1) }) : emDash,
                       ],
                     ]
                     : []),
                   ...(p.combined_score_rent == null && p.combined_score_sale == null
                     ? [
-                      ['Percentile in neighbourhood', p.percentile_rank != null ? `${(p.percentile_rank * 100).toFixed(1)}th pct` : '—'],
-                      ['Z-score', p.z_score != null ? p.z_score.toFixed(3) : '—'],
+                      [
+                        t('attr.percentileInNeighbourhood'),
+                        p.percentile_rank != null ? t('common.percentile', { n: (p.percentile_rank * 100).toFixed(1) }) : emDash,
+                      ],
+                      [t('attr.zScore'), p.z_score != null ? p.z_score.toFixed(3) : emDash],
                     ]
                     : []),
-                ].filter(([, v]) => v && v !== '—' || v === '—').map(([k, v]) => (
+                ].filter(([, v]) => v && v !== emDash || v === emDash).map(([k, v]) => (
                   <div key={k} className="detail-row">
                     <span className="detail-key">{k}</span>
                     <span className="detail-val">{v}</span>
@@ -297,15 +308,15 @@ export default function PropertyModal({ id, onClose }) {
                   if (!groups[key]) groups[key] = []
                   groups[key].push(l)
                 }
-                const typeLabel = (t) => t === 'rent' ? 'Rent' : 'Sale'
-                const typeColor = (t) => t === 'rent'
+                const typeLabel = (type) => type === 'rent' ? t('common.rent') : t('common.sale')
+                const typeColor = (type) => type === 'rent'
                   ? { bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)', header: '#818cf8' }
                   : { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', header: '#34d399' }
-                const money = (v) => (v != null && v !== 0 ? `R$ ${Number(v).toLocaleString('pt-BR')}` : '—')
+                const money = (v) => (v != null && v !== 0 ? formatCurrency(v, locale) : emDash)
                 return (
                   <div style={{ marginBottom: 20 }} data-testid="listings-by-platform">
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                      Listings by Platform
+                      {t('modal.listingsByPlatform')}
                     </div>
                     {Object.entries(groups).map(([type, listings]) => {
                       const colors = typeColor(type)
@@ -313,17 +324,17 @@ export default function PropertyModal({ id, onClose }) {
                       return (
                         <div key={type} style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: colors.header, marginBottom: 6, padding: '4px 8px', background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '6px 6px 0 0' }}>
-                            {typeLabel(type)} ({listings.length} {listings.length === 1 ? 'listing' : 'listings'})
+                            {t(listings.length === 1 ? 'modal.listingCountOne' : 'modal.listingCountMany', { type: typeLabel(type), n: listings.length })}
                           </div>
                           <div style={{ overflowX: 'auto' }}>
                             <table className="listings-table">
                               <thead>
                                 <tr>
-                                  <th>Platform</th>
-                                  <th>Price</th>
-                                  <th>Base</th>
-                                  <th>Condo</th>
-                                  <th>IPTU</th>
+                                  <th>{t('modal.colPlatform')}</th>
+                                  <th>{t('modal.colPrice')}</th>
+                                  <th>{t('modal.colBase')}</th>
+                                  <th>{t('modal.colCondo')}</th>
+                                  <th>{t('modal.colIptu')}</th>
                                   <th></th>
                                 </tr>
                               </thead>
@@ -335,7 +346,7 @@ export default function PropertyModal({ id, onClose }) {
                                       <td style={{ fontWeight: 600 }}>
                                         {formatPlatform(l.platform)}
                                         {l.fees_bundled ? (
-                                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }} title="Condo/IPTU bundled or derived">bundled fees</span>
+                                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)' }} title={t('modal.bundledFeesTitle')}>{t('modal.bundledFees')}</span>
                                         ) : null}
                                       </td>
                                       <td style={{ fontWeight: isBest ? 800 : 400, color: isBest ? '#34d399' : 'inherit' }}>
@@ -346,11 +357,11 @@ export default function PropertyModal({ id, onClose }) {
                                       <td>{money(l.iptu)}</td>
                                       <td>
                                         {sanitizeListingUrl(l.url) ? (
-                                          <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title="Open on platform">
+                                          <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title={t('modal.openOnPlatform')}>
                                             →
                                           </a>
                                         ) : (
-                                          <span className="listing-link-unavailable" title="Link unavailable">✕</span>
+                                          <span className="listing-link-unavailable" title={t('modal.linkUnavailable')}>✕</span>
                                         )}
                                       </td>
                                     </tr>
@@ -362,18 +373,18 @@ export default function PropertyModal({ id, onClose }) {
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 4px 0' }} data-testid={`listing-attrs-${type}`}>
                             {listings.map((l) => {
                               const chips = []
-                              if (l.is_furnished === true) chips.push('Furnished')
-                              else if (l.is_furnished === false) chips.push('Unfurnished')
-                              if (l.accepts_pets === true) chips.push('Pets OK')
-                              else if (l.accepts_pets === false) chips.push('No pets')
+                              if (l.is_furnished === true) chips.push({ slug: 'furnished', labelKey: 'modal.furnished' })
+                              else if (l.is_furnished === false) chips.push({ slug: 'unfurnished', labelKey: 'modal.unfurnished' })
+                              if (l.accepts_pets === true) chips.push({ slug: 'pets-ok', labelKey: 'modal.petsOk' })
+                              else if (l.accepts_pets === false) chips.push({ slug: 'no-pets', labelKey: 'modal.noPets' })
                               if (!chips.length) return null
                               return (
                                 <div key={`attrs-${l.platform}-${l.platform_listing_id}`} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                                   <span style={{ fontWeight: 600, marginRight: 6 }}>{formatPlatform(l.platform)}:</span>
                                   {chips.map((c) => (
                                     <span
-                                      key={c}
-                                      data-testid={`attr-chip-${c.toLowerCase().replace(/\s+/g, '-')}`}
+                                      key={c.slug}
+                                      data-testid={`attr-chip-${c.slug}`}
                                       style={{
                                         display: 'inline-block',
                                         marginRight: 6,
@@ -383,7 +394,7 @@ export default function PropertyModal({ id, onClose }) {
                                         background: 'var(--bg-card)',
                                       }}
                                     >
-                                      {c}
+                                      {t(c.labelKey)}
                                     </span>
                                   ))}
                                 </div>
@@ -399,14 +410,14 @@ export default function PropertyModal({ id, onClose }) {
 
               <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                 {[
-                  { label: 'Combined', val: p.combined_score, color: '#6366f1' },
-                  { label: 'Statistical', val: p.stat_score, color: '#06b6d4' },
-                  { label: 'AI Quality', val: p.ai_score, color: '#10b981' },
-                ].map(({ label, val, color }) => (
-                  <div key={label} style={{ flex: 1, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 6 }}>{label}</div>
+                  { labelKey: 'modal.scoreCombined', val: p.combined_score, color: '#6366f1' },
+                  { labelKey: 'modal.scoreStatistical', val: p.stat_score, color: '#06b6d4' },
+                  { labelKey: 'modal.scoreAiQuality', val: p.ai_score, color: '#10b981' },
+                ].map(({ labelKey, val, color }) => (
+                  <div key={labelKey} style={{ flex: 1, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 6 }}>{t(labelKey)}</div>
                     <div style={{ fontSize: 26, fontWeight: 800, color: val != null ? color : 'var(--text-muted)' }}>
-                      {val != null ? (val * 100).toFixed(0) : '—'}
+                      {val != null ? (val * 100).toFixed(0) : emDash}
                     </div>
                     {val != null && (
                       <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', marginTop: 8 }}>
@@ -426,7 +437,7 @@ export default function PropertyModal({ id, onClose }) {
                   borderRadius: 12,
                 }}>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
-                    💡 Deal verdict
+                    {t('modal.dealVerdict')}
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.5, background: 'linear-gradient(135deg, #6366f1, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                     {p.deal_summary}
@@ -437,13 +448,13 @@ export default function PropertyModal({ id, onClose }) {
               <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {statAnalysis.category && (
                   <div style={{ padding: '12px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0891b2', marginBottom: 4 }}>Statistical: {statAnalysis.category}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0891b2', marginBottom: 4 }}>{t('modal.statisticalCategory', { category: statAnalysis.category })}</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{statAnalysis.reasoning}</div>
                   </div>
                 )}
                 {visual.category && (
                   <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>Visual Condition: {visual.category}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#059669', marginBottom: 4 }}>{t('modal.visualCondition', { category: visual.category })}</div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{visual.reasoning}</div>
                   </div>
                 )}
@@ -453,7 +464,7 @@ export default function PropertyModal({ id, onClose }) {
                     style={{ padding: '12px', background: 'rgba(14, 165, 233, 0.1)', border: '1px solid rgba(14, 165, 233, 0.25)', borderRadius: 8 }}
                   >
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#0284c7', marginBottom: 8 }}>
-                      Neighbourhood quality
+                      {t('modal.neighbourhoodQuality')}
                       {p.neighbourhood_quality.neighbourhood_score != null && (
                         <span style={{ marginLeft: 8, fontWeight: 600 }}>
                           {(p.neighbourhood_quality.neighbourhood_score * 100).toFixed(0)}%
@@ -462,13 +473,13 @@ export default function PropertyModal({ id, onClose }) {
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: (p.neighbourhood_quality.risk_flags || []).length ? 8 : 0 }}>
                       {[
-                        ['Amenity', p.neighbourhood_quality.amenity_score],
-                        ['Transit', p.neighbourhood_quality.transit_score],
-                        ['Access', p.neighbourhood_quality.access_score],
-                        ['Safety', p.neighbourhood_quality.safety_score],
+                        [t('attr.amenity'), p.neighbourhood_quality.amenity_score],
+                        [t('attr.transit'), p.neighbourhood_quality.transit_score],
+                        [t('attr.access'), p.neighbourhood_quality.access_score],
+                        [t('attr.safety'), p.neighbourhood_quality.safety_score],
                       ].map(([label, score]) => (
                         <span key={label} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                          {label}: {score != null ? `${(score * 100).toFixed(0)}%` : '—'}
+                          {t('attr.scoreWithValue', { label, value: score != null ? `${(score * 100).toFixed(0)}%` : emDash })}
                         </span>
                       ))}
                     </div>
@@ -492,7 +503,7 @@ export default function PropertyModal({ id, onClose }) {
                     style={{ padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 8 }}
                   >
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>
-                      Ad claims (listing): {sentiment.category}
+                      {t('modal.adClaimsListing', { category: sentiment.category })}
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sentiment.reasoning}</div>
                   </div>
@@ -502,11 +513,11 @@ export default function PropertyModal({ id, onClose }) {
               {(visual.features_detected?.length > 0 || visual.issues_detected?.length > 0 || sentiment.green_flags?.length > 0 || sentiment.red_flags?.length > 0) && (
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                    🤖 AI Analysis
+                    🤖 {t('modal.aiAnalysis')}
                   </div>
                   {visual.features_detected?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Modern features</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.modernFeatures')}</div>
                       <div className="flags">
                         {visual.features_detected.map(f => <span key={f} className="flag feature">✦ {f}</span>)}
                       </div>
@@ -514,7 +525,7 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   {visual.issues_detected?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Issues detected</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.issuesDetected')}</div>
                       <div className="flags">
                         {visual.issues_detected.map(f => <span key={f} className="flag red">⚠ {f}</span>)}
                       </div>
@@ -522,7 +533,7 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   {sentiment.green_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Claims from listing (positives)</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.claimsPositives')}</div>
                       <div className="flags">
                         {sentiment.green_flags.map(f => <span key={f} className="flag green">✔ {f}</span>)}
                       </div>
@@ -530,7 +541,7 @@ export default function PropertyModal({ id, onClose }) {
                   )}
                   {sentiment.red_flags?.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Claims from listing (concerns)</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.claimsConcerns')}</div>
                       <div className="flags">
                         {sentiment.red_flags.map(f => <span key={f} className="flag red">✖ {f}</span>)}
                       </div>
@@ -546,11 +557,11 @@ export default function PropertyModal({ id, onClose }) {
                 for (const ph of priceHistory) {
                   const lineKey = `${ph.listing_type || 'sale'}|${ph.platform || 'unknown'}`
                   if (!grouped[lineKey]) grouped[lineKey] = []
-                  const date = ph.start_ts ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '?'
+                  const date = ph.start_ts ? formatDate(ph.start_ts, locale) : '?'
                   grouped[lineKey].push({ date, price: ph.price, lineKey })
                 }
                 // Build unified date-based data
-                const allDates = [...new Set(priceHistory.map(ph => ph.start_ts ? new Date(ph.start_ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '?'))]
+                const allDates = [...new Set(priceHistory.map(ph => ph.start_ts ? formatDate(ph.start_ts, locale) : '?'))]
                 const chartData = allDates.map(date => {
                   const point = { date }
                   for (const [key, entries] of Object.entries(grouped)) {
@@ -564,7 +575,7 @@ export default function PropertyModal({ id, onClose }) {
                 return (
                   <div style={{ marginBottom: 20 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                      📈 Price History
+                      📈 {t('modal.priceHistory')}
                     </div>
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '12px 8px 0' }}>
                       <ResponsiveContainer width="100%" height={200}>
@@ -578,12 +589,15 @@ export default function PropertyModal({ id, onClose }) {
                           />
                           <Tooltip
                             contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
-                            formatter={(value) => `R$ ${Number(value).toLocaleString('pt-BR')}`}
+                            formatter={(value) => formatCurrency(value, locale)}
                           />
                           <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
                           {lineKeys.map((key, i) => {
                             const [type, platform] = key.split('|')
-                            const label = `${type === 'rent' ? 'Rent' : 'Sale'} (${formatPlatform(platform)})`
+                            const label = t('common.listingTypeRentSale', {
+                              type: type === 'rent' ? t('common.rent') : t('common.sale'),
+                              platform: formatPlatform(platform),
+                            })
                             return (
                               <Line key={key} type="monotone" dataKey={key} stroke={colors[i % colors.length]}
                                 strokeWidth={2} dot={{ r: 3 }} name={label} connectNulls={false} />
@@ -597,7 +611,7 @@ export default function PropertyModal({ id, onClose }) {
               })()}
               {priceHistory.length > 0 && priceHistory.length < 2 && (
                 <div style={{ marginBottom: 20, padding: '10px 14px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', fontSize: 12, color: 'var(--text-muted)' }}>
-                  Price history needs at least 2 data points to display a chart.
+                  {t('modal.priceHistoryNeedPoints')}
                 </div>
               )}
 

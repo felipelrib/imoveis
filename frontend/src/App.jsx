@@ -46,7 +46,7 @@ function AppShell() {
           <div className="sidebar-logo-icon">🏙️</div>
           <div>
             <div className="sidebar-logo-text">Imóveis AI</div>
-            <div className="sidebar-logo-sub">Real Estate Ingestor</div>
+            <div className="sidebar-logo-sub">{t('brand.tagline')}</div>
           </div>
         </div>
 
