@@ -12,7 +12,7 @@ After BIN-84 split rent/sale price-per-m² cohorts, `stat_score`, `z_score`, and
 - Bulk scoring SQL already had per-type stddev/percentile — compute dual scores in the Python loop and in `score_single_property`.
 - List `ORDER BY` and `min_score` switch to typed `combined_score_*` when `listing_type=rent|sale`; primary column when `both`.
 - Cards show **dual badges** (Rent + Sale scores) when Transaction=Both and both typed scores exist; single typed badge when filtered.
-- Top-deals digest unchanged (primary score) — type-aware digest deferred to follow-up.
+- Top-deals digest supports type-aware ranking via `alerts.top_deals.score_target` (BIN-107 / feature 88).
 
 ## Changes
 
@@ -54,6 +54,6 @@ None.
 
 ## Notes / Follow-ups
 
-- **Follow-up**: Type-aware top-deals digest — rank/filter by rent or sale `combined_score_*` instead of primary only.
+- Type-aware top-deals digest shipped as BIN-107 / feature 88 (`alerts.top_deals.score_target`).
 - Existing rows need Recalculate (or enrichment calling `score_single_property`) to populate dual columns.
 - Depends on BIN-84 rent/sale ppm cohort columns.

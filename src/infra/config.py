@@ -225,6 +225,8 @@ class TopDealsDigestConfig(BaseModel, frozen=True):
     limit: int = 10
     min_combined_score: float = 0.0
     lookback_hours: int = 168  # 7 days
+    # Which combined_score column to rank/filter on (BIN-107).
+    score_target: Literal["primary", "rent", "sale"] = "primary"
     crontab_hour: int = 8
     crontab_minute: int = 0
     crontab_day_of_week: str = "0"  # Sunday (Celery crontab)
