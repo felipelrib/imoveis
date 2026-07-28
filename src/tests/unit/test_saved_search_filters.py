@@ -1,8 +1,23 @@
-"""Unit tests for saved-search EN wire filters (BIN-100)."""
+"""Unit tests for saved-search EN wire filters (BIN-100 / BIN-109)."""
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from api.main import app
 from api.saved_searches import SavedSearchFilters
+from infra.config import AuthConfig, get_config
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    get_config.cache_clear()
+    yield
+    get_config.cache_clear()
 
 
 def test_camel_case_filters_normalize_to_snake_en_wire():
@@ -93,3 +108,85 @@ def test_empty_strings_excluded_from_wire():
     assert "is_furnished" not in wire
     assert "accepts_pets" not in wire
     assert "q" not in wire
+
+
+class _InsertCapturingSession:
+    """Minimal session that records INSERT filter JSON for create assertions."""
+
+    def __init__(self):
+        self.inserted_filters: dict | None = None
+        self.committed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        pass
+
+    def execute(self, statement, params=None):
+        sql = str(statement).lower()
+        params = params or {}
+        if "insert into saved_searches" in sql:
+            raw = params.get("filters")
+            if isinstance(raw, str):
+                self.inserted_filters = json.loads(raw)
+            elif isinstance(raw, dict):
+                self.inserted_filters = raw
+            else:
+                self.inserted_filters = {}
+        return MagicMock(rowcount=1)
+
+
+@pytest.mark.unit
+def test_create_saved_search_accepts_camel_case_price_type(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """BIN-109: POST /saved-searches with camelCase filters → snake_case wire."""
+    store = _InsertCapturingSession()
+    monkeypatch.setattr("api.saved_searches.SessionLocal", lambda: store)
+
+    cfg = MagicMock()
+    cfg.auth = AuthConfig(
+        api_key="key-a",
+        jwt_secret="test-jwt-secret",
+        principal_id="alice",
+        admin_user="admin",
+        admin_pass="admin",
+    )
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    created = client.post(
+        "/saved-searches",
+        headers={"X-API-Key": "key-a"},
+        json={
+            "name": "Sale budget BH",
+            "filters": {
+                "maxPrice": 500000,
+                "priceType": "sale",
+                "listingType": "sale",
+                "propertyType": "apartment",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["filters"]["max_price"] == 500000.0
+    assert body["filters"]["price_type"] == "sale"
+    assert body["filters"]["listing_type"] == "sale"
+    assert body["filters"]["property_type"] == "apartment"
+    assert "priceType" not in body["filters"]
+    assert "maxPrice" not in body["filters"]
+
+    assert store.committed is True
+    assert store.inserted_filters is not None
+    assert store.inserted_filters["max_price"] == 500000.0
+    assert store.inserted_filters["price_type"] == "sale"
+    assert "priceType" not in store.inserted_filters

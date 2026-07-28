@@ -23,7 +23,7 @@ Files touched:
  src/tests/integration/test_sort_price_listing_type.py      | NEW — crossed dual-listed order
  src/tests/contract/test_api_contract.py                    | Smoke: sort_by=price + listing_type=sale
  docs/features/57-max-price-rent-sale-filter.md             | Mark sort follow-up resolved
- docs/features/84-listing-type-aware-sort-price.md          | NEW — this note
+ docs/features/86-listing-type-aware-sort-price.md          | NEW — this note
 ```
 
 ## New Dependencies

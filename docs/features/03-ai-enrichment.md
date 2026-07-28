@@ -11,7 +11,7 @@ Raw property listings lack quality signals. Users need to understand property co
 - **Dual-backend abstraction** (`LocalAIClient` ABC): Supports Ollama (`/api/generate`) and LM Studio (`/v1/chat/completions`) with shared `analyze_visuals()` and `analyze_text()` interfaces.
 - **VLM visual analysis**: Sends up to 5 property photos (base64-encoded) to a vision model (e.g., LLaVA) with a detailed prompt requesting `condition_score` (0-1), `category`, `features_detected`, and `issues_detected`.
 - **LLM sentiment analysis**: Sends property description text to a text model (e.g., Llama 3) for location/lifestyle evaluation, extracting `green_flags`, `red_flags`, `sentiment_score`.
-- **Deal verdict synthesis**: Combines statistical, visual, and sentiment analyses into a single PT-BR "punchline" sentence. Uses LLM when available, falls back to a deterministic template (`template_deal_verdict`).
+- **Deal verdict synthesis**: Combines statistical, visual, and sentiment analyses into a single locale-aware "punchline" sentence (English default; `pt-BR` when UI locale is Portuguese — see [82-localize-ai-tags-verdicts.md](82-localize-ai-tags-verdicts.md) / BIN-101). Uses LLM when available, falls back to a deterministic template (`template_deal_verdict`). Details: [15-deal-summary-enrichment.md](15-deal-summary-enrichment.md).
 - **Image store**: Downloads and caches images locally by MD5 hash to avoid re-downloading and re-encoding.
 - **Few-shot prompts**: Both visual and sentiment prompts include 3 few-shot examples for consistent JSON output.
 
