@@ -60,7 +60,7 @@ None.
 
 ## Notes / Follow-ups
 
-- BIN-100: locale-aware filter labels + PT synonym → EN wire (not synonym maps here).
+- BIN-100: locale-aware filter labels + PT synonym → EN wire — see `docs/features/80-locale-aware-filters.md`.
 - BIN-101: localize AI tags / verdicts / score *payload* copy (only chrome labels shipped here).
 - Scraped listing bodies and neighbourhood proper nouns remain untranslated by design.
 - Map popup click handlers register once per map source create; rare mid-session locale switch may need a map remount to refresh popup chrome (acceptable for single-operator preference change).

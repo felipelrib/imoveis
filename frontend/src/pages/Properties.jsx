@@ -16,6 +16,7 @@ import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatNumber, formatCurrency } from '../i18n/format.js'
+import { fromSavedSearchWire, toSavedSearchWire } from '../savedSearchFilters.js'
 import {
   PROPERTIES_PATH,
   FAVOURITES_PATH,
@@ -276,17 +277,18 @@ export default function Properties() {
     }
   }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
-  const applyFilters = useCallback((filters) => {
+  const applyFilters = useCallback((rawFilters) => {
+    const filters = fromSavedSearchWire(rawFilters)
     if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
     if (filters.sortDir !== undefined) setSortDir(filters.sortDir)
     if (filters.listingType !== undefined) setListingType(filters.listingType)
     if (filters.propertyType !== undefined) setPropertyType(filters.propertyType)
     if (filters.platform !== undefined) setPlatform(filters.platform)
-    if (filters.maxPrice !== undefined) setMaxPrice(filters.maxPrice)
+    if (filters.maxPrice !== undefined) setMaxPrice(String(filters.maxPrice))
     if (filters.priceType !== undefined) setPriceType(filters.priceType)
-    if (filters.minBedrooms !== undefined) setMinBedrooms(filters.minBedrooms)
-    if (filters.minParking !== undefined) setMinParking(filters.minParking)
-    if (filters.minScore !== undefined) setMinScore(filters.minScore)
+    if (filters.minBedrooms !== undefined) setMinBedrooms(String(filters.minBedrooms))
+    if (filters.minParking !== undefined) setMinParking(String(filters.minParking))
+    if (filters.minScore !== undefined) setMinScore(String(filters.minScore))
     if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood)
     if (filters.city !== undefined) setCity(filters.city)
     if (filters.isFurnished !== undefined) setIsFurnished(filters.isFurnished)
@@ -433,9 +435,9 @@ export default function Properties() {
   const handleSaveSearch = async () => {
     if (!saveName.trim()) return
     try {
-      await saveSearch(saveName.trim(), currentFilters)
+      await saveSearch(saveName.trim(), toSavedSearchWire(currentFilters))
       const updated = await fetchSavedSearches()
-      setSavedSearches(updated)
+      setSavedSearches(updated.items || [])
       setSaveName('')
       setShowSaveDialog(false)
       showToast(t('properties.toastSearchSaved'), { type: 'success' })
@@ -580,7 +582,7 @@ export default function Properties() {
 
               <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
                 <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.sortBy')}</label>
-                <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+                <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)} data-testid="sort-by-filter">
                   {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
                 </select>
               </div>
@@ -596,6 +598,7 @@ export default function Properties() {
                     setListingType(next)
                     if (next === 'rent' || next === 'sale') setPriceType(next)
                   }}
+                  data-testid="listing-type-filter"
                 >
                   <option value="both">{t('properties.rentAndSale')}</option>
                   <option value="rent">{t('properties.rentOnly')}</option>
@@ -740,11 +743,11 @@ export default function Properties() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 8 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} />
+                    <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} data-testid="furnished-filter" />
                     {t('properties.furnished')}
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={acceptsPets} onChange={e => setAcceptsPets(e.target.checked)} />
+                    <input type="checkbox" checked={acceptsPets} onChange={e => setAcceptsPets(e.target.checked)} data-testid="pets-filter" />
                     {t('properties.petFriendly')}
                   </label>
                 </div>

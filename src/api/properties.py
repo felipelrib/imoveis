@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from sqlalchemy import text
 from sqlalchemy.exc import DataError, StatementError
 
@@ -29,6 +29,7 @@ from api.schemas import (
     PropertyDetailModel,
     PropertyExportResponse,
 )
+from core.listing_type import normalize_listing_type, normalize_price_type
 from core.neighbourhood_quality import quality_profile_fields
 from infra.db import SessionLocal
 from infra.limiter import limiter
@@ -41,6 +42,26 @@ _RESP_404 = {404: {"description": "Property not found"}}
 # Back-compat aliases for in-module f-strings / detail query
 _LISTINGS_JSON_AGG = LISTINGS_JSON_AGG
 _LIST_SELECT_COLUMNS = LIST_SELECT_COLUMNS
+
+
+def _coerce_listing_type(value: Any) -> Any:
+    """Normalize PT listing_type aliases to EN before pattern validation."""
+    if value is None or not isinstance(value, str):
+        return value
+    canonical = normalize_listing_type(value)
+    return canonical if canonical is not None else value
+
+
+def _coerce_price_type(value: Any) -> Any:
+    """Normalize PT price_type aliases to EN before pattern validation."""
+    if value is None or not isinstance(value, str):
+        return value
+    canonical = normalize_price_type(value)
+    return canonical if canonical is not None else value
+
+
+ListingTypeParam = Annotated[Optional[str], BeforeValidator(_coerce_listing_type)]
+PriceTypeParam = Annotated[Optional[str], BeforeValidator(_coerce_price_type)]
 
 
 def _effective_combined_score_expr(listing_type: Optional[str]) -> str:
@@ -60,12 +81,12 @@ class PropertyListFilters(BaseModel):
     platform: Optional[str] = None
     min_score: Optional[float] = Field(None, ge=0, le=1)
     max_price: Optional[float] = None
-    price_type: Optional[str] = Field(None, pattern="^(rent|sale)$")
+    price_type: PriceTypeParam = Field(None, pattern="^(rent|sale)$")
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
     city_name: Optional[str] = None
-    listing_type: Optional[str] = Field(None, pattern="^(rent|sale|both)$")
+    listing_type: ListingTypeParam = Field(None, pattern="^(rent|sale|both)$")
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
     accepts_pets: Optional[bool] = None
@@ -82,12 +103,12 @@ class PropertyExportFilters(BaseModel):
     platform: Optional[str] = None
     min_score: Optional[float] = Field(None, ge=0, le=1)
     max_price: Optional[float] = None
-    price_type: Optional[str] = Field(None, pattern="^(rent|sale)$")
+    price_type: PriceTypeParam = Field(None, pattern="^(rent|sale)$")
     min_bedrooms: Optional[int] = None
     min_parking: Optional[int] = None
     neighborhood_name: Optional[str] = None
     city_name: Optional[str] = None
-    listing_type: Optional[str] = Field(None, pattern="^(rent|sale|both)$")
+    listing_type: ListingTypeParam = Field(None, pattern="^(rent|sale|both)$")
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
     accepts_pets: Optional[bool] = None
