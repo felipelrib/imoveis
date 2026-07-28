@@ -97,8 +97,8 @@ development_status:
 
   # Epic 8 = BIN-63 (BIN-97..103) — Product i18n (pt-BR first)
   epic-8: in-progress
-  8-1-audit-pt-listing-corpus-vs-ai-stats-embeddings: in-progress
-  8-2-locale-foundation-catalog-persisted-preference: backlog
+  8-1-audit-pt-listing-corpus-vs-ai-stats-embeddings: done
+  8-2-locale-foundation-catalog-persisted-preference: done
   8-3-full-ui-string-catalog-en-pt-br: backlog
   8-4-locale-aware-filters-pt-labels-en-wire: backlog
   8-5-localize-ai-tags-verdicts-score-copy: backlog
