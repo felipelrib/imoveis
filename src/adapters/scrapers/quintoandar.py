@@ -21,6 +21,10 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+# SSR search pages embed at most this many houses in __NEXT_DATA__; no deeper
+# pagination without a non-SSR (tokenized) client. Funnel ends at price → nb → type.
+_SSR_PAGE_CEILING = 12
+
 # (action, min_p, max_p, neighborhood_slug|None, house_type|None)
 _QaWindow = tuple[str, int, int, str | None, str | None]
 
@@ -44,6 +48,8 @@ class QuintoAndarScraper(BaseScraper):
         self._price_rent = self._parse_price_pair(extra.get("price_rent"), (500, 15000))
         self._price_sale = self._parse_price_pair(extra.get("price_sale"), (100000, 5000000))
         self._neighborhoods = self._parse_neighborhoods(extra.get("neighborhoods") or [])
+        self.ssr_truncated_windows = 0
+        self.ssr_truncated_houses_yielded = 0
 
     @staticmethod
     def _parse_price_pair(value: Any, default: tuple[int, int]) -> tuple[int, int]:
@@ -107,6 +113,8 @@ class QuintoAndarScraper(BaseScraper):
 
     def fetch_pages(self, checkpoint: Any = None) -> Iterator[Dict[str, Any]]:
         """Fetch properties using price / neighborhood / house-type funneling."""
+        self.ssr_truncated_windows = 0
+        self.ssr_truncated_houses_yielded = 0
         queue: collections.deque[_QaWindow] = collections.deque(
             self._initial_price_windows(checkpoint)
         )
@@ -121,7 +129,7 @@ class QuintoAndarScraper(BaseScraper):
             valid_houses = self._fetch_window_houses(url, action, min_p, max_p)
             if not valid_houses:
                 continue
-            if len(valid_houses) >= 12:
+            if len(valid_houses) >= _SSR_PAGE_CEILING:
                 if self._enqueue_price_split(
                     queue, action, min_p, max_p, nb_slug, house_type
                 ):
@@ -150,6 +158,8 @@ class QuintoAndarScraper(BaseScraper):
                         types=list(_HOUSE_TYPES),
                     )
                     continue
+                self.ssr_truncated_windows += 1
+                self.ssr_truncated_houses_yielded += len(valid_houses)
                 logger.warning(
                     "quintoandar_window_truncated",
                     action=action,
@@ -158,6 +168,7 @@ class QuintoAndarScraper(BaseScraper):
                     neighborhood=nb_slug,
                     house_type=house_type,
                     houses_found=len(valid_houses),
+                    ssr_page_ceiling=_SSR_PAGE_CEILING,
                 )
             for house_data in unique_by(
                 list(valid_houses.values()), listing_id_from_raw, seen=seen_ids
@@ -165,6 +176,12 @@ class QuintoAndarScraper(BaseScraper):
                 house_data["price_query_min"] = min_p
                 house_data["price_query_max"] = max_p
                 yield house_data
+        logger.info(
+            "quintoandar_ssr_ceiling_summary",
+            truncated_windows=self.ssr_truncated_windows,
+            truncated_houses_yielded=self.ssr_truncated_houses_yielded,
+            ssr_page_ceiling=_SSR_PAGE_CEILING,
+        )
 
     def _window_url(
         self,
@@ -257,7 +274,7 @@ class QuintoAndarScraper(BaseScraper):
     # Back-compat for unit tests that call _split_window directly.
     @staticmethod
     def _split_window(queue, action: str, min_p: int, max_p: int, houses: dict) -> bool:
-        if len(houses) < 12:
+        if len(houses) < _SSR_PAGE_CEILING:
             return False
         return QuintoAndarScraper._enqueue_price_split(
             queue, action, min_p, max_p, None, None

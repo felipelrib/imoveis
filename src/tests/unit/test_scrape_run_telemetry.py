@@ -49,8 +49,28 @@ def test_record_scrape_run_lpushes_summary():
     assert payload["errors"] == 1
     assert payload["status"] == "completed"
     assert isinstance(payload["timestamp"], (int, float))
+    assert "ssr_truncated_windows" not in payload
     pipe.ltrim.assert_called_once_with(REDIS_KEY_SCRAPER_TELEMETRY, 0, SCRAPER_TELEMETRY_MAX - 1)
     pipe.execute.assert_called_once()
+
+
+@pytest.mark.unit
+def test_record_scrape_run_includes_ssr_truncation_when_nonzero():
+    r, pipe = _fake_redis_with_pipeline()
+    _record_scrape_run(
+        r,
+        platform="quintoandar",
+        processed=10,
+        skipped=0,
+        errors=0,
+        status="completed",
+        run_id="run-ssr-1",
+        ssr_truncated_windows=2,
+        ssr_truncated_houses_yielded=24,
+    )
+    payload = json.loads(pipe.lpush.call_args.args[1])
+    assert payload["ssr_truncated_windows"] == 2
+    assert payload["ssr_truncated_houses_yielded"] == 24
 
 
 @pytest.mark.unit
@@ -155,6 +175,85 @@ def test_scrape_listings_records_completed_telemetry():
     assert payload["skipped"] == 0
     assert payload["errors"] == 0
     assert payload["run_id"]
+
+
+@pytest.mark.unit
+def test_scrape_listings_records_ssr_truncation_from_scraper():
+    from adapters.queue import tasks as tasks_mod
+
+    real_cfg = get_config()
+    assert "quintoandar" in real_cfg.scraping.platforms
+
+    normalized = {
+        "platform": "quintoandar",
+        "platform_id": "telemetry-ssr-1",
+        "title": "Apartamento teste",
+        "description": "",
+        "price": 2500.0,
+        "area_m2": 70.0,
+        "bedrooms": 2,
+        "bathrooms": 1,
+        "parking": 1,
+        "location": None,
+        "address": "Savassi, Belo Horizonte",
+        "image_urls": [f"https://cdn.example/{i}.jpg" for i in range(1, 9)],
+        "props_json": {"neighborhood": "Savassi", "city": "Belo Horizonte", "state": "MG"},
+        "listings": [
+            {
+                "platform": "quintoandar",
+                "platform_listing_id": "telemetry-ssr-1",
+                "listing_type": "rent",
+                "price": 2500.0,
+                "currency": "BRL",
+                "url": "https://www.quintoandar.com.br/imovel/telemetry-ssr-1",
+            }
+        ],
+    }
+
+    scraper = MagicMock()
+    scraper.proxy_summary = {}
+    scraper.ssr_truncated_windows = 3
+    scraper.ssr_truncated_houses_yielded = 36
+    scraper.fetch_pages.return_value = iter([{"id": "telemetry-ssr-1"}])
+    scraper.normalize.return_value = normalized
+    scraper.__enter__ = MagicMock(return_value=scraper)
+    scraper.__exit__ = MagicMock(return_value=False)
+
+    fake_redis, pipe = _fake_redis_with_pipeline()
+    fake_redis.exists.return_value = False
+    session = MagicMock()
+
+    with (
+        patch.object(tasks_mod, "get_config", return_value=real_cfg),
+        patch.object(tasks_mod, "SessionLocal", return_value=session),
+        patch.object(tasks_mod, "get_redis", return_value=fake_redis),
+        patch.object(tasks_mod, "CheckpointStore") as store_cls,
+        patch.object(tasks_mod, "ScraperRegistry") as registry,
+        patch.object(
+            tasks_mod,
+            "match_or_create_property",
+            return_value=DedupeMatchResult(property_id="prop-ssr", action="created"),
+        ),
+        patch.object(tasks_mod, "assign_property_neighbourhood"),
+        patch.object(tasks_mod, "assign_property_neighbourhood_by_name"),
+        patch.object(tasks_mod, "_enqueue_post_scrape_jobs"),
+        patch.object(tasks_mod, "sync_ai_extract", return_value=None),
+    ):
+        store_cls.return_value.get.return_value = {}
+        registry.get.return_value = scraper
+        tasks_mod.scrape_listings.run("quintoandar")
+
+    telemetry_calls = [
+        call
+        for call in pipe.lpush.call_args_list
+        if call.args and call.args[0] == REDIS_KEY_SCRAPER_TELEMETRY
+    ]
+    assert telemetry_calls, "expected scrape telemetry LPUSH"
+    payload = json.loads(telemetry_calls[-1].args[1])
+    assert payload["platform"] == "quintoandar"
+    assert payload["status"] == "completed"
+    assert payload["ssr_truncated_windows"] == 3
+    assert payload["ssr_truncated_houses_yielded"] == 36
 
 
 @pytest.mark.unit

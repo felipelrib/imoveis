@@ -59,7 +59,7 @@ Manual:
 
 ## Notes / Follow-ups
 
-- Atomic QuintoAndar windows that remain ≥12 after house-type fan-out still truncate at SSR; no deeper pagination without a non-SSR client.
+- ~~Atomic QuintoAndar windows that remain ≥12 after house-type fan-out still truncate at SSR; no deeper pagination without a non-SSR client.~~ Addressed in **BIN-111** / `docs/features/89-quintoandar-ssr-ceiling-metrics.md` (hard ceiling documented + truncation metrics; no non-SSR client).
 - Platform filter matches canonical `properties.platform`, not “has any listing on X”.
 - Rebuild `worker_scraper` so Compose does not run a stale image after scraper changes.
 - Prefer `--no-merge` on `fix_olx_listings.py --apply` until merge FK ordering is hardened (template OLX titles false-positive heavily).

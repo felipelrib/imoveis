@@ -138,6 +138,8 @@ def _record_scrape_run(
     errors: int,
     status: str,
     run_id: str | None = None,
+    ssr_truncated_windows: int = 0,
+    ssr_truncated_houses_yielded: int = 0,
 ) -> str:
     """Persist a durable scrape-run summary for the Activity Log (newest first)."""
     rid = run_id or str(uuid.uuid4())
@@ -150,6 +152,9 @@ def _record_scrape_run(
         "status": status,
         "timestamp": time.time(),
     }
+    if ssr_truncated_windows or ssr_truncated_houses_yielded:
+        payload["ssr_truncated_windows"] = int(ssr_truncated_windows)
+        payload["ssr_truncated_houses_yielded"] = int(ssr_truncated_houses_yielded)
     with r.pipeline() as pipe:
         pipe.lpush(REDIS_KEY_SCRAPER_TELEMETRY, json.dumps(payload))
         pipe.ltrim(REDIS_KEY_SCRAPER_TELEMETRY, 0, SCRAPER_TELEMETRY_MAX - 1)
@@ -301,6 +306,7 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
     session = SessionLocal()
     r = get_redis()
     processed = skipped = errors = 0
+    scraper = None
 
     # Check paused flag (TD-06-A)
     if r.exists(REDIS_KEY_SCRAPERS_PAUSED):
@@ -469,6 +475,12 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             skipped=skipped,
             errors=errors,
             status="completed",
+            ssr_truncated_windows=int(
+                getattr(scraper, "ssr_truncated_windows", 0) or 0
+            ),
+            ssr_truncated_houses_yielded=int(
+                getattr(scraper, "ssr_truncated_houses_yielded", 0) or 0
+            ),
         )
     except Exception as exc:
         logger.error("scrape_task_error", error=str(exc))
@@ -486,6 +498,12 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                 skipped=skipped,
                 errors=errors,
                 status="failed",
+                ssr_truncated_windows=int(
+                    getattr(scraper, "ssr_truncated_windows", 0) or 0
+                ),
+                ssr_truncated_houses_yielded=int(
+                    getattr(scraper, "ssr_truncated_houses_yielded", 0) or 0
+                ),
             )
         except Exception as tel_exc:
             logger.error("scrape_telemetry_record_failed", error=str(tel_exc))
