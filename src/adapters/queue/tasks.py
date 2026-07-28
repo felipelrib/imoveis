@@ -31,6 +31,7 @@ from adapters.metrics.scoring import score_single_property
 from adapters.queue.celery_app import make_celery
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.checkpoint_store import CheckpointStore
+from adapters.scrapers.listing_description import candidate_listing_url
 from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
@@ -62,6 +63,65 @@ REDIS_KEY_SCRAPER_TELEMETRY = "pipeline:scraper:telemetry"
 SCRAPER_TELEMETRY_MAX = 100
 
 celery = make_celery()
+
+
+def _existing_property_description(
+    session, *, platform: str, platform_id: str
+) -> str:
+    """Return stored description for an exact platform id match (may be empty)."""
+    from sqlalchemy import text
+
+    row = session.execute(
+        text(
+            "SELECT COALESCE(description, '') FROM properties "
+            "WHERE platform = :platform AND platform_id = :platform_id "
+            "LIMIT 1"
+        ),
+        {"platform": platform, "platform_id": str(platform_id)},
+    ).fetchone()
+    if not row:
+        return ""
+    return (row[0] or "").strip()
+
+
+def _enrich_candidate_description(session, scraper, candidate: PropertyCandidate) -> None:
+    """Fill empty candidate.description from detail HTML when DB is also empty.
+
+    Search cards omit body text on QuintoAndar/OLX; detail pages carry remarks /
+    ad body. Skip the HTTP round-trip when the DB already has text (BIN-105).
+    """
+    if (candidate.description or "").strip():
+        return
+    existing = _existing_property_description(
+        session, platform=candidate.platform, platform_id=candidate.platform_id
+    )
+    if existing:
+        candidate.description = existing
+        return
+    fetch = getattr(scraper, "fetch_description", None)
+    if not callable(fetch):
+        return
+    url = candidate_listing_url(candidate)
+    if not url:
+        return
+    try:
+        text = (fetch(url) or "").strip()
+    except Exception as exc:  # noqa: BLE001 — never abort scrape for detail enrich
+        logger.warning(
+            "scrape_description_enrich_error",
+            platform=candidate.platform,
+            platform_id=candidate.platform_id,
+            error=str(exc),
+        )
+        return
+    if text:
+        candidate.description = text
+        logger.info(
+            "scrape_description_enriched",
+            platform=candidate.platform,
+            platform_id=candidate.platform_id,
+            chars=len(text),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +389,8 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     candidate,
                     **photo_gate_kwargs_from_config(cfg.scraping.photo_gate, cfg.ai),
                 )
+
+                _enrich_candidate_description(session, scraper, candidate)
 
                 try:
                     result = match_or_create_property(

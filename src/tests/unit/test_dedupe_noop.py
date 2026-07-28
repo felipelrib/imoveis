@@ -73,6 +73,21 @@ class TestIsUnchanged:
 
         assert _is_unchanged(session, existing, candidate) is False
 
+    def test_blank_candidate_description_preserves_existing(self):
+        """Thin search payload with empty description must not force an update."""
+        existing = self._make_existing(description="Descrição do imóvel")
+        candidate = self._make_candidate(description="")
+        session = self._make_session_with_listings()
+
+        assert _is_unchanged(session, existing, candidate) is True
+
+    def test_blank_both_descriptions_unchanged(self):
+        existing = self._make_existing(description="")
+        candidate = self._make_candidate(description="")
+        session = self._make_session_with_listings()
+
+        assert _is_unchanged(session, existing, candidate) is True
+
     def test_images_changed_returns_false(self):
         """Different image URLs → not noop."""
         existing = self._make_existing(image_urls=["https://img.example.com/1.jpg"])

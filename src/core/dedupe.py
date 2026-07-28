@@ -95,11 +95,27 @@ def _record_candidate_listings(session: Session, property_id: str, candidate: Pr
         _record_price_change(session, property_id, candidate.price)
 
 
+def _description_effectively_unchanged(existing_desc: str, candidate_desc: str) -> bool:
+    """Blank candidate description must not count as a change vs non-empty DB text."""
+    existing = (existing_desc or "").strip()
+    incoming = (candidate_desc or "").strip()
+    if not incoming and existing:
+        return True
+    return existing == incoming
+
+
 def _update_or_noop(session: Session, existing, candidate: PropertyCandidate) -> DedupeMatchResult:
     if _is_unchanged(session, existing, candidate):
         return DedupeMatchResult(property_id=str(existing.id), action="noop")
     for field in ("price", "title", "description", "image_urls", "props_json"):
-        setattr(existing, field, getattr(candidate, field))
+        new_val = getattr(candidate, field)
+        if (
+            field == "description"
+            and not (new_val or "").strip()
+            and (existing.description or "").strip()
+        ):
+            continue
+        setattr(existing, field, new_val)
     existing.active = True
     _record_candidate_listings(session, str(existing.id), candidate)
     session.flush()
@@ -182,7 +198,9 @@ def _is_unchanged(session: Session, existing, candidate: PropertyCandidate) -> b
     if any((
         float(existing.price or 0) != float(candidate.price or 0),
         (existing.title or "") != (candidate.title or ""),
-        (existing.description or "") != (candidate.description or ""),
+        not _description_effectively_unchanged(
+            existing.description or "", candidate.description or ""
+        ),
         sorted(existing.image_urls or []) != sorted(candidate.image_urls or []),
     )):
         return False

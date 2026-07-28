@@ -59,5 +59,5 @@ Files touched:
 - Closed mistaken PR #15 (wrong branch); shipped as [#16](https://github.com/felipelrib/imoveis/pull/16).
 - **BIN-38 (2026-07-23):** Status/docs reconcile closed — FR-15 complete; no remaining scope split into a v0.5 story. See `24-semantic-search-reconcile.md`.
 - **Model (current):** Ollama `bge-m3` at **1024-d** (BIN-73); the nomic / 768-d notes above are historical.
-- **Locale (BIN-102 / `81-semantic-search-locale.md`):** Prefer querying in listing language (PT). English `q=` is expanded with a small PT↔EN housing lexicon (`penthouse`↔`cobertura`, `backyard`↔`quintal`, …) before embed. Index text remains scraped title+description only — no re-embed for language. Empty live descriptions are a separate scrape/persist follow-up (BIN-97).
+- **Locale (BIN-102 / `81-semantic-search-locale.md`):** Prefer querying in listing language (PT). English `q=` is expanded with a small PT↔EN housing lexicon (`penthouse`↔`cobertura`, `backyard`↔`quintal`, …) before embed. Index text remains scraped title+description only — no re-embed for language. Description scrape/persist restored in BIN-105 (`87-listing-description-scrape.md`).
 - Admin backfill unchanged: `POST /admin/embeddings/backfill` (optional `force=true` only when model/dim or index text recipe changes).

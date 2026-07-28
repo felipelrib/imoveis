@@ -62,6 +62,14 @@ class TestQuintoAndarCassettes:
         assert rent["iptu"] == pytest.approx(59.0)
         assert rent["raw_json"].get("fees_bundled") is None
 
+    def test_detail_cassette_description_extractable(self, qa_scraper):
+        from adapters.scrapers.listing_description import extract_quintoandar_description
+
+        html = (FIXTURES / "quintoandar_detail.html").read_text(encoding="utf-8")
+        text = extract_quintoandar_description(html)
+        assert text
+        assert "Alvorada" in text
+
 
 class TestOLXCassettes:
     def test_search_cassette_extracts_and_normalizes(self, olx_scraper):
@@ -102,3 +110,5 @@ class TestOLXCassettes:
         assert result["listings"][0]["listing_type"] == "rent"
         assert result["listings"][0]["accepts_pets"] is True
         assert result["image_urls"] == ["https://img.olx.com.br/img1.jpg"]
+        # Flight search ads omit body — description enrich is a detail-page concern.
+        assert (result.get("description") or "") == ""
