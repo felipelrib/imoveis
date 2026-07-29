@@ -243,16 +243,22 @@ def test_no_route_depends_on_verify_jwt_without_credential_check():
         verify_admin_access,
     }
 
-    def _collect_calls(dependant, seen_keys=None) -> set:
-        seen_keys = seen_keys if seen_keys is not None else set()
+    def _collect_calls(dependant, seen_ids=None) -> set:
+        # Use id(sub) rather than FastAPI's private Dependant.cache_key: that
+        # attribute's presence/shape varies across FastAPI versions (CI hit
+        # AttributeError: 'Dependant' object has no attribute 'cache_key' on
+        # a newer FastAPI than the local dev venv). id() is always available
+        # and is sufficient here purely to avoid infinite recursion on
+        # shared sub-dependencies within a single traversal.
+        seen_ids = seen_ids if seen_ids is not None else set()
         calls = set()
         if dependant.call is not None:
             calls.add(dependant.call)
         for sub in dependant.dependencies:
-            if sub.cache_key in seen_keys:
+            if id(sub) in seen_ids:
                 continue
-            seen_keys.add(sub.cache_key)
-            calls |= _collect_calls(sub, seen_keys)
+            seen_ids.add(id(sub))
+            calls |= _collect_calls(sub, seen_ids)
         return calls
 
     def _iter_api_routes(routes):
