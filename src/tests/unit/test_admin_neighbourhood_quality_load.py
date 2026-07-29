@@ -73,6 +73,7 @@ def test_admin_quality_load_requires_auth(client_with_auth):
 
 @pytest.mark.unit
 def test_admin_quality_load_yaml_error_is_500(client_with_auth):
+    """BIN-132: a 500 must never echo the raw exception text back to the caller."""
     client, auth = client_with_auth
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
@@ -94,4 +95,5 @@ def test_admin_quality_load_yaml_error_is_500(client_with_auth):
         )
 
     assert response.status_code == 500
-    assert "bad yaml" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
+    assert "bad yaml" not in response.json()["detail"]

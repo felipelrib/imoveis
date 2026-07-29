@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.admin import router as admin_router
 from api.auth import router as auth_router
+from api.errors import raise_api_error
 from api.favourites import router as favourites_router
 from api.properties import router as properties_router
 from api.saved_searches import router as saved_searches_router
@@ -133,8 +134,7 @@ def trigger_scrape(request: Request, req: ScrapeRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("scrape_trigger_error", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise_api_error(logger, "scrape_trigger_error", exc)
 
 
 @app.get("/platforms", tags=["ingestion"])
