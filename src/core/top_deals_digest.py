@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from api.property_projection import LIST_SELECT_COLUMNS, map_property_list_item
+from core.property_projection import LIST_SELECT_COLUMNS, map_property_list_item
 
 _SCORE_COLUMNS = {
     "primary": "ms.combined_score",
