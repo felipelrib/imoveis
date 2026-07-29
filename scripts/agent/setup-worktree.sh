@@ -155,6 +155,36 @@ if [ -d "$PRIMARY_ROOT/.cursor" ]; then
   fi
 fi
 
+# Same treatment for the Claude Code harness: symlink primary .claude (do NOT
+# copy — teardown would lose edits). Mirrors the .cursor block above.
+if [ -d "$PRIMARY_ROOT/.claude" ]; then
+  _claude_dest="$WORKTREE/.claude"
+  if [ -L "$_claude_dest" ]; then
+    ln -sfn "$PRIMARY_ROOT/.claude" "$_claude_dest" \
+      && ok "symlinked .claude/ harness from primary" \
+      || warn "could not refresh .claude/ symlink (optional)"
+  elif [ -d "$_claude_dest" ] && [ ! -L "$_claude_dest" ]; then
+    # Path-guard: only rm -rf a directory that is exactly $WORKTREE/.claude.
+    case "$_claude_dest" in
+      "$WORKTREE/.claude")
+        rm -rf -- "$_claude_dest"
+        ln -sfn "$PRIMARY_ROOT/.claude" "$_claude_dest" \
+          && ok "replaced legacy .claude/ directory with symlink from primary" \
+          || warn "could not replace legacy .claude/ (optional)"
+        ;;
+      *)
+        warn "refusing to remove unexpected .claude path: $_claude_dest"
+        ;;
+    esac
+  elif [ ! -e "$_claude_dest" ]; then
+    ln -sfn "$PRIMARY_ROOT/.claude" "$_claude_dest" \
+      && ok "symlinked .claude/ harness from primary" \
+      || warn "could not symlink .claude/ (optional)"
+  else
+    warn "unexpected non-directory at $_claude_dest — skip .claude symlink"
+  fi
+fi
+
 # Sync agent scripts from primary ONLY when primary has local (uncommitted)
 # harness edits — otherwise a busy primary on an old feature branch can
 # overwrite a worktree that was correctly created from origin/main.

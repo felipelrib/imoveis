@@ -28,7 +28,7 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 | Task Queue  | Celery + Redis         | Async scraping, AI enrichment   |
 | Database    | PostgreSQL 15 + PostGIS| Geospatial property storage     |
 | AI          | Ollama / LM Studio     | Local VLM + text models         |
-| Frontend    | React 18 + Vite        | Score-coloured property grid    |
+| Frontend    | React 19 + Vite 8      | Score-coloured property grid    |
 | Config      | Pydantic + YAML        | Single source of truth          |
 | Migrations  | Alembic                | Schema versioning               |
 | CI/CD       | GitHub Actions         | Tests, lint, build, security    |
@@ -46,7 +46,7 @@ src/
 ├── core/                         # Business logic (dedup, entities)
 ├── infra/                        # Config, DB, Redis, logging
 └── tests/                        # pytest suite (unit + integration)
-frontend/                         # React 18 + Vite
+frontend/                         # React 19 + Vite 8
 configs/app_config.yaml           # Runtime settings
 scripts/                          # Management scripts (see below)
 ```
@@ -160,11 +160,11 @@ Preview docs locally: `pip install mkdocs-material && mkdocs serve`
 
 ## Product planning (BMad Method)
 
-Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-started/) for PRD / architecture / epics. Planning artifacts land in `_bmad-output/`. Cursor skills are under `.agents/skills/` (e.g. `bmad-help`, `bmad-prd`).
+Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-started/) for PRD / architecture / epics. Planning artifacts land in `_bmad-output/`. BMad skills are framework-native (not Cursor- or Claude-specific) under `.agents/skills/` (e.g. `bmad-help`, `bmad-prd`).
 
 - Orientation: invoke **`bmad-help`** (see `_bmad-output/planning-artifacts/bmad-help-session.md`).
 - Sprint tracker: `_bmad-output/implementation-artifacts/sprint-status.yaml`.
-- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` / local `feature-pipeline` execute. Local skill: `.cursor/skills/imoveis-planning-bridge`.
+- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` / local `feature-pipeline` execute. Local skill: `.cursor/skills/imoveis-planning-bridge` (Cursor) / `.claude/skills/imoveis-planning-bridge` (Claude Code).
 - Re-install / update: `npx bmad-method install --yes --modules bmm --tools cursor --action update`
 
 ## Development Workflow
@@ -173,7 +173,7 @@ Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 
 **Feature / merge-bound work:**
 
-1. **Plan** — Prefer BMad PRD/epics for product scope; Cursor Plan mode for ticket-level design.
+1. **Plan** — Prefer BMad PRD/epics for product scope; Plan mode (Cursor or Claude Code) for ticket-level design.
 2. **Workspace** — `bash scripts/agent/setup-workspace.sh <feature-slug>` (solo on idle primary, or sibling worktree if primary is busy). See [ADR 0004](docs/adr/0004-parallel-agent-workspaces.md).
 3. **Implement** — TDD with conventional commits.
 4. **Validate** — `bash scripts/agent/validate.sh all`.
@@ -195,7 +195,7 @@ Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 - Scraper fixtures: `src/tests/fixtures/scrapers/` — refresh with `python scripts/dev/record_scraper_cassettes.py` on live HTML drift.
 - Scraper gate: `bash scripts/agent/validate-scrapers.sh --require-live` (CI job `scrapers`).
 
-Agent rules/skills are **local** (`.cursor/`, gitignored). Shared gates live in `scripts/agent/`. See [ADR 0002](docs/adr/0002-cursor-single-agent-workflow.md).
+Agent rules/skills are **local** (`.cursor/` for Cursor, `.claude/` for Claude Code — both gitignored). Shared gates live in `scripts/agent/`. See [ADR 0002](docs/adr/0002-cursor-single-agent-workflow.md).
 
 ## License
 

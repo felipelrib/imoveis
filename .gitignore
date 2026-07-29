@@ -61,6 +61,11 @@ worker.log
 # No trailing slash: worktrees use a .cursor symlink (same as .venv).
 .cursor
 
+# Claude Code agent harness skills (local only — not committed, mirrors .cursor).
+# CLAUDE.md itself stays committed (project instructions, unlike Cursor rules).
+# No trailing slash: worktrees use a .claude symlink (same as .venv / .cursor).
+.claude
+
 # Legacy Cline local-only state (if present)
 .cline/memory/
 .cline/kanban/
