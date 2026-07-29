@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters.scrapers.listing_description import (
+    _unescape_js_string,
     candidate_listing_url,
     extract_olx_description,
     extract_quintoandar_description,
@@ -64,3 +65,10 @@ def test_candidate_listing_url():
 
     assert candidate_listing_url(C()) == "https://example.test/a"
     assert candidate_listing_url({"listings": []}) == ""
+
+
+def test_unescape_js_string_falls_back_on_invalid_escape():
+    """BIN-143: a truncated/invalid \\u escape makes unicode_escape decoding
+    raise; the crude fallback replacements should still run without error."""
+    result = _unescape_js_string('trailing backslash \\')
+    assert isinstance(result, str)
