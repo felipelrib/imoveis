@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -15,8 +14,9 @@ from core.listing_claim_stats import (
     merge_listing_claim_stats,
 )
 from infra.config import ListingClaimStatsConfig
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _SENTIMENT_ROWS_ALL = """
     SELECT
@@ -128,7 +128,7 @@ def refresh_listing_claim_stats(
                 errors += 1
                 logger.exception(
                     "listing_claim_stats_row_error",
-                    extra={"neighborhood_id": nid},
+                    neighborhood_id=nid,
                 )
         session.commit()
     except Exception:
@@ -137,12 +137,10 @@ def refresh_listing_claim_stats(
 
     logger.info(
         "listing_claim_stats_refresh_done",
-        extra={
-            "processed": processed,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-        },
+        processed=processed,
+        updated=updated,
+        skipped=skipped,
+        errors=errors,
     )
     return {
         "processed": processed,

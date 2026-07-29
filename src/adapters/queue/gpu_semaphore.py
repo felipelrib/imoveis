@@ -1,11 +1,11 @@
-import logging
 from typing import Optional
 
 import redis
 
+from infra.logging import get_logger
 from infra.redis_client import get_redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class GPUSemaphore:
@@ -42,7 +42,7 @@ class GPUSemaphore:
             value = self.redis_client.get(f"semaphore:{self.name}")
             return int(value) if value is not None else self.max_concurrent
         except Exception:
-            logger.exception("Error getting semaphore value for %s", self.name)
+            logger.exception("gpu_semaphore_get_value_error", semaphore=self.name)
             # Fallback para valor padrão em caso de falha
             return self._default_limit
 
@@ -74,7 +74,7 @@ class GPUSemaphore:
                     continue
 
         except Exception:
-            logger.exception("Error acquiring semaphore for %s", self.name)
+            logger.exception("gpu_semaphore_acquire_error", semaphore=self.name)
             # Fallback para permitir a operação em caso de falha Redis
             return True
 
@@ -104,7 +104,7 @@ class GPUSemaphore:
                     continue
 
         except Exception:
-            logger.exception("Error releasing semaphore for %s", self.name)
+            logger.exception("gpu_semaphore_release_error", semaphore=self.name)
 
     def scale(self, new_limit: int) -> None:
         """Update the maximum concurrent slots for this semaphore.
@@ -114,6 +114,6 @@ class GPUSemaphore:
         """
         try:
             self.redis_client.set(f"semaphore:limit:{self.name}", new_limit)
-            logger.info("Semaphore %s scaled to %s", self.name, new_limit)
+            logger.info("gpu_semaphore_scaled", semaphore=self.name, new_limit=new_limit)
         except Exception:
-            logger.exception("Error scaling semaphore for %s", self.name)
+            logger.exception("gpu_semaphore_scale_error", semaphore=self.name)

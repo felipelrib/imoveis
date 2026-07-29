@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
 from sqlalchemy import text
@@ -19,8 +18,9 @@ from core.neighbourhood_access import (
     travel_to_hubs,
 )
 from infra.config import NeighbourhoodAccessConfig
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _load_neighbourhoods_with_points(session: Session) -> list[dict[str, Any]]:
@@ -125,7 +125,8 @@ def refresh_neighbourhood_access(
                 errors += 1
                 logger.exception(
                     "neighbourhood_access_row_error",
-                    extra={"neighborhood_id": row.get("id"), "city": city},
+                    neighborhood_id=row.get("id"),
+                    city=city,
                 )
         session.commit()
     except Exception:
@@ -137,12 +138,10 @@ def refresh_neighbourhood_access(
 
     logger.info(
         "neighbourhood_access_refresh_done",
-        extra={
-            "processed": processed,
-            "updated": updated,
-            "skipped": skipped,
-            "errors": errors,
-        },
+        processed=processed,
+        updated=updated,
+        skipped=skipped,
+        errors=errors,
     )
     return {
         "processed": processed,

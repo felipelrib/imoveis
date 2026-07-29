@@ -9,7 +9,6 @@ Never invents rates from listing text.
 from __future__ import annotations
 
 import csv
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,8 +19,9 @@ from sqlalchemy.orm import Session
 
 from core.neighbourhood_assignment import _fold
 from core.neighbourhood_quality import normalize_quality_score
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 RatesInput = Union[str, Path, Mapping[str, Any]]
 
@@ -302,10 +302,13 @@ def apply_safety_rates(
         existing = index.get(key)
         if existing is None:
             logger.warning(
-                "safety_overlay_unknown neighbourhood_name=%s city=%s state=%s",
-                rate_row.name,
-                rate_row.city,
-                rate_row.state,
+                "safety_overlay_unknown",
+                # NOTE: "name" collides with a reserved LogRecord attribute
+                # (KeyError: Attempt to overwrite 'name' in LogRecord) — use
+                # neighbourhood_name instead (BIN-87 / BIN-129).
+                neighbourhood_name=rate_row.name,
+                city=rate_row.city,
+                state=rate_row.state,
             )
             skipped_unknown += 1
             continue
@@ -341,7 +344,7 @@ def load_safety_rates_file(
 ) -> tuple[list[SafetyRateRow], bool]:
     """Load one rates file. Returns (rows, missing). Missing → empty + True."""
     if not path.is_file():
-        logger.warning("skipping missing safety rates path=%s", path)
+        logger.warning("skipping missing safety rates", path=str(path))
         return [], True
     rows = parse_safety_rates(
         path,
