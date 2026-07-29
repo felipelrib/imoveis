@@ -19,8 +19,8 @@ auth:
   api_key: ""
   jwt_secret: ""
   principal_id: default
-  admin_user: admin
-  admin_pass: admin
+  admin_user: ""
+  admin_pass: ""
 
 # ---------------------------------------------------------------------------
 # UI locale (BIN-98) — chrome default; independent of ai.output_language
