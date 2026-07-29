@@ -159,7 +159,7 @@ Wire Linear `blockedBy` to match the plan when practical. Skipping this section 
 
 ### Epic completion (parent issues)
 
-v0.5 epics are Linear parents (BIN-19..23); v0.6 is BIN-85 (BIN-86..95). On every feature-pipeline ticket **with a parent**:
+Every versioned milestone (`v0.N`) is delivered as one or more Linear parent epics with numbered children — check the current milestone's epic via `list_milestones`/`list_issues` rather than assuming a fixed ID range (past ranges: v0.5 was BIN-19..23, v0.6 was BIN-85/BIN-86..95, v0.9 was BIN-104 — all Done; do not treat any of these as current). On every feature-pipeline ticket **with a parent**:
 
 1. **After story Done (mandatory):** re-detect last-ticket on a fresh sibling list ([epic-completion](.claude/skills/epic-completion/SKILL.md) §A). If `remaining == 0`, run checklist §B then close gate §C. Mark the **parent** Done in Linear and `epic-N: done` in `sprint-status.yaml` only when close-ready.
 2. **Do not** rely on a start-of-feature "am I last?" check — concurrent agents often all see siblings still open at kickoff and would skip the close gate. Never leave a fully delivered epic stuck in Backlog; never mark Done while leftovers remain.
