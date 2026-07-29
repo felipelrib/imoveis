@@ -278,6 +278,23 @@ class AuthConfig(BaseModel, frozen=True):
     admin_pass: str = ""
 
 
+class ApiConfig(BaseModel, frozen=True):
+    """FastAPI edge settings (BIN-136) — CORS origins sourced from config.
+
+    Defaults preserve the pre-BIN-136 hardcoded ``main.py`` allowlist so local
+    dev (Vite on 5173/3000) keeps working out of the box. Override via
+    ``api.cors_origins`` in YAML or ``IMOVEIS_API__CORS_ORIGINS`` (comma-separated).
+    """
+
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+        ]
+    )
+
+
 class UiConfig(BaseModel, frozen=True):
     """Operator UI locale defaults (BIN-98 / product i18n).
 
@@ -456,6 +473,7 @@ class AppConfig(BaseModel, frozen=True):
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
     ui: UiConfig = Field(default_factory=UiConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)

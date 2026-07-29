@@ -18,6 +18,7 @@ from api.properties import router as properties_router
 from api.saved_searches import router as saved_searches_router
 from api.system import router as system_router
 from api.watchlist import router as watchlist_router
+from infra.config import get_config
 from infra.limiter import limiter
 from infra.logging import get_logger
 
@@ -40,14 +41,10 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — allow the Vite dev server and any local origin
+# CORS — origins sourced from AppConfig (api.cors_origins), not hardcoded (BIN-136)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=get_config().api.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
