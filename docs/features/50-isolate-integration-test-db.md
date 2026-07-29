@@ -51,5 +51,6 @@ None.
 
 ## Notes / Follow-ups
 
-- Redis `flushdb` in some fixtures can still disturb Celery on a shared Redis — separate Redis DB index is a possible follow-up.
-- Related: BIN-60 (preserve volumes), BIN-71 (this fix).
+- Redis `flushdb` isolation shipped as BIN-117 / `docs/features/90-isolate-redis-test-db.md`
+  (host pytest uses logical DB 15; Compose stays on 0).
+- Related: BIN-60 (preserve volumes), BIN-71 (this fix), BIN-117 (Redis follow-up).

@@ -66,9 +66,20 @@ if [ -n "${POSTGRES_PORT:-}" ]; then
   export DATABASE_URL="$TEST_DATABASE_URL"
   log "Host pytest DATABASE_URL → ${TEST_DB_NAME} (Compose scrapers keep ${DB_NAME})"
 fi
-if [ -z "${REDIS_URL:-}" ] && [ -n "${REDIS_PORT:-}" ]; then
-  export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
-  log "Derived REDIS_URL from REDIS_PORT"
+# Host pytest flushdb must not hit Compose Celery/API Redis DB 0 (BIN-117).
+REDIS_TEST_DB="${REDIS_TEST_DB:-15}"
+if [ -n "${REDIS_PORT:-}" ]; then
+  export REDIS_URL="redis://localhost:${REDIS_PORT}/${REDIS_TEST_DB}"
+  log "Host pytest REDIS_URL → DB ${REDIS_TEST_DB} (Compose keeps 0)"
+elif [ -n "${REDIS_URL:-}" ]; then
+  # Rewrite logical DB index; keep host/port/auth from the existing URL.
+  _redis_base="${REDIS_URL%/*}"
+  # If URL had no path (no trailing /N), %/* strips the whole string — rebuild.
+  case "${REDIS_URL}" in
+    */[0-9]*) export REDIS_URL="${_redis_base}/${REDIS_TEST_DB}" ;;
+    *) export REDIS_URL="${REDIS_URL%/}/${REDIS_TEST_DB}" ;;
+  esac
+  log "Host pytest REDIS_URL → DB ${REDIS_TEST_DB} (rewrote existing REDIS_URL; Compose keeps 0)"
 fi
 # Set API_KEY / JWT_SECRET for admin endpoint tests (via AppConfig env channel)
 if [ -z "${API_KEY:-}" ]; then

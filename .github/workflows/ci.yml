@@ -134,7 +134,7 @@ jobs:
         run: pytest src/tests/integration/ -v
         env:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
-          REDIS_URL: redis://localhost:6379/0
+          REDIS_URL: redis://localhost:6379/15
           API_KEY: test-integration-key
           JWT_SECRET: test-integration-jwt-secret
 
@@ -177,7 +177,7 @@ jobs:
         run: pytest src/tests/contract/ -v
         env:
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
-          REDIS_URL: redis://localhost:6379/0
+          REDIS_URL: redis://localhost:6379/15
           API_KEY: test-contract-key
           JWT_SECRET: test-contract-jwt-secret
 
@@ -208,7 +208,7 @@ jobs:
         env:
           # Dummy DB URL so AppConfig validates when Redis CB loads config
           DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate
-          REDIS_URL: redis://localhost:6379/0
+          REDIS_URL: redis://localhost:6379/15
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
 
   # Playwright uses page.route mocks — independent of backend test jobs
