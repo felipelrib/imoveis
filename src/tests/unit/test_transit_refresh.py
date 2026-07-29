@@ -69,6 +69,55 @@ def test_refresh_persist_and_score():
 
 
 @pytest.mark.unit
+def test_refresh_passes_headways_to_scoring():
+    session = MagicMock()
+    n = MagicMock()
+    n.id = "nid"
+    n.geometry = "GEOM"
+    session.query.return_value.filter.return_value.all.return_value = [n]
+    stops = [TransitStop(-43.9, -19.9, "metro", "A", "gtfs", "BUS1")]
+    from core.gtfs_headways import StopHeadway
+
+    headways = {"BUS1": StopHeadway(headway_secs=600.0, method="gtfs_frequencies")}
+
+    with (
+        patch(
+            "adapters.geo.transit_refresh._parse_file_stops",
+            return_value=stops,
+        ),
+        patch(
+            "adapters.geo.transit_refresh._parse_file_headways",
+            return_value=headways,
+        ),
+        patch(
+            "adapters.geo.transit_refresh.upsert_transit_stops",
+            return_value=LoadResult(inserted=1),
+        ),
+        patch(
+            "adapters.geo.transit_refresh.to_shape",
+            return_value=MagicMock(is_empty=False),
+        ),
+        patch(
+            "adapters.geo.transit_refresh.score_neighbourhood_rows",
+            return_value=[MagicMock()],
+        ) as score_rows,
+        patch(
+            "adapters.geo.transit_refresh.apply_transit_scores",
+            return_value=1,
+        ),
+        patch("adapters.geo.transit_refresh.params_from_config"),
+    ):
+        refresh_transit_proximity(
+            session,
+            gtfs_dirs=["/tmp/gtfs"],
+            persist=True,
+            dry_run=False,
+        )
+
+    assert score_rows.call_args.kwargs["stop_headways"] == headways
+
+
+@pytest.mark.unit
 def test_refresh_from_db_skips_upsert():
     session = MagicMock()
     session.query.return_value.filter.return_value.all.return_value = []

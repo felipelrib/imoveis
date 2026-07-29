@@ -9,6 +9,11 @@ from geoalchemy2.shape import to_shape
 from sqlalchemy.orm import Session
 
 from adapters.db.models import Neighborhood
+from core.gtfs_headways import (
+    StopHeadway,
+    merge_stop_headways,
+    parse_gtfs_stop_headways,
+)
 from core.transit_proximity import (
     TransitProximityError,
     apply_transit_scores,
@@ -69,6 +74,11 @@ def _parse_file_stops(
     return merge_stops(*groups) if groups else []
 
 
+def _parse_file_headways(gtfs_dirs: Sequence[str]) -> dict[str, StopHeadway]:
+    maps = [parse_gtfs_stop_headways(path) for path in gtfs_dirs]
+    return merge_stop_headways(*maps) if maps else {}
+
+
 def refresh_transit_proximity(
     session: Session,
     *,
@@ -84,6 +94,7 @@ def refresh_transit_proximity(
     gtfs = [p for p in (gtfs_dirs or []) if str(p).strip()]
     osm = [p for p in (osm_geojson_paths or []) if str(p).strip()]
     mode = "from_db" if from_db else "files"
+    stop_headways: dict[str, StopHeadway] = {}
 
     if from_db:
         stops = stops_from_db(session)
@@ -95,6 +106,7 @@ def refresh_transit_proximity(
             return TransitRefreshResult(status="error", mode=mode)
         try:
             stops = _parse_file_stops(gtfs, osm)
+            stop_headways = _parse_file_headways(gtfs)
         except (OSError, TransitProximityError) as exc:
             logger.warning("transit_refresh_parse_failed", error=str(exc))
             return TransitRefreshResult(status="error", mode=mode)
@@ -142,7 +154,13 @@ def refresh_transit_proximity(
             stops_loaded=len(stops),
         )
 
-    scores = score_neighbourhood_rows(rows, stops, params, provider=provider)
+    scores = score_neighbourhood_rows(
+        rows,
+        stops,
+        params,
+        provider=provider,
+        stop_headways=stop_headways,
+    )
     updated = 0
     if not dry_run:
         updated = apply_transit_scores(session, scores)

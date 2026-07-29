@@ -1,8 +1,9 @@
-"""Transit proximity scoring from GTFS / OSM stop files (BIN-89).
+"""Transit proximity scoring from GTFS / OSM stop files (BIN-89 / BIN-119).
 
 Offline-first: parse stop points from exported files, score each neighbourhood
 centroid with config-driven radii and mode weights, then write
-``neighborhoods.transit_score`` + ``quality_meta["transit"]``.
+``neighborhoods.transit_score`` + ``quality_meta["transit"]`` (including
+optional schedule-based ``headway`` from GTFS frequencies / stop_times).
 """
 
 from __future__ import annotations
@@ -18,6 +19,11 @@ from typing import Any, Iterable, Mapping, Sequence, Union
 from shapely.geometry import Point, Polygon, shape
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy.orm import Session
+
+from core.gtfs_headways import (
+    StopHeadway,
+    aggregate_neighbourhood_headway,
+)
 
 GeoJsonInput = Union[str, Path, Mapping[str, Any]]
 TransitMode = str  # metro | brt | rail | bus | other
@@ -270,10 +276,12 @@ def score_centroid(
     *,
     provider: str = "gtfs+osm",
     refreshed_at: str | None = None,
+    stop_headways: Mapping[str, StopHeadway] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Score a single point; returns (transit_score, quality_meta.transit)."""
     cfg = params or TransitScoreParams()
     when = refreshed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    headways = stop_headways or {}
 
     nearest_m: float | None = None
     nearest_mode: str | None = None
@@ -281,6 +289,7 @@ def score_centroid(
     density_sum = 0.0
     mode_counts: dict[str, int] = {}
     in_count_radius = 0
+    count_radius_stop_ids: list[str] = []
 
     for stop in stops:
         dist = haversine_m(lon, lat, stop.lon, stop.lat)
@@ -296,6 +305,10 @@ def score_centroid(
             density_sum += w
             in_count_radius += 1
             mode_counts[stop.mode] = mode_counts.get(stop.mode, 0) + 1
+            if stop.stop_id:
+                count_radius_stop_ids.append(stop.stop_id)
+
+    headway_meta = aggregate_neighbourhood_headway(count_radius_stop_ids, headways)
 
     if nearest_m is None:
         meta = {
@@ -306,6 +319,7 @@ def score_centroid(
             "count_radius_m": cfg.count_radius_m,
             "stop_count": 0,
             "mode_counts": {},
+            "headway": headway_meta,
         }
         return 0.0, meta
 
@@ -320,6 +334,7 @@ def score_centroid(
         "count_radius_m": cfg.count_radius_m,
         "stop_count": in_count_radius,
         "mode_counts": mode_counts,
+        "headway": headway_meta,
     }
     return score, meta
 
@@ -381,13 +396,19 @@ def score_neighbourhood_rows(
     params: TransitScoreParams | None = None,
     *,
     provider: str = "gtfs+osm",
+    stop_headways: Mapping[str, StopHeadway] | None = None,
 ) -> list[NeighbourhoodTransitScore]:
     """Score (id, polygon) pairs."""
     when = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     out: list[NeighbourhoodTransitScore] = []
     for nid, polygon in rows:
         score, meta = score_polygon(
-            polygon, stops, params, provider=provider, refreshed_at=when
+            polygon,
+            stops,
+            params,
+            provider=provider,
+            refreshed_at=when,
+            stop_headways=stop_headways,
         )
         out.append(
             NeighbourhoodTransitScore(
