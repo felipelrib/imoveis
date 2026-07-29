@@ -19,6 +19,8 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.flight_html import extract_json_array_after as _shared_extract_json_array_after
+from adapters.scrapers.flight_html import unescape_js_string as _shared_unescape_js_string
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
 from adapters.scrapers.listing_description import extract_olx_description
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
@@ -436,77 +438,12 @@ class OLXScraper(BaseScraper):
     @staticmethod
     def _unescape_js_string(value: str) -> str:
         """Decode escapes used inside ``self.__next_f.push([1, \"...\"])`` payloads."""
-        out: list[str] = []
-        i = 0
-        while i < len(value):
-            ch = value[i]
-            if ch == "\\" and i + 1 < len(value):
-                nxt = value[i + 1]
-                if nxt == "n":
-                    out.append("\n")
-                    i += 2
-                elif nxt == "r":
-                    out.append("\r")
-                    i += 2
-                elif nxt == "t":
-                    out.append("\t")
-                    i += 2
-                elif nxt == '"':
-                    out.append('"')
-                    i += 2
-                elif nxt == "\\":
-                    out.append("\\")
-                    i += 2
-                elif nxt == "u" and i + 5 < len(value):
-                    try:
-                        out.append(chr(int(value[i + 2 : i + 6], 16)))
-                        i += 6
-                    except ValueError:
-                        out.append(nxt)
-                        i += 2
-                else:
-                    out.append(nxt)
-                    i += 2
-            else:
-                out.append(ch)
-                i += 1
-        return "".join(out)
+        return _shared_unescape_js_string(value)
 
     @staticmethod
     def _extract_json_array_after(haystack: str, marker: str) -> list | None:
         """Return the JSON array that follows ``marker`` (e.g. ``\"ads\":``)."""
-        idx = haystack.find(marker)
-        if idx < 0:
-            return None
-        start = haystack.find("[", idx + len(marker))
-        if start < 0:
-            return None
-        depth = 0
-        in_string = False
-        escape = False
-        for pos in range(start, len(haystack)):
-            ch = haystack[pos]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        parsed = json.loads(haystack[start : pos + 1])
-                    except json.JSONDecodeError:
-                        return None
-                    return parsed if isinstance(parsed, list) else None
-        return None
+        return _shared_extract_json_array_after(haystack, marker)
 
     def _extract_flight_ads(self, html: str) -> list[dict]:
         """Parse listing ads embedded in Next.js Flight (``__next_f.push``) payloads.

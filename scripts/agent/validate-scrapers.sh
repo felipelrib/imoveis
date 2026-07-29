@@ -41,6 +41,7 @@ log "Scraper validation: HTML cassette + unit tests"
 if "$PYTHON_BIN" -m pytest \
   src/tests/unit/test_scraper_cassettes.py \
   src/tests/unit/test_olx.py \
+  src/tests/unit/test_zapimoveis.py \
   src/tests/unit/test_scoring_and_fees.py \
   src/tests/unit/test_registry.py \
   -v --timeout=30; then
