@@ -44,6 +44,6 @@ None.
 
 ## Notes / Follow-ups
 
-- BIN-42 / BIN-43 should consume `/by-ids` and prefer `primary_listing` instead of React `groupListings` for decisioning price.
-- Grid/modal still flatten locally for display tables; migrate when compare lands.
+- BIN-42 / BIN-43 consume `/by-ids`; Compare prefers `primary_listing` for decisioning price.
+- Grid/modal decisioning price now prefers `primary_listing` (BIN-125); local `groupListings` remains only for multi-platform / multi-type display rows.
 - Export/digest (Epic 4 / BIN-50+) must reuse this projection (AD-12), not invent a second shape.

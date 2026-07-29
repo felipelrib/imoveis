@@ -5,6 +5,7 @@ import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatCurrency } from '../i18n/format.js'
 import { linkIdForProperty } from '../routes/propertyPaths.js'
 import { combinedScoreForListingType, formatScorePercent } from '../utils/scores.js'
+import { decisioningPrice } from '../utils/primaryListing.js'
 
 function scoreColor(v) {
   if (v == null) return '#6b7280'  // grey for no score
@@ -116,7 +117,7 @@ export default function MapView({
               link_id: linkId,
               selected: linkId && selectedSet.has(String(linkId)) ? 1 : 0,
               title: p.title || translate('common.untitled'),
-              price: p.price,
+              price: decisioningPrice(p),
               combined_score: displayScore,
               neighborhood_name: p.neighborhood_name,
               bedrooms: p.bedrooms,
