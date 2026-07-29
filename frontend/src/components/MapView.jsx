@@ -38,8 +38,10 @@ export default function MapView({
   const onSelectPropertyRef = useRef(onSelectProperty)
   const onBboxChangeRef = useRef(onBboxChange)
   const listingTypeRef = useRef(listingType)
+  const propertiesRef = useRef(properties)
   const tRef = useRef(t)
   const localeRef = useRef(locale)
+  const updateMarkersRef = useRef(null)
 
   useEffect(() => { compareModeRef.current = compareMode }, [compareMode])
   useEffect(() => { selectedIdsRef.current = selectedIds }, [selectedIds])
@@ -47,6 +49,7 @@ export default function MapView({
   useEffect(() => { onSelectPropertyRef.current = onSelectProperty }, [onSelectProperty])
   useEffect(() => { onBboxChangeRef.current = onBboxChange }, [onBboxChange])
   useEffect(() => { listingTypeRef.current = listingType }, [listingType])
+  useEffect(() => { propertiesRef.current = properties }, [properties])
   useEffect(() => { tRef.current = t }, [t])
   useEffect(() => { localeRef.current = locale }, [locale])
 
@@ -308,6 +311,10 @@ export default function MapView({
     syncCompareMarkers(map, props)
   }, [buildGeojson, ensureLayers, syncCompareMarkers])
 
+  useEffect(() => {
+    updateMarkersRef.current = updateMarkers
+  }, [updateMarkers])
+
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return
@@ -338,9 +345,7 @@ export default function MapView({
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     map.on('load', () => {
-      if (properties && properties.length > 0) {
-        updateMarkers(map, properties)
-      }
+      updateMarkersRef.current?.(map, propertiesRef.current || [])
     })
 
     map.on('moveend', () => {

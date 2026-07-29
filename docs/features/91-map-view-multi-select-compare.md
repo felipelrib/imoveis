@@ -47,3 +47,4 @@ None.
 - Closes the map multi-select follow-up called out in `docs/features/27-multi-select-properties-comparison.md` and `29-side-by-side-compare-view.md`.
 - Cluster multi-select (select all members of a cluster) remains out of scope.
 - Fixed a pre-existing MapLibre `step` paint validation error on cluster `circle-color` (missing final stop output) while wiring layers.
+- Map view no longer unmounts `MapView` on bbox refetch (`mapLoading`); an overlay is shown instead so compare hit targets stay stable.

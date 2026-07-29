@@ -16,6 +16,13 @@ async function enterCompareMode(page) {
 async function openMapView(page) {
   await page.getByRole("button", { name: /Map/i }).click();
   await expect(page.getByTestId("map-view")).toBeVisible({ timeout: 15000 });
+  await expect(page.locator(".maplibregl-canvas")).toBeVisible({ timeout: 15000 });
+}
+
+/** Wait until MapLibre compare hit targets exist (map may still be settling after bbox fetch). */
+async function waitForMapCompareHits(page) {
+  await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("map-compare-select-5")).toBeVisible({ timeout: 10000 });
 }
 
 test.describe("Map-view multi-select for comparison", () => {
@@ -32,13 +39,13 @@ test.describe("Map-view multi-select for comparison", () => {
     await expect(page.getByTestId("map-compare-select-1")).toHaveCount(0);
 
     await enterCompareMode(page);
-    await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 15000 });
+    await waitForMapCompareHits(page);
   });
 
   test("enables Compare at 2 map selections", async ({ page }) => {
     await openMapView(page);
     await enterCompareMode(page);
-    await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 15000 });
+    await waitForMapCompareHits(page);
     await expect(page.getByTestId("compare-bar")).toHaveCount(0);
 
     await page.getByTestId("map-compare-select-1").click();
@@ -55,7 +62,7 @@ test.describe("Map-view multi-select for comparison", () => {
   test("blocks a 5th map selection with a warning toast", async ({ page }) => {
     await openMapView(page);
     await enterCompareMode(page);
-    await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 15000 });
+    await waitForMapCompareHits(page);
 
     for (const id of ["1", "2", "3", "4"]) {
       await page.getByTestId(`map-compare-select-${id}`).click();
@@ -72,7 +79,7 @@ test.describe("Map-view multi-select for comparison", () => {
   test("Clear empties map selection; Exit removes hit targets", async ({ page }) => {
     await openMapView(page);
     await enterCompareMode(page);
-    await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 15000 });
+    await waitForMapCompareHits(page);
 
     await page.getByTestId("map-compare-select-1").click();
     await page.getByTestId("map-compare-select-2").click();
@@ -92,7 +99,7 @@ test.describe("Map-view multi-select for comparison", () => {
   test("map compare select does not open the property modal", async ({ page }) => {
     await openMapView(page);
     await enterCompareMode(page);
-    await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 15000 });
+    await waitForMapCompareHits(page);
 
     await page.getByTestId("map-compare-select-1").click();
     await expect(page.locator(".modal")).toHaveCount(0);
