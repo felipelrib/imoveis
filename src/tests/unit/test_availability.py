@@ -16,6 +16,7 @@ from adapters.scrapers.availability import (
     deactivate_listing_and_maybe_property,
     parse_olx_availability,
     parse_quintoandar_availability,
+    parse_zapimoveis_availability,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "scrapers"
@@ -139,6 +140,56 @@ def test_classify_unsupported_platform():
         request_url="https://example.com",
     )
     assert result.status == AvailabilityStatus.UNKNOWN
+    assert result.reason == "unsupported_platform:zap"
+
+
+class TestZapImoveisAvailability:
+    def test_instock_detail_is_available(self):
+        html = _load("zapimoveis_detail.html")
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html=html,
+            request_url=(
+                "https://www.zapimoveis.com.br/imovel/"
+                "aluguel-apartamento-lourdes-id-2877382105/"
+            ),
+        )
+        assert result.status == AvailabilityStatus.AVAILABLE
+
+    def test_out_of_stock_is_unavailable(self):
+        html = _load("zapimoveis_unavailable.html")
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html=html,
+            request_url="https://www.zapimoveis.com.br/imovel/id-9999999999/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+
+    def test_http_404_is_unavailable(self):
+        result = parse_zapimoveis_availability(
+            status_code=404,
+            html="",
+            request_url="https://www.zapimoveis.com.br/imovel/id-1/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+
+    def test_cloudflare_403_is_unknown(self):
+        result = parse_zapimoveis_availability(
+            status_code=403,
+            html="Attention Required! | Cloudflare",
+            request_url="https://www.zapimoveis.com.br/imovel/id-1/",
+        )
+        assert result.status == AvailabilityStatus.UNKNOWN
+
+    def test_classify_response_dispatches_zapimoveis(self):
+        html = _load("zapimoveis_unavailable.html")
+        result = classify_response(
+            "zapimoveis",
+            status_code=200,
+            html=html,
+            request_url="https://www.zapimoveis.com.br/imovel/id-9999999999/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
 
 
 def test_deactivate_listing_keeps_property_when_sibling_active():

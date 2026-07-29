@@ -35,6 +35,10 @@ TARGETS = [
         "https://www.olx.com.br/imoveis/aluguel/apartamentos/"
         "estado-mg/belo-horizonte?o=1",
     ),
+    (
+        "zapimoveis_search.html",
+        "https://www.zapimoveis.com.br/aluguel/apartamentos/mg+belo-horizonte/",
+    ),
 ]
 
 
@@ -56,8 +60,8 @@ def main() -> int:
                 print(f"  FAILED: {exc}", file=sys.stderr)
                 ok = False
                 continue
-            if "__NEXT_DATA__" not in resp.text:
-                print(f"  WARNING: no __NEXT_DATA__ in response for {filename}")
+            if "__NEXT_DATA__" not in resp.text and "__next_f" not in resp.text:
+                print(f"  WARNING: no __NEXT_DATA__/__next_f in response for {filename}")
             path = OUT / filename
             path.write_text(resp.text, encoding="utf-8")
             print(f"  Wrote {path} ({len(resp.text)} bytes)")

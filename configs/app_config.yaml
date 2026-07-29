@@ -191,6 +191,28 @@ scraping:
             neighborhoods: []
         # null → use global proxy: block; non-null URL → fixed override (no rotation)
         proxy: null
+    zapimoveis:
+      base_url: https://www.zapimoveis.com.br
+      enabled: true
+      scrape_interval: 60      # minutes between scheduled scrapes (0 = manual only)
+      rate_limit: 20
+      jitter_min: 2
+      jitter_max: 6
+      extra:
+        max_pages: 5
+        # Multi-city shells (BIN-113 / BIN-127). Empty neighborhoods = city-wide
+        # price bisect only. Rebuild worker_scraper after config changes.
+        price_rent: [500, 15000]
+        price_sale: [100000, 5000000]
+        cities:
+          - city_slug: mg+belo-horizonte
+            neighborhoods: []
+          - city_slug: sp+sao-paulo
+            neighborhoods: []
+          - city_slug: sp+campinas
+            neighborhoods: []
+        # null → use global proxy: block; non-null URL → fixed override (no rotation)
+        proxy: null
 
 # ---------------------------------------------------------------------------
 # Deduplication Engine

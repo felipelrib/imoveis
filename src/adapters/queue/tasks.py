@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 import adapters.scrapers.olx  # noqa: F401
 import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
+import adapters.scrapers.zapimoveis  # noqa: F401 — triggers registry
 from adapters.ai.client import create_ai_client
 from adapters.ai.enrich_pipeline import analyze_visual_and_sentiment
 from adapters.ai.image_store import ImageStore

@@ -27,6 +27,7 @@ _NEXT_DATA_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _OLX_LISTING_ID_RE = re.compile(r"(?:/vi/|/imoveis/[^?\s]*?-)(\d{6,})(?:\.htm)?", re.I)
+_ZAP_LISTING_ID_RE = re.compile(r"(?:id-|/imovel/)(?:[^\s\"']*?-)?(\d{6,})", re.I)
 
 _TRANSIENT_HTTP = frozenset({403, 429})
 _QA_INACTIVE_HOUSE = frozenset({"despublicado", "unpublished", "inactive"})
@@ -214,6 +215,98 @@ def parse_olx_availability(
     return AvailabilityResult(AvailabilityStatus.UNKNOWN, f"olx_http_{status_code}")
 
 
+def _zap_listing_id_from_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+    match = _ZAP_LISTING_ID_RE.search(url)
+    return match.group(1) if match else None
+
+
+def _zap_product_offer(html: str) -> dict | None:
+    soup = BeautifulSoup(html or "", "html.parser")
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get("@type") == "Product":
+            offers = data.get("offers")
+            return offers if isinstance(offers, dict) else None
+    return None
+
+
+def _zap_flight_listing_present(html: str, expected_id: str | None) -> bool:
+    from adapters.scrapers.zapimoveis import _extract_detail_listing
+
+    listing = _extract_detail_listing(html or "")
+    if not isinstance(listing, dict):
+        return False
+    if expected_id is None:
+        return bool(listing.get("id"))
+    return str(listing.get("id") or "") == str(expected_id)
+
+
+def parse_zapimoveis_availability(
+    *,
+    status_code: int,
+    html: str,
+    request_url: str,
+    final_url: str | None = None,
+) -> AvailabilityResult:
+    """Classify a ZapImóveis detail response.
+
+    Prefer schema.org Offer availability + Flight listing id. Cloudflare /
+    rate-limit responses stay UNKNOWN (never soft-deactivate).
+    """
+    transient = _transient_or_server_error(status_code)
+    if transient:
+        return transient
+
+    final = final_url or request_url or ""
+    title_l = ""
+    soup = BeautifulSoup(html or "", "html.parser")
+    if soup.title and soup.title.string:
+        title_l = soup.title.string.strip().lower()
+    body_l = (html or "").lower()
+
+    if status_code in (404, 410):
+        return AvailabilityResult(
+            AvailabilityStatus.UNAVAILABLE, f"zap_http_{status_code}"
+        )
+
+    not_found_signals = (
+        "página não encontrada" in title_l
+        or "pagina nao encontrada" in title_l
+        or "não está mais disponível" in body_l
+        or "nao esta mais disponivel" in body_l
+        or "anúncio não encontrado" in body_l
+        or "anuncio nao encontrado" in body_l
+    )
+    offers = _zap_product_offer(html)
+    availability = str((offers or {}).get("availability") or "").lower()
+    if "outofstock" in availability or not_found_signals:
+        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, "zap_out_of_stock")
+
+    expected_id = _zap_listing_id_from_url(request_url)
+    if expected_id and expected_id not in final:
+        parsed = urlparse(final)
+        path = (parsed.path or "/").rstrip("/") or "/"
+        if path in ("", "/") and "zapimoveis.com.br" in (parsed.netloc or ""):
+            return AvailabilityResult(
+                AvailabilityStatus.UNAVAILABLE, "zap_redirect_homepage"
+            )
+
+    if 200 <= status_code < 300:
+        if "instock" in availability:
+            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_instock")
+        if _zap_flight_listing_present(html, expected_id):
+            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_listing_present")
+        if expected_id and expected_id in final:
+            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_http_ok")
+
+    return AvailabilityResult(AvailabilityStatus.UNKNOWN, f"zap_http_{status_code}")
+
+
 def classify_response(
     platform: str,
     *,
@@ -233,6 +326,13 @@ def classify_response(
         )
     if name == "olx":
         return parse_olx_availability(
+            status_code=status_code,
+            html=html,
+            request_url=request_url,
+            final_url=final_url,
+        )
+    if name == "zapimoveis":
+        return parse_zapimoveis_availability(
             status_code=status_code,
             html=html,
             request_url=request_url,

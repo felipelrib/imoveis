@@ -131,3 +131,40 @@ class TestOLXCassettes:
         assert result["props_json"]["available_for_rent"] is True
         assert result["props_json"]["available_for_sale"] is True
         assert result["price"] == 3300.0
+
+
+@pytest.fixture
+def zap_scraper():
+    from adapters.scrapers.zapimoveis import ZapImoveisScraper
+
+    return ZapImoveisScraper(
+        "zapimoveis",
+        {"rate_limit": 20, "jitter_min": 0, "jitter_max": 0.1, "extra": {}},
+    )
+
+
+class TestZapImoveisCassettes:
+    def test_search_cassette_extracts_and_normalizes(self, zap_scraper):
+        html = (FIXTURES / "zapimoveis_search.html").read_text(encoding="utf-8")
+        listings = zap_scraper.extract_listings(html)
+        assert len(listings) == 1
+        assert listings[0]["id"] == "2877382105"
+
+        result = zap_scraper.normalize(listings[0])
+        assert result["platform"] == "zapimoveis"
+        assert result["platform_id"] == "2877382105"
+        assert result["price"] == 4700.0
+        assert result["area_m2"] == 42.0
+        assert result["bedrooms"] == 1
+        assert result["location"] == {"lat": -19.930459, "lon": -43.93796}
+        rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
+        assert rent["condo_fee"] == pytest.approx(480.0)
+        assert "zapimoveis.com.br" in rent["url"]
+
+    def test_detail_cassette_description_extractable(self):
+        from adapters.scrapers.zapimoveis import extract_zapimoveis_description
+
+        html = (FIXTURES / "zapimoveis_detail.html").read_text(encoding="utf-8")
+        text = extract_zapimoveis_description(html)
+        assert text
+        assert "Liberdade" in text
