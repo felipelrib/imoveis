@@ -64,4 +64,4 @@ None.
 - Sibling fills: BIN-87 curated YAML, BIN-88 OSM amenities, BIN-90 access, BIN-91 risk.
 - Blending into property ranking/UI is BIN-94.
 - Persist `transit_stops` + optional Celery beat: shipped in BIN-118 /
-  `docs/features/91-persist-transit-stops.md`.
+  `docs/features/92-persist-transit-stops.md`.

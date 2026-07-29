@@ -40,7 +40,7 @@ Files touched:
  src/tests/unit/test_transit_proximity.py           | ADD — enabled/paths defaults
  src/tests/integration/test_transit_stops.py        | NEW — idempotent upsert + score-from-DB
  docs/features/67-transit-proximity.md              | UPDATE — Notes point at BIN-118
- docs/features/91-persist-transit-stops.md          | NEW — this doc
+ docs/features/92-persist-transit-stops.md          | NEW — this doc
 ```
 
 ## New Dependencies

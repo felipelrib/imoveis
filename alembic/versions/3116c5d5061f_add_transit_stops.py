@@ -1,7 +1,7 @@
 """Add transit_stops table for durable GTFS/OSM stop geometry (BIN-118).
 
 Revision ID: 3116c5d5061f
-Revises: a4f8c2e91b7d
+Revises: f4eea36d6f80
 Create Date: 2026-07-29 05:50:00.000000
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from alembic import op
 
 revision = "3116c5d5061f"
-down_revision = "a4f8c2e91b7d"
+down_revision = "f4eea36d6f80"
 branch_labels = None
 depends_on = None
 
