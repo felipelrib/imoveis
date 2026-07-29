@@ -181,6 +181,47 @@ class TestZapImoveisAvailability:
         )
         assert result.status == AvailabilityStatus.UNKNOWN
 
+    def test_homepage_redirect_is_unavailable(self):
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html="<html><title>ZAP Imóveis</title></html>",
+            request_url="https://www.zapimoveis.com.br/imovel/id-123456/",
+            final_url="https://www.zapimoveis.com.br/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+        assert "homepage" in result.reason
+
+    def test_title_not_found_text_signal_is_unavailable(self):
+        html = "<html><head><title>Página não encontrada | ZAP Imóveis</title></head></html>"
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html=html,
+            request_url="https://www.zapimoveis.com.br/imovel/id-123456/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+        assert result.reason == "zap_out_of_stock"
+
+    def test_body_not_found_text_signal_is_unavailable(self):
+        html = "<html><body>Este anúncio não está mais disponível</body></html>"
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html=html,
+            request_url="https://www.zapimoveis.com.br/imovel/id-123456/",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+        assert result.reason == "zap_out_of_stock"
+
+    def test_id_mismatch_on_non_homepage_redirect_is_unknown(self):
+        """Redirect signal only fires for a bare homepage path, not any id mismatch."""
+        result = parse_zapimoveis_availability(
+            status_code=200,
+            html="<html><title>Apartamento</title></html>",
+            request_url="https://www.zapimoveis.com.br/imovel/id-123456/",
+            final_url="https://www.zapimoveis.com.br/imovel/id-999999-slug/",
+        )
+        assert result.status == AvailabilityStatus.UNKNOWN
+        assert result.reason == "zap_http_200"
+
     def test_classify_response_dispatches_zapimoveis(self):
         html = _load("zapimoveis_unavailable.html")
         result = classify_response(

@@ -31,6 +31,7 @@ _ZAP_LISTING_ID_RE = re.compile(r"(?:id-|/imovel/)(?:[^\s\"']*?-)?(\d{6,})", re.
 
 _TRANSIENT_HTTP = frozenset({403, 429})
 _QA_INACTIVE_HOUSE = frozenset({"despublicado", "unpublished", "inactive"})
+_HTML_PARSER = "html.parser"
 
 
 class AvailabilityStatus(str, Enum):
@@ -147,7 +148,7 @@ def _olx_listing_id_from_url(url: str) -> Optional[str]:
 
 
 def _olx_title_and_body(html: str) -> tuple[str, str]:
-    soup = BeautifulSoup(html or "", "html.parser")
+    soup = BeautifulSoup(html or "", _HTML_PARSER)
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
@@ -223,7 +224,7 @@ def _zap_listing_id_from_url(url: str) -> Optional[str]:
 
 
 def _zap_product_offer(html: str) -> dict | None:
-    soup = BeautifulSoup(html or "", "html.parser")
+    soup = BeautifulSoup(html or "", _HTML_PARSER)
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "")
@@ -246,6 +247,61 @@ def _zap_flight_listing_present(html: str, expected_id: str | None) -> bool:
     return str(listing.get("id") or "") == str(expected_id)
 
 
+def _zap_title_and_body(html: str) -> tuple[str, str]:
+    soup = BeautifulSoup(html or "", _HTML_PARSER)
+    title_l = ""
+    if soup.title and soup.title.string:
+        title_l = soup.title.string.strip().lower()
+    return title_l, (html or "").lower()
+
+
+def _zap_not_found_signals(
+    status_code: int, title_l: str, body_l: str, availability: str
+) -> AvailabilityResult | None:
+    if status_code in (404, 410):
+        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, f"zap_http_{status_code}")
+
+    text_signals = (
+        "página não encontrada" in title_l
+        or "pagina nao encontrada" in title_l
+        or "não está mais disponível" in body_l
+        or "nao esta mais disponivel" in body_l
+        or "anúncio não encontrado" in body_l
+        or "anuncio nao encontrado" in body_l
+    )
+    if "outofstock" in availability or text_signals:
+        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, "zap_out_of_stock")
+    return None
+
+
+def _zap_redirect_signals(final: str, expected_id: str | None) -> AvailabilityResult | None:
+    if not expected_id or expected_id in final:
+        return None
+    parsed = urlparse(final)
+    path = (parsed.path or "/").rstrip("/") or "/"
+    if path in ("", "/") and "zapimoveis.com.br" in (parsed.netloc or ""):
+        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, "zap_redirect_homepage")
+    return None
+
+
+def _zap_ok_signals(
+    status_code: int,
+    html: str,
+    final: str,
+    expected_id: str | None,
+    availability: str,
+) -> AvailabilityResult | None:
+    if not (200 <= status_code < 300):
+        return None
+    if "instock" in availability:
+        return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_instock")
+    if _zap_flight_listing_present(html, expected_id):
+        return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_listing_present")
+    if expected_id and expected_id in final:
+        return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_http_ok")
+    return None
+
+
 def parse_zapimoveis_availability(
     *,
     status_code: int,
@@ -263,46 +319,18 @@ def parse_zapimoveis_availability(
         return transient
 
     final = final_url or request_url or ""
-    title_l = ""
-    soup = BeautifulSoup(html or "", "html.parser")
-    if soup.title and soup.title.string:
-        title_l = soup.title.string.strip().lower()
-    body_l = (html or "").lower()
-
-    if status_code in (404, 410):
-        return AvailabilityResult(
-            AvailabilityStatus.UNAVAILABLE, f"zap_http_{status_code}"
-        )
-
-    not_found_signals = (
-        "página não encontrada" in title_l
-        or "pagina nao encontrada" in title_l
-        or "não está mais disponível" in body_l
-        or "nao esta mais disponivel" in body_l
-        or "anúncio não encontrado" in body_l
-        or "anuncio nao encontrado" in body_l
-    )
+    title_l, body_l = _zap_title_and_body(html)
     offers = _zap_product_offer(html)
     availability = str((offers or {}).get("availability") or "").lower()
-    if "outofstock" in availability or not_found_signals:
-        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, "zap_out_of_stock")
-
     expected_id = _zap_listing_id_from_url(request_url)
-    if expected_id and expected_id not in final:
-        parsed = urlparse(final)
-        path = (parsed.path or "/").rstrip("/") or "/"
-        if path in ("", "/") and "zapimoveis.com.br" in (parsed.netloc or ""):
-            return AvailabilityResult(
-                AvailabilityStatus.UNAVAILABLE, "zap_redirect_homepage"
-            )
 
-    if 200 <= status_code < 300:
-        if "instock" in availability:
-            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_instock")
-        if _zap_flight_listing_present(html, expected_id):
-            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_listing_present")
-        if expected_id and expected_id in final:
-            return AvailabilityResult(AvailabilityStatus.AVAILABLE, "zap_http_ok")
+    for probe in (
+        _zap_not_found_signals(status_code, title_l, body_l, availability),
+        _zap_redirect_signals(final, expected_id),
+        _zap_ok_signals(status_code, html, final, expected_id, availability),
+    ):
+        if probe is not None:
+            return probe
 
     return AvailabilityResult(AvailabilityStatus.UNKNOWN, f"zap_http_{status_code}")
 
