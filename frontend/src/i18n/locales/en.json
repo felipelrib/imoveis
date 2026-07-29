@@ -380,7 +380,15 @@
     "toastWorkersPaused": "Workers paused",
     "toastWorkerToggleFailed": "Could not update workers",
     "toastScheduleUpdated": "Schedule updated",
-    "toastScheduleFailed": "Could not update schedule"
+    "toastScheduleFailed": "Could not update schedule",
+    "availabilityRecheck": "Listing availability recheck",
+    "availabilityRecheckHelp": "Soft-deactivate source URLs that are no longer live (admin API key required).",
+    "availabilityRecheckRun": "Recheck now",
+    "availabilityRecheckBusy": "Enqueueing…",
+    "logRecheckEnqueued": "[{time}] ✔ Availability recheck enqueued (batch {batch}, task {taskId})",
+    "toastAuthRecheck": "Set an API credential to run availability recheck",
+    "toastRecheckEnqueued": "Availability recheck enqueued",
+    "toastRecheckFailed": "Could not enqueue availability recheck"
   },
   "compare": {
     "ariaLabel": "Property comparison",

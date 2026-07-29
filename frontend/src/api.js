@@ -299,6 +299,18 @@ export async function enrichMissing() {
 }
 
 /**
+ * Enqueue one batch of listing URL availability rechecks (BIN-80 / BIN-123).
+ * @param {number} [batchSize] optional override; server uses config default when omitted
+ */
+export async function triggerAvailabilityRecheck(batchSize) {
+  const qs =
+    batchSize != null && batchSize !== ''
+      ? `?batch_size=${encodeURIComponent(Number(batchSize))}`
+      : ''
+  return apiFetch(`/admin/availability/recheck${qs}`, { method: 'POST' })
+}
+
+/**
  * Selective AI enrichment re-run (BIN-95).
  * @param {object} opts
  * @param {'missing'|'force'|'stale_before'} [opts.mode]

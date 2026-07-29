@@ -380,7 +380,15 @@
     "toastWorkersPaused": "Workers pausados",
     "toastWorkerToggleFailed": "Não foi possível atualizar os workers",
     "toastScheduleUpdated": "Agendamento atualizado",
-    "toastScheduleFailed": "Não foi possível atualizar o agendamento"
+    "toastScheduleFailed": "Não foi possível atualizar o agendamento",
+    "availabilityRecheck": "Recheck de disponibilidade de anúncios",
+    "availabilityRecheckHelp": "Desativa suavemente URLs de origem que não estão mais ativas (requer credencial de API).",
+    "availabilityRecheckRun": "Recheck agora",
+    "availabilityRecheckBusy": "Enfileirando…",
+    "logRecheckEnqueued": "[{time}] ✔ Recheck de disponibilidade enfileirado (lote {batch}, tarefa {taskId})",
+    "toastAuthRecheck": "Defina uma credencial de API para executar o recheck de disponibilidade",
+    "toastRecheckEnqueued": "Recheck de disponibilidade enfileirado",
+    "toastRecheckFailed": "Não foi possível enfileirar o recheck de disponibilidade"
   },
   "compare": {
     "ariaLabel": "Comparação de imóveis",
