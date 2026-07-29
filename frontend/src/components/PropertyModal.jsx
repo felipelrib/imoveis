@@ -14,6 +14,11 @@ import {
   reasoningStatBand,
 } from '../i18n/index.js'
 import { formatCurrency, formatDate, formatPricePerM2, formatNumber } from '../i18n/format.js'
+import {
+  decisioningPrice,
+  groupListings,
+  isPrimaryListingRow,
+} from '../utils/primaryListing.js'
 
 /**
  * Returns the URL only if it starts with https:// and matches a known platform host.
@@ -109,7 +114,7 @@ export default function PropertyModal({ id, onClose }) {
         <div className="modal-header">
           <div>
             <div style={{ fontSize: 22, fontWeight: 800, background: 'var(--grad-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              {loading ? t('common.ellipsis') : formatCurrency(p?.price, locale)}
+              {loading ? t('common.ellipsis') : formatCurrency(decisioningPrice(p), locale)}
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
               {loading ? '' : (p?.title || p?.address || t('common.untitled'))}
@@ -309,12 +314,7 @@ export default function PropertyModal({ id, onClose }) {
 
               {/* Per-platform listings table */}
               {p?.listings && p.listings.length > 0 && (() => {
-                const groups = {}
-                for (const l of p.listings) {
-                  const key = l.listing_type || 'sale'
-                  if (!groups[key]) groups[key] = []
-                  groups[key].push(l)
-                }
+                const groups = groupListings(p.listings)
                 const typeLabel = (type) => type === 'rent' ? t('common.rent') : t('common.sale')
                 const typeColor = (type) => type === 'rent'
                   ? { bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)', header: '#818cf8' }
@@ -328,6 +328,8 @@ export default function PropertyModal({ id, onClose }) {
                     {Object.entries(groups).map(([type, listings]) => {
                       const colors = typeColor(type)
                       const minPrice = Math.min(...listings.map(l => l.price ?? Infinity))
+                      const primaryForType = p.primary_listing
+                        && (p.primary_listing.listing_type || 'sale') === type
                       return (
                         <div key={type} style={{ marginBottom: 12 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: colors.header, marginBottom: 6, padding: '4px 8px', background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '6px 6px 0 0' }}>
@@ -346,8 +348,10 @@ export default function PropertyModal({ id, onClose }) {
                                 </tr>
                               </thead>
                               <tbody>
-                                {listings.sort((a, b) => (a.price || Infinity) - (b.price || Infinity)).map((l) => {
-                                  const isBest = l.price !== null && l.price !== undefined && l.price === minPrice
+                                {listings.map((l) => {
+                                  const isBest = primaryForType
+                                    ? isPrimaryListingRow(l, p)
+                                    : (l.price != null && l.price === minPrice)
                                   return (
                                     <tr key={`${l.platform}-${l.platform_listing_id || l.platform_id}`} className={isBest ? 'best-price' : ''}>
                                       <td style={{ fontWeight: 600 }}>

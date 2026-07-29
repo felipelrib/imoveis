@@ -43,5 +43,5 @@ None.
 ## Notes / Follow-ups
 
 - BIN-43 / Story 1.3: wire Compare to side-by-side view using `GET /properties/by-ids` / `fetchPropertiesByIds`.
-- Grid still uses local `groupListings` for price display; prefer `primary_listing` from BIN-41 when convenient.
-- Map view selection left out of this story (AC targets listed cards).
+- Grid/modal prefer `primary_listing` for decisioning price (BIN-125); local `groupListings` only for multi-platform display rows.
+- Map view selection left out of this story (AC targets listed cards) — later shipped as BIN-115.

@@ -12,6 +12,11 @@ import {
   hasDualScores,
   statScoreForListingType,
 } from '../utils/scores.js'
+import {
+  bestListingForType,
+  decisioningPrice,
+  groupListings,
+} from '../utils/primaryListing.js'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
@@ -1001,21 +1006,6 @@ function displayScore(v) {
   return isNaN(n) ? '—' : (n * 100).toFixed(0);
 }
 
-function groupListings(listings) {
-  if (!listings || listings.length === 0) return {}
-  const groups = {}
-  for (const l of listings) {
-    const key = l.listing_type || 'sale'
-    if (!groups[key]) groups[key] = []
-    groups[key].push(l)
-  }
-  // Sort each group by price (lowest first)
-  for (const key of Object.keys(groups)) {
-    groups[key].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))
-  }
-  return groups
-}
-
 function getPlatformCount(listings) {
   if (!listings || listings.length === 0) return 0
   return new Set(listings.map(l => l.platform)).size
@@ -1060,6 +1050,7 @@ function PropertyCard({
   const hasListings = listings.length > 0
   const locationLabel = formatLocationLabel(p.neighborhood_name, p.city)
   const compareKey = linkIdForProperty(p) || String(p.id)
+  const fallbackPrice = decisioningPrice(p)
 
   return (
     <div
@@ -1102,20 +1093,20 @@ function PropertyCard({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             {hasListings ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }} data-testid="card-price-rows">
                 {groupKeys.map(type => {
-                  const best = groups[type][0]
+                  const best = bestListingForType(p, type, groups)
                   const colors = listingTypeColor(type)
                   return (
                     <div key={type} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                       <span className="property-price" style={{ fontSize: groupKeys.length > 1 ? 16 : 20 }}>
-                        {best.price ? formatCurrency(best.price, locale) : t('common.emDash')}
+                        {best?.price ? formatCurrency(best.price, locale) : t('common.emDash')}
                       </span>
                       <span style={{ padding: '1px 5px', fontSize: 9, background: colors.bg, color: colors.color, borderRadius: 3, fontWeight: 700 }}>
                         {formatListingType(type, t)}
                       </span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        {formatPlatform(best.platform)}
+                        {formatPlatform(best?.platform)}
                       </span>
                       {groups[type].length > 1 && (
                         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
@@ -1127,8 +1118,8 @@ function PropertyCard({
                 })}
               </div>
             ) : (
-              <div className="property-price">
-                {p.price ? formatCurrency(p.price, locale) : t('common.emDash')}
+              <div className="property-price" data-testid="card-decisioning-price">
+                {fallbackPrice ? formatCurrency(fallbackPrice, locale) : t('common.emDash')}
               </div>
             )}
           </div>

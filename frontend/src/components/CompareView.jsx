@@ -7,16 +7,11 @@ import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { labelRiskFlag } from '../i18n/index.js'
 import { formatCurrency, formatDate, formatPricePerM2 } from '../i18n/format.js'
+import { decisioningPrice } from '../utils/primaryListing.js'
 
 function formatScore(value) {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return (Number(value) * 100).toFixed(0)
-}
-
-function decisioningPrice(property) {
-  if (property?.primary_listing?.price != null) return property.primary_listing.price
-  if (property?.price != null) return property.price
-  return null
 }
 
 function buildChartData(priceHistory, locale) {
