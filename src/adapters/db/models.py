@@ -49,6 +49,36 @@ class Neighborhood(Base):
     quality_notes = Column(String, nullable=True)
 
 
+class TransitStopRecord(Base):
+    """Durable GTFS/OSM transit stop geometry (BIN-118).
+
+    In-memory scoring still uses ``core.transit_proximity.TransitStop`` DTOs;
+    this ORM row is the persisted form keyed by ``(source, external_id)``.
+    """
+
+    __tablename__ = "transit_stops"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "source",
+            "external_id",
+            name="uq_transit_stops_source_external_id",
+        ),
+    )
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
+    )
+    source = Column(String, nullable=False)
+    external_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    mode = Column(String, nullable=False)
+    location = Column(Geometry(geometry_type="POINT", srid=4326), nullable=False)
+    updated_at = Column(
+        DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW)
+    )
+
+
 class PlatformCheckpoint(Base):
     __tablename__ = "platform_checkpoints"
     id = Column(

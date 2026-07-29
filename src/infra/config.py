@@ -381,10 +381,13 @@ class NeighbourhoodAccessConfig(BaseModel, frozen=True):
 
 
 class NeighbourhoodTransitConfig(BaseModel, frozen=True):
-    """Transit proximity radii and mode weights (BIN-89).
+    """Transit proximity radii, mode weights, and optional beat refresh (BIN-89/118).
 
     Used by ``core.transit_proximity`` when scoring neighbourhoods from
     GTFS / OSM stop files. Metro/BRT weigh higher than bus.
+
+    Default ``enabled=false`` so Celery beat does not reload files until an
+    operator configures ``gtfs_dirs`` / ``osm_geojson_paths`` and opts in.
     """
 
     count_radius_m: float = 400.0
@@ -401,6 +404,10 @@ class NeighbourhoodTransitConfig(BaseModel, frozen=True):
             "other": 0.4,
         }
     )
+    enabled: bool = False
+    gtfs_dirs: list[str] = Field(default_factory=list)
+    osm_geojson_paths: list[str] = Field(default_factory=list)
+    interval_hours: float = 168.0
 
 
 class ListingClaimStatsConfig(BaseModel, frozen=True):

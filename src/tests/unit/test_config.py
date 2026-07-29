@@ -485,6 +485,17 @@ def test_osm_amenities_from_default_app_config_yaml():
 
 
 @pytest.mark.unit
+def test_transit_beat_from_default_app_config_yaml():
+    """Real configs/app_config.yaml loads transit beat defaults (BIN-118)."""
+    cfg = get_config()
+    transit = cfg.neighbourhood_quality.transit
+    assert transit.enabled is False
+    assert transit.gtfs_dirs == []
+    assert transit.osm_geojson_paths == []
+    assert transit.interval_hours == 168.0
+
+
+@pytest.mark.unit
 def test_neighbourhood_access_from_default_app_config_yaml():
     """Real configs/app_config.yaml loads BIN-90 hubs and routing defaults."""
     cfg = get_config()

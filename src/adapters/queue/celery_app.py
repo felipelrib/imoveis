@@ -136,6 +136,22 @@ def build_beat_schedule() -> dict:
                 "schedule": interval_hours * 3600,
             }
 
+    # Transit proximity stop reload + neighbourhood rescore (BIN-118). Explicit
+    # ``is True`` so MagicMock stubs in unit tests do not accidentally enable.
+    transit_cfg = None
+    try:
+        nq = getattr(cfg, "neighbourhood_quality", None) if cfg is not None else None
+        transit_cfg = getattr(nq, "transit", None) if nq is not None else None
+    except Exception:
+        transit_cfg = None
+    if transit_cfg is not None and getattr(transit_cfg, "enabled", False) is True:
+        transit_hours = float(getattr(transit_cfg, "interval_hours", 168) or 0)
+        if transit_hours > 0:
+            schedule["refresh-transit-proximity"] = {
+                "task": "tasks.refresh_transit_proximity",
+                "schedule": transit_hours * 3600,
+            }
+
     # Neighbourhood access / travel-time to hubs (BIN-90). Explicit ``is True`` so
     # MagicMock stubs in unit tests do not accidentally enable the job.
     access_cfg = None
@@ -213,6 +229,7 @@ def make_celery() -> Celery:
         'tasks.send_top_deals_digest': {'queue': 'scrapers'},
         'tasks.recheck_listing_availability': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_amenities': {'queue': 'scrapers'},
+        'tasks.refresh_transit_proximity': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_access': {'queue': 'scrapers'},
         'tasks.refresh_listing_claim_stats': {'queue': 'scrapers'},
     }

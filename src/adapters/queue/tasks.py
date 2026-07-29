@@ -1338,6 +1338,46 @@ def refresh_neighbourhood_amenities(self, batch_size: int | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Transit proximity — persist stops + rescore neighbourhoods (BIN-118)
+# ---------------------------------------------------------------------------
+
+
+@celery.task(
+    bind=True,
+    name="tasks.refresh_transit_proximity",
+    max_retries=2,
+    default_retry_delay=120,
+)
+def refresh_transit_proximity(self):
+    """Upsert transit_stops from configured GTFS/OSM paths and rescore nhoods."""
+    from adapters.geo.transit_refresh import refresh_transit_proximity as run_refresh
+
+    cfg = get_config()
+    transit = cfg.neighbourhood_quality.transit
+    if transit.enabled is not True:
+        logger.info("transit_refresh_skipped", reason="disabled")
+        return {"status": "skipped", "neighbourhoods_updated": 0}
+
+    gtfs = list(transit.gtfs_dirs or [])
+    osm = list(transit.osm_geojson_paths or [])
+    if not gtfs and not osm:
+        logger.warning("transit_refresh_skipped", reason="no_paths_configured")
+        return {"status": "error", "neighbourhoods_updated": 0, "mode": "files"}
+
+    with SessionLocal() as session:
+        result = run_refresh(
+            session,
+            gtfs_dirs=gtfs,
+            osm_geojson_paths=osm,
+            from_db=False,
+            persist=True,
+            dry_run=False,
+            cfg=cfg,
+        )
+    return result.as_dict()
+
+
+# ---------------------------------------------------------------------------
 # Neighbourhood access / travel-time to hubs (BIN-90)
 # ---------------------------------------------------------------------------
 

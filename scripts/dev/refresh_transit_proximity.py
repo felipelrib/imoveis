@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Refresh neighbourhood transit_score from GTFS and/or OSM stop files (BIN-89).
+"""Refresh neighbourhood transit_score from GTFS and/or OSM stop files (BIN-89/118).
 
 Offline / ops job — no live Overpass or GTFS HTTP. Export municipal GTFS or
 OSM ``public_transport`` / railway station extracts for operator cities
 (Belo Horizonte, São Paulo, Campinas), then run this script.
+
+By default stops are upserted into ``transit_stops`` (idempotent on
+``source`` + ``external_id``) before neighbourhood scores are written.
+Use ``--from-db`` to rescore from the persisted table without re-parsing files.
+Use ``--dry-run`` to parse/score without any database writes.
+
+Optional Celery beat (off by default)::
+
+    neighbourhood_quality.transit.enabled: true
+    neighbourhood_quality.transit.gtfs_dirs: [/path/to/gtfs]
+    neighbourhood_quality.transit.osm_geojson_paths: [/path/to/stops.geojson]
+    neighbourhood_quality.transit.interval_hours: 168
 
 Expected GTFS layout (directory)::
 
@@ -22,6 +34,8 @@ Usage::
 
   PYTHONPATH=src python scripts/dev/refresh_transit_proximity.py \\
     --osm-geojson src/tests/fixtures/transit/osm_stops_tiny.geojson --dry-run
+
+  PYTHONPATH=src python scripts/dev/refresh_transit_proximity.py --from-db
 """
 
 from __future__ import annotations
@@ -34,25 +48,17 @@ _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _REPO)
 sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from geoalchemy2.shape import to_shape  # noqa: E402
-
-from adapters.db.models import Neighborhood  # noqa: E402
-from core.transit_proximity import (  # noqa: E402
-    TransitProximityError,
-    apply_transit_scores,
-    merge_stops,
-    params_from_config,
-    parse_gtfs_stops,
-    parse_osm_transit_geojson,
-    score_neighbourhood_rows,
-)
+from adapters.geo.transit_refresh import refresh_transit_proximity  # noqa: E402
+from infra.config import get_config  # noqa: E402
+from infra.db import SessionLocal  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Score neighbourhood transit proximity from GTFS/OSM stop files "
-            "and write neighborhoods.transit_score + quality_meta.transit."
+            "(or persisted transit_stops), upsert stops, and write "
+            "neighborhoods.transit_score + quality_meta.transit."
         )
     )
     parser.add_argument(
@@ -73,80 +79,54 @@ def main(argv: list[str] | None = None) -> int:
         help="Only score neighbourhoods in this city (exact match).",
     )
     parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Score from persisted transit_stops only (ignore file args).",
+    )
+    parser.add_argument(
+        "--no-persist",
+        action="store_true",
+        help="Do not upsert into transit_stops (score only from files).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Parse and score only; do not write to the database.",
     )
     args = parser.parse_args(argv)
 
-    if not args.gtfs_dir and not args.osm_geojson:
-        print("error: provide at least one --gtfs-dir or --osm-geojson", file=sys.stderr)
-        return 1
-
-    try:
-        groups = []
-        for path in args.gtfs_dir:
-            groups.append(parse_gtfs_stops(path))
-            print(f"Loaded {len(groups[-1])} GTFS stop(s) from {path}")
-        for path in args.osm_geojson:
-            groups.append(parse_osm_transit_geojson(path))
-            print(f"Loaded {len(groups[-1])} OSM stop(s) from {path}")
-    except (OSError, TransitProximityError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    stops = merge_stops(*groups)
-    if not stops:
-        print("error: no stops parsed", file=sys.stderr)
-        return 1
-
-    sources = set()
-    if args.gtfs_dir:
-        sources.add("gtfs")
-    if args.osm_geojson:
-        sources.add("osm")
-    provider = "+".join(sorted(sources)) if sources else "unknown"
-
-    from infra.config import get_config
-    from infra.db import SessionLocal
-
-    params = params_from_config(get_config())
-
-    with SessionLocal() as session:
-        q = session.query(Neighborhood).filter(Neighborhood.geometry.isnot(None))
-        if args.city:
-            q = q.filter(Neighborhood.city == args.city)
-        rows = []
-        for n in q.all():
-            poly = to_shape(n.geometry)
-            rows.append((n.id, poly))
-
-        if not rows:
-            print("No neighbourhoods with geometry found; nothing to score.")
-            return 0
-
-        scores = score_neighbourhood_rows(
-            rows, stops, params, provider=provider
+    if not args.from_db and not args.gtfs_dir and not args.osm_geojson:
+        print(
+            "error: provide --from-db or at least one --gtfs-dir / --osm-geojson",
+            file=sys.stderr,
         )
-        print(f"Scored {len(scores)} neighbourhood(s); provider={provider}")
-        for item in scores[:20]:
-            print(
-                f"  id={item.neighborhood_id} score={item.transit_score:.3f} "
-                f"nearest_m={item.meta.get('nearest_m')} "
-                f"mode={item.meta.get('nearest_mode')} "
-                f"count={item.meta.get('stop_count')}"
-            )
-        if len(scores) > 20:
-            print(f"  ... and {len(scores) - 20} more")
+        return 1
 
-        if args.dry_run:
-            print("Dry-run complete; no database writes.")
-            return 0
+    cfg = get_config()
+    with SessionLocal() as session:
+        result = refresh_transit_proximity(
+            session,
+            gtfs_dirs=args.gtfs_dir,
+            osm_geojson_paths=args.osm_geojson,
+            from_db=args.from_db,
+            persist=not args.no_persist,
+            dry_run=args.dry_run,
+            city=args.city,
+            cfg=cfg,
+        )
 
-        updated = apply_transit_scores(session, scores)
-        session.commit()
-        print(f"Updated transit_score on {updated} neighbourhood(s).")
-
+    print(
+        f"status={result.status} mode={result.mode} provider={result.provider} "
+        f"stops_loaded={result.stops_loaded} "
+        f"stops_inserted={result.stops_inserted} "
+        f"stops_updated={result.stops_updated} "
+        f"stops_skipped={result.stops_skipped} "
+        f"neighbourhoods_updated={result.neighbourhoods_updated}"
+    )
+    if result.status == "error":
+        return 1
+    if result.status == "dry_run":
+        print("Dry-run complete; no database writes.")
     return 0
 
 

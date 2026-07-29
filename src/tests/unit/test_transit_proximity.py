@@ -168,3 +168,7 @@ def test_appconfig_transit_defaults():
     assert t.mode_weights["bus"] == 0.55
     assert t.nearest_weight == pytest.approx(0.7)
     assert t.density_weight == pytest.approx(0.3)
+    assert t.enabled is False
+    assert t.gtfs_dirs == []
+    assert t.osm_geojson_paths == []
+    assert t.interval_hours == 168.0
