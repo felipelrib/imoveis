@@ -473,3 +473,21 @@ class TestQuintoAndarNormalizeLocation:
         assert result["listings"][0]["base_price"] == 3000.0
         assert result["props_json"]["city"] == "Belo Horizonte"
         assert result["props_json"]["state"] == "MG"
+
+
+@pytest.mark.unit
+class TestQuintoAndarFetchDescription:
+    def test_fetch_description_blank_url_returns_empty(self):
+        assert _scraper().fetch_description("   ") == ""
+
+    def test_fetch_description_circuit_open_returns_empty(self):
+        s = _scraper()
+        s._throttled_request = MagicMock(side_effect=CircuitBreakerOpenError("open"))
+        with patch("adapters.scrapers.quintoandar.logger"):
+            assert s.fetch_description("https://example.test") == ""
+
+    def test_fetch_description_unexpected_error_returns_empty(self):
+        s = _scraper()
+        s._throttled_request = MagicMock(side_effect=RuntimeError("boom"))
+        with patch("adapters.scrapers.quintoandar.logger"):
+            assert s.fetch_description("https://example.test") == ""

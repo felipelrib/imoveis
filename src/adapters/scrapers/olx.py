@@ -132,7 +132,7 @@ class OLXScraper(BaseScraper):
         except CircuitBreakerOpenError:
             logger.warning("olx_description_circuit_open", url=url)
             return ""
-        except Exception as exc:  # noqa: BLE001 — detail enrich must not abort scrape
+        except Exception as exc:  # detail enrich must not abort scrape
             logger.warning("olx_description_fetch_error", url=url, error=str(exc))
             return ""
         if response.status_code != 200:

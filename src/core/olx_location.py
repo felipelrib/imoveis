@@ -206,7 +206,7 @@ def reconcile_olx_location(
         )
         try:
             data = ai_extract(prompt)
-        except Exception as exc:  # noqa: BLE001 — backfill/ingest must continue
+        except Exception as exc:  # backfill/ingest must continue
             return OlxLocationResult(
                 action="ai_failed",
                 city=scraped_city,

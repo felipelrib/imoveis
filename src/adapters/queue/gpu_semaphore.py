@@ -75,7 +75,13 @@ class GPUSemaphore:
 
         except Exception:
             logger.exception("gpu_semaphore_acquire_error", semaphore=self.name)
-            # Fallback para permitir a operação em caso de falha Redis
+            # Intentional fail-open (BIN-143): a flaky/unreachable Redis must not
+            # halt AI enrichment entirely. Worst case is transient GPU
+            # oversubscription (bounded by process concurrency elsewhere), which is
+            # preferable to blocking the whole enrichment pipeline on Redis health.
+            # If GPU oversubscription becomes an actual incident, make this
+            # configurable (fail-open vs fail-closed) rather than flipping it here —
+            # see BIN-147 (semaphore TTL/timeout conflation) for related hardening.
             return True
 
     def release(self) -> None:

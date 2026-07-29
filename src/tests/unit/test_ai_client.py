@@ -594,6 +594,18 @@ class TestSummarizeAndSession:
         assert result.confidence == 0.0
         assert "Not enough data" in result.verdict
 
+    def test_summarize_deal_falls_back_to_en_when_locale_resolution_also_fails(self):
+        """BIN-143: covers the nested except (locale resolution itself raising)."""
+        from adapters.ai.client import OllamaClient
+
+        client = OllamaClient()
+        client._llm_verdict = AsyncMock(side_effect=RuntimeError("llm down"))
+        with patch("adapters.ai.prompts.build_deal_verdict_prompt", return_value="prompt"):
+            with patch("infra.ui_locale.resolve_ai_output_language", side_effect=RuntimeError("locale down")):
+                result = asyncio.run(client.summarize_deal(None, None, None, None))
+        assert result.confidence == 0.0
+        assert "Not enough data" in result.verdict
+
     def test_session_context_sets_and_clears_session(self):
         client = OllamaClient()
 

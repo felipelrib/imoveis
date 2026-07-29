@@ -43,6 +43,6 @@ def resolve_ai_output_language() -> str:
         from infra.redis_client import get_redis
 
         return resolve_active_locale(cfg, get_redis())
-    except Exception as exc:  # noqa: BLE001 — workers may lack Redis briefly
+    except Exception as exc:  # workers may lack Redis briefly
         logger.debug("ai_output_language_fallback", error=str(exc))
         return getattr(getattr(cfg, "ui", None), "locale", None) or cfg.ai.output_language or "en"
