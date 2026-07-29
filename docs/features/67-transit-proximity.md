@@ -60,7 +60,8 @@ None.
 
 ## Notes / Follow-ups
 
-- Stretch (not in this PR): GTFS service frequency / headways.
+- Stretch (not in this PR): GTFS service frequency / headways — BIN-119.
 - Sibling fills: BIN-87 curated YAML, BIN-88 OSM amenities, BIN-90 access, BIN-91 risk.
 - Blending into property ranking/UI is BIN-94.
-- Optional later: persist `transit_stops` table or Celery beat schedule.
+- Persist `transit_stops` + optional Celery beat: shipped in BIN-118 /
+  `docs/features/91-persist-transit-stops.md`.

@@ -285,12 +285,17 @@ pipeline_metrics:
 # ---------------------------------------------------------------------------
 # Neighbourhood quality fill jobs (BIN-86+)
 # ---------------------------------------------------------------------------
-# Transit proximity (BIN-89): radii + mode weights for GTFS/OSM stop scoring.
-# Refresh via scripts/dev/refresh_transit_proximity.py (offline files; no live
-# Overpass/GTFS HTTP in CI).
+# Transit proximity (BIN-89/118): radii + mode weights for GTFS/OSM stop scoring.
+# Persists stops into transit_stops; optional Celery beat when enabled=true.
+# Offline files only (no live Overpass/GTFS HTTP in CI). Operator CLI:
+# scripts/dev/refresh_transit_proximity.py
 # OSM amenities (BIN-88): offline GeoJSON or rate-limited Overpass.
 neighbourhood_quality:
   transit:
+    enabled: false              # set true to schedule Celery beat refresh
+    gtfs_dirs: []               # GTFS dirs with stops.txt (required when enabled)
+    osm_geojson_paths: []       # OSM Point FeatureCollections (optional)
+    interval_hours: 168         # beat cadence when enabled (weekly)
     count_radius_m: 400
     max_radius_m: 1200
     nearest_weight: 0.7

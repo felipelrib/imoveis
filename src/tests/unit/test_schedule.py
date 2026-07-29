@@ -230,6 +230,7 @@ class TestBuildBeatSchedule:
         assert app.conf.task_routes["tasks.send_top_deals_digest"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.recheck_listing_availability"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.refresh_neighbourhood_amenities"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.refresh_transit_proximity"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.refresh_neighbourhood_access"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.refresh_listing_claim_stats"] == {"queue": "scrapers"}
         assert app.conf.beat_schedule == {"scheduled": {}}
@@ -267,6 +268,7 @@ class TestBuildBeatSchedule:
             "tasks.send_top_deals_digest",
             "tasks.recheck_listing_availability",
             "tasks.refresh_neighbourhood_amenities",
+            "tasks.refresh_transit_proximity",
             "tasks.refresh_neighbourhood_access",
             "tasks.refresh_listing_claim_stats",
         ):
@@ -367,6 +369,59 @@ class TestBuildBeatSchedule:
 
         schedule = build_beat_schedule()
         assert "refresh-neighbourhood-amenities" not in schedule
+
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_transit_proximity_schedule_when_enabled(self, mock_get_redis, mock_get_config):
+        """BIN-118: enabled transit adds a scrapers-bound beat entry."""
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals.enabled = False
+        cfg.scraping.platforms = {}
+        cfg.scraping.availability_recheck = SimpleNamespace(enabled=False)
+        cfg.pipeline_metrics.snapshot_interval_sec = 30
+        cfg.neighbourhood_access = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.osm_amenities = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.listing_claim_stats = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.transit = SimpleNamespace(
+            enabled=True,
+            interval_hours=168,
+        )
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock(get=MagicMock(return_value=None))
+
+        schedule = build_beat_schedule()
+        assert "refresh-transit-proximity" in schedule
+        assert schedule["refresh-transit-proximity"]["task"] == (
+            "tasks.refresh_transit_proximity"
+        )
+        assert schedule["refresh-transit-proximity"]["schedule"] == 168 * 3600
+
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_transit_proximity_excluded_when_disabled(self, mock_get_redis, mock_get_config):
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.alerts.digest_mode = False
+        cfg.alerts.top_deals.enabled = False
+        cfg.scraping.platforms = {}
+        cfg.scraping.availability_recheck = SimpleNamespace(enabled=False)
+        cfg.pipeline_metrics.snapshot_interval_sec = 30
+        cfg.neighbourhood_access = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.osm_amenities = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.listing_claim_stats = SimpleNamespace(enabled=False)
+        cfg.neighbourhood_quality.transit = SimpleNamespace(
+            enabled=False,
+            interval_hours=168,
+        )
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock(get=MagicMock(return_value=None))
+
+        schedule = build_beat_schedule()
+        assert "refresh-transit-proximity" not in schedule
 
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
