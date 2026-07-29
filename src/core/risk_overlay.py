@@ -8,7 +8,6 @@ out of git — pass local paths like neighbourhood GeoJSON (feature 28).
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +18,9 @@ from shapely.geometry.base import BaseGeometry
 from sqlalchemy.orm import Session
 
 from core.neighbourhood_quality import normalize_risk_flags
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 GeoJsonInput = Union[str, Path, Mapping[str, Any]]
 
@@ -296,9 +296,9 @@ def load_risk_layers(
         path = Path(layer.path)
         if not path.is_file():
             logger.warning(
-                "skipping missing risk layer path=%s risk_type=%s",
-                path,
-                layer.risk_type,
+                "skipping missing risk layer",
+                path=str(path),
+                risk_type=layer.risk_type,
             )
             skipped += 1
             continue
@@ -404,10 +404,9 @@ def load_and_apply_risk_overlays(
 
     if not features and skipped == len(list(layers)):
         logger.warning(
-            "no risk layers loaded for city=%s state=%s (all paths missing); "
-            "leaving neighbourhood risk_flags unchanged",
-            city,
-            state,
+            "no risk layers loaded (all paths missing); leaving neighbourhood risk_flags unchanged",
+            city=city,
+            state=state,
         )
         return ApplyResult(
             updated=0,

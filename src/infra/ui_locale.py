@@ -6,9 +6,9 @@ follows the same preference as SPA chrome (BIN-98 / BIN-101).
 
 from __future__ import annotations
 
-import logging
+from infra.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 REDIS_KEY_UI_LOCALE = "ui:locale"
 
@@ -44,5 +44,5 @@ def resolve_ai_output_language() -> str:
 
         return resolve_active_locale(cfg, get_redis())
     except Exception as exc:  # noqa: BLE001 — workers may lack Redis briefly
-        logger.debug("ai_output_language_fallback: %s", exc)
+        logger.debug("ai_output_language_fallback", error=str(exc))
         return getattr(getattr(cfg, "ui", None), "locale", None) or cfg.ai.output_language or "en"
