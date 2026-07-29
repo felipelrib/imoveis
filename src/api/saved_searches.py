@@ -372,9 +372,12 @@ def update_saved_search(
             if not update_fields:
                 return get_saved_search(search_id, principal)
 
+            # update_fields entries are hardcoded literals ("name = :name" /
+            # "filters = :filters") appended above — never user-supplied column
+            # names. Plain concatenation (not an f-string) per BIN-135.
             session.execute(
                 text(
-                    f"UPDATE saved_searches SET {', '.join(update_fields)} "
+                    "UPDATE saved_searches SET " + ", ".join(update_fields) + " "
                     "WHERE id = :sid AND owner = :owner"
                 ),
                 params,
