@@ -158,7 +158,7 @@ export default function PropertyModal({ id, onClose }) {
                 </div>
               </>
             )}
-            {!loading && p?.listings && p.listings.map((l, i) => {
+            {!loading && p?.listings && p.listings.map((l) => {
               const safeUrl = sanitizeListingUrl(l.url);
               if (!safeUrl) return null;
               return (

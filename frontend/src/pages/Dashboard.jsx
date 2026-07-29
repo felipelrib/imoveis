@@ -1,4 +1,3 @@
-import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useAlerts } from '../hooks/useAlerts.js'
 import { ensureOllama, recalculateScores, enrichMissing, enrichmentRerun, fetchPipeline, fetchPipelineHistory } from '../api.js'
 import { useState, useEffect, useRef } from 'react'
@@ -158,7 +157,7 @@ export default function Dashboard({ status, loading }) {
       cancelled = true
       clearInterval(id)
     }
-  }, [])
+  }, [locale])
 
   const handleEnsureOllama = async () => {
     setOllamaLoading(true)

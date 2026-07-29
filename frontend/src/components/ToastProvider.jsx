@@ -100,6 +100,9 @@ export function ToastProvider({ children }) {
   )
 }
 
+// Context + companion hook co-located on purpose (standard React pattern); the resulting
+// occasional extra Fast Refresh remount is an acceptable dev-only trade-off here.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   const ctx = useContext(ToastContext)
   if (!ctx) throw new Error('useToast must be used within a ToastProvider')
