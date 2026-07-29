@@ -48,4 +48,4 @@ None.
 
 - BIN-55 / Story 5.3: scoring cohorts prefer spatially assigned neighbourhoods (readers already `COALESCE` FK over string).
 - Existing rows without a re-scrape / `ai_enrich` stay unassigned until the pipeline runs again (no bulk backfill in this story).
-- Optional later: GIST on `properties.location` if containment volume needs it.
+- GIST on `properties.location`: shipped as BIN-121 / `docs/features/90-gist-index-properties-location.md`.

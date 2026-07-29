@@ -60,4 +60,4 @@ Bring your own BH (or other) GeoJSON — for example a municipal open-data bairr
 
 - BIN-54 / Story 5.2: assign `properties.neighborhood_id` via `ST_Contains` in the enrichment pipeline (AD-10), not from API handlers (AD-3).
 - BIN-55 / Story 5.3: scoring cohorts prefer spatially assigned neighbourhoods.
-- Optional later: GIST on `properties.location` if containment queries need it.
+- GIST on `properties.location`: shipped as BIN-121 / `docs/features/90-gist-index-properties-location.md`.
