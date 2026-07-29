@@ -402,6 +402,8 @@
     "colIptu": "IPTU",
     "bundledFees": "Taxas inclusas",
     "bundledFeesTitle": "Inclui taxa de condomínio e IPTU",
+    "condoPlusIptu": "Cond.+IPTU",
+    "iptuBundledTitle": "IPTU incluído no valor Cond.+IPTU — a plataforma não publicou valores separados",
     "openOnPlatform": "Abrir na plataforma",
     "linkUnavailable": "Link indisponível",
     "furnished": "Mobiliado",

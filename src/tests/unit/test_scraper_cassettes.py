@@ -60,7 +60,7 @@ class TestQuintoAndarCassettes:
         rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(120.0)
         assert rent["iptu"] == pytest.approx(59.0)
-        assert rent["raw_json"].get("fees_bundled") is None
+        assert rent["raw_json"]["fees_bundled"] is False
 
     def test_detail_cassette_description_extractable(self, qa_scraper):
         from adapters.scrapers.listing_description import extract_quintoandar_description
@@ -89,6 +89,7 @@ class TestOLXCassettes:
         assert result["location"] == {"lat": -19.9320, "lon": -43.9380}
         assert result["listings"][0]["accepts_pets"] is True
         assert result["listings"][0]["is_furnished"] is False
+        assert result["listings"][0]["raw_json"]["fees_bundled"] is False
 
     def test_flight_search_cassette_extracts_and_normalizes(self, olx_scraper):
         """OLX listing pages ship Flight RSC ads (no __NEXT_DATA__)."""

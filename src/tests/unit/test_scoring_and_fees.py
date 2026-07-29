@@ -52,7 +52,8 @@ class TestQuintoAndarFees:
         rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] == pytest.approx(120.0)
         assert rent["iptu"] == pytest.approx(59.0)
-        assert rent["raw_json"].get("fees_bundled") is None
+        assert rent["raw_json"]["fees_bundled"] is False
+        assert result["props_json"]["fees_bundled"] is False
 
     def test_bundled_condo_iptu_field(self, qa_scraper):
         result = qa_scraper.normalize(
@@ -71,12 +72,14 @@ class TestQuintoAndarFees:
         assert rent["condo_fee"] is None
         assert rent["iptu"] is None
         assert rent["price"] == 900
+        assert rent["raw_json"]["fees_bundled"] is False
 
     def test_equal_total_and_base_no_phantom_fees(self, qa_scraper):
         result = qa_scraper.normalize(_qa_raw(rentPrice=900, totalCost=900))
         rent = next(row for row in result["listings"] if row["listing_type"] == "rent")
         assert rent["condo_fee"] is None
         assert rent["iptu"] is None
+        assert rent["raw_json"]["fees_bundled"] is False
 
 
 class TestQuintoAndarPropertyType:

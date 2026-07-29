@@ -94,6 +94,21 @@ class TestOLXNormalize:
         assert listing["price"] == 4150.0
         assert listing["currency"] == "BRL"
 
+    def test_fees_bundled_false_for_separate_condo_iptu(self, scraper):
+        """BIN-114: OLX never invents a condo+IPTU bundle; flag separate fees."""
+        raw = {
+            **SAMPLE_OLX_LISTING,
+            "properties": [
+                *SAMPLE_OLX_LISTING["properties"],
+                {"label": "IPTU", "value": "165"},
+            ],
+        }
+        result = scraper.normalize(raw)
+        listing = result["listings"][0]
+        assert listing["condo_fee"] == pytest.approx(650.0)
+        assert listing["iptu"] == pytest.approx(165.0)
+        assert listing["raw_json"]["fees_bundled"] is False
+
     def test_images_extracted(self, scraper):
         result = scraper.normalize(SAMPLE_OLX_LISTING)
         assert len(result["image_urls"]) == 2

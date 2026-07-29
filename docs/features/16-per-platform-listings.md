@@ -64,9 +64,9 @@ bash scripts/test.sh all  # validates build + lint + unit + integration
 
 ## Notes / Follow-ups
 
-- **Scraper alignment**: Some platforms report "condo fee" (condomínio) and "property tax"
-  (IPTU) as a single bundled value, while others report them separately. The UI currently
-  displays whatever the scraper provided, which can make cross-platform comparison
-  difficult if the values aren't normalized.
+- **Scraper alignment (BIN-114 / feature 91)**: Bundled condo+IPTU is flagged via
+  `fees_bundled` (QuintoAndar true when only a bundle is published; OLX always false).
+  The modal labels the condo cell as Condo+IPTU and leaves IPTU as "—" — no invented
+  splits. See `docs/features/91-bundled-condo-iptu.md`.
 - **Historical listings**: If a platform delists a property, the row remains in the UI
   but the link will 404. A daily health-check scraper could verify and prune dead URLs.
