@@ -274,8 +274,8 @@ class AuthConfig(BaseModel, frozen=True):
     api_key: str = ""
     jwt_secret: str = ""
     principal_id: str = "default"
-    admin_user: str = "admin"
-    admin_pass: str = "admin"
+    admin_user: str = ""
+    admin_pass: str = ""
 
 
 class UiConfig(BaseModel, frozen=True):
