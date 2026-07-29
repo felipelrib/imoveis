@@ -19,9 +19,7 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
-from adapters.scrapers.flight_html import (
-    extract_json_array_after as _shared_extract_json_array_after,
-)
+from adapters.scrapers.flight_html import extract_json_array_after as _shared_extract_json_array_after
 from adapters.scrapers.flight_html import unescape_js_string as _shared_unescape_js_string
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
 from adapters.scrapers.listing_description import extract_olx_description
