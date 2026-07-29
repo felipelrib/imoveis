@@ -219,6 +219,13 @@ pre-commit run --all-files
 ./scripts/test.sh unit --args "-v -k test_dedupe"  # Filter tests
 ```
 
+Prefer `bash scripts/agent/validate.sh` for the CI-equivalent gate. Host pytest uses
+an isolated Postgres DB (`realestate_test`) and Redis logical DB **15**
+(`REDIS_TEST_DB`); Compose API/Celery keep Postgres `realestate` and Redis DB **0**
+so fixtures that truncate tables / `flushdb` do not wipe scraped data or Celery
+queues. See `docs/features/50-isolate-integration-test-db.md` and
+`docs/features/90-isolate-redis-test-db.md`.
+
 ### Frontend Development
 
 `./scripts/start.sh` and `./scripts/restart.sh` bring up backend containers **and** a
