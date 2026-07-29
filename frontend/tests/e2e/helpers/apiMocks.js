@@ -90,7 +90,14 @@ export const PROPERTIES_PAGE = {
 /** Five distinct properties for multi-select / compare limit e2e. */
 export const PROPERTIES_PAGE_FIVE = {
   properties: [
-    { ...SAMPLE_PROPERTY, id: "1", public_id: 1, title: "2BR Apartment Savassi" },
+    {
+      ...SAMPLE_PROPERTY,
+      id: "1",
+      public_id: 1,
+      title: "2BR Apartment Savassi",
+      lat: -19.92,
+      lon: -43.94,
+    },
     {
       ...SAMPLE_PROPERTY,
       id: "2",
@@ -102,6 +109,8 @@ export const PROPERTIES_PAGE_FIVE = {
       price_per_m2: 56,
       neighborhood_name: "Lourdes",
       combined_score: 0.65,
+      lat: -19.925,
+      lon: -43.935,
       primary_listing: {
         platform: "quintoandar",
         platform_listing_id: "2",
@@ -130,6 +139,8 @@ export const PROPERTIES_PAGE_FIVE = {
       area_m2: 40,
       price_per_m2: 52.5,
       neighborhood_name: "Funcionarios",
+      lat: -19.915,
+      lon: -43.945,
       primary_listing: {
         platform: "olx",
         platform_listing_id: "3",
@@ -158,6 +169,8 @@ export const PROPERTIES_PAGE_FIVE = {
       area_m2: 180,
       price_per_m2: 4944,
       neighborhood_name: "Santo Antonio",
+      lat: -19.93,
+      lon: -43.95,
       primary_listing: {
         platform: "olx",
         platform_listing_id: "4",
@@ -186,6 +199,8 @@ export const PROPERTIES_PAGE_FIVE = {
       area_m2: 55,
       price_per_m2: 50.91,
       neighborhood_name: "Centro",
+      lat: -19.91,
+      lon: -43.93,
       primary_listing: {
         platform: "quintoandar",
         platform_listing_id: "5",

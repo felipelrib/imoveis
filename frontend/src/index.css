@@ -1315,6 +1315,27 @@ body {
   background: rgba(99,102,241,0.3);
 }
 
+/* Map View — compare-mode HTML hit targets over MapLibre points */
+.map-compare-hit {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+.map-compare-hit--selected {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.85);
+}
+.map-compare-hit:focus-visible {
+  outline: 2px solid var(--accent, #6366f1);
+  outline-offset: 2px;
+}
+
 /* Map View */
 .map-container .maplibregl-popup-content {
   background: var(--bg-card, #1a1a2e);

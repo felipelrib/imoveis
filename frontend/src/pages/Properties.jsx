@@ -820,6 +820,22 @@ export default function Properties() {
             <MapView
               properties={mapProperties.length > 0 ? mapProperties : (data?.properties || [])}
               listingType={listingType}
+              compareMode={compareMode}
+              selectedIds={compareIds}
+              onToggleCompare={(propertyOrId) => {
+                if (propertyOrId && typeof propertyOrId === 'object') {
+                  const linkId = linkIdForProperty(propertyOrId)
+                  if (linkId) toggleCompare(linkId)
+                  return
+                }
+                const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
+                const key = String(propertyOrId)
+                const match = list.find(
+                  (p) => String(linkIdForProperty(p) || '') === key || String(p.id) === key,
+                )
+                const linkId = match ? linkIdForProperty(match) : key
+                if (linkId) toggleCompare(linkId)
+              }}
               onSelectProperty={(id) => {
                 const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
                 const match = list.find((p) => String(p.id) === String(id))
