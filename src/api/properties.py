@@ -43,6 +43,14 @@ _RESP_404 = {404: {"description": "Property not found"}}
 # Back-compat aliases for in-module f-strings / detail query
 _LISTINGS_JSON_AGG = LISTINGS_JSON_AGG
 _LIST_SELECT_COLUMNS = LIST_SELECT_COLUMNS
+# Shared FROM/JOIN clause for every properties/metrics_scoring/neighborhoods
+# query below (BIN-135) — a single source avoids Sonar duplicated-lines flags
+# on the near-identical concatenated SQL across list/get/export helpers.
+_PROPERTIES_FROM_JOIN = (
+    "FROM properties p "
+    "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
+    "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
+)
 
 
 def _coerce_listing_type(value: Any) -> Any:
@@ -389,21 +397,13 @@ def list_properties(
         # plain concatenation (not an f-string) per BIN-135.
         sql = text(
             "SELECT " + _LIST_SELECT_COLUMNS + " "
-            "FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + where + " "
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + where + " "
             "ORDER BY " + order + " "
             "LIMIT :limit OFFSET :offset"
         )
 
-        count_sql = text(
-            "SELECT COUNT(*) "
-            "FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + where
-        )
+        count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
 
         count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
         total = session.execute(count_sql, count_params).scalar() or 0
@@ -568,10 +568,8 @@ def get_properties_by_ids(
         # never user-supplied text. Plain concatenation per BIN-135.
         sql = text(
             "SELECT " + _LIST_SELECT_COLUMNS + " "
-            "FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + column + " IN (" + placeholders + ")"
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + column + " IN (" + placeholders + ")"
         )
         rows = session.execute(sql, params).mappings().fetchall()
         if key_kind == "public_id":
@@ -622,20 +620,12 @@ def export_properties(
         # concatenation (not an f-string) per BIN-135.
         sql = text(
             "SELECT " + _LIST_SELECT_COLUMNS + " "
-            "FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + where + " "
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + where + " "
             "ORDER BY " + order + " "
             "LIMIT :limit OFFSET :offset"
         )
-        count_sql = text(
-            "SELECT COUNT(*) "
-            "FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + where
-        )
+        count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
         count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
         total = session.execute(count_sql, count_params).scalar() or 0
         rows = session.execute(sql, params).mappings().fetchall()
@@ -695,10 +685,9 @@ def get_property(property_id: str) -> Dict[str, Any]:
             "n.quality_notes, "
             "ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat, "
             + _LISTINGS_JSON_AGG
-            + " FROM properties p "
-            "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
-            "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
-            "WHERE " + where
+            + " "
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + where
         )
         row = session.execute(sql, {"id": key_value}).mappings().fetchone()
         if row is None:
