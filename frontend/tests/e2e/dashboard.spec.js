@@ -21,6 +21,38 @@ test.describe("Dashboard page", () => {
     await expect(page.locator("text=PostgreSQL")).toBeVisible();
   });
 
+  test("shows proxy health card as Direct without credentials (BIN-124)", async ({
+    page,
+  }) => {
+    await installCommonMocks(page);
+    await page.goto("/");
+    const card = page.getByTestId("proxy-health-card");
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("Proxy");
+    await expect(card).toContainText("Direct");
+    await expect(card).toContainText("Proxy disabled");
+    await expect(card).not.toContainText("@");
+  });
+
+  test("shows proxy pool mode from pipeline summary (BIN-124)", async ({ page }) => {
+    await installCommonMocks(page, {
+      pipelineProxy: {
+        proxy_enabled: true,
+        proxy_mode: "pool",
+        rotation_strategy: "round_robin",
+        pool_size: 3,
+        proxy_host: "http://proxy-a.example:8080",
+        health: "ok",
+      },
+    });
+    await page.goto("/");
+    const card = page.getByTestId("proxy-health-card");
+    await expect(card).toContainText("Pool");
+    await expect(card).toContainText("Pool of 3");
+    await expect(card).not.toContainText("user:");
+    await expect(card).not.toContainText("s3cret");
+  });
+
   test("shows em dash for property counts when database is unhealthy (BIN-60)", async ({
     page,
   }) => {

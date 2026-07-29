@@ -55,4 +55,4 @@ None.
 
 - Related: BIN-47 (AppConfig), BIN-48 (HTTP rotation) — Epic 3 / FR-20 complete with this story.
 - Round-robin remains process-local per Celery worker (unchanged from BIN-48).
-- No frontend dashboard widgets for proxy mode (out of scope).
+- Frontend dashboard widgets for proxy mode: **done** in BIN-124 (`docs/features/91-proxy-dashboard-widgets.md`).

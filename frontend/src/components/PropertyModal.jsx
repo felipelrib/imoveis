@@ -360,8 +360,29 @@ export default function PropertyModal({ id, onClose }) {
                                         {isBest && '★ '}{money(l.price)}
                                       </td>
                                       <td>{money(l.base_price)}</td>
-                                      <td>{money(l.condo_fee)}</td>
-                                      <td>{money(l.iptu)}</td>
+                                      <td>
+                                        {l.fees_bundled ? (
+                                          <span data-testid="fee-condo-bundled" title={t('modal.bundledFeesTitle')}>
+                                            {money(l.condo_fee)}
+                                            {l.condo_fee != null && l.condo_fee !== 0 ? (
+                                              <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)' }}>
+                                                {t('modal.condoPlusIptu')}
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                        ) : (
+                                          money(l.condo_fee)
+                                        )}
+                                      </td>
+                                      <td>
+                                        {l.fees_bundled ? (
+                                          <span data-testid="fee-iptu-bundled" title={t('modal.iptuBundledTitle')}>
+                                            {emDash}
+                                          </span>
+                                        ) : (
+                                          money(l.iptu)
+                                        )}
+                                      </td>
                                       <td>
                                         {sanitizeListingUrl(l.url) ? (
                                           <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title={t('modal.openOnPlatform')}>

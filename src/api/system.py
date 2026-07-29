@@ -180,6 +180,7 @@ def system_pipeline() -> Dict[str, Any]:
         "scrapers_status": _scraper_pipeline_statuses(r),
         "ai_metrics": _ai_pipeline_metrics(r.lrange("pipeline:ai:telemetry", 0, -1)),
         "recent_scrape_runs": _recent_scrape_runs(r),
+        "proxy": _pipeline_proxy_summary(),
     }
 
 
@@ -211,6 +212,31 @@ def system_pipeline_history(minutes: int = 60) -> Dict[str, Any]:
             }
         )
     return {"points": points}
+
+
+def _pipeline_proxy_summary() -> dict:
+    """Safe proxy mode / pool readiness for Dashboard widgets (BIN-124).
+
+    Reuses BIN-49 redaction helpers. Health is config readiness only — there is
+    no per-proxy success telemetry:
+
+    - ``direct`` — proxy disabled (or no URL selected because disabled)
+    - ``ok`` — enabled with a usable pool or single URL
+    - ``warn`` — enabled but empty pool and no URL (misconfigured)
+    """
+    from adapters.scrapers.http_client import proxy_mode_summary, resolve_proxy_url
+
+    cfg = get_config().proxy
+    selected = resolve_proxy_url(cfg)
+    summary = proxy_mode_summary(cfg, selected=selected)
+    mode = summary.get("proxy_mode") or "direct"
+    if not summary.get("proxy_enabled"):
+        health = "direct"
+    elif mode in ("pool", "single", "override"):
+        health = "ok"
+    else:
+        health = "warn"
+    return {**summary, "health": health}
 
 
 def _pipeline_queue_lengths(redis) -> dict:

@@ -297,10 +297,24 @@ class TestSeedCoversFanOut:
 
         app = yaml.safe_load(APP_CONFIG.read_text(encoding="utf-8"))
         platforms = app["scraping"]["platforms"]
-        qa_slugs = {
-            n["slug"] for n in platforms["quintoandar"]["extra"]["neighborhoods"]
-        }
-        olx_slugs = {n["slug"] for n in platforms["olx"]["extra"]["neighborhoods"]}
+
+        def _fan_out_slugs(extra: dict) -> set[str]:
+            cities = extra.get("cities") or []
+            if cities:
+                return {
+                    n["slug"]
+                    for city in cities
+                    for n in (city.get("neighborhoods") or [])
+                    if isinstance(n, dict) and n.get("slug")
+                }
+            return {
+                n["slug"]
+                for n in (extra.get("neighborhoods") or [])
+                if isinstance(n, dict) and n.get("slug")
+            }
+
+        qa_slugs = _fan_out_slugs(platforms["quintoandar"]["extra"])
+        olx_slugs = _fan_out_slugs(platforms["olx"]["extra"])
         fan_out = qa_slugs | olx_slugs
         missing = fan_out - seed_slugs
         assert not missing, f"seed missing fan-out slugs: {sorted(missing)}"

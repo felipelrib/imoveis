@@ -72,5 +72,5 @@ None.
 
 - BIN-99: migrate remaining SPA strings into the catalogs.
 - BIN-100 / BIN-101: filters and AI user-visible fields; may optionally link UI locale to AI generation later without merging the config keys.
-- Money/date formatters remain hardcoded `pt-BR` for now; centralize on active locale in a later story if desired.
+- Money/date formatters: centralized on active UI locale in BIN-99 (`format.js`); follow-up ticket BIN-116 closed with regression locks — see `90-locale-aware-moneydate-formatters.md`.
 - Redis preference is process/cluster shared (single-operator first); owner-scoped prefs table deferred per epic non-goals.

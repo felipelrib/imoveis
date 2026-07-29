@@ -19,6 +19,7 @@ from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from api.main import app
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
+from tests.redis_isolation import assert_wipe_safe_redis_url
 
 # ============================================================================
 # Fixtures
@@ -50,14 +51,20 @@ def admin_headers():
 
 @pytest.fixture(scope="function")
 def mock_redis():
-    """Use real Redis from CI when available, otherwise mock it."""
+    """Use real Redis from CI when available, otherwise mock it.
+
+    Real Redis must be a non-zero logical DB (BIN-117) so flushdb cannot
+    wipe Compose Celery/API keys on DB 0.
+    """
     redis_url = os.environ.get("REDIS_URL")
     if redis_url:
         import redis
 
+        assert_wipe_safe_redis_url(redis_url)
         client = redis.Redis.from_url(redis_url)
         client.flushdb()
         yield client
+        assert_wipe_safe_redis_url(redis_url)
         client.flushdb()
         client.close()
     else:

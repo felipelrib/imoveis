@@ -1,6 +1,6 @@
 /**
- * Locale-aware number/date helpers (BIN-99).
- * Currency stays BRL; digit grouping follows the active UI locale.
+ * Locale-aware number/date helpers (BIN-99 / BIN-116).
+ * Currency stays BRL; digit grouping / date order follow the active UI locale.
  */
 
 /**

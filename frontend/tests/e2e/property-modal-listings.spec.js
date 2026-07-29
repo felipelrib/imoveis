@@ -32,6 +32,30 @@ const FURNISHED_PROPERTY = {
   ],
 };
 
+const BUNDLED_FEES_PROPERTY = {
+  ...SAMPLE_PROPERTY,
+  id: "bundled-fees-uuid-1",
+  public_id: 43,
+  title: "Bundled Fees Alvorada Flat",
+  deal_summary: "Fair value — condition unknown",
+  listings: [
+    {
+      platform: "quintoandar",
+      platform_listing_id: "895549038",
+      listing_type: "rent",
+      price: 929,
+      base_price: 750,
+      condo_fee: 179,
+      iptu: null,
+      currency: "BRL",
+      url: "https://www.quintoandar.com.br/imovel/895549038",
+      is_furnished: false,
+      accepts_pets: null,
+      fees_bundled: true,
+    },
+  ],
+};
+
 test.describe("Property modal listings (BIN-65/66/67)", () => {
   test.beforeEach(async ({ page }) => {
     await installCommonMocks(page);
@@ -55,5 +79,37 @@ test.describe("Property modal listings (BIN-65/66/67)", () => {
     await expect(page.getByTestId("attr-chip-pets-ok")).toBeVisible();
     await expect(page.getByText("R$ 3,000")).toBeVisible();
     await expect(page.getByText("Deal verdict")).toBeVisible();
+  });
+});
+
+test.describe("Property modal bundled fees (BIN-114)", () => {
+  test.beforeEach(async ({ page }) => {
+    await installCommonMocks(page);
+    await mockPropertiesList(page, {
+      ...PROPERTIES_PAGE,
+      properties: [BUNDLED_FEES_PROPERTY],
+      total: 1,
+    });
+    await mockPropertyDetail(page, BUNDLED_FEES_PROPERTY);
+    await page.goto("/properties");
+    await expect(page.locator("text=Bundled Fees Alvorada Flat")).toBeVisible();
+  });
+
+  test("flags bundled condo+IPTU and leaves IPTU as em-dash", async ({ page }) => {
+    await page.locator("text=Bundled Fees Alvorada Flat").click();
+    const listings = page.getByTestId("listings-by-platform");
+    await expect(listings).toBeVisible();
+    await expect(listings.getByText("Bundled fees")).toBeVisible();
+    const condoCell = page.getByTestId("fee-condo-bundled");
+    await expect(condoCell).toBeVisible();
+    await expect(condoCell).toContainText("R$ 179");
+    await expect(condoCell).toContainText("Condo+IPTU");
+    const iptuCell = page.getByTestId("fee-iptu-bundled");
+    await expect(iptuCell).toBeVisible();
+    await expect(iptuCell).toHaveText("—");
+    await expect(iptuCell).toHaveAttribute(
+      "title",
+      "IPTU included in the Condo+IPTU amount — platform did not publish a separate value",
+    );
   });
 });
