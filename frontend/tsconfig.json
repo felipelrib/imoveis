@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    /* Gradual JS/TS coexistence (BIN-140). This is scoped tooling only —
+       api.ts is the first migrated file; the rest of frontend/src stays
+       .jsx/.js until a follow-up epic migrates it incrementally. */
+    "allowJs": true,
+    "checkJs": false,
+
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+
+    /* Vite/esbuild does the actual transpile; tsc here is type-checking only. */
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    /* Strict on the .ts/.tsx files that opt in (checkJs is off, so this does
+       not retroactively force-check existing .jsx/.js). */
+    "strict": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "tests"]
+}
