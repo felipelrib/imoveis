@@ -1,5 +1,3 @@
-import os
-
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import task_failure, task_revoked
@@ -193,7 +191,12 @@ def make_celery() -> Celery:
     """Create and configure Celery app."""
     celery_app = Celery("real_estate_scraper")
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    # Same resolution path as infra.redis_client.get_redis(): YAML redis.host/
+    # port/password fields, with REDIS_URL only applied if explicitly set
+    # (infra.config._apply_env_overrides). A bare os.environ.get() here would
+    # silently point the broker/backend at a different Redis than the rest of
+    # the app uses for checkpoints/circuit breakers/scheduler overrides (BIN-130).
+    redis_url = get_config().redis.url
 
     # Configurações básicas do Celery
     celery_app.conf.update(

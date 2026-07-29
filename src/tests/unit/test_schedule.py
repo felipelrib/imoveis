@@ -195,10 +195,13 @@ class TestBuildBeatSchedule:
 
     @patch("adapters.queue.celery_app.build_beat_schedule", return_value={"scheduled": {}})
     @patch("adapters.queue.celery_app.Celery")
-    def test_make_celery_applies_broker_routes_and_schedule(self, celery_cls, build_schedule, monkeypatch):
+    @patch("adapters.queue.celery_app.get_config")
+    def test_make_celery_applies_broker_routes_and_schedule(self, mock_get_config, celery_cls, build_schedule):
         from adapters.queue.celery_app import make_celery
 
-        monkeypatch.setenv("REDIS_URL", "redis://broker:6379/9")
+        # BIN-130: broker/backend resolve through AppConfig (cfg.redis.url),
+        # the same path infra.redis_client.get_redis() uses — not os.environ.
+        mock_get_config.return_value.redis.url = "redis://broker:6379/9"
         app = MagicMock()
         celery_cls.return_value = app
 
@@ -237,10 +240,16 @@ class TestBuildBeatSchedule:
         build_schedule.assert_called_once()
 
     @patch("adapters.queue.celery_app.Celery")
-    def test_make_celery_uses_default_redis_url(self, celery_cls, monkeypatch):
+    @patch("adapters.queue.celery_app.get_config")
+    def test_make_celery_uses_default_redis_url(self, mock_get_config, celery_cls):
+        """BIN-130: with AppConfig's default RedisConfig (no YAML/env override),
+        broker/backend fall back to the same default get_redis() would use —
+        derived from cfg.redis.url, not a bare os.environ.get("REDIS_URL", ...).
+        """
         from adapters.queue.celery_app import make_celery
+        from infra.config import RedisConfig
 
-        monkeypatch.delenv("REDIS_URL", raising=False)
+        mock_get_config.return_value.redis.url = RedisConfig().url
         celery_cls.return_value = MagicMock()
 
         make_celery()
@@ -249,11 +258,12 @@ class TestBuildBeatSchedule:
 
     @patch("adapters.queue.celery_app.build_beat_schedule", return_value={})
     @patch("adapters.queue.celery_app.Celery")
-    def test_beat_maintenance_tasks_routed_to_scrapers_queue(self, celery_cls, _build_schedule, monkeypatch):
+    @patch("adapters.queue.celery_app.get_config")
+    def test_beat_maintenance_tasks_routed_to_scrapers_queue(self, mock_get_config, celery_cls, _build_schedule):
         """Regression BIN-76: unrouted beat tasks pile up on default `celery` (no consumer)."""
         from adapters.queue.celery_app import make_celery
 
-        monkeypatch.setenv("REDIS_URL", "redis://broker:6379/9")
+        mock_get_config.return_value.redis.url = "redis://broker:6379/9"
         app = MagicMock()
         celery_cls.return_value = app
 
