@@ -10,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from tests.env_helpers import get_api_key
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -126,7 +128,7 @@ def test_list_properties_accepts_float_ai_scores(client, seeded_ai_enriched_prop
 
 def test_export_json_accepts_float_ai_scores(client, seeded_ai_enriched_property):
     prop_id = seeded_ai_enriched_property
-    api_key = os.environ.get("API_KEY", "")
+    api_key = get_api_key()
     headers = {"X-API-Key": api_key} if api_key else {}
     response = client.get(
         "/properties/export?format=json&platform=test",
