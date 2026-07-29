@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   fetchPlatforms, triggerScrape, pauseWorkers, resumeWorkers, fetchPipeline,
-  fetchSchedule, updateSchedule, hasApiKey,
+  fetchSchedule, updateSchedule, hasApiKey, triggerAvailabilityRecheck,
 } from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -58,6 +58,7 @@ export default function ScraperControl() {
   const [savingSchedule, setSavingSchedule] = useState(false)
   const [scheduleAuthNeeded, setScheduleAuthNeeded] = useState(() => !hasApiKey())
   const scheduleAuthToastShown = useRef(false)
+  const [recheckingAvailability, setRecheckingAvailability] = useState(false)
 
   // Logs state initialized from localStorage
   const [logs, setLogs] = useState(() => {
@@ -256,6 +257,31 @@ export default function ScraperControl() {
     }
   }
 
+  const handleAvailabilityRecheck = async () => {
+    if (!hasApiKey()) {
+      showToast(t('scraper.toastAuthRecheck'), { type: 'error' })
+      return
+    }
+    setRecheckingAvailability(true)
+    try {
+      const r = await triggerAvailabilityRecheck()
+      addLog(
+        'success',
+        t('scraper.logRecheckEnqueued', {
+          time: ts(),
+          batch: r.batch_size ?? t('common.emDash'),
+          taskId: r.task_id ?? t('common.emDash'),
+        }),
+      )
+      showToast(t('scraper.toastRecheckEnqueued'), { type: 'success' })
+    } catch (e) {
+      addLog('error', t('scraper.logGenericError', { time: ts(), message: e.message }))
+      showToast(t('scraper.toastRecheckFailed'), { type: 'error' })
+    } finally {
+      setRecheckingAvailability(false)
+    }
+  }
+
   const formatTs = (value) => {
     if (!value) return t('common.emDash')
     return formatDateTime(value, locale)
@@ -438,6 +464,26 @@ export default function ScraperControl() {
                   {t('scraper.install')}
                 </a>
               )}
+            </div>
+
+            {/* Listing availability recheck (BIN-123) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 10 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{t('scraper.availabilityRecheck')}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.45 }}>
+                  {t('scraper.availabilityRecheckHelp')}
+                </div>
+              </div>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={handleAvailabilityRecheck}
+                disabled={recheckingAvailability}
+                data-testid="availability-recheck"
+              >
+                {recheckingAvailability
+                  ? <><span className="spinner" /> {t('scraper.availabilityRecheckBusy')}</>
+                  : t('scraper.availabilityRecheckRun')}
+              </button>
             </div>
 
             <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, padding: '10px 14px', background: 'rgba(0,0,0,0.2)', borderRadius: 8 }}>

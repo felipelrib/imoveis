@@ -61,7 +61,7 @@ None.
 ## Notes / Follow-ups
 
 - Maps PRD debt “Dead listing URL pruning”.
-- Scraper Control UI button for recheck not added (admin API is enough for v1).
+- Scraper Control UI button for recheck: shipped in BIN-123 / feature 93.
 - Rebuild `beat` + `worker_scraper` after merge so the new route/schedule load.
 - Example QA unavailable: house `894638432` rent `despublicado` while sale stayed
   `publicado` at probe time.

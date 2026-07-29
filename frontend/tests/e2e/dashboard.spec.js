@@ -323,4 +323,57 @@ test.describe("Scraper control critical path", () => {
     await expect.poll(() => scheduleKeys.some((k) => k === "e2e-test-api-key")).toBeTruthy();
     await expect(page.getByText(/Interval:/i).first()).toBeVisible();
   });
+
+  test("availability recheck requires API key and enqueues when set (BIN-123)", async ({
+    page,
+  }) => {
+    /** @type {string[]} */
+    const recheckKeys = [];
+    let recheckPosts = 0;
+
+    await installCommonMocks(page);
+    await mockPlatforms(page);
+    await mockAdminHealth(page, { validKey: "e2e-test-api-key" });
+
+    await page.route("**/api/admin/availability/recheck**", async (route) => {
+      if (route.request().method() === "POST") {
+        recheckPosts += 1;
+        recheckKeys.push(route.request().headers()["x-api-key"] || "");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            queued: true,
+            task_id: "recheck-task-1",
+            batch_size: 20,
+          }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/");
+    await page.evaluate(() => sessionStorage.clear());
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("availability-recheck")).toBeVisible();
+    await page.getByTestId("availability-recheck").click();
+    await expect(
+      page.getByText("Set an API credential to run availability recheck"),
+    ).toBeVisible();
+    await expect.poll(() => recheckPosts, { timeout: 1500 }).toBe(0);
+
+    await page.getByTestId("credential-input").fill("e2e-test-api-key");
+    await page.getByTestId("credential-save").click();
+    await expect(page.getByTestId("credential-status")).toHaveText("set");
+
+    await page.goto("/scraper");
+    await page.getByTestId("availability-recheck").click();
+    await expect.poll(() => recheckPosts).toBe(1);
+    await expect.poll(() => recheckKeys.some((k) => k === "e2e-test-api-key")).toBeTruthy();
+    await expect(
+      page.getByText("Availability recheck enqueued", { exact: true }),
+    ).toBeVisible();
+  });
 });
