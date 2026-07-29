@@ -19,7 +19,7 @@ function loadSeenRunIds() {
     const raw = localStorage.getItem(SEEN_RUN_IDS_KEY)
     const parsed = raw ? JSON.parse(raw) : []
     return new Set(Array.isArray(parsed) ? parsed : [])
-  } catch (e) {
+  } catch {
     return new Set()
   }
 }
@@ -37,7 +37,6 @@ export default function ScraperControl() {
   const [selectedPlatform, setSelectedPlatform] = useState('')
   const [scrapeType, setScrapeType] = useState('both')
   const [scraping, setScraping] = useState(false)
-  const [taskId, setTaskId] = useState(null)
   const [workerPaused, setWorkerPaused] = useState(false)
   const logRef = useRef(null)
   const seenRunIdsRef = useRef(null)
@@ -64,7 +63,7 @@ export default function ScraperControl() {
   const [logs, setLogs] = useState(() => {
     const saved = localStorage.getItem('scraperLogs')
     if (saved) {
-      try { return JSON.parse(saved) } catch (e) { /* ignore */ }
+      try { return JSON.parse(saved) } catch { /* ignore malformed localStorage payload */ }
     }
     return [{ type: 'info', text: t('scraper.logReady', { time: ts() }) }]
   })
@@ -97,7 +96,6 @@ export default function ScraperControl() {
     } else {
       addLog('success', t('scraper.logScrapeOk', { time, platform, counts }))
     }
-    setTaskId(null)
     setScraping(false)
   }
 
@@ -121,11 +119,14 @@ export default function ScraperControl() {
           if (age > SCRAPE_RUN_LOG_MAX_AGE_SEC) continue
           logScrapeRun(run)
         }
-      } catch (e) { /* ignore polling errors */ }
+      } catch { /* ignore polling errors */ }
     }
     poll()
     const id = setInterval(poll, 3000)
     return () => { cancelled = true; clearInterval(id) }
+    // logScrapeRun is a plain (unmemoized) function redefined every render — adding it here
+    // would tear down/recreate this polling interval on every render instead of every 3s.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Poll schedule status — only when an API credential is present (admin-gated).
@@ -160,7 +161,7 @@ export default function ScraperControl() {
     poll()
     const id = setInterval(poll, 15000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [showToast])
+  }, [showToast, t])
 
   // Save logs to localStorage on change (capped at 200)
   useEffect(() => {
@@ -174,9 +175,12 @@ export default function ScraperControl() {
     }).catch(() => {
       showToast(t('scraper.toastPlatformsFailed'), { type: 'error' })
     })
-  }, [])
+  }, [showToast, t])
 
   useEffect(() => {
+    // Mirrors polled server status into local (optimistically-toggled) state — status
+    // is owned by a separate hook (useSystemStatus), so this sync can't move to render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (status) setWorkerPaused(status.ai_workers_paused)
   }, [status])
 
@@ -195,8 +199,7 @@ export default function ScraperControl() {
     setScraping(true)
     addLog('info', t('scraper.logTrigger', { platform: formatPlatform(selectedPlatform), type: scrapeTypeLabel(scrapeType) }))
     try {
-      const r = await triggerScrape(selectedPlatform, {}, scrapeType)
-      setTaskId(r.task_id)
+      await triggerScrape(selectedPlatform, {}, scrapeType)
       addLog('success', t('scraper.logEnqueued', { time: ts() }))
       showToast(t('scraper.toastEnqueued'), { type: 'success' })
     } catch (e) {

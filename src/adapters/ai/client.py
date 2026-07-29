@@ -15,7 +15,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Tuple
 
 import aiohttp
 import anyio
@@ -335,6 +335,40 @@ class LocalAIClient(ABC):
             raw = await image_file.read()
         return base64.b64encode(raw).decode("utf-8")
 
+    async def _run_json_retry_loop(
+        self,
+        fetch: Callable[[], Awaitable[Tuple[str, Any]]],
+        apply_retry_hint: Callable[[], None],
+        build_result: Callable[[dict, Any], Any],
+        attempts: int = 3,
+    ) -> Any:
+        """Call ``fetch`` up to ``attempts`` times until it yields valid JSON.
+
+        Shared by ``OllamaClient`` and ``LMStudioClient`` for the
+        analyze_visuals / analyze_text / _llm_verdict retry-on-invalid-JSON
+        loop, which was previously duplicated per backend.
+
+        ``fetch`` performs one HTTP call and returns ``(raw_text, context)``:
+        ``raw_text`` is parsed as JSON, and ``context`` is passed through to
+        ``build_result`` unchanged (e.g. the raw response payload, used by
+        some callers as an ``analysis`` fallback distinct from the JSON
+        parse text). On ``json.JSONDecodeError``, ``apply_retry_hint`` mutates
+        the enclosing prompt/messages before the next attempt. The last
+        ``JSONDecodeError`` is re-raised once attempts are exhausted —
+        callers wrap the call in their own try/except to apply a fallback
+        result and keep their own log message.
+        """
+        for attempt in range(attempts):
+            raw_text, context = await fetch()
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                if attempt == attempts - 1:
+                    raise
+                apply_retry_hint()
+                continue
+            return build_result(data, context)
+
     @asynccontextmanager
     async def session_context(self):
         """Use client session as an async context manager."""
@@ -388,18 +422,21 @@ class OllamaClient(LocalAIClient):
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call Ollama for deal verdict synthesis."""
         try:
-            for attempt in range(3):
+            async def fetch() -> Tuple[str, Any]:
                 res = await self.generate(self.text_model, prompt, stream=False, format="json")
-                try:
-                    data = json.loads(res.get("response", "{}"))
-                    return DealVerdictResult(
-                        verdict=data.get("verdict", ""),
-                        confidence=float(data.get("confidence", 0.8)),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    prompt += _INVALID_JSON_RETRY_HINT
+                return res.get("response", "{}"), None
+
+            def apply_hint() -> None:
+                nonlocal prompt
+                prompt += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, _context: Any) -> DealVerdictResult:
+                return DealVerdictResult(
+                    verdict=data.get("verdict", ""),
+                    confidence=float(data.get("confidence", 0.8)),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception as exc:
             logger.warning("ollama_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -447,22 +484,25 @@ class OllamaClient(LocalAIClient):
         try:
             images = [await self._read_image_b64(path) for path in local_paths]
 
-            for attempt in range(3):
+            async def fetch() -> Tuple[str, Any]:
                 res = await self.generate(self.visual_model, prompt, images=images, stream=False, format="json")
-                try:
-                    data = json.loads(res.get("response", "{}"))
-                    return VisualResult(
-                        condition_score=data.get("condition_score", 0.5),
-                        analysis=res.get("response", ""),
-                        category=normalize_visual_category(data.get("category", "average")),
-                        reasoning=data.get("reasoning", ""),
-                        features_detected=data.get("features_detected", []),
-                        issues_detected=data.get("issues_detected", []),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    prompt += _INVALID_JSON_RETRY_HINT
+                return res.get("response", "{}"), res
+
+            def apply_hint() -> None:
+                nonlocal prompt
+                prompt += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, res: Any) -> VisualResult:
+                return VisualResult(
+                    condition_score=data.get("condition_score", 0.5),
+                    analysis=res.get("response", ""),
+                    category=normalize_visual_category(data.get("category", "average")),
+                    reasoning=data.get("reasoning", ""),
+                    features_detected=data.get("features_detected", []),
+                    issues_detected=data.get("issues_detected", []),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception:
             logger.exception("Error in analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
@@ -470,22 +510,26 @@ class OllamaClient(LocalAIClient):
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
-            for attempt in range(3):
+
+            async def fetch() -> Tuple[str, Any]:
                 res = await self.generate(self.text_model, full_prompt, stream=False, format="json")
-                try:
-                    data = json.loads(res.get("response", "{}"))
-                    return SentimentResult(
-                        sentiment_score=data.get("sentiment_score", 0.5),
-                        analysis=res.get("response", ""),
-                        category=normalize_sentiment_category(data.get("category", "average")),
-                        reasoning=data.get("reasoning", ""),
-                        green_flags=data.get("green_flags", []),
-                        red_flags=data.get("red_flags", []),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    full_prompt += _INVALID_JSON_RETRY_HINT
+                return res.get("response", "{}"), res
+
+            def apply_hint() -> None:
+                nonlocal full_prompt
+                full_prompt += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, res: Any) -> SentimentResult:
+                return SentimentResult(
+                    sentiment_score=data.get("sentiment_score", 0.5),
+                    analysis=res.get("response", ""),
+                    category=normalize_sentiment_category(data.get("category", "average")),
+                    reasoning=data.get("reasoning", ""),
+                    green_flags=data.get("green_flags", []),
+                    red_flags=data.get("red_flags", []),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception:
             logger.exception("Error in analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
@@ -540,7 +584,7 @@ class LMStudioClient(LocalAIClient):
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
         """Call LM Studio for deal verdict synthesis."""
         try:
-            for attempt in range(3):
+            async def fetch() -> Tuple[str, Any]:
                 messages = [{"role": "user", "content": prompt}]
                 result = await self.chat_completions(
                     model=self.text_model,
@@ -548,16 +592,19 @@ class LMStudioClient(LocalAIClient):
                     max_tokens=256,
                 )
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                try:
-                    data = json.loads(text)
-                    return DealVerdictResult(
-                        verdict=data.get("verdict", ""),
-                        confidence=float(data.get("confidence", 0.8)),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    prompt += _INVALID_JSON_RETRY_HINT
+                return text, None
+
+            def apply_hint() -> None:
+                nonlocal prompt
+                prompt += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, _context: Any) -> DealVerdictResult:
+                return DealVerdictResult(
+                    verdict=data.get("verdict", ""),
+                    confidence=float(data.get("confidence", 0.8)),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception as exc:
             logger.warning("lmstudio_verdict_error: %s", str(exc))
             return DealVerdictResult(
@@ -600,7 +647,6 @@ class LMStudioClient(LocalAIClient):
 
     async def analyze_visuals(self, local_paths: List[str], prompt: str) -> VisualResult:
         """Analyze property images using LM Studio VLM via chat completions."""
-        text = "<unread>"
         try:
             # Build message content with text prompt + base64 images
             content: list = [{"type": "text", "text": prompt}]
@@ -613,7 +659,7 @@ class LMStudioClient(LocalAIClient):
                     "image_url": {"url": f"data:{media_type};base64,{b64}"},
                 })
 
-            for attempt in range(3):
+            async def fetch() -> Tuple[str, Any]:
                 messages = [{"role": "user", "content": content}]
                 result = await self.chat_completions(
                     model=self.visual_model,
@@ -621,31 +667,33 @@ class LMStudioClient(LocalAIClient):
                     max_tokens=1024,
                 )
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                try:
-                    data = json.loads(text)
-                    return VisualResult(
-                        condition_score=data.get("condition_score", 0.5),
-                        analysis=data.get("analysis", text),
-                        category=normalize_visual_category(data.get("category", "average")),
-                        reasoning=data.get("reasoning", ""),
-                        features_detected=data.get("features_detected", []),
-                        issues_detected=data.get("issues_detected", []),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    if isinstance(content[0], dict) and content[0].get("type") == "text":
-                        content[0]["text"] += _INVALID_JSON_RETRY_HINT
+                return text, text
+
+            def apply_hint() -> None:
+                if isinstance(content[0], dict) and content[0].get("type") == "text":
+                    content[0]["text"] += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, text: str) -> VisualResult:
+                return VisualResult(
+                    condition_score=data.get("condition_score", 0.5),
+                    analysis=data.get("analysis", text),
+                    category=normalize_visual_category(data.get("category", "average")),
+                    reasoning=data.get("reasoning", ""),
+                    features_detected=data.get("features_detected", []),
+                    issues_detected=data.get("issues_detected", []),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception:
             logger.exception("Error in LMStudioClient.analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         """Analyze property description text using LM Studio via chat completions."""
-        text = "<unread>"
         try:
             full_prompt = f"{prompt}\n\nDescription: {description}"
-            for attempt in range(3):
+
+            async def fetch() -> Tuple[str, Any]:
                 messages = [{"role": "user", "content": full_prompt}]
                 result = await self.chat_completions(
                     model=self.text_model,
@@ -653,20 +701,23 @@ class LMStudioClient(LocalAIClient):
                     max_tokens=1024,
                 )
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                try:
-                    data = json.loads(text)
-                    return SentimentResult(
-                        sentiment_score=data.get("sentiment_score", 0.5),
-                        analysis=data.get("analysis", text),
-                        category=normalize_sentiment_category(data.get("category", "average")),
-                        reasoning=data.get("reasoning", ""),
-                        green_flags=data.get("green_flags", []),
-                        red_flags=data.get("red_flags", []),
-                    )
-                except json.JSONDecodeError:
-                    if attempt == 2:
-                        raise
-                    full_prompt += _INVALID_JSON_RETRY_HINT
+                return text, text
+
+            def apply_hint() -> None:
+                nonlocal full_prompt
+                full_prompt += _INVALID_JSON_RETRY_HINT
+
+            def build(data: dict, text: str) -> SentimentResult:
+                return SentimentResult(
+                    sentiment_score=data.get("sentiment_score", 0.5),
+                    analysis=data.get("analysis", text),
+                    category=normalize_sentiment_category(data.get("category", "average")),
+                    reasoning=data.get("reasoning", ""),
+                    green_flags=data.get("green_flags", []),
+                    red_flags=data.get("red_flags", []),
+                )
+
+            return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception:
             logger.exception("Error in LMStudioClient.analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
