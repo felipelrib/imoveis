@@ -1,0 +1,16 @@
+# Trivy vulnerability ignore list. One entry per accepted-risk CVE, always
+# with a comment explaining why — never add an entry without justification.
+
+# CVE-2024-23342 — python-ecdsa: vulnerable to the Minerva timing attack.
+# No fixed version exists upstream (python-ecdsa's maintainers consider
+# constant-time guarantees out of scope for the pure-Python implementation).
+# `ecdsa` is a hard transitive dependency of `python-jose` (via
+# requirements.in's `python-jose[cryptography]`) regardless of the
+# `[cryptography]` extra — that extra adds `cryptography` for other
+# algorithms but does not remove `ecdsa` from python-jose's own dependency
+# tree. This app signs/verifies JWTs with HS256 (HMAC-SHA256) only
+# (see src/api/auth.py JWT_ALGORITHM) — the vulnerable ECDSA signing/
+# verification path in `ecdsa` is never exercised at runtime. Revisit if
+# python-jose ever drops the ecdsa dependency, ships a fix, or this app
+# starts using an ES256/EC-based JWT algorithm.
+CVE-2024-23342
