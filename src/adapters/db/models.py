@@ -102,7 +102,11 @@ class Property(Base):
     bedrooms = Column(Integer)
     bathrooms = Column(Integer)
     parking = Column(Integer)
-    location = Column(Geometry(geometry_type="POINT", srid=4326))
+    # GIST via Alembic ix_properties_location_gist (BIN-121); spatial_index=False
+    # avoids GeoAlchemy2 create_all inventing a second index name.
+    location = Column(
+        Geometry(geometry_type="POINT", srid=4326, spatial_index=False),
+    )
     address = Column(String)
     image_urls = Column(JSON)
     props_json = Column(JSON)
