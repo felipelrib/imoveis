@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from api.auth import Principal, verify_api_key
+from api.errors import raise_api_error
 from api.property_refs import resolve_property_uuid
 from infra.db import SessionLocal
 from infra.logging import get_logger
@@ -157,7 +158,7 @@ def add_favourite(req: FavouriteCreate, principal: CurrentPrincipal) -> Favourit
             raise
         except Exception as exc:
             session.rollback()
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "favourite_add_failed", exc)
 
 
 @router.delete("/{property_id}", responses={**_RESP_404, **_RESP_500})
@@ -188,7 +189,7 @@ def remove_favourite(
             raise
         except Exception as exc:
             session.rollback()
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "favourite_remove_failed", exc)
 
 
 @router.get("/check/{property_id}")

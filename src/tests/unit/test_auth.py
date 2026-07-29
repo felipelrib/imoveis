@@ -174,6 +174,126 @@ def test_admin_jwt_maps_to_same_principal(client_with_auth):
 
 
 @pytest.mark.unit
+def test_admin_login_fails_closed_when_credentials_unset(monkeypatch: pytest.MonkeyPatch):
+    """BIN-131: admin_user/admin_pass default to "" — unset creds must reject login, not
+
+    fall back to a guessable literal default like the old ``admin``/``admin``.
+    """
+    cfg = MagicMock()
+    cfg.auth = _auth_config(admin_user="", admin_pass="")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/auth/admin/login",
+        data={"username": "anything", "password": "anything"},
+    )
+    assert response.status_code == 403
+    assert "not configured" in response.json()["detail"].lower()
+
+
+@pytest.mark.unit
+def test_admin_login_fails_closed_when_only_password_unset(monkeypatch: pytest.MonkeyPatch):
+    """Partial config (username set, password blank) must still fail closed."""
+    cfg = MagicMock()
+    cfg.auth = _auth_config(admin_user="admin", admin_pass="")
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # Non-empty client-submitted password — the point is the *server* config
+    # (admin_pass) is unset, not that the client sent a blank form field
+    # (which would 422 before ever reaching the handler).
+    response = client.post(
+        "/auth/admin/login",
+        data={"username": "admin", "password": "whatever"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.unit
+def test_auth_config_defaults_admin_credentials_empty():
+    """AuthConfig defaults must match jwt_secret's empty-by-default pattern (BIN-131)."""
+    cfg = AuthConfig()
+    assert cfg.admin_user == ""
+    assert cfg.admin_pass == ""
+
+
+@pytest.mark.unit
+def test_auth_token_mock_endpoint_removed():
+    """BIN-131: the unauthenticated mock /auth/token JWT issuer must not exist."""
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/auth/token", data={"username": "anyone", "password": ""})
+    assert response.status_code == 404
+
+
+@pytest.mark.unit
+def test_no_route_depends_on_verify_jwt_without_credential_check():
+    """BIN-131 guardrail: verify_jwt only checks a JWT's signature/claims — it does not
+
+    itself verify a real credential (that check happened when the token was minted).
+    Any future route wired with ``Depends(verify_jwt)`` must pair it with an explicit
+    credential-check dependency, or it inherits an auth bypass by construction.
+    """
+    from api.auth import verify_admin_access, verify_admin_jwt, verify_api_key, verify_api_key_if_configured, verify_jwt
+
+    credential_checks = {
+        verify_admin_jwt,
+        verify_api_key,
+        verify_api_key_if_configured,
+        verify_admin_access,
+    }
+
+    def _collect_calls(dependant, seen_ids=None) -> set:
+        # Use id(sub) rather than FastAPI's private Dependant.cache_key: that
+        # attribute's presence/shape varies across FastAPI versions (CI hit
+        # AttributeError: 'Dependant' object has no attribute 'cache_key' on
+        # a newer FastAPI than the local dev venv). id() is always available
+        # and is sufficient here purely to avoid infinite recursion on
+        # shared sub-dependencies within a single traversal.
+        seen_ids = seen_ids if seen_ids is not None else set()
+        calls = set()
+        if dependant.call is not None:
+            calls.add(dependant.call)
+        for sub in dependant.dependencies:
+            if id(sub) in seen_ids:
+                continue
+            seen_ids.add(id(sub))
+            calls |= _collect_calls(sub, seen_ids)
+        return calls
+
+    def _iter_api_routes(routes):
+        """Recursively flatten FastAPI's route tree into leaf APIRoutes.
+
+        Handles both plain nested ``APIRouter``s (older FastAPI: sub-routes
+        live on ``.routes``) and newer FastAPI's ``_IncludedRouter`` wrapper
+        (the real routes live on ``.original_router.routes``).
+        """
+        for route in routes:
+            original_router = getattr(route, "original_router", None)
+            if original_router is not None:
+                yield from _iter_api_routes(original_router.routes)
+                continue
+            sub_routes = getattr(route, "routes", None)
+            if sub_routes:
+                yield from _iter_api_routes(sub_routes)
+            elif getattr(route, "dependant", None) is not None:
+                yield route
+
+    checked_routes = 0
+    for route in _iter_api_routes(app.routes):
+        checked_routes += 1
+        calls = _collect_calls(route.dependant)
+        if verify_jwt in calls:
+            assert calls & credential_checks, (
+                f"Route {getattr(route, 'path', route)} depends on verify_jwt "
+                "without an explicit credential check upstream"
+            )
+
+    # Sanity: make sure this test actually walked real routes (not a no-op).
+    assert checked_routes > 10
+
+
+@pytest.mark.unit
 def test_api_key_loaded_via_appconfig_env_channel(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """API_KEY reaches auth only through AppConfig load path (AD-2)."""
     from infra.config import load_config

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_admin_access
+from api.errors import raise_api_error
 from core.enrichment_rerun import (
     MODE_MISSING,
     MODE_STALE_BEFORE,
@@ -162,8 +163,7 @@ def recalculate_scores(weights: Optional[ScoringWeights] = None):
             }
         except Exception as exc:
             session.rollback()
-            logger.error("recalculate_scores_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "recalculate_scores_failed", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -388,9 +388,9 @@ def enrichment_rerun(body: EnrichmentRerunRequest):
     try:
         return enqueue_enrichment_rerun(body, audit_action="enrichment_rerun")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_api_error(logger, "enrichment_rerun_invalid", exc, status_code=400)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise_api_error(logger, "enrichment_rerun_failed", exc)
 
 
 @router.post("/enrichment/missing", responses={**_RESP_400, **_RESP_500})
@@ -406,9 +406,9 @@ def enrich_missing():
             audit_action="enrich_missing",
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_api_error(logger, "enrich_missing_invalid", exc, status_code=400)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise_api_error(logger, "enrich_missing_failed", exc)
     return {
         "queued_enrichments": result["queued"],
         "skipped_no_images": result["skipped_no_images"],
@@ -515,8 +515,7 @@ def recompute_verdicts():
             count = result.queued
             skipped_prior = result.skipped_missing_prior_enrichment
         except Exception as exc:
-            logger.error("verdict_recompute_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise_api_error(logger, "verdict_recompute_failed", exc)
 
     logger.info("verdicts_recompute_queued", count=count, skipped_prior=skipped_prior)
     log_audit_action(
@@ -557,8 +556,7 @@ def backfill_embeddings(force: bool = False):
                 embed_property.apply_async(args=[str(prop_id)], queue="ai")
                 count += 1
         except Exception as exc:
-            logger.error("embeddings_backfill_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "embeddings_backfill_failed", exc)
 
     logger.info("embeddings_backfill_queued", count=count, force=force)
     log_audit_action("embeddings_backfill", {"queued": count, "force": force})
@@ -583,11 +581,9 @@ def load_neighbourhood_quality():
             result = load_curated_neighbourhood_quality(session, DEFAULT_YAML_PATH)
             session.commit()
     except (OSError, NeighbourhoodQualityYamlError) as exc:
-        logger.error("neighbourhood_quality_load_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise_api_error(logger, "neighbourhood_quality_load_failed", exc)
     except Exception as exc:
-        logger.error("neighbourhood_quality_load_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise_api_error(logger, "neighbourhood_quality_load_failed", exc)
 
     logger.info(
         "neighbourhood_quality_loaded",

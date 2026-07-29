@@ -5,7 +5,6 @@ Tests cover API endpoints, deduplication, scraping, and async task processing.
 Run with: pytest src/tests/integration/ -v
 """
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +18,7 @@ from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from api.main import app
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
+from tests.env_helpers import get_api_key, get_redis_url
 from tests.redis_isolation import assert_wipe_safe_redis_url
 
 # ============================================================================
@@ -44,7 +44,7 @@ def admin_headers():
     from infra.config import get_config
 
     get_config.cache_clear()
-    api_key = get_config().auth.api_key or os.environ.get("API_KEY", "")
+    api_key = get_config().auth.api_key or get_api_key()
     assert api_key, "API_KEY must be set (via env → AppConfig) for admin integration tests"
     return {"X-API-Key": api_key}
 
@@ -56,7 +56,7 @@ def mock_redis():
     Real Redis must be a non-zero logical DB (BIN-117) so flushdb cannot
     wipe Compose Celery/API keys on DB 0.
     """
-    redis_url = os.environ.get("REDIS_URL")
+    redis_url = get_redis_url()
     if redis_url:
         import redis
 
@@ -268,7 +268,7 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_opens_on_failures(self):
         """Test that circuit breaker opens after threshold failures."""
-        redis_url = os.environ.get("REDIS_URL")
+        redis_url = get_redis_url()
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
@@ -287,7 +287,7 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_resets_on_success(self):
         """Test that circuit breaker resets on success."""
-        redis_url = os.environ.get("REDIS_URL")
+        redis_url = get_redis_url()
         if not redis_url:
             pytest.skip("REDIS_URL not set — skipping Redis-dependent test")
 
@@ -314,7 +314,7 @@ class TestGPUSemaphore:
         # This test requires a real Redis connection because GPUSemaphore uses
         # Redis pipelines internally. The mock fixture returns a MagicMock when
         # REDIS_URL is not set, which cannot simulate pipeline transactions.
-        redis_url = os.environ.get("REDIS_URL")
+        redis_url = get_redis_url()
         if not redis_url:
             pytest.skip("REDIS_URL not set — semaphore test requires real Redis")
 

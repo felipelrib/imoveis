@@ -562,11 +562,13 @@ class TestTaskSignals:
             )
 
         logger.error.assert_called_once()
-        extra = logger.error.call_args.kwargs["extra"]
-        assert extra["task_id"] == "task-1"
-        assert extra["task_name"] == "tasks.scrape"
-        assert extra["exception"] == "bad listing"
-        assert extra["args"] == ["olx"]
+        call_kwargs = logger.error.call_args.kwargs
+        assert call_kwargs["task_id"] == "task-1"
+        assert call_kwargs["task_name"] == "tasks.scrape"
+        assert call_kwargs["exception"] == "bad listing"
+        # NOTE: "args"/"kwargs" collide with reserved LogRecord attributes, so
+        # the handler logs them as task_args/task_kwargs (BIN-129).
+        assert call_kwargs["task_args"] == ["olx"]
 
     def test_failure_handler_logs_its_own_logging_error(self):
         from adapters.queue.celery_app import handle_task_failure
@@ -587,8 +589,8 @@ class TestTaskSignals:
             handle_task_revoked(sender=sender, request=request, terminated=True, signum="TERM", expired=False)
 
         logger.warning.assert_called_once()
-        extra = logger.warning.call_args.kwargs["extra"]
-        assert extra == {
+        call_kwargs = logger.warning.call_args.kwargs
+        assert call_kwargs == {
             "task_id": "task-2",
             "task_name": "tasks.ai",
             "terminated": True,

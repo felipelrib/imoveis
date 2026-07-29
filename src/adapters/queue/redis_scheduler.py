@@ -1,10 +1,9 @@
-import logging
-
 from celery.beat import PersistentScheduler, ScheduleEntry
 
+from infra.logging import get_logger
 from infra.redis_client import get_redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RedisAwareScheduler(PersistentScheduler):
@@ -28,7 +27,11 @@ class RedisAwareScheduler(PersistentScheduler):
                     new_interval = int(override)
                     if new_interval <= 0:
                         # Interval <= 0 means disabled, skip sending
-                        logger.info("redis_scheduler_skipped", task=entry.name, reason="disabled_via_redis")
+                        logger.info(
+                            "redis_scheduler_skipped",
+                            task=entry.name,
+                            reason="disabled_via_redis",
+                        )
                         return
 
                     # Celery schedule is in seconds
@@ -42,11 +45,19 @@ class RedisAwareScheduler(PersistentScheduler):
                             new=new_interval,
                         )
                         from celery.schedules import schedule
+
                         entry.schedule = schedule(run_every=new_interval_sec)
 
                         # Reschedule it
                         self._maybe_sync()
                 except ValueError:
-                    logger.warning("redis_scheduler_invalid_override", task=entry.name, override=override)
+                    override_str = (
+                        override.decode() if isinstance(override, bytes) else str(override)
+                    )
+                    logger.warning(
+                        "redis_scheduler_invalid_override",
+                        task=entry.name,
+                        override=override_str,
+                    )
 
         return super().apply_entry(entry, producer=producer)

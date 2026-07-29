@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
@@ -12,6 +11,7 @@ from sqlalchemy import text
 from adapters.db.models import Property
 from api.main import app
 from infra.config import get_config
+from tests.env_helpers import get_api_key
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +35,7 @@ def client():
 @pytest.fixture
 def api_headers():
     get_config.cache_clear()
-    api_key = get_config().auth.api_key or os.environ.get("API_KEY", "")
+    api_key = get_config().auth.api_key or get_api_key()
     assert api_key, "API_KEY must be set for owner-scoped integration tests"
     return {"X-API-Key": api_key}
 

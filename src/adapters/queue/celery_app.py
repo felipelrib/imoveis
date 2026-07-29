@@ -1,13 +1,12 @@
-import logging
-
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import task_failure, task_revoked
 
 from infra.config import get_config
+from infra.logging import get_logger
 from infra.redis_client import get_redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +57,7 @@ def build_beat_schedule() -> dict:
                 "kwargs": {},
             }
     except Exception:
-        logger.warning("beat_schedule_build_failed", exc_info=True)
+        logger.exception("beat_schedule_build_failed")
 
     # Always-on maintenance jobs (independent of scraper platform config)
     schedule["evaluate-watchlist-alerts"] = {
@@ -251,14 +250,15 @@ def handle_task_failure(sender=None, task_id=None, exception=None, traceback=Non
     try:
         logger.error(
             "Task failed",
-            extra={
-                "task_id": task_id,
-                "task_name": sender.name if sender else "unknown",
-                "exception": str(exception),
-                "traceback": traceback,
-                "args": kwargs.get("args", []),
-                "kwargs": kwargs.get("kwargs", {}),
-            },
+            task_id=task_id,
+            task_name=sender.name if sender else "unknown",
+            exception=str(exception),
+            traceback=traceback,
+            # NOTE: "args"/"kwargs" collide with reserved LogRecord attributes
+            # (KeyError: Attempt to overwrite 'args' in LogRecord) — use
+            # task_args/task_kwargs instead (BIN-129).
+            task_args=kwargs.get("args", []),
+            task_kwargs=kwargs.get("kwargs", {}),
         )
     except Exception:
         logger.exception("Error in task failure handler")
@@ -271,13 +271,11 @@ def handle_task_revoked(sender=None, request=None, terminated=None, signum=None,
     try:
         logger.warning(
             "Task revoked",
-            extra={
-                "task_id": request.id if request else "unknown",
-                "task_name": sender.name if sender else "unknown",
-                "terminated": terminated,
-                "signum": signum,
-                "expired": expired,
-            },
+            task_id=request.id if request else "unknown",
+            task_name=sender.name if sender else "unknown",
+            terminated=terminated,
+            signum=signum,
+            expired=expired,
         )
     except Exception:
         logger.exception("Error in task revoked handler")

@@ -15,8 +15,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 api_key_header_optional = APIKeyHeader(name="X-API-Key", auto_error=False)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
-oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+# /auth/admin/login is the only token-issuing endpoint (BIN-131 removed the
+# unauthenticated mock /auth/token) — point OpenAPI's implicit flow there.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/admin/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/admin/login", auto_error=False)
 
 JWT_ALGORITHM = "HS256"
 CREDENTIALS_INVALID = "Could not validate credentials"
@@ -49,6 +51,21 @@ def _jwt_secret() -> str:
             detail="JWT secret not configured",
         )
     return secret
+
+
+def _require_admin_credentials_configured(cfg) -> None:
+    """Fail closed when ``ADMIN_USER``/``ADMIN_PASS`` are unset (BIN-131).
+
+    ``admin_user``/``admin_pass`` default to ``""`` like ``api_key``/``jwt_secret``;
+    an unset deployment must reject admin login rather than fall back to any
+    guessable literal default.
+    """
+    if not cfg.admin_user or not cfg.admin_pass:
+        logger.warning("auth_failed", reason="admin_credentials_not_set")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin credentials not configured",
+        )
 
 
 def verify_api_key(key: Annotated[str, Security(api_key_header)]) -> Principal:
@@ -109,6 +126,14 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 def verify_jwt(token: Annotated[str, Depends(oauth2_scheme)]):
+    """Validate a bearer JWT's signature/claims only — no credential check of its own.
+
+    Not wired to any route today (BIN-131): the only token issuer is the
+    credential-gated ``/auth/admin/login``, so any *future* route that adds
+    ``Depends(verify_jwt)`` must pair it with an explicit credential
+    dependency (``verify_admin_jwt`` / ``verify_api_key`` / ``verify_admin_access``)
+    upstream — see ``test_no_route_depends_on_verify_jwt_without_credential_check``.
+    """
     try:
         payload = jwt.decode(token, _jwt_secret(), algorithms=[JWT_ALGORITHM])
         user_id: str = payload.get("sub")
@@ -181,17 +206,6 @@ def verify_admin_access(
     )
 
 
-@router.post("/token", response_model=Token)
-def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
-    """Issue a JWT for a regular user (mock authentication)."""
-    user_id = form_data.username
-    access_token_expires = timedelta(days=30)
-    access_token = create_access_token(
-        data={"sub": user_id, "role": "user"}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 @router.post(
     "/admin/login",
     response_model=Token,
@@ -203,6 +217,7 @@ def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depen
 def login_for_admin_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     """Issue a short-lived JWT for admin access."""
     cfg = _auth_cfg()
+    _require_admin_credentials_configured(cfg)
 
     if form_data.username != cfg.admin_user or form_data.password != cfg.admin_pass:
         raise HTTPException(status_code=401, detail="Incorrect admin credentials")

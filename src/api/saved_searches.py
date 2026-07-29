@@ -18,6 +18,7 @@ from pydantic import (
 from sqlalchemy import text
 
 from api.auth import Principal, verify_api_key
+from api.errors import raise_api_error
 from core.listing_type import normalize_listing_type, normalize_price_type
 from core.property_type import normalize_property_type
 from infra.db import SessionLocal
@@ -307,7 +308,7 @@ def create_saved_search(
             )
         except Exception as exc:
             session.rollback()
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "saved_search_create_failed", exc)
 
 
 @router.delete("/{search_id}", responses={**_RESP_404, **_RESP_500})
@@ -336,7 +337,7 @@ def delete_saved_search(
             raise
         except Exception as exc:
             session.rollback()
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "saved_search_delete_failed", exc)
 
 
 @router.patch("/{search_id}", responses={**_RESP_404, **_RESP_500})
@@ -390,4 +391,4 @@ def update_saved_search(
             raise
         except Exception as exc:
             session.rollback()
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise_api_error(logger, "saved_search_update_failed", exc)

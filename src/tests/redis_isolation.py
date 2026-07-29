@@ -40,6 +40,10 @@ def is_wipe_safe_redis_url(
     if not url:
         return False
     if allow_primary_wipe is None:
+        # Intentional exception (BIN-142): this destructive-action guard reads
+        # the env var directly rather than via tests.env_helpers — it is a
+        # safety gate, not shared fixture setup, and should stay local/obvious
+        # at the call site.
         allow_primary_wipe = os.environ.get("IMOVEIS_ALLOW_PRIMARY_REDIS_WIPE", "") == "1"
     if allow_primary_wipe:
         return True

@@ -7,9 +7,9 @@ regression after prompt or model changes.  Requires Ollama to be reachable
 
 from __future__ import annotations
 
-import os
-
 import pytest
+
+from tests.env_helpers import get_ollama_host
 
 try:
     HAS_AIOHTTP = True
@@ -27,7 +27,7 @@ SENTIMENT_SCORE_TOLERANCE = 0.20
 @pytest.fixture(autouse=True)
 def _skip_if_ollama_unavailable():
     """Skip all tests in this module if Ollama is not reachable."""
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    ollama_host = get_ollama_host()
     import urllib.request
 
     try:
@@ -119,7 +119,7 @@ class TestAIGoldenFiles:
 
         async def _run():
             client = OllamaClient(
-                base_url=os.environ.get("OLLAMA_HOST", cfg.ai.ollama_url),
+                base_url=get_ollama_host(cfg.ai.ollama_url),
                 timeout=cfg.ai.timeout,
                 visual_model=cfg.ai.visual_model,
                 text_model=cfg.ai.text_model,
