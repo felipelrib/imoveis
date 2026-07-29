@@ -62,5 +62,6 @@ None.
 
 - BIN-100: locale-aware filter labels + PT synonym → EN wire — see `docs/features/80-locale-aware-filters.md`.
 - BIN-101: localize AI tags / verdicts / score *payload* copy (only chrome labels shipped here).
+- BIN-116: money/date formatter follow-up from feature 77 — already shipped here; closed with dedicated regression specs in `90-locale-aware-moneydate-formatters.md`.
 - Scraped listing bodies and neighbourhood proper nouns remain untranslated by design.
 - Map popup click handlers register once per map source create; rare mid-session locale switch may need a map remount to refresh popup chrome (acceptable for single-operator preference change).
