@@ -148,7 +148,7 @@ def _olx_walk_for_body(obj: Any, *, depth: int = 0) -> str:
 def _unescape_js_string(value: str) -> str:
     try:
         return bytes(value, "utf-8").decode("unicode_escape")
-    except Exception:  # noqa: BLE001 — fall back to crude unescape
+    except Exception:  # fall back to crude unescape
         return (
             value.replace(r"\\\"", '"')
             .replace(r"\\n", "\n")

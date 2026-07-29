@@ -108,7 +108,7 @@ def _enrich_candidate_description(session, scraper, candidate: PropertyCandidate
         return
     try:
         text = (fetch(url) or "").strip()
-    except Exception as exc:  # noqa: BLE001 — never abort scrape for detail enrich
+    except Exception as exc:  # never abort scrape for detail enrich
         logger.warning(
             "scrape_description_enrich_error",
             platform=candidate.platform,
@@ -1084,8 +1084,9 @@ def send_daily_digest(self):
     for item in alerts_json:
         try:
             alerts.append(json.loads(item))
-        except Exception:
-            pass
+        except Exception as exc:
+            raw = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else item
+            logger.warning("send_daily_digest_bad_alert_json", raw_item=raw, error=str(exc))
 
     if not alerts:
         return {"sent": 0}

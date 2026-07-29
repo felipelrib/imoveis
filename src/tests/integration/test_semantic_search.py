@@ -19,6 +19,18 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _reset_embedding_client_cache():
+    """Clear the per-thread AI client cache (BIN-143) so each test's patched
+    ``create_ai_client`` actually gets exercised instead of reusing a client
+    cached by a threadpool worker thread from a previous test."""
+    from api.properties import _reset_embedding_clients
+
+    _reset_embedding_clients()
+    yield
+    _reset_embedding_clients()
+
+
 def _db_ready() -> bool:
     try:
         from infra.db import SessionLocal

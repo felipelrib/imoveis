@@ -315,7 +315,7 @@ class QuintoAndarScraper(BaseScraper):
         except CircuitBreakerOpenError:
             logger.warning("quintoandar_description_circuit_open", url=url)
             return ""
-        except Exception as exc:  # noqa: BLE001 — detail enrich must not abort scrape
+        except Exception as exc:  # detail enrich must not abort scrape
             logger.warning(
                 "quintoandar_description_fetch_error", url=url, error=str(exc)
             )

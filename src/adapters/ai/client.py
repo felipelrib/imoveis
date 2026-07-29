@@ -302,7 +302,7 @@ class LocalAIClient(ABC):
                 from infra.ui_locale import resolve_ai_output_language
 
                 lang = output_language or resolve_ai_output_language()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 lang = output_language or "en"
             return DealVerdictResult(
                 verdict=template_deal_verdict(

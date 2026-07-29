@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Annotated, Any, Dict, List, Optional, Union
 from uuid import UUID
 
@@ -160,11 +161,43 @@ def _export_filters_as_list_filters(filters_in: PropertyExportFilters) -> Proper
 _parse_property_ref = parse_property_ref
 
 
-def _embed_query_literal(query_text: str) -> str:
-    import asyncio
+# Per-thread AI client cache for semantic-search embeddings (BIN-143).
+#
+# FastAPI runs sync route handlers in a bounded worker threadpool. aiohttp's
+# ClientSession (used by LocalAIClient subclasses) is bound to the event loop that
+# created it, so a single process-wide client/session cannot safely be shared across
+# worker threads each running their own event loop. Instead we cache one client per
+# worker thread — keyed by thread id in a plain dict (not ``threading.local()``) so
+# tests can clear the whole cache from any thread via ``_reset_embedding_clients``.
+# This still avoids the previous per-*request* cost of constructing a fresh client
+# and event loop (and re-opening a fresh TCP connection to Ollama/LM Studio) on
+# every semantic-search call.
+_embedding_clients: Dict[int, Any] = {}
+_embedding_clients_lock = threading.Lock()
 
+
+def _get_embedding_client() -> Any:
+    """Return this worker thread's cached AI client, creating it on first use."""
     from adapters.ai.client import create_ai_client
+
+    thread_id = threading.get_ident()
+    client = _embedding_clients.get(thread_id)
+    if client is None:
+        client = create_ai_client()
+        with _embedding_clients_lock:
+            _embedding_clients[thread_id] = client
+    return client
+
+
+def _reset_embedding_clients() -> None:
+    """Test-only hook: clear all cached per-thread embedding clients."""
+    with _embedding_clients_lock:
+        _embedding_clients.clear()
+
+
+def _embed_query_literal(query_text: str) -> str:
     from adapters.ai.embeddings import vector_literal
+    from adapters.queue.async_bridge import run_coro
     from core.semantic_query import normalize_semantic_query
     from infra.config import get_config
 
@@ -173,13 +206,10 @@ def _embed_query_literal(query_text: str) -> str:
     embed_input = normalize_semantic_query(query_text)
     if max_chars > 0:
         embed_input = embed_input[:max_chars]
-    client = create_ai_client()
 
-    async def _embed_query():
-        async with client:
-            return await client.embed(embed_input)
-
-    return vector_literal(asyncio.run(_embed_query()))
+    client = _get_embedding_client()
+    embedding = run_coro(client.embed(embed_input))
+    return vector_literal(embedding)
 
 
 def _append_neighborhood_filters(
