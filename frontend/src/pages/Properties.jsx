@@ -810,16 +810,48 @@ export default function Properties() {
           </div>
         )}
 
-        {/* Map View */}
+        {/* Map View — keep MapView mounted while bbox refetch runs (mapLoading);
+            unmounting caused compare hit targets to vanish mid-interaction. */}
         {!loadError && viewType === 'map' && (
-          mapLoading ? (
-            <div className="loading-grid">
-              {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}
-            </div>
-          ) : (
+          <div style={{ position: 'relative' }}>
+            {mapLoading && (
+              <div
+                className="map-loading-overlay"
+                data-testid="map-loading"
+                aria-busy="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 2,
+                  pointerEvents: 'none',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                  paddingTop: 12,
+                }}
+              >
+                <span className="skeleton" style={{ width: 120, height: 12, borderRadius: 6 }} />
+              </div>
+            )}
             <MapView
               properties={mapProperties.length > 0 ? mapProperties : (data?.properties || [])}
               listingType={listingType}
+              compareMode={compareMode}
+              selectedIds={compareIds}
+              onToggleCompare={(propertyOrId) => {
+                if (propertyOrId && typeof propertyOrId === 'object') {
+                  const linkId = linkIdForProperty(propertyOrId)
+                  if (linkId) toggleCompare(linkId)
+                  return
+                }
+                const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
+                const key = String(propertyOrId)
+                const match = list.find(
+                  (p) => String(linkIdForProperty(p) || '') === key || String(p.id) === key,
+                )
+                const linkId = match ? linkIdForProperty(match) : key
+                if (linkId) toggleCompare(linkId)
+              }}
               onSelectProperty={(id) => {
                 const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
                 const match = list.find((p) => String(p.id) === String(id))
@@ -827,7 +859,7 @@ export default function Properties() {
               }}
               onBboxChange={handleBboxChange}
             />
-          )
+          </div>
         )}
 
         {/* Grid */}
