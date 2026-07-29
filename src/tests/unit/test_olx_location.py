@@ -188,3 +188,27 @@ class TestReconcileOlxLocation:
         assert candidate.location is None
         assert candidate.props_json["neighborhood"] == "Itapoã"
         assert candidate.props_json["olx_location_corrected"] is True
+
+
+def test_reconcile_olx_location_ai_extract_raising_returns_ai_failed():
+    """BIN-143: ai_extract errors must not abort backfill/ingest."""
+
+    def _raising_ai(_prompt: str):
+        raise RuntimeError("model unavailable")
+
+    result = reconcile_olx_location(
+        title="Vendo casa",
+        description="",
+        scraped_city="Belo Horizonte",
+        scraped_neighborhood="Sion",
+        scraped_state="MG",
+        scraped_address="Sion, Belo Horizonte, MG",
+        allowed_cities=ALLOWED,
+        allowed_states=STATES,
+        known_neighborhoods=NEIGHBORHOODS,
+        ai_extract=_raising_ai,
+        force_ai=True,
+    )
+    assert result.action == "ai_failed"
+    assert result.city == "Belo Horizonte"
+    assert result.neighborhood == "Sion"

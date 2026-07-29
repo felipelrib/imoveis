@@ -286,7 +286,7 @@ class ZapImoveisScraper(BaseScraper):
         except CircuitBreakerOpenError:
             logger.warning("zapimoveis_description_circuit_open", url=url)
             return ""
-        except Exception as exc:  # noqa: BLE001 — detail enrich must not abort scrape
+        except Exception as exc:  # detail enrich must not abort scrape
             logger.warning("zapimoveis_description_fetch_error", url=url, error=str(exc))
             return ""
         if response.status_code != 200:
@@ -429,7 +429,7 @@ class ZapImoveisScraper(BaseScraper):
         except CircuitBreakerOpenError:
             logger.warning("zapimoveis_circuit_open", url=url)
             return []
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("zapimoveis_fetch_error", url=url, error=str(exc))
             return []
         if response.status_code == 403:

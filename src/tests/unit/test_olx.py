@@ -688,6 +688,21 @@ class TestOLXFetchLifecycle:
         with patch("adapters.scrapers.olx.logger"):
             assert scraper._fetch_page_listings("https://example.test", 1) == []
 
+    def test_fetch_description_circuit_open_returns_empty(self, scraper):
+        scraper._throttled_request = MagicMock(side_effect=CircuitBreakerOpenError("open"))
+
+        with patch("adapters.scrapers.olx.logger"):
+            assert scraper.fetch_description("https://example.test") == ""
+
+    def test_fetch_description_unexpected_error_returns_empty(self, scraper):
+        scraper._throttled_request = MagicMock(side_effect=RuntimeError("boom"))
+
+        with patch("adapters.scrapers.olx.logger"):
+            assert scraper.fetch_description("https://example.test") == ""
+
+    def test_fetch_description_blank_url_returns_empty(self, scraper):
+        assert scraper.fetch_description("   ") == ""
+
     @pytest.mark.parametrize(
         ("status", "html"),
         [
