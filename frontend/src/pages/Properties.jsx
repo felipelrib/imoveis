@@ -192,6 +192,9 @@ export default function Properties() {
     if (isCompareRoute) {
       if (routeCompareIds.length >= 2) {
         replaceCompare(routeCompareIds)
+        // Route-driven mode sync; a full effect->render refactor is tracked under BIN-141
+        // (Properties.jsx split), not this lint-tooling ticket.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setCompareMode(true)
       } else {
         navigate(PROPERTIES_PATH, { replace: true })
@@ -371,6 +374,7 @@ export default function Properties() {
       .then(res => setFavouriteIds(new Set((res.items || []).map(f => f.property_id))))
       .catch(() => {})
     // Fetch dynamic neighborhoods / cities
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-only fetch-loading flag
     setNeighborhoodsLoading(true)
     fetchNeighborhoods()
       .then(setNeighborhoods)
@@ -416,16 +420,28 @@ export default function Properties() {
   }, [favouriteIds, showToast, t])
 
   // Reload on filter changes; also enter favourites view via URL/sidebar
+  //
+  // `load` is a plain (unmemoized) closure over ~15 filter fields, not a stable callback —
+  // adding it to the deps array below would fire this effect on every render (its identity
+  // changes each render) instead of only on real filter changes. Memoizing `load` (and
+  // untangling it from the page-change effect just below) is exactly the kind of effect
+  // restructuring tracked separately under BIN-141 (Properties.jsx split), not this
+  // lint-tooling ticket — narrowly suppressed here instead of a risky untested refactor.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
     setPage(1)
     load(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
   }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
   // page 1 when setPage(1) runs after visiting page 2+, which is intentional and correct.
+  // Same `load`-is-unmemoized rationale as above (BIN-141) for the suppressions below.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
     load(page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
   }, [page])
 
   const handleViewModeChange = (mode) => {
