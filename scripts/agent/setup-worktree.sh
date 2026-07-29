@@ -8,6 +8,16 @@
 # Worktree path:  ../<primary-basename>-wt-<slug>
 #   e.g. /home/felipe/workfolder/imoveis-wt-add-login
 #
+# EXCEPTION — already-isolated sessions: if the CURRENT checkout is already a
+# linked worktree (not the primary) when this script starts, it was given a
+# dedicated worktree natively by the calling product (Claude Code's
+# EnterWorktree tool / Agent `isolation: "worktree"`, or Cursor's
+# background-agent dispatch) before this script ever ran. Creating a second,
+# nested/sibling worktree in that case is redundant and would try to relocate
+# outside the product's own sanctioned worktree root (e.g. permission-gated
+# for Claude Code). So: skip `git worktree add` entirely and just configure
+# ports/.env.local/symlinks for the CURRENT worktree in place.
+#
 # Prefer scripts/agent/setup-workspace.sh — it chooses solo branch vs worktree.
 #
 # Prints the worktree path on the LAST line (machine-readable).
@@ -47,27 +57,52 @@ parse_branch "$BRANCH"
 SLUG="$BRANCH_DESC"
 BASE_BRANCH="${2:-main}"
 PROJ="$(sanitize_proj "$BRANCH")"
-WORKTREE="$(worktree_path_for_slug "$SLUG")"
 
-log "Preparing isolated worktree for '$BRANCH' at $WORKTREE"
+if in_linked_worktree; then
+  # Already isolated by the calling product (see header comment) — do not
+  # create a second, nested/sibling worktree. Configure THIS worktree in
+  # place instead.
+  WORKTREE="$REPO_ROOT"
+  ok "already in an isolated worktree at $WORKTREE (native product isolation) — skipping nested worktree creation"
 
-if git -C "$PRIMARY_ROOT" remote get-url origin >/dev/null 2>&1; then
-  git -C "$PRIMARY_ROOT" fetch origin --quiet || warn "git fetch failed; using local $BASE_BRANCH"
-  git -C "$PRIMARY_ROOT" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1 && BASE_REF="origin/$BASE_BRANCH" || BASE_REF="$BASE_BRANCH"
-else
-  BASE_REF="$BASE_BRANCH"
-fi
-
-if [ -d "$WORKTREE" ]; then
-  warn "worktree already exists at $WORKTREE — reusing it"
-else
-  mkdir -p "$WORKTREE_PARENT"
-  if git -C "$PRIMARY_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-    git -C "$PRIMARY_ROOT" worktree add "$WORKTREE" "$BRANCH"
-  else
-    git -C "$PRIMARY_ROOT" worktree add -b "$BRANCH" "$WORKTREE" "$BASE_REF"
+  CURRENT_BRANCH="$(current_branch)"
+  if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    if validate_conventional_branch "$CURRENT_BRANCH" >/dev/null 2>&1; then
+      warn "current branch '$CURRENT_BRANCH' is already Conventional-Branch-compliant — keeping it instead of renaming to '$BRANCH'"
+      BRANCH="$CURRENT_BRANCH"
+      PROJ="$(sanitize_proj "$BRANCH")"
+    elif git -C "$PRIMARY_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+      warn "branch '$BRANCH' already exists elsewhere — keeping current branch '$CURRENT_BRANCH' to avoid a collision"
+      BRANCH="$CURRENT_BRANCH"
+      PROJ="$(sanitize_proj "$BRANCH")"
+    else
+      git branch -m "$BRANCH"
+      ok "renamed branch '$CURRENT_BRANCH' -> '$BRANCH' for Conventional Branch compliance"
+    fi
   fi
-  ok "worktree created at $WORKTREE (branch $BRANCH from $BASE_REF)"
+else
+  WORKTREE="$(worktree_path_for_slug "$SLUG")"
+
+  log "Preparing isolated worktree for '$BRANCH' at $WORKTREE"
+
+  if git -C "$PRIMARY_ROOT" remote get-url origin >/dev/null 2>&1; then
+    git -C "$PRIMARY_ROOT" fetch origin --quiet || warn "git fetch failed; using local $BASE_BRANCH"
+    git -C "$PRIMARY_ROOT" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1 && BASE_REF="origin/$BASE_BRANCH" || BASE_REF="$BASE_BRANCH"
+  else
+    BASE_REF="$BASE_BRANCH"
+  fi
+
+  if [ -d "$WORKTREE" ]; then
+    warn "worktree already exists at $WORKTREE — reusing it"
+  else
+    mkdir -p "$WORKTREE_PARENT"
+    if git -C "$PRIMARY_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+      git -C "$PRIMARY_ROOT" worktree add "$WORKTREE" "$BRANCH"
+    else
+      git -C "$PRIMARY_ROOT" worktree add -b "$BRANCH" "$WORKTREE" "$BASE_REF"
+    fi
+    ok "worktree created at $WORKTREE (branch $BRANCH from $BASE_REF)"
+  fi
 fi
 
 # --- Allocate ports under the registry lock ---------------------------------
@@ -199,9 +234,14 @@ fi
 echo ""
 echo "  MODE=parallel"
 echo "  BRANCH=$BRANCH"
-echo "  Workspace ready. Next steps:"
-echo "    1. move_agent_to_root → $WORKTREE   (or: cd \"$WORKTREE\")"
-echo "    2. bash scripts/agent/run-services.sh"
+if [ "$WORKTREE" = "$REPO_ROOT" ]; then
+  echo "  Workspace ready — already isolated here, nothing to relocate to. Next step:"
+  echo "    1. bash scripts/agent/run-services.sh"
+else
+  echo "  Workspace ready. Next steps:"
+  echo "    1. move_agent_to_root → $WORKTREE   (or: cd \"$WORKTREE\")"
+  echo "    2. bash scripts/agent/run-services.sh"
+fi
 echo ""
 # Last line = worktree path (machine-readable for the caller).
 echo "$WORKTREE"
