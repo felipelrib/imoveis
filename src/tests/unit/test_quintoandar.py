@@ -109,7 +109,7 @@ class TestQuintoAndarFetch:
         assert any("sao-paulo-sp-brasil" in u for u in urls)
         assert any("campinas-sp-brasil" in u for u in urls)
         assert s._neighborhoods_for_city("sao-paulo-sp-brasil") == []
-        assert s._neighborhoods_for_city("belo-horizonte-mg-brasil") == ["savassi"]
+        assert s._neighborhoods_for_city("belo-horizonte-mg-brasil") == [{"slug": "savassi"}]
 
     def test_split_window(self):
         q: deque = deque()

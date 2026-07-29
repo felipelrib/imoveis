@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.common import neighborhoods_for, parse_cities, parse_price_pair
 from adapters.scrapers.flight_html import extract_json_array_after as _shared_extract_json_array_after
 from adapters.scrapers.flight_html import unescape_js_string as _shared_unescape_js_string
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
@@ -50,9 +51,13 @@ class OLXScraper(BaseScraper):
         extra = config.get("extra") or {}
         self._max_pages = int(extra.get("max_pages", 5))
         self._page_size_hint = int(extra.get("page_size_hint", 50))
-        self._price_rent = self._parse_price_pair(extra.get("price_rent"), (500, 15000))
-        self._price_sale = self._parse_price_pair(extra.get("price_sale"), (100000, 5000000))
-        cities = self._parse_cities(extra)
+        self._price_rent = parse_price_pair(extra.get("price_rent"), (500, 15000))
+        self._price_sale = parse_price_pair(extra.get("price_sale"), (100000, 5000000))
+        cities = parse_cities(
+            extra,
+            {"region": "estado-mg", "city_slug": "belo-horizonte-e-regiao"},
+            require_zone=True,
+        )
         self._RENT_PATHS: list[str] = []
         self._SALE_PATHS: list[str] = []
         self._path_neighborhoods: dict[str, list[dict[str, str]]] = {}
@@ -75,67 +80,8 @@ class OLXScraper(BaseScraper):
         # Back-compat for tests that mutate ``_neighborhoods`` (first city).
         self._neighborhoods = list(cities[0]["neighborhoods"]) if cities else []
 
-    @classmethod
-    def _parse_cities(cls, extra: dict) -> list[dict[str, Any]]:
-        raw_cities = extra.get("cities")
-        if isinstance(raw_cities, list) and raw_cities:
-            out: list[dict[str, Any]] = []
-            for item in raw_cities:
-                if not isinstance(item, dict):
-                    continue
-                region = item.get("region")
-                city_slug = item.get("city_slug")
-                if not region or not city_slug:
-                    continue
-                out.append(
-                    {
-                        "region": str(region),
-                        "city_slug": str(city_slug),
-                        "neighborhoods": cls._parse_neighborhoods(
-                            item.get("neighborhoods") or []
-                        ),
-                    }
-                )
-            if out:
-                return out
-        region = str(extra.get("region") or "estado-mg")
-        city_slug = str(extra.get("city_slug") or "belo-horizonte-e-regiao")
-        return [
-            {
-                "region": region,
-                "city_slug": city_slug,
-                "neighborhoods": cls._parse_neighborhoods(
-                    extra.get("neighborhoods") or []
-                ),
-            }
-        ]
-
-    @staticmethod
-    def _parse_price_pair(value: Any, default: tuple[int, int]) -> tuple[int, int]:
-        if (
-            isinstance(value, (list, tuple))
-            and len(value) == 2
-            and all(isinstance(v, (int, float)) for v in value)
-        ):
-            return int(value[0]), int(value[1])
-        return default
-
-    @staticmethod
-    def _parse_neighborhoods(raw: list) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            slug = item.get("slug")
-            zone = item.get("zone")
-            if slug and zone:
-                out.append({"slug": str(slug), "zone": str(zone)})
-        return out
-
     def _neighborhoods_for_path(self, path: str) -> list[dict[str, str]]:
-        if path in self._path_neighborhoods:
-            return self._path_neighborhoods[path]
-        return self._neighborhoods
+        return neighborhoods_for(self._path_neighborhoods, path, self._neighborhoods)
 
     def start(self) -> None:
         self.session = self.create_http_session()

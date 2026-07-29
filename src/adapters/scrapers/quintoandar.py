@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterator
 from bs4 import BeautifulSoup
 
 from adapters.scrapers.base import BaseScraper
+from adapters.scrapers.common import neighborhoods_for, parse_cities, parse_price_pair
 from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_by
 from adapters.scrapers.listing_description import extract_quintoandar_description
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
@@ -58,76 +59,22 @@ class QuintoAndarScraper(BaseScraper):
     def __init__(self, platform_name: str, config: Dict[str, Any]):
         super().__init__(platform_name, config)
         extra = config.get("extra") or {}
-        self._cities = self._parse_cities(extra)
+        self._cities = parse_cities(extra, {"city_slug": _DEFAULT_CITY_SLUG})
         self.city_slug = self._cities[0]["city_slug"]
         self._city_neighborhoods = {
             c["city_slug"]: c["neighborhoods"] for c in self._cities
         }
         # Back-compat for tests that read/mutate ``_neighborhoods`` (first city).
         self._neighborhoods = list(self._city_neighborhoods[self.city_slug])
-        self._price_rent = self._parse_price_pair(extra.get("price_rent"), (500, 15000))
-        self._price_sale = self._parse_price_pair(extra.get("price_sale"), (100000, 5000000))
+        self._price_rent = parse_price_pair(extra.get("price_rent"), (500, 15000))
+        self._price_sale = parse_price_pair(extra.get("price_sale"), (100000, 5000000))
         self.ssr_truncated_windows = 0
         self.ssr_truncated_houses_yielded = 0
 
-    @classmethod
-    def _parse_cities(cls, extra: dict) -> list[dict[str, Any]]:
-        raw_cities = extra.get("cities")
-        if isinstance(raw_cities, list) and raw_cities:
-            out: list[dict[str, Any]] = []
-            for item in raw_cities:
-                if not isinstance(item, dict):
-                    continue
-                slug = item.get("city_slug")
-                if not slug:
-                    continue
-                out.append(
-                    {
-                        "city_slug": str(slug),
-                        "neighborhoods": cls._parse_neighborhoods(
-                            item.get("neighborhoods") or []
-                        ),
-                    }
-                )
-            if out:
-                return out
-        slug = str(extra.get("city_slug") or _DEFAULT_CITY_SLUG)
-        return [
-            {
-                "city_slug": slug,
-                "neighborhoods": cls._parse_neighborhoods(
-                    extra.get("neighborhoods") or []
-                ),
-            }
-        ]
-
-    @staticmethod
-    def _parse_price_pair(value: Any, default: tuple[int, int]) -> tuple[int, int]:
-        if (
-            isinstance(value, (list, tuple))
-            and len(value) == 2
-            and all(isinstance(v, (int, float)) for v in value)
-        ):
-            return int(value[0]), int(value[1])
-        return default
-
-    @staticmethod
-    def _parse_neighborhoods(raw: list) -> list[str]:
-        out: list[str] = []
-        for item in raw:
-            if isinstance(item, dict) and item.get("slug"):
-                out.append(str(item["slug"]))
-            elif isinstance(item, str) and item:
-                out.append(item)
-        return out
-
-    def _neighborhoods_for_city(self, city_slug: str) -> list[str]:
-        if city_slug in self._city_neighborhoods:
-            return self._city_neighborhoods[city_slug]
-        # Tests may mutate ``_neighborhoods`` without updating the map.
-        if city_slug == self.city_slug:
-            return self._neighborhoods
-        return []
+    def _neighborhoods_for_city(self, city_slug: str) -> list[dict[str, str]]:
+        return neighborhoods_for(
+            self._city_neighborhoods, city_slug, self._neighborhoods, strict_key=self.city_slug
+        )
 
     def start(self) -> None:
         self.session = self.create_http_session()
@@ -196,9 +143,9 @@ class QuintoAndarScraper(BaseScraper):
                     continue
                 neighborhoods = self._neighborhoods_for_city(city_slug)
                 if nb_slug is None and neighborhoods:
-                    for slug in neighborhoods:
+                    for nb in neighborhoods:
                         queue.append(
-                            (action, min_p, max_p, slug, house_type, city_slug)
+                            (action, min_p, max_p, nb["slug"], house_type, city_slug)
                         )
                     logger.info(
                         "quintoandar_fanout_neighborhoods",
