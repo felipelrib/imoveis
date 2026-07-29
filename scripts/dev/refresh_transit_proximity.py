@@ -22,7 +22,11 @@ Expected GTFS layout (directory)::
     stops.txt                 # required
     routes.txt                # optional — enables metro/bus mode mapping
     trips.txt
-    stop_times.txt
+    stop_times.txt            # modes + optional headway fallback (departure times)
+    frequencies.txt           # optional — preferred headway_secs for quality_meta
+
+Headways are nested under ``quality_meta.transit.headway`` (schedule estimate,
+not live). ``--from-db`` / OSM-only refreshes leave headway as unavailable.
 
 OSM GeoJSON: FeatureCollection of Point features with ``properties.mode``
 or OSM-style tags (``railway=station``, ``highway=bus_stop``, …).

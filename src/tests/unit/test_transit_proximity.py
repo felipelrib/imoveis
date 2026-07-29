@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 from shapely.geometry import Polygon
 
+from core.gtfs_headways import (
+    TRANSIT_HEADWAY_DISCLAIMER,
+    parse_gtfs_stop_headways,
+)
 from core.transit_proximity import (
     TransitScoreParams,
     TransitStop,
@@ -105,6 +109,42 @@ def test_score_no_stops_within_max_radius_is_zero():
     assert score == 0.0
     assert meta["stop_count"] == 0
     assert meta["nearest_m"] is None
+    assert meta["headway"]["method"] == "unavailable"
+    assert meta["headway"]["disclaimer"] == TRANSIT_HEADWAY_DISCLAIMER
+
+
+@pytest.mark.unit
+def test_score_includes_gtfs_frequencies_headway():
+    stops = parse_gtfs_stops(GTFS_DIR)
+    headways = parse_gtfs_stop_headways(GTFS_DIR)
+    score, meta = score_centroid(
+        -43.9375,
+        -19.9175,
+        stops,
+        stop_headways=headways,
+    )
+    assert score > 0.0
+    assert meta["headway"]["method"] == "gtfs_frequencies"
+    assert meta["headway"]["median_headway_min"] == 10
+    assert meta["headway"]["stop_sample"] >= 1
+    assert meta["headway"]["window"] == "gtfs_export"
+    assert meta["headway"]["disclaimer"] == TRANSIT_HEADWAY_DISCLAIMER
+
+
+@pytest.mark.unit
+def test_score_headway_unavailable_without_map():
+    stop = TransitStop(
+        lon=-43.9375,
+        lat=-19.9175,
+        mode="bus",
+        name="near",
+        source="gtfs",
+        stop_id="BUS1",
+    )
+    score, meta = score_centroid(-43.9375, -19.9175, [stop])
+    assert score > 0.0
+    assert meta["headway"]["method"] == "unavailable"
+    assert meta["headway"]["median_headway_min"] is None
 
 
 @pytest.mark.unit

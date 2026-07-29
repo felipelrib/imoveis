@@ -76,7 +76,9 @@ None.
 
 ## Notes / Follow-ups
 
-- GTFS service frequency / headways: BIN-119 (blocked by this table).
+- GTFS service frequency / headways: shipped in BIN-119 /
+  `docs/features/95-gtfs-transit-headways.md` (computed at file refresh into
+  `quality_meta.transit.headway`; not stored on this table).
 - Stale-stop prune / source-scoped replace not implemented — operators may
   `TRUNCATE transit_stops` before a full feed replace if needed.
 - Related: BIN-89 / feature 67.

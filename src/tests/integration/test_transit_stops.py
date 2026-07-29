@@ -86,6 +86,8 @@ class TestTransitStopsPersistence:
         )
         assert fixture_a.transit_score is not None
         assert fixture_a.quality_meta["transit"]["provider"] == "db"
+        assert fixture_a.quality_meta["transit"]["headway"]["method"] == "unavailable"
+        assert fixture_a.quality_meta["transit"]["headway"]["median_headway_min"] is None
         # Geometry round-trip sanity
         row = db_session.query(TransitStopRecord).first()
         pt = to_shape(row.location)

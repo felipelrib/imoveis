@@ -10,6 +10,7 @@ from geoalchemy2.shape import to_shape
 
 from adapters.db.models import Neighborhood
 from api.main import app
+from core.gtfs_headways import TRANSIT_HEADWAY_DISCLAIMER, parse_gtfs_stop_headways
 from core.neighbourhood_geojson import load_neighbourhood_geojson
 from core.transit_proximity import (
     apply_transit_scores,
@@ -59,13 +60,14 @@ class TestTransitProximityRefresh:
             parse_gtfs_stops(GTFS_DIR),
             parse_osm_transit_geojson(OSM_GEOJSON),
         )
+        headways = parse_gtfs_stop_headways(GTFS_DIR)
         rows = [
             (n.id, to_shape(n.geometry))
             for n in db_session.query(Neighborhood).all()
             if n.geometry is not None
         ]
         scores = score_neighbourhood_rows(
-            rows, stops, provider="gtfs+osm"
+            rows, stops, provider="gtfs+osm", stop_headways=headways
         )
         updated = apply_transit_scores(db_session, scores)
         db_session.commit()
@@ -79,6 +81,14 @@ class TestTransitProximityRefresh:
         assert fixture_a.quality_meta["note"] == "keep"
         assert fixture_a.quality_meta["transit"]["provider"] == "gtfs+osm"
         assert fixture_a.quality_meta["transit"]["stop_count"] >= 1
+        assert fixture_a.quality_meta["transit"]["headway"]["method"] == (
+            "gtfs_frequencies"
+        )
+        assert fixture_a.quality_meta["transit"]["headway"]["median_headway_min"] == 10
+        assert (
+            fixture_a.quality_meta["transit"]["headway"]["disclaimer"]
+            == TRANSIT_HEADWAY_DISCLAIMER
+        )
 
         client = TestClient(app)
         response = client.get(f"/properties/neighborhoods/{fixture_a.id}")
@@ -91,4 +101,7 @@ class TestTransitProximityRefresh:
             "brt",
             "bus",
         }
+        assert data["quality_meta"]["transit"]["headway"]["method"] == (
+            "gtfs_frequencies"
+        )
         assert data["quality_meta"]["provider"] == "curated-yaml"
