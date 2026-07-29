@@ -63,6 +63,7 @@ class TestQuintoAndarFetch:
         both = s._initial_price_windows(None)
         assert {w[0] for w in both} == {"alugar", "comprar"}
         assert all(w[3] is None and w[4] is None for w in both)
+        assert all(w[5] == "belo-horizonte-mg-brasil" for w in both)
 
     def test_initial_price_windows_from_config(self):
         s = QuintoAndarScraper(
@@ -76,7 +77,39 @@ class TestQuintoAndarFetch:
             },
         )
         rent = s._initial_price_windows({"scrape_type": "rent"})[0]
-        assert rent == ("alugar", 100, 200, None, None)
+        assert rent == ("alugar", 100, 200, None, None, "belo-horizonte-mg-brasil")
+
+    def test_initial_price_windows_multi_city(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {
+                "extra": {
+                    "price_rent": [500, 1500],
+                    "cities": [
+                        {
+                            "city_slug": "belo-horizonte-mg-brasil",
+                            "neighborhoods": [{"slug": "savassi"}],
+                        },
+                        {"city_slug": "sao-paulo-sp-brasil", "neighborhoods": []},
+                        {"city_slug": "campinas-sp-brasil", "neighborhoods": []},
+                    ],
+                }
+            },
+        )
+        rent = s._initial_price_windows({"scrape_type": "rent"})
+        assert [w[5] for w in rent] == [
+            "belo-horizonte-mg-brasil",
+            "sao-paulo-sp-brasil",
+            "campinas-sp-brasil",
+        ]
+        assert all(w[0] == "alugar" and w[1:] == (500, 1500, None, None, w[5]) for w in rent)
+        urls = [
+            s._window_url(*w[:5], city_slug=w[5]) for w in rent
+        ]
+        assert any("sao-paulo-sp-brasil" in u for u in urls)
+        assert any("campinas-sp-brasil" in u for u in urls)
+        assert s._neighborhoods_for_city("sao-paulo-sp-brasil") == []
+        assert s._neighborhoods_for_city("belo-horizonte-mg-brasil") == ["savassi"]
 
     def test_split_window(self):
         q: deque = deque()
@@ -127,11 +160,15 @@ class TestQuintoAndarFetch:
         with patch.object(
             QuintoAndarScraper,
             "_initial_price_windows",
-            return_value=[("alugar", 1, 2, None, None), ("alugar", 1, 2, None, None)],
+            return_value=[
+                ("alugar", 1, 2, None, None, "belo-horizonte-mg-brasil"),
+                ("alugar", 1, 2, None, None, "belo-horizonte-mg-brasil"),
+            ],
         ):
             items = list(s.fetch_pages({"scrape_type": "rent"}))
         assert len(items) == 1
         assert items[0]["price_query_min"] == 1
+        assert items[0]["_qa_city_slug"] == "belo-horizonte-mg-brasil"
 
     def test_fetch_pages_fans_out_neighborhoods_on_atomic_saturation(self):
         s = QuintoAndarScraper(
@@ -156,7 +193,9 @@ class TestQuintoAndarFetch:
         with patch.object(
             QuintoAndarScraper,
             "_initial_price_windows",
-            return_value=[("alugar", 100, 100, None, None)],
+            return_value=[
+                ("alugar", 100, 100, None, None, "belo-horizonte-mg-brasil")
+            ],
         ):
             items = list(s.fetch_pages({"scrape_type": "rent"}))
         ids = {item["id"] for item in items}
@@ -164,6 +203,43 @@ class TestQuintoAndarFetch:
         urls = [c.args[0] for c in s._fetch_window_houses.call_args_list]
         assert any("savassi-belo-horizonte-mg-brasil" in u for u in urls)
         assert any("lourdes-belo-horizonte-mg-brasil" in u for u in urls)
+
+    def test_fetch_pages_skips_nb_fanout_for_city_without_neighborhoods(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {
+                "extra": {
+                    "cities": [
+                        {
+                            "city_slug": "belo-horizonte-mg-brasil",
+                            "neighborhoods": [{"slug": "savassi"}],
+                        },
+                        {"city_slug": "sao-paulo-sp-brasil", "neighborhoods": []},
+                    ],
+                }
+            },
+        )
+        full = {str(i): {"id": f"sp{i}"} for i in range(_SSR_PAGE_CEILING)}
+
+        def fake_houses(url, action, min_p, max_p):
+            if "savassi-" in url:
+                return {"1": {"id": "s1"}}
+            if "sao-paulo-sp-brasil" in url:
+                return full
+            return full
+
+        s._fetch_window_houses = MagicMock(side_effect=fake_houses)
+        with patch.object(
+            QuintoAndarScraper,
+            "_initial_price_windows",
+            return_value=[("alugar", 100, 100, None, None, "sao-paulo-sp-brasil")],
+        ):
+            items = list(s.fetch_pages({"scrape_type": "rent"}))
+        # No neighborhoods → house-type fan-out, then truncate; city listings still yield
+        assert len(items) == _SSR_PAGE_CEILING
+        urls = [c.args[0] for c in s._fetch_window_houses.call_args_list]
+        assert not any("savassi-" in u for u in urls)
+        assert any("/apartamento/" in u or "/casa/" in u for u in urls)
 
     def test_fetch_pages_fans_out_house_types_on_atomic_nb_saturation(self):
         s = QuintoAndarScraper(
@@ -190,7 +266,9 @@ class TestQuintoAndarFetch:
         with patch.object(
             QuintoAndarScraper,
             "_initial_price_windows",
-            return_value=[("alugar", 100, 100, "savassi", None)],
+            return_value=[
+                ("alugar", 100, 100, "savassi", None, "belo-horizonte-mg-brasil")
+            ],
         ):
             items = list(s.fetch_pages({"scrape_type": "rent"}))
         ids = {item["id"] for item in items}
@@ -215,7 +293,16 @@ class TestQuintoAndarFetch:
             patch.object(
                 QuintoAndarScraper,
                 "_initial_price_windows",
-                return_value=[("alugar", 100, 100, "savassi", "apartamento")],
+                return_value=[
+                    (
+                        "alugar",
+                        100,
+                        100,
+                        "savassi",
+                        "apartamento",
+                        "belo-horizonte-mg-brasil",
+                    )
+                ],
             ),
             patch("adapters.scrapers.quintoandar.logger") as log,
         ):
@@ -236,6 +323,66 @@ class TestQuintoAndarFetch:
         assert summary_kwargs["truncated_windows"] == 1
         assert summary_kwargs["truncated_houses_yielded"] == _SSR_PAGE_CEILING
         assert summary_kwargs["ssr_page_ceiling"] == _SSR_PAGE_CEILING
+
+
+@pytest.mark.unit
+class TestQuintoAndarNormalizeCityFallback:
+    def test_missing_city_uses_sp_slug(self):
+        from adapters.scrapers.quintoandar import _city_state_from_slug
+
+        assert _city_state_from_slug("sao-paulo-sp-brasil") == ("São Paulo", "SP")
+        assert _city_state_from_slug("campinas-sp-brasil") == ("Campinas", "SP")
+        assert _city_state_from_slug("belo-horizonte-mg-brasil") == (
+            "Belo Horizonte",
+            "MG",
+        )
+
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {"extra": {"city_slug": "sao-paulo-sp-brasil"}},
+        )
+        raw = {
+            "id": 1,
+            "rentPrice": 2000,
+            "salePrice": 0,
+            "totalCost": 2000,
+            "area": 40,
+            "bedrooms": 1,
+            "bathrooms": 1,
+            "parkingSpots": 0,
+            "address": {"address": "Rua X"},
+            "neighbourhood": "Pinheiros",
+            "photos": [],
+            "_qa_city_slug": "sao-paulo-sp-brasil",
+        }
+        result = s.normalize(raw)
+        assert result["props_json"]["city"] == "São Paulo"
+        assert result["props_json"]["state"] == "SP"
+        assert "São Paulo" in result["title"] or "Pinheiros" in result["title"]
+
+    def test_missing_city_uses_campinas_slug(self):
+        s = QuintoAndarScraper(
+            "quintoandar",
+            {"extra": {"city_slug": "campinas-sp-brasil"}},
+        )
+        raw = {
+            "id": 2,
+            "rentPrice": 1800,
+            "salePrice": 0,
+            "totalCost": 1800,
+            "area": 50,
+            "bedrooms": 2,
+            "bathrooms": 1,
+            "parkingSpots": 0,
+            "address": {},
+            "neighbourhood": None,
+            "photos": [],
+            "_qa_city_slug": "campinas-sp-brasil",
+        }
+        result = s.normalize(raw)
+        assert result["props_json"]["city"] == "Campinas"
+        assert result["props_json"]["state"] == "SP"
+        assert "Campinas" in result["title"]
 
 
 @pytest.mark.unit

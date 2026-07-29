@@ -867,3 +867,85 @@ class TestOLXFetchLifecycle:
             "https://www.olx.com.br/imoveis/aluguel/apartamentos/estado-mg/bh/"
             "centro-sul/savassi?ps=1000&pe=2000&o=2"
         )
+
+    def test_initial_windows_multi_city(self):
+        s = OLXScraper(
+            "olx",
+            {
+                "extra": {
+                    "max_pages": 2,
+                    "cities": [
+                        {
+                            "region": "estado-mg",
+                            "city_slug": "belo-horizonte-e-regiao",
+                            "neighborhoods": [
+                                {"slug": "savassi", "zone": "centro-sul"},
+                            ],
+                        },
+                        {
+                            "region": "estado-sp",
+                            "city_slug": "sao-paulo-e-regiao",
+                            "neighborhoods": [],
+                        },
+                        {
+                            "region": "estado-sp",
+                            "city_slug": "campinas-e-regiao",
+                            "neighborhoods": [],
+                        },
+                    ],
+                }
+            },
+        )
+        windows = s._initial_windows({"scrape_type": "rent"})
+        paths = [w[0] for w in windows]
+        assert any("estado-mg/belo-horizonte-e-regiao" in p for p in paths)
+        assert any("estado-sp/sao-paulo-e-regiao" in p for p in paths)
+        assert any("estado-sp/campinas-e-regiao" in p for p in paths)
+        # 3 cities × 2 rent categories
+        assert len(windows) == 6
+        bh_apt = "aluguel/apartamentos/estado-mg/belo-horizonte-e-regiao"
+        sp_apt = "aluguel/apartamentos/estado-sp/sao-paulo-e-regiao"
+        assert s._neighborhoods_for_path(bh_apt) == [
+            {"slug": "savassi", "zone": "centro-sul"}
+        ]
+        assert s._neighborhoods_for_path(sp_apt) == []
+
+    def test_fanout_uses_per_path_neighborhoods_not_global_bh(self):
+        s = OLXScraper(
+            "olx",
+            {
+                "extra": {
+                    "max_pages": 1,
+                    "page_size_hint": 2,
+                    "price_rent": [100, 101],
+                    "cities": [
+                        {
+                            "region": "estado-mg",
+                            "city_slug": "belo-horizonte-e-regiao",
+                            "neighborhoods": [
+                                {"slug": "savassi", "zone": "centro-sul"},
+                            ],
+                        },
+                        {
+                            "region": "estado-sp",
+                            "city_slug": "sao-paulo-e-regiao",
+                            "neighborhoods": [],
+                        },
+                    ],
+                }
+            },
+        )
+        s._RENT_PATHS = ["aluguel/apartamentos/estado-sp/sao-paulo-e-regiao"]
+        s._SALE_PATHS = []
+
+        def fake_fetch(url, page):
+            # SP city-wide saturated; must NOT fan out BH savassi
+            if "sao-paulo-e-regiao" in url and "/centro-sul/" not in url:
+                return [{"list_id": "sp1"}, {"list_id": "sp2"}]
+            return []
+
+        s._fetch_page_listings = MagicMock(side_effect=fake_fetch)
+        listings = list(s.fetch_pages({"scrape_type": "rent"}))
+        assert {x["list_id"] for x in listings} == {"sp1", "sp2"}
+        urls = [c.args[0] for c in s._fetch_page_listings.call_args_list]
+        assert not any("/centro-sul/savassi" in u for u in urls)

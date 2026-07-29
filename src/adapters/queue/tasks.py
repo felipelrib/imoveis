@@ -238,9 +238,15 @@ def _olx_neighborhood_catalog(
     # Always include common BH barrios that titles mention but polygons may lack.
     extras = ["Itapoã", "Itapoa", "São Tomáz", "Sao Tomaz", "Ponta da Praia"]
     extra = scraper_config.get("extra") or {}
+    nb_items: list = []
+    for city in extra.get("cities") or []:
+        if isinstance(city, dict):
+            nb_items.extend(city.get("neighborhoods") or [])
+    if not nb_items:
+        nb_items = list(extra.get("neighborhoods") or [])
     slugs = [
         item.get("slug")
-        for item in (extra.get("neighborhoods") or [])
+        for item in nb_items
         if isinstance(item, dict) and item.get("slug")
     ]
     names.extend(humanize_neighborhood_slugs(slugs))

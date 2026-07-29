@@ -57,6 +57,6 @@ None.
 
 ## Notes / Follow-ups
 
-- Scrapers still primarily target BH URLs; SP/Campinas are allowed for retention/filter but are not actively scraped unless platform `extra` is expanded.
+- ~~Scrapers still primarily target BH URLs; SP/Campinas are allowed for retention/filter but are not actively scraped unless platform `extra` is expanded.~~ **Done (BIN-113 / feature 91):** `extra.cities` seeds SP + Campinas city-wide windows on QuintoAndar and OLX; BH keeps neighborhood fan-out.
 - Workers may re-ingest out-of-geo rows until rebuilt with the new allowlist image — rebuild `api` / `worker_scraper` after deploy.
-- Related: BIN-68 (initial geo allowlist), BIN-70 (this feature).
+- Related: BIN-68 (initial geo allowlist), BIN-70 (this feature), BIN-113 (SP/Campinas scrape coverage).

@@ -48,19 +48,64 @@ class OLXScraper(BaseScraper):
         extra = config.get("extra") or {}
         self._max_pages = int(extra.get("max_pages", 5))
         self._page_size_hint = int(extra.get("page_size_hint", 50))
-        region = extra.get("region", "estado-mg")
-        city_slug = extra.get("city_slug", "belo-horizonte-e-regiao")
         self._price_rent = self._parse_price_pair(extra.get("price_rent"), (500, 15000))
         self._price_sale = self._parse_price_pair(extra.get("price_sale"), (100000, 5000000))
-        self._neighborhoods = self._parse_neighborhoods(extra.get("neighborhoods") or [])
-        # Category paths only (no -e-regiao duplicate); geo fan-out adds zone/bairro.
-        self._RENT_PATHS = [
-            f"aluguel/apartamentos/{region}/{city_slug}",
-            f"aluguel/casas/{region}/{city_slug}",
-        ]
-        self._SALE_PATHS = [
-            f"venda/apartamentos/{region}/{city_slug}",
-            f"venda/casas/{region}/{city_slug}",
+        cities = self._parse_cities(extra)
+        self._RENT_PATHS: list[str] = []
+        self._SALE_PATHS: list[str] = []
+        self._path_neighborhoods: dict[str, list[dict[str, str]]] = {}
+        for city in cities:
+            region = city["region"]
+            city_slug = city["city_slug"]
+            neighborhoods = city["neighborhoods"]
+            rent_paths = [
+                f"aluguel/apartamentos/{region}/{city_slug}",
+                f"aluguel/casas/{region}/{city_slug}",
+            ]
+            sale_paths = [
+                f"venda/apartamentos/{region}/{city_slug}",
+                f"venda/casas/{region}/{city_slug}",
+            ]
+            self._RENT_PATHS.extend(rent_paths)
+            self._SALE_PATHS.extend(sale_paths)
+            for path in rent_paths + sale_paths:
+                self._path_neighborhoods[path] = neighborhoods
+        # Back-compat for tests that mutate ``_neighborhoods`` (first city).
+        self._neighborhoods = list(cities[0]["neighborhoods"]) if cities else []
+
+    @classmethod
+    def _parse_cities(cls, extra: dict) -> list[dict[str, Any]]:
+        raw_cities = extra.get("cities")
+        if isinstance(raw_cities, list) and raw_cities:
+            out: list[dict[str, Any]] = []
+            for item in raw_cities:
+                if not isinstance(item, dict):
+                    continue
+                region = item.get("region")
+                city_slug = item.get("city_slug")
+                if not region or not city_slug:
+                    continue
+                out.append(
+                    {
+                        "region": str(region),
+                        "city_slug": str(city_slug),
+                        "neighborhoods": cls._parse_neighborhoods(
+                            item.get("neighborhoods") or []
+                        ),
+                    }
+                )
+            if out:
+                return out
+        region = str(extra.get("region") or "estado-mg")
+        city_slug = str(extra.get("city_slug") or "belo-horizonte-e-regiao")
+        return [
+            {
+                "region": region,
+                "city_slug": city_slug,
+                "neighborhoods": cls._parse_neighborhoods(
+                    extra.get("neighborhoods") or []
+                ),
+            }
         ]
 
     @staticmethod
@@ -84,6 +129,11 @@ class OLXScraper(BaseScraper):
             if slug and zone:
                 out.append({"slug": str(slug), "zone": str(zone)})
         return out
+
+    def _neighborhoods_for_path(self, path: str) -> list[dict[str, str]]:
+        if path in self._path_neighborhoods:
+            return self._path_neighborhoods[path]
+        return self._neighborhoods
 
     def start(self) -> None:
         self.session = self.create_http_session()
@@ -193,17 +243,21 @@ class OLXScraper(BaseScraper):
                         bairro=bairro,
                     )
                     continue
-                if zone is None and self._neighborhoods:
-                    for nb in self._neighborhoods:
-                        queue.append((path, min_p, max_p, nb["zone"], nb["slug"]))
-                    logger.info(
-                        "olx_fanout_neighborhoods",
-                        path=path,
-                        min_p=min_p,
-                        max_p=max_p,
-                        count=len(self._neighborhoods),
-                    )
-                    continue
+                if zone is None:
+                    neighborhoods = self._neighborhoods_for_path(path)
+                    if neighborhoods:
+                        for nb in neighborhoods:
+                            queue.append(
+                                (path, min_p, max_p, nb["zone"], nb["slug"])
+                            )
+                        logger.info(
+                            "olx_fanout_neighborhoods",
+                            path=path,
+                            min_p=min_p,
+                            max_p=max_p,
+                            count=len(neighborhoods),
+                        )
+                        continue
                 logger.warning(
                     "olx_window_truncated",
                     path=path,
