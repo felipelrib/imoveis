@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from api.main import app
-from api.property_projection import map_property_list_item
 from api.schemas import PaginatedPropertiesResponse, PropertyModel
+from core.property_projection import map_property_list_item
 
 
 def _ai_enriched_row(**overrides):

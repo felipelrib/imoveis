@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.property_projection import (
+from core.property_projection import (
     LISTINGS_JSON_AGG,
     decisioning_price,
     map_property_detail,
@@ -118,7 +118,7 @@ class TestNeighborhoodFields:
         assert fields["neighborhood_name"] == "Lourdes"
 
     def test_humanizes_slug_and_projects_city(self):
-        from api.property_projection import format_location_label
+        from core.property_projection import format_location_label
 
         row = {
             "neighborhood_id": None,

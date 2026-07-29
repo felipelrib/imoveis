@@ -13,12 +13,6 @@ from sqlalchemy.exc import DataError, StatementError
 
 from api.auth import verify_api_key_if_configured
 from api.property_export import EXPORT_MAX_ROWS, properties_to_csv, properties_to_export_json
-from api.property_projection import (
-    LIST_SELECT_COLUMNS,
-    LISTINGS_JSON_AGG,
-    map_property_detail,
-    map_property_list_item,
-)
 from api.property_refs import parse_property_ref
 from api.schemas import (
     CityModel,
@@ -31,6 +25,12 @@ from api.schemas import (
 )
 from core.listing_type import normalize_listing_type, normalize_price_type
 from core.neighbourhood_quality import quality_profile_fields
+from core.property_projection import (
+    LIST_SELECT_COLUMNS,
+    LISTINGS_JSON_AGG,
+    map_property_detail,
+    map_property_list_item,
+)
 from infra.db import SessionLocal
 from infra.limiter import limiter
 from infra.logging import get_logger
