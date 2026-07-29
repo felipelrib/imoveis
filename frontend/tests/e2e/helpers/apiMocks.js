@@ -251,6 +251,14 @@ export async function installCommonMocks(page, opts = {}) {
           avg_duration_sec: 0,
           total_recorded: 0,
         },
+        proxy: opts.pipelineProxy ?? {
+          proxy_enabled: false,
+          proxy_mode: "direct",
+          rotation_strategy: "round_robin",
+          pool_size: 0,
+          proxy_host: null,
+          health: "direct",
+        },
       }),
     })
   );

@@ -214,6 +214,8 @@ class PipelineResponse(BaseModel):
     scrapers_status: Dict[str, Any]
     ai_metrics: Dict[str, Any]
     recent_scrape_runs: List[Dict[str, Any]] = []
+    # Safe proxy mode / pool readiness (BIN-124); never includes credentials.
+    proxy: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PipelineHistoryPoint(BaseModel):
