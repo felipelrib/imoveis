@@ -686,3 +686,47 @@ def test_real_config_exposes_ui_locale():
     assert cfg.ui.locale in ("en", "pt-BR")
     assert "en" in cfg.ui.supported_locales
     assert "pt-BR" in cfg.ui.supported_locales
+
+
+@pytest.mark.unit
+def test_cors_origins_defaults(tmp_path: Path):
+    """Absent api: section yields the pre-BIN-136 hardcoded allowlist as default."""
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    assert cfg.api.cors_origins == [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+    ]
+
+
+@pytest.mark.unit
+def test_cors_origins_from_yaml(tmp_path: Path):
+    """YAML api.cors_origins overrides the default allowlist."""
+    yaml_content = MINIMAL_YAML + """\
+api:
+  cors_origins:
+    - https://staging.example.com
+    - https://app.example.com
+"""
+    cfg = load_config(_write_yaml(tmp_path, yaml_content))
+    assert cfg.api.cors_origins == [
+        "https://staging.example.com",
+        "https://app.example.com",
+    ]
+
+
+@pytest.mark.unit
+def test_api_config_is_frozen(tmp_path: Path):
+    """ApiConfig, like other config sections, must be immutable."""
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    with pytest.raises((ValidationError, AttributeError)):
+        cfg.api.cors_origins = ["http://evil.example.com"]  # type: ignore[misc]
+
+
+@pytest.mark.unit
+def test_real_config_exposes_cors_origins():
+    """Committed app_config.yaml must expose api.cors_origins for main.py CORS setup."""
+    cfg = get_config()
+    assert isinstance(cfg.api.cors_origins, list)
+    assert cfg.api.cors_origins
+    assert all(isinstance(origin, str) for origin in cfg.api.cors_origins)
