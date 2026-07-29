@@ -286,6 +286,66 @@ class TestBuildBeatSchedule:
                 f"{task_name} must route to scrapers — workers do not consume default celery"
             )
 
+    @patch("adapters.queue.celery_app.Celery")
+    @patch("adapters.queue.celery_app.get_config")
+    @patch("adapters.queue.celery_app.get_redis")
+    def test_every_scheduled_task_has_a_route(self, mock_get_redis, mock_get_config, celery_cls):
+        """BIN-144: generic invariant — every task name build_beat_schedule()
+        can produce must have a task_routes entry pointing at a queue workers
+        consume (`scrapers` or `ai`).
+
+        The tests above (and `test_beat_maintenance_tasks_routed_to_scrapers_queue`)
+        enumerate each task name individually, so a *newly added* beat task with a
+        forgotten route entry would not fail any of them. This test enables every
+        optional beat branch at once and asserts the invariant generically, so
+        that gap is caught automatically (BIN-76-style unrouted-task regression).
+        """
+        from adapters.queue.celery_app import make_celery
+
+        cfg = MagicMock()
+        cfg.redis.url = "redis://broker:6379/9"
+        cfg.alerts.digest_mode = True
+        cfg.alerts.top_deals = SimpleNamespace(
+            enabled=True, crontab_hour=9, crontab_minute=15, crontab_day_of_week="1",
+        )
+        cfg.scraping.platforms = {
+            "quintoandar": SimpleNamespace(enabled=True, scrape_interval=60),
+            "olx": SimpleNamespace(enabled=True, scrape_interval=30),
+        }
+        cfg.pipeline_metrics.snapshot_interval_sec = 30
+        cfg.scraping.availability_recheck = SimpleNamespace(enabled=True, interval_minutes=360)
+        cfg.neighbourhood_access = SimpleNamespace(enabled=True, interval_minutes=1440)
+        cfg.neighbourhood_quality.osm_amenities = SimpleNamespace(enabled=True, interval_hours=168)
+        cfg.neighbourhood_quality.transit = SimpleNamespace(enabled=True, interval_hours=168)
+        cfg.neighbourhood_quality.listing_claim_stats = SimpleNamespace(
+            enabled=True, interval_hours=24,
+        )
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value = MagicMock(get=MagicMock(return_value=None))
+
+        app = MagicMock()
+        celery_cls.return_value = app
+
+        make_celery()
+
+        scheduled_task_names = {entry["task"] for entry in app.conf.beat_schedule.values()}
+        # Sanity floor: the maximal config above must actually exercise every
+        # optional beat branch, or this test would silently stop catching gaps.
+        assert len(scheduled_task_names) >= 10
+
+        routes = app.conf.task_routes
+        consumed_queues = {"scrapers", "ai"}
+        for task_name in scheduled_task_names:
+            assert task_name in routes, (
+                f"{task_name} is scheduled by build_beat_schedule() but has no "
+                "task_routes entry — it will land on the unconsumed default "
+                "`celery` queue and never run (BIN-76-style gap)."
+            )
+            assert routes[task_name].get("queue") in consumed_queues, (
+                f"{task_name} routes to {routes[task_name]!r}, not a queue "
+                f"workers consume ({consumed_queues})"
+            )
+
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_availability_recheck_schedule_when_enabled(self, mock_get_redis, mock_get_config):

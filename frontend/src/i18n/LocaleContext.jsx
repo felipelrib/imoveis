@@ -1,4 +1,4 @@
-import React, {
+import {
   createContext,
   useCallback,
   useContext,
@@ -100,10 +100,14 @@ export function LocaleProvider({ children }) {
   )
 }
 
+// Context + companion hooks co-located on purpose (standard React pattern); the resulting
+// occasional extra Fast Refresh remount is an acceptable dev-only trade-off here.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useLocale() {
   return useContext(LocaleContext)
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useT() {
   return useLocale().t
 }

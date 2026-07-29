@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { fetchStatus } from '../api.js'
 
 export function useSystemStatus(intervalMs = 8000) {
