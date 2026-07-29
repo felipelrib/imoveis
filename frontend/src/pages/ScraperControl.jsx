@@ -326,6 +326,27 @@ export default function ScraperControl() {
             <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-app)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('scraper.livePipeline')}</div>
 
+              {pipeline?.proxy && (
+                <div
+                  data-testid="scraper-proxy-line"
+                  style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}
+                >
+                  {pipeline.proxy.proxy_mode === 'pool'
+                    ? t('scraper.proxyModeLinePool', {
+                        mode: pipeline.proxy.proxy_mode,
+                        n: pipeline.proxy.pool_size ?? 0,
+                      })
+                    : t('scraper.proxyModeLine', { mode: pipeline.proxy.proxy_mode || 'direct' })}
+                  {(() => {
+                    const runningHost = activeScrapers
+                      .map(([, s]) => s.proxy_host)
+                      .find((h) => h)
+                    const host = runningHost || pipeline.proxy.proxy_host
+                    return host ? t('scraper.proxyHostLine', { host }) : null
+                  })()}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                 <div style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-card)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border-subtle)' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('scraper.scraperQueue')}</span>

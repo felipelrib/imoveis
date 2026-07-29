@@ -45,6 +45,39 @@ function svcStatus(key, s) {
   return s[key]?.status === 'ok' ? 'ok' : 'err'
 }
 
+function proxyModeLabel(mode, t) {
+  switch (mode) {
+    case 'pool':
+      return t('dashboard.proxyModePool')
+    case 'single':
+      return t('dashboard.proxyModeSingle')
+    case 'override':
+      return t('dashboard.proxyModeOverride')
+    default:
+      return t('dashboard.proxyModeDirect')
+  }
+}
+
+function proxyHealthClass(health) {
+  if (health === 'ok') return 'ok'
+  if (health === 'warn') return 'loading'
+  return 'ok'
+}
+
+function proxySubline(proxy, t) {
+  if (!proxy) return t('dashboard.proxyLoading')
+  if (!proxy.proxy_enabled) return t('dashboard.proxyDisabled')
+  if (proxy.health === 'warn') return t('dashboard.proxyMisconfigured')
+  const strategy = proxy.rotation_strategy || 'round_robin'
+  if (proxy.proxy_mode === 'pool') {
+    return t('dashboard.proxyPoolReady', { n: proxy.pool_size ?? 0, strategy })
+  }
+  if (proxy.proxy_mode === 'single' || proxy.proxy_mode === 'override') {
+    return t('dashboard.proxySingleReady', { strategy })
+  }
+  return t('dashboard.proxyDisabled')
+}
+
 export default function Dashboard({ status, loading }) {
   const { t, locale } = useLocale()
   const [recalculating, setRecalculating] = useState(false)
@@ -341,6 +374,20 @@ export default function Dashboard({ status, loading }) {
             </div>
           )
         })}
+        <div className="service-card" data-testid="proxy-health-card">
+          <div className={`service-icon ${proxyHealthClass(pipeline?.proxy?.health)}`}>🔒</div>
+          <div className="service-info">
+            <div className="service-name">{t('dashboard.svcProxy')}</div>
+            <div className={`service-status ${proxyHealthClass(pipeline?.proxy?.health)}`}>
+              {!pipeline?.proxy
+                ? t('dashboard.proxyLoading')
+                : proxyModeLabel(pipeline.proxy.proxy_mode, t)}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              {proxySubline(pipeline?.proxy, t)}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Quick actions */}
