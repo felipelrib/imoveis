@@ -402,6 +402,8 @@
     "colIptu": "IPTU",
     "bundledFees": "Bundled fees",
     "bundledFeesTitle": "Includes condo fee and IPTU",
+    "condoPlusIptu": "Condo+IPTU",
+    "iptuBundledTitle": "IPTU included in the Condo+IPTU amount — platform did not publish a separate value",
     "openOnPlatform": "Open on Platform",
     "linkUnavailable": "Link unavailable",
     "furnished": "Furnished",

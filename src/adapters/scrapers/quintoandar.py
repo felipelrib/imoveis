@@ -356,7 +356,7 @@ class QuintoAndarScraper(BaseScraper):
                 "type": _normalize_qa_property_type(raw.get("type")),
                 "condo_fee": condo_fee,
                 "iptu": iptu,
-                "fees_bundled": fees_bundled or None,
+                "fees_bundled": bool(fees_bundled),
                 "isFurnished": raw.get("isFurnished"),
                 "neighborhood": neighbourhood,
                 "city": city,
@@ -437,9 +437,10 @@ class QuintoAndarScraper(BaseScraper):
         }
 
         def listing(kind, price, partial_price):
-            details = {"partial_price": partial_price}
-            if bundled:
-                details["fees_bundled"] = True
+            details = {
+                "partial_price": partial_price,
+                "fees_bundled": bool(bundled),
+            }
             if note:
                 details["fees_note"] = note
             base_price = float(partial_price) if kind == "rent" and partial_price else None

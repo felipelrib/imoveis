@@ -565,6 +565,8 @@ class OLXScraper(BaseScraper):
         listing_url = (
             raw.get("url") or raw.get("_olx_url") or f"https://www.olx.com.br/detalhes/{platform_id}"
         )
+        # OLX exposes Condomínio and IPTU as separate labeled props — never invent a
+        # bundle or split (BIN-114). Always stamp fees_bundled=false for projection/UI.
         base_listing = {
             "platform": "olx",
             "platform_listing_id": platform_id,
@@ -574,6 +576,7 @@ class OLXScraper(BaseScraper):
             "accepts_pets": props.get("accepts_pets"),
             "condo_fee": props.get("condo_fee"),
             "iptu": props.get("iptu"),
+            "raw_json": {"fees_bundled": False},
         }
         listings: list[dict] = []
         if rent_total is not None and rent_total > 0:
