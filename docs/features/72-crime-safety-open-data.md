@@ -10,7 +10,7 @@ Neighbourhood `safety_score` was only filled by curated operator judgment (BIN-8
 
 - Spike MG/SP sources first (table below); ship ingest only where grain supports neighbourhood differentiation.
 - **Ship São Paulo** via vendor-agnostic YAML/CSV rate files (mirrors flood overlays BIN-91): operator exports SSP-SP BO microdata offline → aggregate rates → load. No live SSP scrape in CI.
-- **Ship Belo Horizonte (BIN-96)** via PBH regional SEJUSP counts mapped to curated neighbourhoods; bairro LAI extracts preferred when available. Campinas / Fogo Cruzado remain parked.
+- **Ship Belo Horizonte (BIN-96)** via PBH regional SEJUSP counts mapped to curated neighbourhoods; bairro LAI extracts preferred when available. Campinas remains parked. Fogo Cruzado for MG/SP is **not viable** (BIN-120).
 - City-relative invert of `rate_per_100k` → `safety_score` in `[0,1]`; nested `quality_meta.safety` carries period, rate definition, and attribution (UI must not label absolute safe/unsafe without this — blend is BIN-94).
 
 ### Spike findings (2026-07-27)
@@ -21,7 +21,7 @@ Neighbourhood `safety_score` was only filled by curated operator judgment (BIN-8
 | SEJUSP regional counts (PBH regionais) | Regional | **Ship BH** — see [73-bh-crime-safety-rates.md](73-bh-crime-safety-rates.md) |
 | [SSP-SP Transparência BO](https://www.ssp.sp.gov.br/transparenciassp/Apresentacao.aspx) | Bairro / coords | **Ship SP** (operator → rates file) |
 | PBH GCM stats | PDF aggregates | Park |
-| [Fogo Cruzado API](https://api.fogocruzado.org.br/docs) | Lat/lon | Park (not BH/SP) |
+| [Fogo Cruzado API](https://api.fogocruzado.org.br/docs) | Lat/lon | **Not viable for MG/SP** — covers RJ/PE/BA/PA only ([90](90-fogo-cruzado-mg-sp-feasibility.md), BIN-120) |
 | SINESP / IBGE | Município / population | Benchmark / denominator only |
 | GeoSampa distritos | 96 districts | Preferred join geometry when building SP rates offline |
 
@@ -84,4 +84,4 @@ None.
 - Scoring / UI blend is BIN-94 — must surface `quality_meta.safety.attribution` and never claim absolute safe/unsafe.
 - Never invent crime numbers from listing AI prompts.
 - BH unlock (done in BIN-96): regional SEJUSP counts → neighbourhood rates; bairro LAI extracts via `build_bh_safety_rates.py --bairro-csv`. See docs/features/73-bh-crime-safety-rates.md.
-- Fogo Cruzado expansion into MG/SP still a future option for armed-violence grain.
+- Fogo Cruzado MG/SP: closed in BIN-120 — API does not cover MG/SP; no ingest. See [90-fogo-cruzado-mg-sp-feasibility.md](90-fogo-cruzado-mg-sp-feasibility.md).
