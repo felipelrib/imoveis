@@ -81,8 +81,6 @@ Files touched:
 - **MD5 as identity hash**: MD5 is used purely for de-duplication (not security). A
   collision would cause two distinct images to overwrite each other. SHA-256 would be
   marginally safer with negligible performance cost.
-- **`asyncio.run()` in a Celery sync task**: The `ai_enrich` task is synchronous but
-  uses `asyncio.run(image_store.download_images(...))` and `asyncio.run(run_ai())`.
-  Creating a new event loop per task is safe but wasteful. A better approach is to make
-  `ai_enrich` an `async def` task with `celery[gevent]` or use a thread pool for
-  async-in-sync bridging.
+- **`asyncio.run()` in a Celery sync task**: addressed in BIN-122 / feature 91 —
+  `ai_enrich` and `embed_property` now use a thread-local `run_coro` bridge instead of
+  creating a new event loop per task.

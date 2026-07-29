@@ -5,7 +5,7 @@ Changes from original:
 - PropertyCandidate Pydantic validation between scraper output and DB
 - Real AI scoring (visual + sentiment) replaces hardcoded ai_score = 0.5
 - Images downloaded to local storage before VLM call
-- asyncio.run() instead of new_event_loop() + set_event_loop()
+- Thread-local run_coro() bridge for async AI/httpx from sync tasks (BIN-122)
 - All config/Redis imported from centralized infra modules
 - Structured logging throughout
 - Celery bind=True + self.retry() for proper retry semantics
@@ -13,7 +13,6 @@ Changes from original:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid
@@ -28,6 +27,7 @@ from adapters.ai.enrich_pipeline import analyze_visual_and_sentiment
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
 from adapters.metrics.scoring import score_single_property
+from adapters.queue.async_bridge import run_coro
 from adapters.queue.celery_app import make_celery
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.checkpoint_store import CheckpointStore
@@ -777,7 +777,7 @@ def ai_enrich(
                 return a_score, v_res, s_res, paths
 
         if stages == STAGES_VERDICT_ONLY:
-            visual_meta, sentiment_meta = asyncio.run(_run_verdict_only())
+            visual_meta, sentiment_meta = run_coro(_run_verdict_only())
             duration = time.time() - start_time
             logger.info(
                 "ai_enrich_completed",
@@ -793,7 +793,7 @@ def ai_enrich(
                 "sentiment": sentiment_meta,
             }
 
-        ai_score, visual_result, sentiment_result, local_paths = asyncio.run(
+        ai_score, visual_result, sentiment_result, local_paths = run_coro(
             _run_enrichment()
         )
 
@@ -888,7 +888,7 @@ def embed_property(self, property_id: str):
                 async with client:
                     return await client.embed(text_in)
 
-            embedding = asyncio.run(_run())
+            embedding = run_coro(_run())
             literal = vector_literal(embedding)
             session.execute(
                 text(

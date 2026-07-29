@@ -164,3 +164,80 @@ def test_ai_enrich_visual_sentiment_skips_verdict():
     assert "enriched_at" in ms.meta
     assert "visual" in ms.meta
     assert "deal_verdict" not in ms.meta
+
+
+@pytest.mark.unit
+def test_ai_enrich_sequential_gpu_acquire_release_one_to_one():
+    """GPU semaphore stays outside the async bridge: 1 acquire + 1 release per run."""
+    from adapters.queue import tasks as tasks_mod
+
+    property_id = "33333333-3333-3333-3333-333333333333"
+    ms = SimpleNamespace(meta={}, ai_score=None, stat_score=0.5)
+
+    session = MagicMock()
+    session.query.return_value.filter_by.return_value.one_or_none.return_value = ms
+    session.get.return_value = SimpleNamespace(neighborhood_id=None, props_json=None)
+
+    redis = MagicMock()
+    redis.exists.return_value = False
+    pipe = MagicMock()
+    redis.pipeline.return_value.__enter__ = MagicMock(return_value=pipe)
+    redis.pipeline.return_value.__exit__ = MagicMock(return_value=False)
+    sem = MagicMock()
+    sem.acquire.return_value = True
+
+    client = MagicMock()
+    client.session_context = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=None),
+            __aexit__=AsyncMock(return_value=None),
+        )
+    )
+
+    image_store = MagicMock()
+    image_store.download_images = AsyncMock(return_value=["/tmp/a.jpg"])
+
+    v_res = VisualResult(condition_score=0.7, analysis="ok", category="Good")
+    s_res = SentimentResult(sentiment_score=0.6, analysis="ok", category="Good")
+
+    with (
+        patch.object(tasks_mod, "get_redis", return_value=redis),
+        patch.object(tasks_mod, "get_config") as mock_cfg,
+        patch.object(tasks_mod, "GPUSemaphore", return_value=sem),
+        patch.object(tasks_mod, "ImageStore", return_value=image_store),
+        patch.object(tasks_mod, "create_ai_client", return_value=client),
+        patch.object(tasks_mod, "SessionLocal", return_value=session),
+        patch.object(
+            tasks_mod,
+            "analyze_visual_and_sentiment",
+            new=AsyncMock(return_value=(v_res, s_res)),
+        ),
+        patch.object(tasks_mod, "assign_property_neighbourhood"),
+        patch.object(tasks_mod, "score_single_property"),
+        patch.object(
+            tasks_mod,
+            "build_visual_condition_prompt",
+            return_value="vp",
+        ),
+        patch.object(tasks_mod, "build_sentiment_prompt", return_value="sp"),
+    ):
+        mock_cfg.return_value.gpu.semaphore_limit = 2
+        mock_cfg.return_value.ai.max_images_per_property = 8
+        mock_cfg.return_value.ai.max_description_chars = 2000
+        mock_cfg.return_value.ai.visual_weight = 0.6
+        mock_cfg.return_value.ai.text_weight = 0.4
+        mock_cfg.return_value.scoring = SimpleNamespace(
+            stat_weight=0.4, ai_weight=0.4, neighbourhood_weight=0.2
+        )
+
+        for _ in range(2):
+            result = tasks_mod.ai_enrich.run(
+                property_id,
+                ["https://cdn.example/1.jpg"],
+                "nice",
+                stages="visual+sentiment",
+            )
+            assert result["status"] == "completed"
+
+    assert sem.acquire.call_count == 2
+    assert sem.release.call_count == 2
