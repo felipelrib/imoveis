@@ -62,7 +62,7 @@ export default function PropertyModal({ id, onClose }) {
       .catch(() => {})
   }, [id])
 
-  const [dropPct, setDropPct] = useState(5)
+  const [dropPct, setDropPct] = useState('5')
 
   // Prefer resolved UUID from the detail payload — route `id` may be public_id (BIN-82).
   const mutationId = property?.id || id
@@ -73,7 +73,7 @@ export default function PropertyModal({ id, onClose }) {
         await removeFromWatchlist(mutationId)
         setIsWatched(false)
       } else {
-        await addToWatchlist(mutationId, dropPct)
+        await addToWatchlist(mutationId, Number(dropPct) || 5)
         setIsWatched(true)
       }
     } catch (err) {
@@ -137,10 +137,12 @@ export default function PropertyModal({ id, onClose }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
                       <span style={{ color: 'var(--text-secondary)' }}>{t('modal.alertAt')}</span>
                       <input
-                        type="number"
-                        min="1" max="50"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        data-testid="modal-drop-pct-input"
                         value={dropPct}
-                        onChange={e => setDropPct(Number(e.target.value))}
+                        onChange={e => setDropPct(e.target.value.replace(/[^\d]/g, ''))}
                         style={{ width: 44, padding: '2px 4px', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 4, color: 'var(--text-primary)', textAlign: 'center' }}
                       />
                       <span style={{ color: 'var(--text-secondary)' }}>{t('modal.pctDrop')}</span>
