@@ -8,23 +8,57 @@ import { useToast } from '../components/ToastProvider.jsx'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatTime, formatDateTime } from '../i18n/format.js'
+import type { DateLike } from '../i18n/format.js'
 
 const SEEN_RUN_IDS_KEY = 'scraperLogSeenRunIds'
 const SEEN_RUN_IDS_MAX = 200
 /** Only surface recent runs on first load so Redis history does not flood the log. */
 const SCRAPE_RUN_LOG_MAX_AGE_SEC = 3600
 
-function loadSeenRunIds() {
+// ── Local "views" over loosely-typed (Record<string, unknown>) API responses. ──
+interface ScraperStatusRow { status?: string; processed?: number; skipped?: number; errors?: number; proxy_host?: string }
+interface AiMetrics { throughput_per_min?: number; avg_duration_sec?: number; total_recorded?: number }
+interface ScrapeRun {
+  run_id?: string
+  platform?: string
+  processed?: number
+  skipped?: number
+  errors?: number
+  status?: string
+  timestamp?: number | string
+}
+interface ProxyInfo { proxy_mode?: string; pool_size?: number; proxy_host?: string }
+interface ScraperPipeline {
+  queues: { scrapers: number; ai: number }
+  scrapers_status: Record<string, ScraperStatusRow>
+  ai_metrics?: AiMetrics
+  recent_scrape_runs?: ScrapeRun[]
+  proxy?: ProxyInfo
+}
+interface ScheduleRow {
+  platform: string
+  interval_minutes: number
+  last_run?: DateLike
+  next_run?: DateLike
+}
+interface PlatformRow { name: string; enabled?: boolean; rate_limit?: number }
+interface LogEntry { type: string; text: string }
+interface OllamaInfo { status?: string; models?: string[] }
+interface ServiceInfo { status?: string }
+
+const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+function loadSeenRunIds(): Set<string> {
   try {
     const raw = localStorage.getItem(SEEN_RUN_IDS_KEY)
     const parsed = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(parsed) ? parsed : [])
+    return new Set<string>(Array.isArray(parsed) ? parsed : [])
   } catch {
-    return new Set()
+    return new Set<string>()
   }
 }
 
-function persistSeenRunIds(seen) {
+function persistSeenRunIds(seen: Set<string>) {
   const ids = [...seen].slice(-SEEN_RUN_IDS_MAX)
   localStorage.setItem(SEEN_RUN_IDS_KEY, JSON.stringify(ids))
 }
@@ -33,7 +67,7 @@ export default function ScraperControl() {
   const { t, locale } = useLocale()
   // Refs so the mount-only "poll pipeline status" effect below always reads the
   // *current* locale/t instead of the values captured at mount (BIN-154 — mirrors
-  // the tRef/localeRef pattern in MapView.jsx). logScrapeRun (only ever invoked from
+  // the tRef/localeRef pattern in MapView.tsx). logScrapeRun (only ever invoked from
   // that effect's async poll callback, never during render) reads these directly
   // instead of calling `ts()`, so accessing `.current` here never happens at render
   // time (react-hooks/refs forbids reading ref.current during render).
@@ -43,17 +77,17 @@ export default function ScraperControl() {
   useEffect(() => { localeRef.current = locale }, [locale])
   const ts = () => formatTime(new Date(), locale)
   const { status, loading: statusLoading } = useSystemStatus(5000)
-  const [platforms, setPlatforms] = useState([])
+  const [platforms, setPlatforms] = useState<PlatformRow[]>([])
   const [selectedPlatform, setSelectedPlatform] = useState('')
   const [scrapeType, setScrapeType] = useState('both')
   const [scraping, setScraping] = useState(false)
   const [workerPaused, setWorkerPaused] = useState(false)
-  const logRef = useRef(null)
-  const seenRunIdsRef = useRef(null)
+  const logRef = useRef<HTMLDivElement>(null)
+  const seenRunIdsRef = useRef<Set<string> | null>(null)
   const showToast = useToast()
 
   // Pipeline tracking state
-  const [pipeline, setPipeline] = useState({
+  const [pipeline, setPipeline] = useState<ScraperPipeline>({
     queues: { scrapers: 0, ai: 0 },
     scrapers_status: {},
     ai_metrics: { throughput_per_min: 0, avg_duration_sec: 0, total_recorded: 0 },
@@ -61,8 +95,8 @@ export default function ScraperControl() {
   })
 
   // Schedule state
-  const [schedules, setSchedules] = useState([])
-  const [editingPlatform, setEditingPlatform] = useState(null)
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([])
+  const [editingPlatform, setEditingPlatform] = useState<string | null>(null)
   const [editInterval, setEditInterval] = useState('')
   const [savingSchedule, setSavingSchedule] = useState(false)
   const [scheduleAuthNeeded, setScheduleAuthNeeded] = useState(() => !hasApiKey())
@@ -70,7 +104,7 @@ export default function ScraperControl() {
   const [recheckingAvailability, setRecheckingAvailability] = useState(false)
 
   // Logs state initialized from localStorage
-  const [logs, setLogs] = useState(() => {
+  const [logs, setLogs] = useState<LogEntry[]>(() => {
     const saved = localStorage.getItem('scraperLogs')
     if (saved) {
       try { return JSON.parse(saved) } catch { /* ignore malformed localStorage payload */ }
@@ -82,17 +116,17 @@ export default function ScraperControl() {
     seenRunIdsRef.current = loadSeenRunIds()
   }
 
-  const addLog = (type, text) => setLogs(prev => [...prev.slice(-199), { type, text }])
+  const addLog = (type: string, text: string) => setLogs(prev => [...prev.slice(-199), { type, text }])
 
-  const rememberRunId = (runId) => {
+  const rememberRunId = (runId: string): boolean => {
     const seen = seenRunIdsRef.current
-    if (seen.has(runId)) return false
+    if (!seen || seen.has(runId)) return false
     seen.add(runId)
     persistSeenRunIds(seen)
     return true
   }
 
-  const logScrapeRun = (run) => {
+  const logScrapeRun = (run: ScrapeRun) => {
     const translate = tRef.current
     const platform = formatPlatform(run.platform || 'unknown')
     const processed = run.processed ?? 0
@@ -118,7 +152,7 @@ export default function ScraperControl() {
     let cancelled = false
     const poll = async () => {
       try {
-        const p = await fetchPipeline()
+        const p = await fetchPipeline() as unknown as ScraperPipeline
         if (cancelled) return
         setPipeline(p)
         const runs = Array.isArray(p?.recent_scrape_runs) ? p.recent_scrape_runs : []
@@ -157,7 +191,7 @@ export default function ScraperControl() {
         return
       }
       try {
-        const s = await fetchSchedule()
+        const s = await fetchSchedule() as { schedules?: ScheduleRow[] }
         if (cancelled) return
         setScheduleAuthNeeded(false)
         scheduleAuthToastShown.current = false
@@ -168,7 +202,7 @@ export default function ScraperControl() {
         if (!scheduleAuthToastShown.current) {
           scheduleAuthToastShown.current = true
           showToast(
-            e.message || t('scraper.toastAuthSchedule'),
+            errMessage(e) || t('scraper.toastAuthSchedule'),
             { type: 'error' },
           )
         }
@@ -185,9 +219,10 @@ export default function ScraperControl() {
   }, [logs])
 
   useEffect(() => {
-    fetchPlatforms().then(p => {
-      setPlatforms(p)
-      if (p.length > 0) setSelectedPlatform(p[0].name)
+    fetchPlatforms().then(raw => {
+      const rows = raw as unknown as PlatformRow[]
+      setPlatforms(rows)
+      if (rows.length > 0) setSelectedPlatform(rows[0].name)
     }).catch(() => {
       showToast(t('scraper.toastPlatformsFailed'), { type: 'error' })
     })
@@ -204,7 +239,7 @@ export default function ScraperControl() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
 
-  const scrapeTypeLabel = (type) => {
+  const scrapeTypeLabel = (type: string) => {
     if (type === 'rent') return t('scraper.rentOnly')
     if (type === 'sale') return t('scraper.saleOnly')
     return t('scraper.bothRentSale')
@@ -223,7 +258,7 @@ export default function ScraperControl() {
       addLog('success', t('scraper.logEnqueued', { time: ts() }))
       showToast(t('scraper.toastEnqueued'), { type: 'success' })
     } catch (e) {
-      addLog('error', t('scraper.logError', { time: ts(), message: e.message }))
+      addLog('error', t('scraper.logError', { time: ts(), message: errMessage(e) }))
       showToast(t('scraper.toastScrapeFailed'), { type: 'error' })
     } finally {
       setScraping(false)
@@ -244,18 +279,18 @@ export default function ScraperControl() {
         showToast(t('scraper.toastWorkersPaused'), { type: 'warning' })
       }
     } catch (e) {
-      addLog('error', t('scraper.logGenericError', { time: ts(), message: e.message }))
+      addLog('error', t('scraper.logGenericError', { time: ts(), message: errMessage(e) }))
       showToast(t('scraper.toastWorkerToggleFailed'), { type: 'error' })
     }
   }
 
   const clearLogs = () => {
-    const fresh = [{ type: 'info', text: t('scraper.logCleared', { time: ts() }) }]
+    const fresh: LogEntry[] = [{ type: 'info', text: t('scraper.logCleared', { time: ts() }) }]
     setLogs(fresh)
     localStorage.setItem('scraperLogs', JSON.stringify(fresh))
   }
 
-  const handleSaveSchedule = async (platform) => {
+  const handleSaveSchedule = async (platform: string) => {
     const minutes = parseInt(editInterval, 10)
     if (isNaN(minutes) || minutes < 0) return
     setSavingSchedule(true)
@@ -268,12 +303,12 @@ export default function ScraperControl() {
       setEditInterval('')
       // Refresh schedules
       if (hasApiKey()) {
-        const s = await fetchSchedule()
+        const s = await fetchSchedule() as { schedules?: ScheduleRow[] }
         if (s?.schedules) setSchedules(s.schedules)
         setScheduleAuthNeeded(false)
       }
     } catch (e) {
-      addLog('error', t('scraper.logGenericError', { time: ts(), message: e.message }))
+      addLog('error', t('scraper.logGenericError', { time: ts(), message: errMessage(e) }))
       showToast(t('scraper.toastScheduleFailed'), { type: 'error' })
     } finally {
       setSavingSchedule(false)
@@ -287,7 +322,7 @@ export default function ScraperControl() {
     }
     setRecheckingAvailability(true)
     try {
-      const r = await triggerAvailabilityRecheck()
+      const r = await triggerAvailabilityRecheck() as { batch_size?: number | string; task_id?: string }
       addLog(
         'success',
         t('scraper.logRecheckEnqueued', {
@@ -298,22 +333,25 @@ export default function ScraperControl() {
       )
       showToast(t('scraper.toastRecheckEnqueued'), { type: 'success' })
     } catch (e) {
-      addLog('error', t('scraper.logGenericError', { time: ts(), message: e.message }))
+      addLog('error', t('scraper.logGenericError', { time: ts(), message: errMessage(e) }))
       showToast(t('scraper.toastRecheckFailed'), { type: 'error' })
     } finally {
       setRecheckingAvailability(false)
     }
   }
 
-  const formatTs = (value) => {
+  const formatTs = (value: DateLike) => {
     if (!value) return t('common.emDash')
     return formatDateTime(value, locale)
   }
 
-  const aiOk = status?.ollama?.status === 'ok'
-  const dbOk = status?.database?.status === 'ok'
+  const ollama = status?.ollama as OllamaInfo | undefined
+  const database = status?.database as ServiceInfo | undefined
+  const aiOk = ollama?.status === 'ok'
+  const dbOk = database?.status === 'ok'
+  const proxy = pipeline.proxy
 
-  const activeScrapers = Object.entries(pipeline.scrapers_status).filter(([_, s]) => s.status === 'running')
+  const activeScrapers = Object.entries(pipeline.scrapers_status).filter(([, s]) => s.status === 'running')
 
   return (
     <div>
@@ -375,22 +413,22 @@ export default function ScraperControl() {
             <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-app)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('scraper.livePipeline')}</div>
 
-              {pipeline?.proxy && (
+              {proxy && (
                 <div
                   data-testid="scraper-proxy-line"
                   style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}
                 >
-                  {pipeline.proxy.proxy_mode === 'pool'
+                  {proxy.proxy_mode === 'pool'
                     ? t('scraper.proxyModeLinePool', {
-                        mode: pipeline.proxy.proxy_mode,
-                        n: pipeline.proxy.pool_size ?? 0,
+                        mode: proxy.proxy_mode,
+                        n: proxy.pool_size ?? 0,
                       })
-                    : t('scraper.proxyModeLine', { mode: pipeline.proxy.proxy_mode || 'direct' })}
+                    : t('scraper.proxyModeLine', { mode: proxy.proxy_mode || 'direct' })}
                   {(() => {
                     const runningHost = activeScrapers
                       .map(([, s]) => s.proxy_host)
                       .find((h) => h)
-                    const host = runningHost || pipeline.proxy.proxy_host
+                    const host = runningHost || proxy.proxy_host
                     return host ? t('scraper.proxyHostLine', { host }) : null
                   })()}
                 </div>
@@ -427,19 +465,19 @@ export default function ScraperControl() {
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('scraper.throughput')}</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-emerald)' }}>
-                      {pipeline?.ai_metrics?.throughput_per_min ?? 0} <span style={{ fontSize: 11, fontWeight: 400 }}>{t('scraper.propsPerMin')}</span>
+                      {pipeline.ai_metrics?.throughput_per_min ?? 0} <span style={{ fontSize: 11, fontWeight: 400 }}>{t('scraper.propsPerMin')}</span>
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('scraper.avgSpeed')}</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {pipeline?.ai_metrics?.avg_duration_sec ?? 0} <span style={{ fontSize: 11, fontWeight: 400 }}>{t('scraper.secPerProp')}</span>
+                      {pipeline.ai_metrics?.avg_duration_sec ?? 0} <span style={{ fontSize: 11, fontWeight: 400 }}>{t('scraper.secPerProp')}</span>
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('scraper.recorded')}</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {pipeline?.ai_metrics?.total_recorded ?? 0}
+                      {pipeline.ai_metrics?.total_recorded ?? 0}
                     </div>
                   </div>
                 </div>
@@ -478,7 +516,7 @@ export default function ScraperControl() {
                   {statusLoading
                     ? `⏳ ${t('scraper.checkingStatus')}`
                     : aiOk
-                      ? t('scraper.onlineModels', { models: (status?.ollama?.models || []).join(', ') || t('scraper.noModels') })
+                      ? t('scraper.onlineModels', { models: (ollama?.models || []).join(', ') || t('scraper.noModels') })
                       : `✖ ${t('scraper.offline')}`}
                 </div>
               </div>

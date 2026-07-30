@@ -1,6 +1,10 @@
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { useAlerts } from '../hooks/useAlerts.js'
-import { ensureOllama, recalculateScores, enrichMissing, enrichmentRerun, fetchPipeline, fetchPipelineHistory } from '../api.js'
-import { useState, useEffect, useRef } from 'react'
+import {
+  ensureOllama, recalculateScores, enrichMissing, enrichmentRerun,
+  fetchPipeline, fetchPipelineHistory,
+  type SystemStatus, type PipelineStatus, type EnrichmentMode, type EnrichmentStages,
+} from '../api.js'
 import { useToast } from '../components/ToastProvider.jsx'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -9,14 +13,66 @@ import {
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatTime, formatCurrencyBRL, formatNumber } from '../i18n/format.js'
+import type { TFunction } from '../i18n/LocaleContext.jsx'
 
 const HISTORY_MAX_POINTS = 120
 
-function toHistoryPoint(tsLabel, throughput, scraperQueue, aiQueue) {
+// ── Local "views" over the loosely-typed (Record<string, unknown>) API responses.
+//    api.ts keeps these as the intentional backend seam; the page narrows at read. ──
+interface ServiceInfo { status?: string; detail?: string }
+interface OllamaInfo { status?: string; models?: string[] }
+interface DashboardStats { total_properties?: number; enriched_properties?: number }
+type ServiceKey = 'database' | 'redis' | 'ollama' | 'workers'
+interface StatusView {
+  database?: ServiceInfo
+  redis?: ServiceInfo
+  ollama?: OllamaInfo
+  workers?: ServiceInfo
+  ai_workers_paused?: boolean
+  stats?: DashboardStats
+}
+interface ProxyInfo {
+  health?: string
+  proxy_enabled?: boolean
+  proxy_mode?: string
+  rotation_strategy?: string
+  pool_size?: number
+}
+interface AiMetricsView { throughput_per_min?: number; avg_duration_sec?: number; total_recorded?: number }
+interface AlertRow { drop_pct?: number; platform?: string; title?: string; old_price?: number; new_price?: number }
+interface EnrichMissingResult { queued_enrichments?: number; skipped_no_images?: number }
+interface RerunResult {
+  would_queue?: number
+  queued?: number
+  skipped_no_images?: number
+  skipped_too_few_photos?: number
+  skipped_missing_prior_enrichment?: number
+}
+interface HistoryPoint { time: string; throughput: number; scraperQueue: number; aiQueue: number }
+interface RerunForm {
+  mode: EnrichmentMode
+  stages: EnrichmentStages
+  city: string
+  platform: string
+  limit: string
+  active_only: boolean
+  stale_before: string
+}
+
+const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+function toHistoryPoint(tsLabel: string, throughput: number, scraperQueue: number, aiQueue: number): HistoryPoint {
   return { time: tsLabel, throughput, scraperQueue, aiQueue }
 }
 
-const SERVICES = [
+interface ServiceDef {
+  key: ServiceKey
+  icon: string
+  labelKey: string
+  sub: (s: StatusView | null, t: TFunction) => string
+}
+
+const SERVICES: ServiceDef[] = [
   {
     key: 'database', icon: '🗄️', labelKey: 'dashboard.svcPostgresql',
     sub: (s, t) => s?.database?.status === 'ok' ? t('dashboard.connected') : (s?.database?.detail || t('dashboard.offline')),
@@ -27,7 +83,7 @@ const SERVICES = [
   },
   {
     key: 'ollama', icon: '🤖', labelKey: 'dashboard.svcOllama',
-    sub: (s, t) => s?.ollama?.status === 'ok' ? t('dashboard.modelsLoaded', { n: (s.ollama.models || []).length }) : t('dashboard.offline'),
+    sub: (s, t) => s?.ollama?.status === 'ok' ? t('dashboard.modelsLoaded', { n: (s?.ollama?.models || []).length }) : t('dashboard.offline'),
   },
   {
     key: 'workers', icon: '⚙️', labelKey: 'dashboard.svcCelery',
@@ -35,16 +91,16 @@ const SERVICES = [
   },
 ]
 
-function svcStatus(key, s) {
+function svcStatus(key: ServiceKey, s: StatusView | null): string {
   if (!s) return 'loading'
   if (key === 'workers') {
-    if (s?.workers?.status !== 'ok') return 'err'
+    if (s.workers?.status !== 'ok') return 'err'
     return s.ai_workers_paused ? 'warn' : 'ok'
   }
   return s[key]?.status === 'ok' ? 'ok' : 'err'
 }
 
-function proxyModeLabel(mode, t) {
+function proxyModeLabel(mode: string | undefined, t: TFunction): string {
   switch (mode) {
     case 'pool':
       return t('dashboard.proxyModePool')
@@ -57,13 +113,13 @@ function proxyModeLabel(mode, t) {
   }
 }
 
-function proxyHealthClass(health) {
+function proxyHealthClass(health: string | undefined): string {
   if (health === 'ok') return 'ok'
   if (health === 'warn') return 'loading'
   return 'ok'
 }
 
-function proxySubline(proxy, t) {
+function proxySubline(proxy: ProxyInfo | undefined, t: TFunction): string {
   if (!proxy) return t('dashboard.proxyLoading')
   if (!proxy.proxy_enabled) return t('dashboard.proxyDisabled')
   if (proxy.health === 'warn') return t('dashboard.proxyMisconfigured')
@@ -77,15 +133,20 @@ function proxySubline(proxy, t) {
   return t('dashboard.proxyDisabled')
 }
 
-export default function Dashboard({ status, loading }) {
+export interface DashboardProps {
+  status: SystemStatus | null
+  loading: boolean
+}
+
+export default function Dashboard({ status, loading }: DashboardProps) {
   const { t, locale } = useLocale()
   const [recalculating, setRecalculating] = useState(false)
-  const [recalcResult, setRecalcResult] = useState(null)
+  const [recalcResult, setRecalcResult] = useState<string | null>(null)
   const [enriching, setEnriching] = useState(false)
-  const [enrichResult, setEnrichResult] = useState(null)
+  const [enrichResult, setEnrichResult] = useState<string | null>(null)
   const [rerunBusy, setRerunBusy] = useState(false)
-  const [rerunResult, setRerunResult] = useState(null)
-  const [rerunForm, setRerunForm] = useState({
+  const [rerunResult, setRerunResult] = useState<string | null>(null)
+  const [rerunForm, setRerunForm] = useState<RerunForm>({
     mode: 'missing',
     stages: 'all',
     city: '',
@@ -95,13 +156,15 @@ export default function Dashboard({ status, loading }) {
     stale_before: '',
   })
   const [ollamaLoading, setOllamaLoading] = useState(false)
-  const [pipeline, setPipeline] = useState(null)
-  const [throughputHistory, setThroughputHistory] = useState([])
+  const [pipeline, setPipeline] = useState<PipelineStatus | null>(null)
+  const [throughputHistory, setThroughputHistory] = useState<HistoryPoint[]>([])
   const { alerts, loading: alertsLoading, setAlerts } = useAlerts()
   const showToast = useToast()
 
-  const stats = status?.stats || {}
-  const dbOk = status?.database?.status === 'ok'
+  const sv = status as unknown as StatusView | null
+  const stats: DashboardStats = sv?.stats || {}
+  const dbOk = sv?.database?.status === 'ok'
+  const proxy = pipeline?.proxy as ProxyInfo | undefined
   const historyLoaded = useRef(false)
 
   // Load persisted history once, then poll live tip
@@ -133,12 +196,13 @@ export default function Dashboard({ status, loading }) {
         if (cancelled) return
         setPipeline(data)
         const timeLabel = formatTime(new Date(), locale)
+        const aiMetrics = data.ai_metrics as AiMetricsView
         setThroughputHistory((prev) => {
           const next = [
             ...prev,
             toHistoryPoint(
               timeLabel,
-              data.ai_metrics?.throughput_per_min || 0,
+              aiMetrics?.throughput_per_min || 0,
               data.queues?.scrapers || 0,
               data.queues?.ai || 0,
             ),
@@ -165,7 +229,7 @@ export default function Dashboard({ status, loading }) {
       const r = await ensureOllama()
       showToast(r.status === 'already_running' ? t('dashboard.toastOllamaAlready') : t('dashboard.toastOllamaStarted'), { type: 'success' })
     } catch (e) {
-      showToast(t('dashboard.toastError', { message: e.message }), { type: 'error' })
+      showToast(t('dashboard.toastError', { message: errMessage(e) }), { type: 'error' })
     } finally {
       setOllamaLoading(false)
     }
@@ -179,7 +243,7 @@ export default function Dashboard({ status, loading }) {
       setRecalcResult(t('dashboard.recalcResultOk'))
       showToast(t('dashboard.toastRecalculated'), { type: 'success' })
     } catch (e) {
-      setRecalcResult(t('common.errorCross', { message: e.message }))
+      setRecalcResult(t('common.errorCross', { message: errMessage(e) }))
       showToast(t('dashboard.toastRecalcFailed'), { type: 'error' })
     } finally {
       setRecalculating(false)
@@ -190,7 +254,7 @@ export default function Dashboard({ status, loading }) {
     setEnriching(true)
     setEnrichResult(null)
     try {
-      const r = await enrichMissing()
+      const r = await enrichMissing() as EnrichMissingResult
       const skipped = r.skipped_no_images || 0
       const msg = skipped
         ? t('dashboard.enrichResultOkSkipped', { n: r.queued_enrichments, skipped })
@@ -198,14 +262,14 @@ export default function Dashboard({ status, loading }) {
       setEnrichResult(msg)
       showToast(t('dashboard.toastEnrichQueued'), { type: 'success' })
     } catch (e) {
-      setEnrichResult(t('common.errorCross', { message: e.message }))
+      setEnrichResult(t('common.errorCross', { message: errMessage(e) }))
       showToast(t('dashboard.toastEnrichFailed'), { type: 'error' })
     } finally {
       setEnriching(false)
     }
   }
 
-  const handleEnrichmentRerun = async (dryRun) => {
+  const handleEnrichmentRerun = async (dryRun: boolean) => {
     setRerunBusy(true)
     setRerunResult(null)
     try {
@@ -221,7 +285,7 @@ export default function Dashboard({ status, loading }) {
           ? new Date(rerunForm.stale_before).toISOString()
           : undefined,
       }
-      const r = await enrichmentRerun(payload)
+      const r = await enrichmentRerun(payload) as RerunResult
       const n = dryRun ? r.would_queue : r.queued
       const verb = dryRun ? t('dashboard.verbWouldQueue') : t('dashboard.verbQueued')
       const skips = [
@@ -233,7 +297,7 @@ export default function Dashboard({ status, loading }) {
       setRerunResult(t('dashboard.rerunResultOk', { verb, n, skipNote }))
       showToast(t('dashboard.toastRerunOk', { verb, n }), { type: 'success' })
     } catch (e) {
-      setRerunResult(t('common.errorCross', { message: e.message }))
+      setRerunResult(t('common.errorCross', { message: errMessage(e) }))
       showToast(t('dashboard.toastRerunFailed'), { type: 'error' })
     } finally {
       setRerunBusy(false)
@@ -308,20 +372,23 @@ export default function Dashboard({ status, loading }) {
             </button>
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
-            {alerts.slice(0, 10).map((alert, idx) => (
-              <div key={idx} style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--accent-rose)' }}>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  {t('dashboard.alertDrop', { pct: alert.drop_pct?.toFixed(1), platform: formatPlatform(alert.platform) })}
+            {alerts.slice(0, 10).map((alert, idx) => {
+              const a = alert as AlertRow
+              return (
+                <div key={idx} style={{ padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--accent-rose)' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                    {t('dashboard.alertDrop', { pct: a.drop_pct?.toFixed(1), platform: formatPlatform(a.platform) })}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    {t('dashboard.alertPrices', {
+                      title: a.title,
+                      oldPrice: formatCurrencyBRL(a.old_price, locale),
+                      newPrice: formatCurrencyBRL(a.new_price, locale),
+                    })}
+                  </div>
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  {t('dashboard.alertPrices', {
-                    title: alert.title,
-                    oldPrice: formatCurrencyBRL(alert.old_price, locale),
-                    newPrice: formatCurrencyBRL(alert.new_price, locale),
-                  })}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </>
       )}
@@ -343,14 +410,14 @@ export default function Dashboard({ status, loading }) {
           value={
             loading || !dbOk || !stats.total_properties
               ? t('common.emDash')
-              : `${Math.round((stats.enriched_properties / stats.total_properties) * 100)}%`
+              : `${Math.round(((stats.enriched_properties ?? 0) / stats.total_properties) * 100)}%`
           }
           sub={t('dashboard.ofTotalScraped')}
         />
         <StatCard
           label={t('dashboard.ollamaModels')}
-          value={loading ? t('common.ellipsis') : (status?.ollama?.models?.length ?? 0)}
-          sub={status?.ollama?.models?.[0] ?? t('dashboard.noneLoaded')}
+          value={loading ? t('common.ellipsis') : (sv?.ollama?.models?.length ?? 0)}
+          sub={sv?.ollama?.models?.[0] ?? t('dashboard.noneLoaded')}
         />
       </div>
 
@@ -360,30 +427,30 @@ export default function Dashboard({ status, loading }) {
       </h2>
       <div className="services-grid" style={{ marginBottom: 28 }}>
         {SERVICES.map(({ key, icon, labelKey, sub }) => {
-          const st = svcStatus(key, status)
+          const st = svcStatus(key, sv)
           return (
             <div key={key} className="service-card">
               <div className={`service-icon ${st === 'warn' ? 'loading' : st}`}>{icon}</div>
               <div className="service-info">
                 <div className="service-name">{t(labelKey)}</div>
                 <div className={`service-status ${st === 'warn' ? 'loading' : st}`}>
-                  {loading ? t('common.checking') : sub(status, t)}
+                  {loading ? t('common.checking') : sub(sv, t)}
                 </div>
               </div>
             </div>
           )
         })}
         <div className="service-card" data-testid="proxy-health-card">
-          <div className={`service-icon ${proxyHealthClass(pipeline?.proxy?.health)}`}>🔒</div>
+          <div className={`service-icon ${proxyHealthClass(proxy?.health)}`}>🔒</div>
           <div className="service-info">
             <div className="service-name">{t('dashboard.svcProxy')}</div>
-            <div className={`service-status ${proxyHealthClass(pipeline?.proxy?.health)}`}>
-              {!pipeline?.proxy
+            <div className={`service-status ${proxyHealthClass(proxy?.health)}`}>
+              {!proxy
                 ? t('dashboard.proxyLoading')
-                : proxyModeLabel(pipeline.proxy.proxy_mode, t)}
+                : proxyModeLabel(proxy.proxy_mode, t)}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              {proxySubline(pipeline?.proxy, t)}
+              {proxySubline(proxy, t)}
             </div>
           </div>
         </div>
@@ -440,7 +507,7 @@ export default function Dashboard({ status, loading }) {
               className="form-select"
               data-testid="enrichment-rerun-mode"
               value={rerunForm.mode}
-              onChange={(e) => setRerunForm((f) => ({ ...f, mode: e.target.value }))}
+              onChange={(e) => setRerunForm((f) => ({ ...f, mode: e.target.value as EnrichmentMode }))}
             >
               <option value="missing">{t('dashboard.modeMissing')}</option>
               <option value="force">{t('dashboard.modeForce')}</option>
@@ -453,7 +520,7 @@ export default function Dashboard({ status, loading }) {
               className="form-select"
               data-testid="enrichment-rerun-stages"
               value={rerunForm.stages}
-              onChange={(e) => setRerunForm((f) => ({ ...f, stages: e.target.value }))}
+              onChange={(e) => setRerunForm((f) => ({ ...f, stages: e.target.value as EnrichmentStages }))}
             >
               <option value="all">{t('dashboard.stagesAll')}</option>
               <option value="visual+sentiment">{t('dashboard.stagesVisualSentiment')}</option>
@@ -551,11 +618,11 @@ export default function Dashboard({ status, loading }) {
       </div>
 
       {/* Ollama models list */}
-      {status?.ollama?.status === 'ok' && (status.ollama.models || []).length > 0 && (
+      {sv?.ollama?.status === 'ok' && (sv?.ollama?.models || []).length > 0 && (
         <div className="card">
           <div className="panel-section-title">{t('dashboard.loadedModels')}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {status.ollama.models.map(m => (
+            {sv?.ollama?.models?.map(m => (
               <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-card)', borderRadius: 8, border: '1px solid var(--border-subtle)', fontSize: 13 }}>
                 <span style={{ color: 'var(--accent-emerald)' }}>✔</span>
                 <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{m}</span>
@@ -569,13 +636,19 @@ export default function Dashboard({ status, loading }) {
   )
 }
 
-function formatPropertyCount(loading, dbOk, value, t, locale) {
+function formatPropertyCount(loading: boolean, dbOk: boolean, value: number | null | undefined, t: TFunction, locale: string): string {
   if (loading) return t('common.ellipsis')
   if (!dbOk || value == null) return t('common.emDash')
   return formatNumber(value, locale)
 }
 
-function StatCard({ label, value, sub }) {
+interface StatCardProps {
+  label: ReactNode
+  value: ReactNode
+  sub?: ReactNode
+}
+
+function StatCard({ label, value, sub }: StatCardProps) {
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
