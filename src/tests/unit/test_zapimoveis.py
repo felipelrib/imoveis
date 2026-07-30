@@ -539,6 +539,20 @@ class TestZapFetchLifecycle:
             zap_scraper._throttled_request("https://example.test")
         zap_scraper._cb.record_failure.assert_called_once()
 
+    def test_throttled_request_records_403_as_separate_reason(self, zap_scraper):
+        """BIN-156: sustained Cloudflare 403 streaks must feed a SEPARATE
+        circuit-breaker reason bucket from 5xx/429 — not be dropped entirely.
+        """
+        zap_scraper.session = MagicMock()
+        zap_scraper._cb = MagicMock()
+        zap_scraper._cb.is_open.return_value = False
+        zap_scraper.session.get.return_value = MagicMock(status_code=403)
+        with patch("adapters.scrapers.zapimoveis.random.uniform", return_value=0), patch(
+            "adapters.scrapers.zapimoveis.time.sleep"
+        ):
+            zap_scraper._throttled_request("https://example.test")
+        zap_scraper._cb.record_failure.assert_called_once_with(reason="cloudflare_403")
+
     def test_fetch_description_blank_url_returns_empty(self, zap_scraper):
         assert zap_scraper.fetch_description("   ") == ""
 
