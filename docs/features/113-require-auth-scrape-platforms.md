@@ -50,7 +50,7 @@ Files touched:
  frontend/src/i18n/locales/pt-BR.json         | NEW key scraper.toastAuthScrape (PT translation)
  src/tests/contract/test_api_contract.py      | NEW TestScrapeEndpoint — regression: 401 missing cred, 403 invalid cred, 200 valid cred (mocked delay), 400 unknown platform still surfaces post-auth
  frontend/tests/e2e/dashboard.spec.js         | "shows platforms and triggers scrape" rewritten to require + attach a credential before asserting the enqueue toast (BIN-149)
- docs/features/111-require-auth-scrape-platforms.md | NEW — this file
+ docs/features/113-require-auth-scrape-platforms.md | NEW — this file
 ```
 
 ## New Dependencies
