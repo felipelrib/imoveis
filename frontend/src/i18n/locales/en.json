@@ -446,7 +446,9 @@
     "claimsPositives": "Claims from listing (positives)",
     "claimsConcerns": "Claims from listing (concerns)",
     "priceHistory": "Price History",
-    "priceHistoryNeedPoints": "Needs at least two data points to plot"
+    "priceHistoryNeedPoints": "Needs at least two data points to plot",
+    "loadErrorTitle": "Couldn't load this property",
+    "loadErrorBody": "It may have been removed or is temporarily unavailable. Please try again later."
   },
   "map": {
     "score": "Score: {value}",
