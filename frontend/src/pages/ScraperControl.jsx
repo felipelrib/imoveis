@@ -196,6 +196,10 @@ export default function ScraperControl() {
 
   const handleScrape = async () => {
     if (!selectedPlatform) return
+    if (!hasApiKey()) {
+      showToast(t('scraper.toastAuthScrape'), { type: 'error' })
+      return
+    }
     setScraping(true)
     addLog('info', t('scraper.logTrigger', { platform: formatPlatform(selectedPlatform), type: scrapeTypeLabel(scrapeType) }))
     try {
