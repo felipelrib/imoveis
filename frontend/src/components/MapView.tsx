@@ -1,21 +1,47 @@
 import { useRef, useEffect, useCallback } from 'react'
-import maplibregl from 'maplibre-gl'
+import maplibregl, {
+  type Map as MLMap,
+  type Marker as MLMarker,
+  type GeoJSONSource,
+  type MapLayerMouseEvent,
+  type StyleSpecification,
+} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import type { FeatureCollection, Feature, Point } from 'geojson'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatCurrency } from '../i18n/format.js'
 import { linkIdForProperty } from '../routes/propertyPaths.js'
 import { combinedScoreForListingType, formatScorePercent } from '../utils/scores.js'
 import { decisioningPrice } from '../utils/primaryListing.js'
+import type { Property } from '../api.js'
+import type { TFunction } from '../i18n/LocaleContext.jsx'
 
-function scoreColor(v) {
+/** A property guaranteed to have numeric coordinates (post-filter). */
+type LocatedProperty = Property & { lat: number; lon: number }
+
+function scoreColor(v: number | null | undefined): string {
   if (v == null) return '#6b7280'  // grey for no score
   if (v >= 0.7) return '#10b981'  // green
   if (v >= 0.4) return '#f59e0b'  // yellow
   return '#ef4444'                 // red
 }
 
-function propertyLinkId(p) {
+function propertyLinkId(p: Property): string | null {
   return linkIdForProperty(p) || (p?.id != null ? String(p.id) : null)
+}
+
+function hasCoords(p: Property): p is LocatedProperty {
+  return p.lat != null && p.lon != null
+}
+
+export interface MapViewProps {
+  properties: Property[]
+  listingType?: string
+  onSelectProperty?: (id: string) => void
+  onBboxChange?: (bbox: string) => void
+  compareMode?: boolean
+  selectedIds?: string[]
+  onToggleCompare?: (id: string) => void
 }
 
 export default function MapView({
@@ -26,10 +52,10 @@ export default function MapView({
   compareMode = false,
   selectedIds = [],
   onToggleCompare,
-}) {
-  const mapContainer = useRef(null)
-  const mapRef = useRef(null)
-  const markersRef = useRef([])
+}: MapViewProps) {
+  const mapContainer = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<MLMap | null>(null)
+  const markersRef = useRef<MLMarker[]>([])
   const layersReadyRef = useRef(false)
   const { t, locale } = useLocale()
 
@@ -40,9 +66,9 @@ export default function MapView({
   const onBboxChangeRef = useRef(onBboxChange)
   const listingTypeRef = useRef(listingType)
   const propertiesRef = useRef(properties)
-  const tRef = useRef(t)
+  const tRef = useRef<TFunction>(t)
   const localeRef = useRef(locale)
-  const updateMarkersRef = useRef(null)
+  const updateMarkersRef = useRef<((map: MLMap, props: Property[]) => void) | null>(null)
 
   useEffect(() => { compareModeRef.current = compareMode }, [compareMode])
   useEffect(() => { selectedIdsRef.current = selectedIds }, [selectedIds])
@@ -59,7 +85,7 @@ export default function MapView({
     markersRef.current = []
   }, [])
 
-  const syncCompareMarkers = useCallback((map, props) => {
+  const syncCompareMarkers = useCallback((map: MLMap, props: Property[]) => {
     clearCompareMarkers()
     if (!compareModeRef.current) return
 
@@ -67,7 +93,7 @@ export default function MapView({
     const translate = tRef.current
 
     props
-      .filter((p) => p.lat != null && p.lon != null)
+      .filter(hasCoords)
       .forEach((p) => {
         const linkId = propertyLinkId(p)
         if (!linkId) return
@@ -97,7 +123,7 @@ export default function MapView({
       })
   }, [clearCompareMarkers])
 
-  const buildGeojson = useCallback((props) => {
+  const buildGeojson = useCallback((props: Property[]): FeatureCollection<Point> => {
     const selectedSet = new Set((selectedIdsRef.current || []).map(String))
     const type = listingTypeRef.current
     const translate = tRef.current
@@ -105,8 +131,8 @@ export default function MapView({
     return {
       type: 'FeatureCollection',
       features: props
-        .filter((p) => p.lat != null && p.lon != null)
-        .map((p) => {
+        .filter(hasCoords)
+        .map((p): Feature<Point> => {
           const displayScore = combinedScoreForListingType(p, type)
           const linkId = propertyLinkId(p)
           return {
@@ -128,7 +154,7 @@ export default function MapView({
     }
   }, [])
 
-  const ensureLayers = useCallback((map, sourceId) => {
+  const ensureLayers = useCallback((map: MLMap, sourceId: string) => {
     if (layersReadyRef.current) return
 
     // Cluster circles
@@ -211,8 +237,11 @@ export default function MapView({
       className: 'map-popup',
     })
 
-    map.on('click', 'unclustered-point', (e) => {
-      const featProps = e.features[0].properties
+    map.on('click', 'unclustered-point', (e: MapLayerMouseEvent) => {
+      const feat = e.features?.[0]
+      if (!feat) return
+      const featProps = feat.properties
+      if (!featProps) return
       const linkId = featProps.link_id != null && featProps.link_id !== ''
         ? String(featProps.link_id)
         : (featProps.id != null ? String(featProps.id) : null)
@@ -223,7 +252,7 @@ export default function MapView({
         return
       }
 
-      const coords = e.features[0].geometry.coordinates.slice()
+      const coords = (feat.geometry as Point).coordinates.slice() as [number, number]
       const translate = tRef.current
       const loc = localeRef.current
       const score = featProps.combined_score != null
@@ -231,27 +260,27 @@ export default function MapView({
         : translate('common.emDash')
 
       const container = document.createElement('div')
-      container.style = 'padding: 4px 0; font-size: 13px;'
+      container.style.cssText = 'padding: 4px 0; font-size: 13px;'
 
       const titleDiv = document.createElement('div')
-      titleDiv.style = 'font-weight: 600; margin-bottom: 4px; line-height: 1.3;'
+      titleDiv.style.cssText = 'font-weight: 600; margin-bottom: 4px; line-height: 1.3;'
       titleDiv.textContent = featProps.title
       container.appendChild(titleDiv)
 
       const priceDiv = document.createElement('div')
-      priceDiv.style = 'font-size: 15px; font-weight: 700; color: var(--accent, #6366f1); margin-bottom: 4px;'
+      priceDiv.style.cssText = 'font-size: 15px; font-weight: 700; color: var(--accent, #6366f1); margin-bottom: 4px;'
       priceDiv.textContent = formatCurrency(featProps.price, loc)
       container.appendChild(priceDiv)
 
       const detailsDiv = document.createElement('div')
-      detailsDiv.style = 'color: var(--text-muted, #9ca3af); font-size: 11px; margin-bottom: 6px;'
+      detailsDiv.style.cssText = 'color: var(--text-muted, #9ca3af); font-size: 11px; margin-bottom: 6px;'
       const beds = featProps.bedrooms ? `· ${translate('common.bedsShort', { n: featProps.bedrooms })}` : ''
       const area = featProps.area_m2 ? `· ${translate('common.areaM2Compact', { n: featProps.area_m2 })}` : ''
       detailsDiv.textContent = `${featProps.neighborhood_name || ''} ${beds} ${area}`.trim()
       container.appendChild(detailsDiv)
 
       const scoreDiv = document.createElement('div')
-      scoreDiv.style = 'font-size: 12px; margin-bottom: 6px;'
+      scoreDiv.style.cssText = 'font-size: 12px; margin-bottom: 6px;'
       const scoreLabel = translate('map.score', { value: '' }).replace(/\s*$/, '')
       scoreDiv.innerHTML = `${scoreLabel} <strong style="color: ${scoreColor(featProps.combined_score)}">${score}</strong>`
       container.appendChild(scoreDiv)
@@ -259,7 +288,7 @@ export default function MapView({
       const btn = document.createElement('button')
       btn.className = 'map-view-btn'
       btn.dataset.id = featProps.id
-      btn.style = 'background: var(--accent, #6366f1); color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%;'
+      btn.style.cssText = 'background: var(--accent, #6366f1); color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%;'
       btn.textContent = translate('map.viewDetails')
       btn.addEventListener('click', () => {
         onSelectPropertyRef.current?.(featProps.id)
@@ -277,10 +306,11 @@ export default function MapView({
       map.getCanvas().style.cursor = ''
     })
 
-    map.on('click', 'clusters', (e) => {
+    map.on('click', 'clusters', (e: MapLayerMouseEvent) => {
       const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] })
-      const clusterId = features[0].properties.cluster_id
-      map.getSource(sourceId).getClusterExpansionZoom(clusterId)
+      const clusterId = features[0]?.properties?.cluster_id
+      const source = map.getSource(sourceId) as GeoJSONSource | undefined
+      source?.getClusterExpansionZoom(clusterId)
         .then((zoom) => {
           map.easeTo({ zoom, center: e.lngLat })
         })
@@ -292,12 +322,13 @@ export default function MapView({
     layersReadyRef.current = true
   }, [])
 
-  const updateMarkers = useCallback((map, props) => {
+  const updateMarkers = useCallback((map: MLMap, props: Property[]) => {
     const geojson = buildGeojson(props)
     const sourceId = 'properties'
 
-    if (map.getSource(sourceId)) {
-      map.getSource(sourceId).setData(geojson)
+    const existing = map.getSource(sourceId) as GeoJSONSource | undefined
+    if (existing) {
+      existing.setData(geojson)
     } else {
       map.addSource(sourceId, {
         type: 'geojson',
@@ -318,27 +349,30 @@ export default function MapView({
 
   // Initialize map
   useEffect(() => {
-    if (!mapContainer.current || mapRef.current) return
+    const container = mapContainer.current
+    if (!container || mapRef.current) return
+
+    const style: StyleSpecification = {
+      version: 8,
+      sources: {
+        osm: {
+          type: 'raster',
+          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          attribution: '&copy; OpenStreetMap contributors',
+          maxzoom: 19,
+        },
+      },
+      layers: [{
+        id: 'osm',
+        type: 'raster',
+        source: 'osm',
+      }],
+    }
 
     const map = new maplibregl.Map({
-      container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '&copy; OpenStreetMap contributors',
-            maxzoom: 19,
-          },
-        },
-        layers: [{
-          id: 'osm',
-          type: 'raster',
-          source: 'osm',
-        }],
-      },
+      container,
+      style,
       center: [-43.94, -19.92],  // Belo Horizonte
       zoom: 13,
     })
@@ -385,7 +419,7 @@ export default function MapView({
       return
     }
     map.once('idle', run)
-    return () => map.off('idle', run)
+    return () => { map.off('idle', run) }
   }, [properties, listingType, compareMode, selectedIds, updateMarkers])
 
   return (

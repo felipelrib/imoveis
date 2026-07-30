@@ -20,12 +20,16 @@ export function decisioningPrice(property: PropertyLike | null | undefined): num
   return null
 }
 
-/** Group listings by listing_type, each group sorted by price ascending. */
-export function groupListings(
-  listings: ListingLike[] | null | undefined,
-): Record<string, ListingLike[]> {
+/**
+ * Group listings by listing_type, each group sorted by price ascending.
+ * Generic so callers passing a richer listing type (e.g. api PropertyListing)
+ * get that same type back out, not a widened ListingLike.
+ */
+export function groupListings<T extends ListingLike>(
+  listings: T[] | null | undefined,
+): Record<string, T[]> {
   if (!listings || listings.length === 0) return {}
-  const groups: Record<string, ListingLike[]> = {}
+  const groups: Record<string, T[]> = {}
   for (const l of listings) {
     const key = l.listing_type || 'sale'
     if (!groups[key]) groups[key] = []

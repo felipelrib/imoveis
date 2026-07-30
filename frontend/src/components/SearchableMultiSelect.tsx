@@ -1,19 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useT } from '../i18n/LocaleContext.jsx'
+
+export interface SmsOption {
+  value: string
+  label: string
+  group?: string | null
+}
+
+export interface SearchableMultiSelectProps {
+  options?: SmsOption[]
+  value?: string[]
+  onChange: (next: string[]) => void
+  placeholder?: string
+  searchPlaceholder?: string
+  loading?: boolean
+  'data-testid'?: string
+  /** When true, options with `.group` are sectioned by city. */
+  groupByCity?: boolean
+}
 
 /**
  * Ant Design–style searchable multi-select: closed until clicked, tags with ×,
  * optional group headers, checkmarks on selected rows.
- *
- * @param {object} props
- * @param {{ value: string, label: string, group?: string|null }[]} props.options
- * @param {string[]} props.value
- * @param {(next: string[]) => void} props.onChange
- * @param {string} [props.placeholder]
- * @param {string} [props.searchPlaceholder]
- * @param {boolean} [props.loading]
- * @param {string} [props['data-testid']]
- * @param {boolean} [props.groupByCity] — when true, options with `.group` are sectioned
  */
 export default function SearchableMultiSelect({
   options = [],
@@ -24,23 +32,23 @@ export default function SearchableMultiSelect({
   loading = false,
   'data-testid': testId,
   groupByCity = false,
-}) {
+}: SearchableMultiSelectProps) {
   const t = useT()
   const resolvedPlaceholder = placeholder ?? t('common.selectEllipsis')
   const resolvedSearchPlaceholder = searchPlaceholder ?? t('common.searchEllipsis')
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
-  const rootRef = useRef(null)
-  const searchRef = useRef(null)
-  const triggerRef = useRef(null)
-  const optionRefs = useRef([])
+  const rootRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
   const selected = useMemo(() => new Set(value), [value])
 
   useEffect(() => {
     if (!open) return undefined
-    const onDoc = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) {
+    const onDoc = (e: MouseEvent | globalThis.MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false)
         setSearch('')
         setActiveIndex(-1)
@@ -65,15 +73,15 @@ export default function SearchableMultiSelect({
     })
   }, [options, search])
 
-  const grouped = useMemo(() => {
+  const grouped = useMemo<{ group: string | null; items: SmsOption[] }[]>(() => {
     if (!groupByCity) {
       return [{ group: null, items: filtered }]
     }
-    const map = new Map()
+    const map = new Map<string, SmsOption[]>()
     for (const opt of filtered) {
       const g = opt.group || t('common.otherGroup')
       if (!map.has(g)) map.set(g, [])
-      map.get(g).push(opt)
+      map.get(g)!.push(opt)
     }
     return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
   }, [filtered, groupByCity, t])
@@ -91,7 +99,7 @@ export default function SearchableMultiSelect({
     }
   }, [activeIndex])
 
-  const toggle = (optValue) => {
+  const toggle = (optValue: string) => {
     if (selected.has(optValue)) {
       onChange(value.filter((v) => v !== optValue))
     } else {
@@ -99,14 +107,14 @@ export default function SearchableMultiSelect({
     }
   }
 
-  const removeTag = (e, optValue) => {
+  const removeTag = (e: MouseEvent | KeyboardEvent, optValue: string) => {
     e.stopPropagation()
     onChange(value.filter((v) => v !== optValue))
   }
 
-  const labelFor = (v) => options.find((o) => o.value === v)?.label || v
+  const labelFor = (v: string) => options.find((o) => o.value === v)?.label || v
 
-  const moveActive = (delta) => {
+  const moveActive = (delta: number) => {
     if (flatOptions.length === 0) return
     setActiveIndex((idx) => {
       let next = idx + delta
@@ -116,7 +124,7 @@ export default function SearchableMultiSelect({
     })
   }
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       setOpen(false)

@@ -21,6 +21,8 @@ export type ExportFormat = 'csv' | 'json'
 export interface PropertyListing {
   platform: string
   platform_listing_id: string
+  // Some payloads carry a legacy `platform_id` fallback (used only for React keys).
+  platform_id?: string | null
   listing_type: string
   price: number
   currency: string
@@ -67,6 +69,20 @@ export interface Property {
   z_score?: number | null
   price_per_m2?: number | null
   neighborhood_mean?: number | null
+  // Listing-type-aware statistical fields (BIN-83 / v0.7). Present when the
+  // property is scored per rent/sale; consumed by PropertyModal / CompareView / MapView.
+  combined_score_rent?: number | null
+  combined_score_sale?: number | null
+  stat_score_rent?: number | null
+  stat_score_sale?: number | null
+  z_score_rent?: number | null
+  z_score_sale?: number | null
+  percentile_rank_rent?: number | null
+  percentile_rank_sale?: number | null
+  price_per_m2_rent?: number | null
+  price_per_m2_sale?: number | null
+  neighborhood_mean_rent?: number | null
+  neighborhood_mean_sale?: number | null
   neighborhood_id?: string | null
   neighborhood_name?: string | null
   city?: string | null

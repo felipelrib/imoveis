@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Star, Bell } from 'lucide-react'
-import { fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist, checkFavourite, addFavourite, removeFavourite, fetchPriceHistory } from '../api.js'
+import {
+  fetchProperty, checkWatchlist, addToWatchlist, removeFromWatchlist,
+  checkFavourite, addFavourite, removeFavourite, fetchPriceHistory,
+  type PropertyDetail, type PriceHistoryPoint,
+} from '../api.js'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from 'recharts'
@@ -20,11 +24,36 @@ import {
   isPrimaryListingRow,
 } from '../utils/primaryListing.js'
 
+/** Structured sub-shapes carried inside PropertyDetail.ai_analysis / stat_analysis (Record<string, unknown>). */
+interface VisualAnalysis {
+  category?: string | null
+  reasoning?: string | null
+  features_detected?: string[]
+  issues_detected?: string[]
+}
+
+interface SentimentAnalysis {
+  category?: string | null
+  reasoning?: string | null
+  green_flags?: string[]
+  red_flags?: string[]
+}
+
+interface StatAnalysis {
+  category?: string | null
+  reasoning?: string | null
+}
+
+interface ChartPoint {
+  date: string
+  [lineKey: string]: string | number
+}
+
 /**
  * Returns the URL only if it starts with https:// and matches a known platform host.
  * Returns null if the URL is unsafe or invalid.
  */
-function sanitizeListingUrl(url) {
+function sanitizeListingUrl(url: string | null | undefined): string | null {
     if (!url) return null;
     try {
         const parsed = new URL(url);
@@ -43,7 +72,7 @@ function sanitizeListingUrl(url) {
  * from the id alone get a template; others (OLX, ZapImóveis — slug-based URLs)
  * return null so we never render a wrong-platform link (BIN-158).
  */
-function platformFallbackUrl(platform, platformId) {
+function platformFallbackUrl(platform: string | null | undefined, platformId: string | null | undefined): string | null {
     if (!platformId) return null;
     if (platform === 'quintoandar') {
         return sanitizeListingUrl(`https://www.quintoandar.com.br/imovel/${platformId}`);
@@ -51,14 +80,19 @@ function platformFallbackUrl(platform, platformId) {
     return null;
 }
 
-export default function PropertyModal({ id, onClose }) {
+export interface PropertyModalProps {
+  id: string
+  onClose: () => void
+}
+
+export default function PropertyModal({ id, onClose }: PropertyModalProps) {
   const { t, locale } = useLocale()
-  const [property, setProperty] = useState(null)
+  const [property, setProperty] = useState<PropertyDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
   const [isWatched, setIsWatched] = useState(false)
   const [isFavourited, setIsFavourited] = useState(false)
-  const [priceHistory, setPriceHistory] = useState([])
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryPoint[]>([])
 
   useEffect(() => {
     fetchProperty(id)
@@ -110,17 +144,89 @@ export default function PropertyModal({ id, onClose }) {
   }
 
   useEffect(() => {
-    const handler = (e) => e.key === 'Escape' && onClose()
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
   const p = property
   const images = p?.image_urls || []
-  const visual = p?.ai_analysis?.visual || {}
-  const sentiment = p?.ai_analysis?.sentiment || {}
-  const statAnalysis = p?.stat_analysis || {}
+  const visual: VisualAnalysis = (p?.ai_analysis?.visual as VisualAnalysis | undefined) ?? {}
+  const sentiment: SentimentAnalysis = (p?.ai_analysis?.sentiment as SentimentAnalysis | undefined) ?? {}
+  const statAnalysis: StatAnalysis = (p?.stat_analysis as StatAnalysis | undefined) ?? {}
   const emDash = t('common.emDash')
+
+  const detailRows: [string, string | number | null | undefined][] = p ? [
+    [t('attr.platform'), formatPlatform(p.platform)],
+    [t('attr.address'), p.address],
+    [t('attr.neighbourhood'), p.neighborhood_name],
+    [t('attr.area'), p.area_m2 ? t('common.areaM2', { n: p.area_m2 }) : emDash],
+    [t('attr.bedrooms'), p.bedrooms ?? emDash],
+    [t('attr.bathrooms'), p.bathrooms ?? emDash],
+    [t('attr.parking'), p.parking ?? emDash],
+    ...(p.price_per_m2_rent != null
+      ? [
+        [t('attr.pricePerM2Rent'), formatPricePerM2(p.price_per_m2_rent, locale)],
+        [
+          t('attr.neighbourhoodAvgPerM2Rent'),
+          p.neighborhood_mean_rent != null
+            ? formatPricePerM2(p.neighborhood_mean_rent, locale)
+            : emDash,
+        ],
+      ] as [string, string][]
+      : []),
+    ...(p.price_per_m2_sale != null
+      ? [
+        [t('attr.pricePerM2Sale'), formatPricePerM2(p.price_per_m2_sale, locale)],
+        [
+          t('attr.neighbourhoodAvgPerM2Sale'),
+          p.neighborhood_mean_sale != null
+            ? formatPricePerM2(p.neighborhood_mean_sale, locale)
+            : emDash,
+        ],
+      ] as [string, string][]
+      : []),
+    ...(p.price_per_m2_rent == null && p.price_per_m2_sale == null
+      ? [
+        [t('attr.pricePerM2'), p.price_per_m2 ? formatPricePerM2(p.price_per_m2, locale) : emDash],
+        [
+          t('attr.neighbourhoodAvgPerM2'),
+          p.neighborhood_mean ? formatPricePerM2(p.neighborhood_mean, locale) : emDash,
+        ],
+      ] as [string, string][]
+      : []),
+    ...(p.combined_score_rent != null
+      ? [
+        [t('attr.combinedScoreRent'), p.combined_score_rent != null ? `${(p.combined_score_rent * 100).toFixed(0)}` : emDash],
+        [t('attr.statisticalScoreRent'), p.stat_score_rent != null ? `${(p.stat_score_rent * 100).toFixed(0)}` : emDash],
+        [t('attr.zScoreRent'), p.z_score_rent != null ? p.z_score_rent.toFixed(3) : emDash],
+        [
+          t('attr.percentileRent'),
+          p.percentile_rank_rent != null ? t('common.percentile', { n: (p.percentile_rank_rent * 100).toFixed(1) }) : emDash,
+        ],
+      ] as [string, string][]
+      : []),
+    ...(p.combined_score_sale != null
+      ? [
+        [t('attr.combinedScoreSale'), p.combined_score_sale != null ? `${(p.combined_score_sale * 100).toFixed(0)}` : emDash],
+        [t('attr.statisticalScoreSale'), p.stat_score_sale != null ? `${(p.stat_score_sale * 100).toFixed(0)}` : emDash],
+        [t('attr.zScoreSale'), p.z_score_sale != null ? p.z_score_sale.toFixed(3) : emDash],
+        [
+          t('attr.percentileSale'),
+          p.percentile_rank_sale != null ? t('common.percentile', { n: (p.percentile_rank_sale * 100).toFixed(1) }) : emDash,
+        ],
+      ] as [string, string][]
+      : []),
+    ...(p.combined_score_rent == null && p.combined_score_sale == null
+      ? [
+        [
+          t('attr.percentileInNeighbourhood'),
+          p.percentile_rank != null ? t('common.percentile', { n: (p.percentile_rank * 100).toFixed(1) }) : emDash,
+        ],
+        [t('attr.zScore'), p.z_score != null ? p.z_score.toFixed(3) : emDash],
+      ] as [string, string][]
+      : []),
+  ] : []
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -179,7 +285,7 @@ export default function PropertyModal({ id, onClose }) {
               if (!safeUrl) return null;
               return (
                 <a
-                  key={`${l.platform}-${l.platform_id}-${l.listing_type}`}
+                  key={`${l.platform}-${l.platform_listing_id}-${l.listing_type}`}
                   href={safeUrl}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -239,7 +345,7 @@ export default function PropertyModal({ id, onClose }) {
                     src={images[imgIndex]}
                     alt=""
                     style={{ width: '100%', height: 220, objectFit: 'cover', borderRadius: 12, display: 'block', marginBottom: 8 }}
-                    onError={e => e.target.style.display = 'none'}
+                    onError={e => { e.currentTarget.style.display = 'none' }}
                   />
                   {images.length > 1 && (
                     <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
@@ -258,7 +364,7 @@ export default function PropertyModal({ id, onClose }) {
                             }
                           }}
                           style={{ width: 60, height: 45, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', opacity: i === imgIndex ? 1 : 0.5, border: i === imgIndex ? '2px solid var(--accent)' : '2px solid transparent', flexShrink: 0 }}
-                          onError={e => e.target.style.display = 'none'}
+                          onError={e => { e.currentTarget.style.display = 'none' }}
                         />
                       ))}
                     </div>
@@ -267,77 +373,7 @@ export default function PropertyModal({ id, onClose }) {
               )}
 
               <div style={{ marginBottom: 20 }}>
-                {[
-                  [t('attr.platform'), formatPlatform(p.platform)],
-                  [t('attr.address'), p.address],
-                  [t('attr.neighbourhood'), p.neighborhood_name],
-                  [t('attr.area'), p.area_m2 ? t('common.areaM2', { n: p.area_m2 }) : emDash],
-                  [t('attr.bedrooms'), p.bedrooms ?? emDash],
-                  [t('attr.bathrooms'), p.bathrooms ?? emDash],
-                  [t('attr.parking'), p.parking ?? emDash],
-                  ...(p.price_per_m2_rent != null
-                    ? [
-                      [t('attr.pricePerM2Rent'), formatPricePerM2(p.price_per_m2_rent, locale)],
-                      [
-                        t('attr.neighbourhoodAvgPerM2Rent'),
-                        p.neighborhood_mean_rent != null
-                          ? formatPricePerM2(p.neighborhood_mean_rent, locale)
-                          : emDash,
-                      ],
-                    ]
-                    : []),
-                  ...(p.price_per_m2_sale != null
-                    ? [
-                      [t('attr.pricePerM2Sale'), formatPricePerM2(p.price_per_m2_sale, locale)],
-                      [
-                        t('attr.neighbourhoodAvgPerM2Sale'),
-                        p.neighborhood_mean_sale != null
-                          ? formatPricePerM2(p.neighborhood_mean_sale, locale)
-                          : emDash,
-                      ],
-                    ]
-                    : []),
-                  ...(p.price_per_m2_rent == null && p.price_per_m2_sale == null
-                    ? [
-                      [t('attr.pricePerM2'), p.price_per_m2 ? formatPricePerM2(p.price_per_m2, locale) : emDash],
-                      [
-                        t('attr.neighbourhoodAvgPerM2'),
-                        p.neighborhood_mean ? formatPricePerM2(p.neighborhood_mean, locale) : emDash,
-                      ],
-                    ]
-                    : []),
-                  ...(p.combined_score_rent != null
-                    ? [
-                      [t('attr.combinedScoreRent'), p.combined_score_rent != null ? `${(p.combined_score_rent * 100).toFixed(0)}` : emDash],
-                      [t('attr.statisticalScoreRent'), p.stat_score_rent != null ? `${(p.stat_score_rent * 100).toFixed(0)}` : emDash],
-                      [t('attr.zScoreRent'), p.z_score_rent != null ? p.z_score_rent.toFixed(3) : emDash],
-                      [
-                        t('attr.percentileRent'),
-                        p.percentile_rank_rent != null ? t('common.percentile', { n: (p.percentile_rank_rent * 100).toFixed(1) }) : emDash,
-                      ],
-                    ]
-                    : []),
-                  ...(p.combined_score_sale != null
-                    ? [
-                      [t('attr.combinedScoreSale'), p.combined_score_sale != null ? `${(p.combined_score_sale * 100).toFixed(0)}` : emDash],
-                      [t('attr.statisticalScoreSale'), p.stat_score_sale != null ? `${(p.stat_score_sale * 100).toFixed(0)}` : emDash],
-                      [t('attr.zScoreSale'), p.z_score_sale != null ? p.z_score_sale.toFixed(3) : emDash],
-                      [
-                        t('attr.percentileSale'),
-                        p.percentile_rank_sale != null ? t('common.percentile', { n: (p.percentile_rank_sale * 100).toFixed(1) }) : emDash,
-                      ],
-                    ]
-                    : []),
-                  ...(p.combined_score_rent == null && p.combined_score_sale == null
-                    ? [
-                      [
-                        t('attr.percentileInNeighbourhood'),
-                        p.percentile_rank != null ? t('common.percentile', { n: (p.percentile_rank * 100).toFixed(1) }) : emDash,
-                      ],
-                      [t('attr.zScore'), p.z_score != null ? p.z_score.toFixed(3) : emDash],
-                    ]
-                    : []),
-                ].filter(([, v]) => v && v !== emDash || v === emDash).map(([k, v]) => (
+                {detailRows.filter(([, v]) => (v && v !== emDash) || v === emDash).map(([k, v]) => (
                   <div key={k} className="detail-row">
                     <span className="detail-key">{k}</span>
                     <span className="detail-val">{v}</span>
@@ -348,11 +384,11 @@ export default function PropertyModal({ id, onClose }) {
               {/* Per-platform listings table */}
               {p?.listings && p.listings.length > 0 && (() => {
                 const groups = groupListings(p.listings)
-                const typeLabel = (type) => type === 'rent' ? t('common.rent') : t('common.sale')
-                const typeColor = (type) => type === 'rent'
+                const typeLabel = (type: string) => type === 'rent' ? t('common.rent') : t('common.sale')
+                const typeColor = (type: string) => type === 'rent'
                   ? { bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)', header: '#818cf8' }
                   : { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', header: '#34d399' }
-                const money = (v) => (v != null && v !== 0 ? formatCurrency(v, locale) : emDash)
+                const money = (v: number | null | undefined) => (v != null && v !== 0 ? formatCurrency(v, locale) : emDash)
                 return (
                   <div style={{ marginBottom: 20 }} data-testid="listings-by-platform">
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
@@ -385,6 +421,7 @@ export default function PropertyModal({ id, onClose }) {
                                   const isBest = primaryForType
                                     ? isPrimaryListingRow(l, p)
                                     : (l.price != null && l.price === minPrice)
+                                  const rowUrl = sanitizeListingUrl(l.url)
                                   return (
                                     <tr key={`${l.platform}-${l.platform_listing_id || l.platform_id}`} className={isBest ? 'best-price' : ''}>
                                       <td style={{ fontWeight: 600 }}>
@@ -421,8 +458,8 @@ export default function PropertyModal({ id, onClose }) {
                                         )}
                                       </td>
                                       <td>
-                                        {sanitizeListingUrl(l.url) ? (
-                                          <a href={sanitizeListingUrl(l.url)} target="_blank" rel="noopener noreferrer" className="listing-link" title={t('modal.openOnPlatform')}>
+                                        {rowUrl ? (
+                                          <a href={rowUrl} target="_blank" rel="noopener noreferrer" className="listing-link" title={t('modal.openOnPlatform')}>
                                             →
                                           </a>
                                         ) : (
@@ -437,7 +474,7 @@ export default function PropertyModal({ id, onClose }) {
                           </div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 4px 0' }} data-testid={`listing-attrs-${type}`}>
                             {listings.map((l) => {
-                              const chips = []
+                              const chips: { slug: string; labelKey: string }[] = []
                               if (l.is_furnished === true) chips.push({ slug: 'furnished', labelKey: 'modal.furnished' })
                               else if (l.is_furnished === false) chips.push({ slug: 'unfurnished', labelKey: 'modal.unfurnished' })
                               if (l.accepts_pets === true) chips.push({ slug: 'pets-ok', labelKey: 'modal.petsOk' })
@@ -537,12 +574,12 @@ export default function PropertyModal({ id, onClose }) {
                       )}
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: (p.neighbourhood_quality.risk_flags || []).length ? 8 : 0 }}>
-                      {[
+                      {([
                         [t('attr.amenity'), p.neighbourhood_quality.amenity_score],
                         [t('attr.transit'), p.neighbourhood_quality.transit_score],
                         [t('attr.access'), p.neighbourhood_quality.access_score],
                         [t('attr.safety'), p.neighbourhood_quality.safety_score],
-                      ].map(([label, score]) => (
+                      ] as [string, number | null | undefined][]).map(([label, score]) => (
                         <span key={label} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                           {t('attr.scoreWithValue', { label, value: score != null ? `${(score * 100).toFixed(0)}%` : emDash })}
                         </span>
@@ -575,40 +612,40 @@ export default function PropertyModal({ id, onClose }) {
                 )}
               </div>
 
-              {(visual.features_detected?.length > 0 || visual.issues_detected?.length > 0 || sentiment.green_flags?.length > 0 || sentiment.red_flags?.length > 0) && (
+              {((visual.features_detected?.length ?? 0) > 0 || (visual.issues_detected?.length ?? 0) > 0 || (sentiment.green_flags?.length ?? 0) > 0 || (sentiment.red_flags?.length ?? 0) > 0) && (
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
                     🤖 {t('modal.aiAnalysis')}
                   </div>
-                  {visual.features_detected?.length > 0 && (
+                  {(visual.features_detected?.length ?? 0) > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.modernFeatures')}</div>
                       <div className="flags">
-                        {visual.features_detected.map(f => <span key={f} className="flag feature">✦ {f}</span>)}
+                        {visual.features_detected?.map(f => <span key={f} className="flag feature">✦ {f}</span>)}
                       </div>
                     </div>
                   )}
-                  {visual.issues_detected?.length > 0 && (
+                  {(visual.issues_detected?.length ?? 0) > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.issuesDetected')}</div>
                       <div className="flags">
-                        {visual.issues_detected.map(f => <span key={f} className="flag red">⚠ {f}</span>)}
+                        {visual.issues_detected?.map(f => <span key={f} className="flag red">⚠ {f}</span>)}
                       </div>
                     </div>
                   )}
-                  {sentiment.green_flags?.length > 0 && (
+                  {(sentiment.green_flags?.length ?? 0) > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.claimsPositives')}</div>
                       <div className="flags">
-                        {sentiment.green_flags.map(f => <span key={f} className="flag green">✔ {f}</span>)}
+                        {sentiment.green_flags?.map(f => <span key={f} className="flag green">✔ {f}</span>)}
                       </div>
                     </div>
                   )}
-                  {sentiment.red_flags?.length > 0 && (
+                  {(sentiment.red_flags?.length ?? 0) > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{t('modal.claimsConcerns')}</div>
                       <div className="flags">
-                        {sentiment.red_flags.map(f => <span key={f} className="flag red">✖ {f}</span>)}
+                        {sentiment.red_flags?.map(f => <span key={f} className="flag red">✖ {f}</span>)}
                       </div>
                     </div>
                   )}
@@ -618,7 +655,7 @@ export default function PropertyModal({ id, onClose }) {
               {/* Price history chart */}
               {priceHistory.length >= 2 && (() => {
                 // Group by listing_type + platform for separate lines
-                const grouped = {}
+                const grouped: Record<string, { date: string; price: number; lineKey: string }[]> = {}
                 for (const ph of priceHistory) {
                   const lineKey = `${ph.listing_type || 'sale'}|${ph.platform || 'unknown'}`
                   if (!grouped[lineKey]) grouped[lineKey] = []
@@ -627,8 +664,8 @@ export default function PropertyModal({ id, onClose }) {
                 }
                 // Build unified date-based data
                 const allDates = [...new Set(priceHistory.map(ph => ph.start_ts ? formatDate(ph.start_ts, locale) : '?'))]
-                const chartData = allDates.map(date => {
-                  const point = { date }
+                const chartData: ChartPoint[] = allDates.map(date => {
+                  const point: ChartPoint = { date }
                   for (const [key, entries] of Object.entries(grouped)) {
                     const match = entries.find(e => e.date === date)
                     if (match) point[key] = match.price
@@ -650,11 +687,11 @@ export default function PropertyModal({ id, onClose }) {
                           <YAxis
                             tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
                             tickLine={false} axisLine={false}
-                            tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
+                            tickFormatter={(v: number) => `R$${(v / 1000).toFixed(0)}k`}
                           />
                           <Tooltip
                             contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 }}
-                            formatter={(value) => formatCurrency(value, locale)}
+                            formatter={(value) => formatCurrency(value as number, locale)}
                           />
                           <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-muted)' }} />
                           {lineKeys.map((key, i) => {
