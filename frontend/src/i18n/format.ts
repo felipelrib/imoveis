@@ -3,36 +3,24 @@
  * Currency stays BRL; digit grouping / date order follow the active UI locale.
  */
 
-/**
- * @param {string|null|undefined} locale
- */
-function resolveLocale(locale) {
+/** Values these formatters accept for date-like inputs. */
+export type DateLike = string | number | Date | null | undefined
+
+function resolveLocale(locale: string | null | undefined): string {
   return locale || 'en'
 }
 
-/**
- * @param {number|null|undefined} value
- * @param {string} [locale]
- */
-export function formatNumber(value, locale) {
+export function formatNumber(value: number | null | undefined, locale?: string): string {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return Number(value).toLocaleString(resolveLocale(locale))
 }
 
-/**
- * @param {number|null|undefined} value
- * @param {string} [locale]
- */
-export function formatCurrency(value, locale) {
+export function formatCurrency(value: number | null | undefined, locale?: string): string {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return `R$ ${Number(value).toLocaleString(resolveLocale(locale))}`
 }
 
-/**
- * @param {number|null|undefined} value
- * @param {string} [locale]
- */
-export function formatCurrencyBRL(value, locale) {
+export function formatCurrencyBRL(value: number | null | undefined, locale?: string): string {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return Number(value).toLocaleString(resolveLocale(locale), {
     style: 'currency',
@@ -40,38 +28,32 @@ export function formatCurrencyBRL(value, locale) {
   })
 }
 
-/**
- * @param {number|null|undefined} value
- * @param {string} [locale]
- */
-export function formatPricePerM2(value, locale) {
+export function formatPricePerM2(value: number | null | undefined, locale?: string): string {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return `R$ ${Math.round(Number(value)).toLocaleString(resolveLocale(locale))}/m²`
 }
 
-/**
- * @param {string|number|Date|null|undefined} value
- * @param {string} [locale]
- * @param {Intl.DateTimeFormatOptions} [options]
- */
-export function formatDate(value, locale, options = { day: '2-digit', month: '2-digit' }) {
+export function formatDate(
+  value: DateLike,
+  locale?: string,
+  options: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit' },
+): string {
   if (value == null) return '?'
   const d = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(d.getTime())) return '?'
   return d.toLocaleDateString(resolveLocale(locale), options)
 }
 
-/**
- * @param {string|number|Date|null|undefined} value
- * @param {string} [locale]
- * @param {Intl.DateTimeFormatOptions} [options]
- */
-export function formatDateTime(value, locale, options = {
-  hour: '2-digit',
-  minute: '2-digit',
-  day: '2-digit',
-  month: '2-digit',
-}) {
+export function formatDateTime(
+  value: DateLike,
+  locale?: string,
+  options: Intl.DateTimeFormatOptions = {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+  },
+): string {
   if (value == null) return '—'
   const d = typeof value === 'number'
     ? new Date(value > 1e12 ? value : value * 1000)
@@ -80,11 +62,7 @@ export function formatDateTime(value, locale, options = {
   return d.toLocaleString(resolveLocale(locale), options)
 }
 
-/**
- * @param {string|number|Date|null|undefined} value
- * @param {string} [locale]
- */
-export function formatTime(value, locale) {
+export function formatTime(value: DateLike, locale?: string): string {
   const d = value == null
     ? new Date()
     : (value instanceof Date ? value : new Date(value))

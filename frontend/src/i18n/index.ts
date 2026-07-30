@@ -7,33 +7,36 @@ import ptBR from './locales/pt-BR.json'
 
 export const DEFAULT_LOCALE = 'en'
 
-/** @type {Record<string, typeof en>} */
-export const CATALOGS = {
+/** A catalog node: either a leaf string or a nested subtree of more nodes. */
+export type MessageNode = string | { [key: string]: MessageNode }
+
+/** A full message catalog for one locale (dotted keys resolved via `lookup`). */
+export type Catalog = Record<string, MessageNode>
+
+/** `{placeholder}` interpolation params passed to `t()`. */
+export type TranslateParams = Record<string, string | number>
+
+export const CATALOGS: Record<string, Catalog> = {
   en,
   'pt-BR': ptBR,
 }
 
-export const SUPPORTED_LOCALES = Object.keys(CATALOGS)
+export const SUPPORTED_LOCALES: string[] = Object.keys(CATALOGS)
 
 /**
  * Catalog key for a locale switcher option label (`en` → `locale.en`,
  * `pt-BR` → `locale.ptBR`). Prefer this over hardcoded `code === …` branches.
- * @param {string} code BCP-47 tag from the preference allowlist
+ * @param code BCP-47 tag from the preference allowlist
  */
-export function localeLabelKey(code) {
-  const camel = String(code).replace(/-([A-Za-z]+)/g, (_, part) => part)
+export function localeLabelKey(code: string): string {
+  const camel = String(code).replace(/-([A-Za-z]+)/g, (_, part: string) => part)
   return `locale.${camel}`
 }
 
-/**
- * Resolve a dotted key in a nested catalog object.
- * @param {unknown} node
- * @param {string} path
- * @returns {string|undefined}
- */
-function lookup(node, path) {
+/** Resolve a dotted key in a nested catalog object. */
+function lookup(node: MessageNode | undefined, path: string): string | undefined {
   const parts = path.split('.')
-  let cur = node
+  let cur: MessageNode | undefined = node
   for (const part of parts) {
     if (cur == null || typeof cur !== 'object') return undefined
     cur = cur[part]
@@ -41,14 +44,10 @@ function lookup(node, path) {
   return typeof cur === 'string' ? cur : undefined
 }
 
-/**
- * Interpolate `{name}` placeholders from params.
- * @param {string} template
- * @param {Record<string, string|number>|undefined} params
- */
-function interpolate(template, params) {
+/** Interpolate `{name}` placeholders from params. */
+function interpolate(template: string, params?: TranslateParams): string {
   if (!params) return template
-  return template.replace(/\{(\w+)\}/g, (_, key) =>
+  return template.replace(/\{(\w+)\}/g, (_, key: string) =>
     params[key] != null ? String(params[key]) : `{${key}}`
   )
 }
@@ -56,11 +55,8 @@ function interpolate(template, params) {
 /**
  * Translate a catalog key for the given locale.
  * Falls back to English, then to the key itself.
- * @param {string} locale
- * @param {string} key
- * @param {Record<string, string|number>} [params]
  */
-export function t(locale, key, params) {
+export function t(locale: string, key: string, params?: TranslateParams): string {
   const primary = CATALOGS[locale] || CATALOGS[DEFAULT_LOCALE]
   const raw =
     lookup(primary, key) ??
@@ -69,31 +65,24 @@ export function t(locale, key, params) {
   return interpolate(raw, params)
 }
 
-/**
- * Normalize an API/config locale to a catalog key.
- * @param {string|null|undefined} value
- */
-export function normalizeLocale(value) {
+/** Normalize an API/config locale to a catalog key. */
+export function normalizeLocale(value: string | null | undefined): string {
   if (value && CATALOGS[value]) return value
   return DEFAULT_LOCALE
 }
 
-/**
- * Humanize an unknown snake_case code for display fallback.
- * @param {string} code
- */
-function humanizeCode(code) {
+/** Humanize an unknown snake_case code for display fallback. */
+function humanizeCode(code: string): string {
   return String(code)
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/**
- * Normalize legacy EN titles or codes to snake_case catalog keys.
- * @param {string|null|undefined} raw
- * @param {Record<string, string>} aliases
- */
-function toCode(raw, aliases) {
+/** Normalize legacy EN titles or codes to snake_case catalog keys. */
+function toCode(
+  raw: string | null | undefined,
+  aliases: Record<string, string>,
+): string | null {
   if (raw == null || raw === '') return null
   const key = String(raw).trim().toLowerCase().replace(/-/g, '_')
   if (aliases[key]) return aliases[key]
@@ -102,7 +91,7 @@ function toCode(raw, aliases) {
   return key.includes('_') ? key : spaced.replace(/ /g, '_')
 }
 
-const STAT_ALIASES = {
+const STAT_ALIASES: Record<string, string> = {
   'highly undervalued': 'highly_undervalued',
   'slightly undervalued': 'slightly_undervalued',
   average: 'average',
@@ -114,7 +103,7 @@ const STAT_ALIASES = {
   highly_overvalued: 'highly_overvalued',
 }
 
-const VISUAL_ALIASES = {
+const VISUAL_ALIASES: Record<string, string> = {
   pristine: 'pristine',
   good: 'good',
   average: 'average',
@@ -123,7 +112,7 @@ const VISUAL_ALIASES = {
   poor: 'poor',
 }
 
-const SENTIMENT_ALIASES = {
+const SENTIMENT_ALIASES: Record<string, string> = {
   'highly desirable': 'highly_desirable',
   highly_desirable: 'highly_desirable',
   good: 'good',
@@ -133,11 +122,7 @@ const SENTIMENT_ALIASES = {
   standard: 'average',
 }
 
-/**
- * @param {string} locale
- * @param {string|null|undefined} codeOrLabel
- */
-export function labelStatBand(locale, codeOrLabel) {
+export function labelStatBand(locale: string, codeOrLabel: string | null | undefined): string {
   const code = toCode(codeOrLabel, STAT_ALIASES)
   if (!code) return ''
   const labeled = t(locale, `ai.statBand.${code}.label`)
@@ -145,12 +130,11 @@ export function labelStatBand(locale, codeOrLabel) {
   return humanizeCode(code)
 }
 
-/**
- * @param {string} locale
- * @param {string|null|undefined} codeOrLabel
- * @param {string|null|undefined} [storedReasoning]
- */
-export function reasoningStatBand(locale, codeOrLabel, storedReasoning) {
+export function reasoningStatBand(
+  locale: string,
+  codeOrLabel: string | null | undefined,
+  storedReasoning?: string | null,
+): string {
   const code = toCode(codeOrLabel, STAT_ALIASES)
   if (code) {
     const fromCatalog = t(locale, `ai.statBand.${code}.reasoning`)
@@ -159,11 +143,7 @@ export function reasoningStatBand(locale, codeOrLabel, storedReasoning) {
   return storedReasoning || ''
 }
 
-/**
- * @param {string} locale
- * @param {string|null|undefined} codeOrLabel
- */
-export function labelVisualCategory(locale, codeOrLabel) {
+export function labelVisualCategory(locale: string, codeOrLabel: string | null | undefined): string {
   const code = toCode(codeOrLabel, VISUAL_ALIASES)
   if (!code) return ''
   const labeled = t(locale, `ai.visualCategory.${code}`)
@@ -171,11 +151,10 @@ export function labelVisualCategory(locale, codeOrLabel) {
   return humanizeCode(code)
 }
 
-/**
- * @param {string} locale
- * @param {string|null|undefined} codeOrLabel
- */
-export function labelSentimentCategory(locale, codeOrLabel) {
+export function labelSentimentCategory(
+  locale: string,
+  codeOrLabel: string | null | undefined,
+): string {
   const code = toCode(codeOrLabel, SENTIMENT_ALIASES)
   if (!code) return ''
   const labeled = t(locale, `ai.sentimentCategory.${code}`)
@@ -183,11 +162,7 @@ export function labelSentimentCategory(locale, codeOrLabel) {
   return humanizeCode(code)
 }
 
-/**
- * @param {string} locale
- * @param {string|null|undefined} code
- */
-export function labelRiskFlag(locale, code) {
+export function labelRiskFlag(locale: string, code: string | null | undefined): string {
   if (code == null || code === '') return ''
   const key = String(code).trim()
   const labeled = t(locale, `ai.riskFlags.${key}`)

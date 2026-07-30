@@ -5,7 +5,10 @@
  * and camelCase (legacy SPA) on reopen so labels re-localize via t().
  */
 
-const CAMEL_TO_SNAKE = {
+/** Loose filter blob — keys vary between camelCase SPA state and snake_case wire. */
+export type FilterMap = Record<string, unknown>
+
+const CAMEL_TO_SNAKE: Record<string, string> = {
   sortBy: 'sort_by',
   sortDir: 'sort_dir',
   listingType: 'listing_type',
@@ -23,7 +26,7 @@ const CAMEL_TO_SNAKE = {
   q: 'q',
 }
 
-function isEmptyFilterValue(value) {
+function isEmptyFilterValue(value: unknown): boolean {
   return (
     value === undefined ||
     value === null ||
@@ -33,12 +36,12 @@ function isEmptyFilterValue(value) {
 }
 
 /**
- * @param {Record<string, unknown>} filters camelCase Properties filter state
- * @returns {Record<string, unknown>} snake_case EN wire for POST /saved-searches
+ * @param filters camelCase Properties filter state
+ * @returns snake_case EN wire for POST /saved-searches
  */
-export function toSavedSearchWire(filters) {
+export function toSavedSearchWire(filters: FilterMap): FilterMap {
   if (!filters || typeof filters !== 'object') return {}
-  const out = {}
+  const out: FilterMap = {}
   for (const [camel, snake] of Object.entries(CAMEL_TO_SNAKE)) {
     const value = filters[camel]
     if (isEmptyFilterValue(value)) continue
@@ -47,7 +50,7 @@ export function toSavedSearchWire(filters) {
   return out
 }
 
-function pick(filters, ...keys) {
+function pick(filters: FilterMap, ...keys: string[]): unknown {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(filters, key) && filters[key] !== undefined) {
       return filters[key]
@@ -57,12 +60,12 @@ function pick(filters, ...keys) {
 }
 
 /**
- * @param {Record<string, unknown>} filters snake_case or camelCase blob from API
- * @returns {Record<string, unknown>} camelCase keys for Properties applyFilters
+ * @param filters snake_case or camelCase blob from API
+ * @returns camelCase keys for Properties applyFilters
  */
-export function fromSavedSearchWire(filters) {
+export function fromSavedSearchWire(filters: FilterMap): FilterMap {
   if (!filters || typeof filters !== 'object') return {}
-  const out = {}
+  const out: FilterMap = {}
 
   const sortBy = pick(filters, 'sort_by', 'sortBy')
   if (sortBy !== undefined) out.sortBy = sortBy
