@@ -299,10 +299,20 @@ def _record_price_change(
 ) -> None:
     """Record a price change in the price_history table.
 
-    Each (property_id, listing_type, platform) triplet maintains its own
-    independent open interval.  If an open interval exists and the price
-    differs, close it and insert a new row.  If the price is the same,
-    do nothing.  If no open interval exists, seed one (handles first-seen).
+    Each (property_id, listing_type, platform, property_listing_id) tuple
+    maintains its own independent open interval.  If an open interval exists
+    and the price differs, close it and insert a new row.  If the price is
+    the same, do nothing.  If no open interval exists, seed one (handles
+    first-seen).
+
+    ``property_listing_id`` is part of the interval's identity key:
+    ``PropertyListing``'s unique constraint is (platform, platform_listing_id,
+    listing_type), not property_id, so two distinct ads (e.g. two brokers
+    re-listing the same unit, or a relisted ad with a new platform id) can
+    attach to the same property under the same (platform, listing_type) via
+    the fuzzy matcher. Without scoping by property_listing_id, processing one
+    ad's price could close/rewrite the other ad's open interval as if it were
+    a real price change on the same ad (BIN-145).
 
     Also checks the watchlist for price-drop alerts.
     """
@@ -312,10 +322,11 @@ def _record_price_change(
         text(
             "SELECT id, price FROM price_history "
             "WHERE property_id = :pid AND listing_type = :lt AND platform IS NOT DISTINCT FROM :platform "
+            "AND property_listing_id IS NOT DISTINCT FROM :plid "
             "AND end_ts IS NULL "
             "ORDER BY start_ts DESC LIMIT 1"
         ),
-        {"pid": property_id, "lt": listing_type, "platform": platform},
+        {"pid": property_id, "lt": listing_type, "platform": platform, "plid": property_listing_id},
     ).fetchone()
 
     if open_row is not None:
