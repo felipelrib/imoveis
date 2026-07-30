@@ -83,6 +83,12 @@ AI_ENRICH_SOFT_TIME_LIMIT_SECONDS = 570
 # runs (the root cause of BIN-147's GPU oversubscription).
 AI_ENRICH_GPU_SLOT_TTL_SECONDS = AI_ENRICH_TIME_LIMIT_SECONDS + 60
 
+# GPUSemaphore held-slot TTL for embed_property (BIN-159). Embeddings are far
+# quicker than VLM enrichment, but the slot marker must still outlive the call so
+# it can't expire mid-embed and let another task oversubscribe the GPU. Generous
+# ceiling for a single embedding request against the local Ollama backend.
+EMBED_GPU_SLOT_TTL_SECONDS = 180
+
 celery = make_celery()
 
 
@@ -476,11 +482,17 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
                     )
                     errors += 1
 
-                # Persist checkpoint after every item so we can resume mid-run
-                store.set(platform_name, cp)
                 _write_scraper_status(
                     r, status_key, processed, skipped, errors, "running", proxy=proxy_signal
                 )
+
+        # Persist the checkpoint once after the run. The price-funnel scrapers
+        # never mutate `cp` mid-loop (they only read it in fetch_pages), so the
+        # old per-item store.set(cp) re-persisted an identical dict on every
+        # listing — a needless DB write/commit per item, and the "resume mid-run"
+        # promise never held (a task retry restarts the whole BFS funnel). Write
+        # once so any caller-supplied `checkpoint` override is still recorded (BIN-159).
+        store.set(platform_name, cp)
 
         _write_scraper_status(
             r, status_key, processed, skipped, errors, "completed", proxy=proxy_signal
@@ -870,7 +882,7 @@ def ai_enrich(
 
 
 # ---------------------------------------------------------------------------
-# Embedding task (semantic search) — no GPU semaphore
+# Embedding task (semantic search) — gated by the GPU semaphore (BIN-159)
 # ---------------------------------------------------------------------------
 
 
@@ -891,6 +903,16 @@ def embed_property(self, property_id: str):
     if r.exists(REDIS_KEY_AI_PAUSED):
         logger.info("embed_property_paused", property_id=property_id)
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
+
+    # Gate the Ollama embed call through the same GPU semaphore as ai_enrich so
+    # scaling worker_ai concurrency/replicas can't reintroduce unmetered
+    # concurrent GPU calls (BIN-159). Acquire before the work and release in
+    # finally, mirroring ai_enrich.
+    sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
+    acquired = sem.acquire(timeout=60, slot_ttl=EMBED_GPU_SLOT_TTL_SECONDS)
+    if not acquired:
+        logger.warning("embed_property_gpu_busy", property_id=property_id)
+        raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
 
     try:
         with SessionLocal() as session:
@@ -935,6 +957,8 @@ def embed_property(self, property_id: str):
     except Exception as exc:
         logger.error("embed_property_error", property_id=property_id, error=str(exc))
         raise self.retry(exc=exc, countdown=60)
+    finally:
+        sem.release()
 
 
 # ---------------------------------------------------------------------------
