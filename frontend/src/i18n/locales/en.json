@@ -374,6 +374,7 @@
     "logScrapeOk": "[{time}] ✔ {platform} scrape finished — {counts}",
     "toastAuthSchedule": "Set an API credential to manage schedules",
     "toastPlatformsFailed": "Could not load platforms",
+    "toastAuthScrape": "Set an API credential to trigger a scrape",
     "toastEnqueued": "Scraper enqueued",
     "toastScrapeFailed": "Could not start scraper",
     "toastWorkersResumed": "Workers resumed",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
@@ -37,6 +37,9 @@ function buildChartData(priceHistory, locale) {
 }
 
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
+
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), '
+  + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 const ATTR_ROWS = [
   { key: 'title', labelKey: 'attr.title', get: (p) => p.title || '—' },
@@ -144,6 +147,38 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
   const [histories, setHistories] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const dialogRef = useRef(null)
+
+  // Initial focus management: move focus into the dialog on open (mirrors PropertyModal).
+  useEffect(() => {
+    const first = dialogRef.current?.querySelector(FOCUSABLE_SELECTOR)
+    first?.focus()
+  }, [])
+
+  // Escape-to-close + Tab focus trap (mirrors PropertyModal.jsx's Escape handling).
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return
+      const focusable = Array.from(dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR))
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -183,7 +218,14 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
   }, [ids]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="compare-view" data-testid="compare-view" role="dialog" aria-modal="true" aria-label={t('compare.ariaLabel')}>
+    <div
+      className="compare-view"
+      data-testid="compare-view"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('compare.ariaLabel')}
+      ref={dialogRef}
+    >
       <div className="compare-view-header">
         <h2 className="compare-view-title">{t('compare.title')}</h2>
         <div className="compare-view-actions">

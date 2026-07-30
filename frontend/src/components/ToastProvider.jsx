@@ -72,7 +72,17 @@ export function ToastProvider({ children }) {
           return (
             <div
               key={t.id}
+              role="status"
+              aria-live="polite"
+              tabIndex={0}
               onClick={() => removeToast(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+                  e.preventDefault()
+                  removeToast(t.id)
+                }
+              }}
+              aria-label={`${t.message} — press Enter or Escape to dismiss`}
               style={{
                 pointerEvents: 'auto',
                 background: s.background,
@@ -90,7 +100,7 @@ export function ToastProvider({ children }) {
                 transition: 'opacity 0.2s',
               }}
             >
-              <span style={{ fontSize: 14, flexShrink: 0 }}>{s.icon}</span>
+              <span style={{ fontSize: 14, flexShrink: 0 }} aria-hidden="true">{s.icon}</span>
               <span style={{ flex: 1, lineHeight: 1.4 }}>{t.message}</span>
             </div>
           )

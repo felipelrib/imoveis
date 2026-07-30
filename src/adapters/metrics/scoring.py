@@ -109,11 +109,8 @@ def blend_combined_score(
     )
 
 
-def _neighbourhood_score_for_property(session: Session, prop: Property) -> float:
-    """Load linked neighbourhood quality aggregate (neutral 0.5 when missing)."""
-    if not prop.neighborhood_id:
-        return aggregate_neighbourhood_score({})
-    nhood = session.get(Neighborhood, prop.neighborhood_id)
+def _neighbourhood_score(nhood: Optional[Neighborhood]) -> float:
+    """Aggregate a (possibly missing) neighbourhood's quality scores (neutral 0.5)."""
     if nhood is None:
         return aggregate_neighbourhood_score({})
     return aggregate_neighbourhood_score(
@@ -124,6 +121,14 @@ def _neighbourhood_score_for_property(session: Session, prop: Property) -> float
             "safety_score": nhood.safety_score,
         }
     )
+
+
+def _neighbourhood_score_for_property(session: Session, prop: Property) -> float:
+    """Load linked neighbourhood quality aggregate (neutral 0.5 when missing)."""
+    if not prop.neighborhood_id:
+        return _neighbourhood_score(None)
+    nhood = session.get(Neighborhood, prop.neighborhood_id)
+    return _neighbourhood_score(nhood)
 
 
 def _compute_type_scores(
@@ -354,6 +359,34 @@ def compute_neighborhood_stats(
     rows = session.execute(sql, params).fetchall()
     count = len(rows)
 
+    # Batch-load MetricsScoring/Property/Neighborhood once for every property
+    # in this recalculation instead of one round trip per row (BIN-151).
+    prop_ids = [row[0] for row in rows]
+    ms_by_property: dict = {}
+    props_by_id: dict = {}
+    neighborhoods_by_id: dict = {}
+    if prop_ids:
+        ms_by_property = {
+            ms.property_id: ms
+            for ms in session.query(MetricsScoring)
+            .filter(MetricsScoring.property_id.in_(prop_ids))
+            .all()
+        }
+        props_by_id = {
+            p.id: p
+            for p in session.query(Property).filter(Property.id.in_(prop_ids)).all()
+        }
+        neighborhood_ids = {
+            p.neighborhood_id for p in props_by_id.values() if p.neighborhood_id
+        }
+        if neighborhood_ids:
+            neighborhoods_by_id = {
+                n.id: n
+                for n in session.query(Neighborhood)
+                .filter(Neighborhood.id.in_(neighborhood_ids))
+                .all()
+            }
+
     for row in rows:
         prop_id = row[0]
         ppm_rent = float(row[1]) if row[1] is not None else None
@@ -372,16 +405,17 @@ def compute_neighborhood_stats(
             continue
 
         ai = 0.0
-        ms = session.query(MetricsScoring).filter_by(property_id=prop_id).one_or_none()
+        ms = ms_by_property.get(prop_id)
         if ms is not None:
             ai = float(ms.ai_score or 0.0)
 
-        prop = session.get(Property, prop_id)
-        nhood_score = (
-            _neighbourhood_score_for_property(session, prop)
-            if prop is not None
-            else aggregate_neighbourhood_score({})
+        prop = props_by_id.get(prop_id)
+        nhood = (
+            neighborhoods_by_id.get(prop.neighborhood_id)
+            if prop is not None and prop.neighborhood_id
+            else None
         )
+        nhood_score = _neighbourhood_score(nhood)
 
         stat_rent, z_rent, pct_rent_out, combined_rent = _compute_type_scores(
             ppm=ppm_rent,

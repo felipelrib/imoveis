@@ -41,6 +41,25 @@ class BaseScraper(ABC):
     def fetch_pages(self, checkpoint: dict) -> Generator:
         """Fetch pages of raw data from the platform."""
 
+    @staticmethod
+    def _record_circuit_outcome(cb, status_code: int) -> None:
+        """Feed an HTTP response status into a scraper's circuit breaker.
+
+        Shared by all platform ``_throttled_request`` implementations
+        (BIN-156). 2xx marks success. 403 (Cloudflare block) buckets into
+        its own failure-reason counter (``cloudflare_403``) so a sustained
+        403 streak can open the SAME breaker `is_open()` gates without
+        diluting — or being diluted by — a 5xx/429 streak. 403 is NOT an
+        `errors` metric — that classification is unchanged and lives in
+        ``availability.py``.
+        """
+        if 200 <= status_code < 300:
+            cb.record_success()
+        elif status_code == 403:
+            cb.record_failure(reason="cloudflare_403")
+        elif status_code >= 500 or status_code == 429:
+            cb.record_failure()
+
     def __enter__(self):
         return self
 

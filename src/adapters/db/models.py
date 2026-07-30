@@ -142,7 +142,10 @@ class Property(Base):
     props_json = Column(JSON)
     first_seen = Column(DateTime, server_default=sa.text(SQL_NOW))
     last_updated = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
-    active = Column(Boolean, server_default=sa.text("true"))
+    # BIN-152: full (non-partial) index — active=true is ~97% of rows in
+    # production, so a partial index scoped to WHERE active would cover
+    # nearly the whole table anyway (see migration b65411932ef9 docstring).
+    active = Column(Boolean, server_default=sa.text("true"), index=True)
     neighborhood_id = Column(UUID(as_uuid=True), ForeignKey("neighborhoods.id"), index=True)
     # nomic-embed-text was 768-d; bge-m3 (default) produces 1024-d vectors
     embedding = Column(Vector(1024), nullable=True)
@@ -155,7 +158,8 @@ class MetricsScoring(Base):
         primary_key=True,
         server_default=sa.text(SQL_GEN_RANDOM_UUID),
     )
-    property_id = Column(UUID(as_uuid=True), ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"))
+    # BIN-152: joined in every properties list/detail/export query.
+    property_id = Column(UUID(as_uuid=True), ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"), index=True)
     stat_score = Column(Float)
     ai_score = Column(Float)
     combined_score = Column(Float)

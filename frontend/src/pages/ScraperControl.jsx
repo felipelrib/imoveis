@@ -31,6 +31,16 @@ function persistSeenRunIds(seen) {
 
 export default function ScraperControl() {
   const { t, locale } = useLocale()
+  // Refs so the mount-only "poll pipeline status" effect below always reads the
+  // *current* locale/t instead of the values captured at mount (BIN-154 — mirrors
+  // the tRef/localeRef pattern in MapView.jsx). logScrapeRun (only ever invoked from
+  // that effect's async poll callback, never during render) reads these directly
+  // instead of calling `ts()`, so accessing `.current` here never happens at render
+  // time (react-hooks/refs forbids reading ref.current during render).
+  const tRef = useRef(t)
+  const localeRef = useRef(locale)
+  useEffect(() => { tRef.current = t }, [t])
+  useEffect(() => { localeRef.current = locale }, [locale])
   const ts = () => formatTime(new Date(), locale)
   const { status, loading: statusLoading } = useSystemStatus(5000)
   const [platforms, setPlatforms] = useState([])
@@ -83,18 +93,22 @@ export default function ScraperControl() {
   }
 
   const logScrapeRun = (run) => {
+    const translate = tRef.current
     const platform = formatPlatform(run.platform || 'unknown')
     const processed = run.processed ?? 0
     const skipped = run.skipped ?? 0
     const errors = run.errors ?? 0
-    const counts = t('scraper.logCounts', { processed, skipped, errors })
-    const time = ts()
+    const counts = translate('scraper.logCounts', { processed, skipped, errors })
+    // Only ever called from the poll callback below (never during render), so
+    // reading localeRef.current directly here (instead of the render-scoped
+    // ts()) is safe and keeps the log line's timestamp locale-fresh (BIN-154).
+    const time = formatTime(new Date(), localeRef.current)
     if (run.status === 'failed') {
-      addLog('error', t('scraper.logScrapeFailed', { time, platform, counts }))
+      addLog('error', translate('scraper.logScrapeFailed', { time, platform, counts }))
     } else if (errors > 0) {
-      addLog('warn', t('scraper.logScrapeWarn', { time, platform, counts }))
+      addLog('warn', translate('scraper.logScrapeWarn', { time, platform, counts }))
     } else {
-      addLog('success', t('scraper.logScrapeOk', { time, platform, counts }))
+      addLog('success', translate('scraper.logScrapeOk', { time, platform, counts }))
     }
     setScraping(false)
   }
@@ -126,6 +140,8 @@ export default function ScraperControl() {
     return () => { cancelled = true; clearInterval(id) }
     // logScrapeRun is a plain (unmemoized) function redefined every render — adding it here
     // would tear down/recreate this polling interval on every render instead of every 3s.
+    // It reads locale/t via tRef/localeRef (BIN-154) so log lines stay correctly localized
+    // across a mid-session locale switch without needing to restart this interval.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -196,6 +212,10 @@ export default function ScraperControl() {
 
   const handleScrape = async () => {
     if (!selectedPlatform) return
+    if (!hasApiKey()) {
+      showToast(t('scraper.toastAuthScrape'), { type: 'error' })
+      return
+    }
     setScraping(true)
     addLog('info', t('scraper.logTrigger', { platform: formatPlatform(selectedPlatform), type: scrapeTypeLabel(scrapeType) }))
     try {

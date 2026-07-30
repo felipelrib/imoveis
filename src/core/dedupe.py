@@ -170,19 +170,44 @@ def _update_or_noop(session: Session, existing, candidate: PropertyCandidate) ->
     return DedupeMatchResult(property_id=str(existing.id), action="updated")
 
 
+def _room_count_close(candidate_value: Optional[int], row_value: Optional[int]) -> bool:
+    """Gate a fuzzy match on a single room-count field (bedrooms/bathrooms/parking).
+
+    Permissive when either side has no data (older rows / scrapers that didn't
+    extract the field yet), but a **required** equality gate when both sides
+    report a value. Brazilian towers commonly repeat an identical floor plan
+    per floor with a platform-templated title, so geo radius + area tolerance
+    + title similarity alone let two genuinely distinct units (different
+    floors, same floor plan) satisfy every existing criterion. Requiring
+    bedroom/bathroom/parking equality closes that gap (BIN-146).
+    """
+    if candidate_value is None or row_value is None:
+        return True
+    return candidate_value == row_value
+
+
 def _find_fuzzy_match(session, candidate, radius_m, text_threshold, area_tol, algorithm):
     loc = candidate.location
     if not (loc and loc.get("lat") and loc.get("lon")):
         return None
     nearby = session.execute(text("""
-        SELECT id, title, area_m2 FROM properties
+        SELECT id, title, area_m2, bedrooms, bathrooms, parking FROM properties
         WHERE ST_DWithin(location::geography,
             ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radius)
         AND active = true
     """), {"lat": loc["lat"], "lon": loc["lon"], "radius": radius_m}).fetchall()
     for row in nearby:
         area_close = not (candidate.area_m2 and row.area_m2) or abs(candidate.area_m2 - row.area_m2) <= area_tol
-        if area_close and text_similarity(candidate.title, row.title, algorithm=algorithm) >= text_threshold:
+        rooms_match = (
+            _room_count_close(candidate.bedrooms, getattr(row, "bedrooms", None))
+            and _room_count_close(candidate.bathrooms, getattr(row, "bathrooms", None))
+            and _room_count_close(candidate.parking, getattr(row, "parking", None))
+        )
+        if (
+            area_close
+            and rooms_match
+            and text_similarity(candidate.title, row.title, algorithm=algorithm) >= text_threshold
+        ):
             return row.id
     return None
 
@@ -299,10 +324,20 @@ def _record_price_change(
 ) -> None:
     """Record a price change in the price_history table.
 
-    Each (property_id, listing_type, platform) triplet maintains its own
-    independent open interval.  If an open interval exists and the price
-    differs, close it and insert a new row.  If the price is the same,
-    do nothing.  If no open interval exists, seed one (handles first-seen).
+    Each (property_id, listing_type, platform, property_listing_id) tuple
+    maintains its own independent open interval.  If an open interval exists
+    and the price differs, close it and insert a new row.  If the price is
+    the same, do nothing.  If no open interval exists, seed one (handles
+    first-seen).
+
+    ``property_listing_id`` is part of the interval's identity key:
+    ``PropertyListing``'s unique constraint is (platform, platform_listing_id,
+    listing_type), not property_id, so two distinct ads (e.g. two brokers
+    re-listing the same unit, or a relisted ad with a new platform id) can
+    attach to the same property under the same (platform, listing_type) via
+    the fuzzy matcher. Without scoping by property_listing_id, processing one
+    ad's price could close/rewrite the other ad's open interval as if it were
+    a real price change on the same ad (BIN-145).
 
     Also checks the watchlist for price-drop alerts.
     """
@@ -312,10 +347,11 @@ def _record_price_change(
         text(
             "SELECT id, price FROM price_history "
             "WHERE property_id = :pid AND listing_type = :lt AND platform IS NOT DISTINCT FROM :platform "
+            "AND property_listing_id IS NOT DISTINCT FROM :plid "
             "AND end_ts IS NULL "
             "ORDER BY start_ts DESC LIMIT 1"
         ),
-        {"pid": property_id, "lt": listing_type, "platform": platform},
+        {"pid": property_id, "lt": listing_type, "platform": platform, "plid": property_listing_id},
     ).fetchone()
 
     if open_row is not None:

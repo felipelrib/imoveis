@@ -140,6 +140,56 @@ class TestPlatformsEndpoint:
             assert isinstance(platform["enabled"], bool)
 
 
+class TestScrapeEndpoint:
+    """POST /scrape must require admin credentials (BIN-149).
+
+    Prior to this fix the route had no ``Depends(verify_admin_access)`` (or
+    any auth check) at all, so any unauthenticated caller could enqueue
+    scrape jobs against QuintoAndar/OLX/ZapImóveis for any registered
+    platform. These are the regression specs for that fix.
+    """
+
+    def test_scrape_without_credential_returns_401(self, client):
+        response = client.post("/scrape", json={"platform": "olx"})
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_scrape_with_invalid_credential_returns_403(self, client):
+        response = client.post(
+            "/scrape",
+            json={"platform": "olx"},
+            headers={"X-API-Key": "wrong-key"},
+        )
+        assert response.status_code == 403
+
+    def test_scrape_with_valid_credential_enqueues(self, client, admin_headers, monkeypatch):
+        """A correctly-credentialed request still reaches the enqueue path."""
+        from adapters.queue.tasks import scrape_listings
+
+        fake_task = type("FakeTask", (), {"id": "fake-task-id"})()
+        monkeypatch.setattr(scrape_listings, "delay", lambda *a, **k: fake_task)
+
+        response = client.post(
+            "/scrape",
+            json={"platform": "olx"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["platform"] == "olx"
+        assert data["status"] == "queued"
+        assert data["task_id"] == "fake-task-id"
+
+    def test_scrape_unknown_platform_still_returns_400_when_authorized(self, client, admin_headers):
+        """Auth gate must not shadow the existing unknown-platform validation."""
+        response = client.post(
+            "/scrape",
+            json={"platform": "not-a-real-platform"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 400
+
+
 class TestNeighborhoodsEndpoint:
     def test_neighborhoods_returns_list(self, client):
         """GET /properties/neighborhoods must return a list of neighbourhood objects."""

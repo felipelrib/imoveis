@@ -272,10 +272,7 @@ class ZapImoveisScraper(BaseScraper):
         )
         time.sleep(delay)
         response = self.session.get(url, follow_redirects=True)
-        if 200 <= response.status_code < 300:
-            self._cb.record_success()
-        elif response.status_code >= 500 or response.status_code == 429:
-            self._cb.record_failure()
+        self._record_circuit_outcome(self._cb, response.status_code)
         return response
 
     def fetch_description(self, url: str) -> str:
