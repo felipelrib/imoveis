@@ -2,24 +2,34 @@ import React from 'react';
 import { t as translate } from '../i18n/index.js';
 import { getActiveLocale } from '../i18n/activeLocale.js';
 
-class ErrorBoundary extends React.Component {
-  constructor(props) {
+interface ErrorBoundaryProps {
+  children: React.ReactNode
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+  errorInfo: React.ErrorInfo | null
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): Partial<ErrorBoundaryState> {
     return { hasError: true };
   }
 
-  componentDidCatch(error, errorInfo) {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     this.setState({ error, errorInfo });
     console.error("ErrorBoundary caught an error", error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
-      const t = (key) => translate(getActiveLocale(), key);
+      const t = (key: string) => translate(getActiveLocale(), key);
       return (
         <div style={{ padding: '24px', background: 'var(--bg-surface)', border: '1px solid var(--accent-rose)', borderRadius: '8px', margin: '24px' }}>
           <h2 style={{ color: 'var(--accent-rose)', marginTop: 0 }}>{t('errors.somethingWrong')}</h2>

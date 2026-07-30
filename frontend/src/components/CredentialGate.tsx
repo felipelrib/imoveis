@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import {
   clearApiKey,
   hasApiKey,
@@ -10,7 +10,7 @@ import { useToast } from './ToastProvider.jsx'
 
 /**
  * Paste-once API credential gate (BIN-46 / Story 2.2).
- * Stores the key only in sessionStorage; api.js attaches X-API-Key.
+ * Stores the key only in sessionStorage; api.ts attaches X-API-Key.
  */
 export default function CredentialGate() {
   const showToast = useToast()
@@ -19,7 +19,7 @@ export default function CredentialGate() {
   const [configured, setConfigured] = useState(() => hasApiKey())
   const [busy, setBusy] = useState(false)
 
-  const handleSave = async (e) => {
+  const handleSave = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const value = draft.trim()
     if (!value) {
@@ -36,7 +36,8 @@ export default function CredentialGate() {
     } catch (err) {
       clearApiKey()
       setConfigured(false)
-      showToast(err.message || t('credential.toastInvalid'), { type: 'error' })
+      const message = err instanceof Error && err.message ? err.message : t('credential.toastInvalid')
+      showToast(message, { type: 'error' })
     } finally {
       setBusy(false)
     }

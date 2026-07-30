@@ -1,8 +1,31 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react'
 
-const ToastContext = createContext(null)
+export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
-const TOAST_STYLES = {
+export interface ToastOptions {
+  type?: ToastType
+  duration?: number
+}
+
+/** Imperative toast trigger returned by `useToast()`; resolves to the new toast id. */
+export type ShowToast = (message: string, options?: ToastOptions) => number
+
+interface Toast {
+  id: number
+  message: string
+  type: ToastType
+}
+
+interface ToastStyle {
+  background: string
+  border: string
+  color: string
+  icon: string
+}
+
+const ToastContext = createContext<ShowToast | null>(null)
+
+const TOAST_STYLES: Record<ToastType, ToastStyle> = {
   success: {
     background: 'rgba(16,185,129,0.15)',
     border: '1px solid rgba(16,185,129,0.3)',
@@ -31,11 +54,11 @@ const TOAST_STYLES = {
 
 let toastIdCounter = 0
 
-export function ToastProvider({ children }) {
-  const [toasts, setToasts] = useState([])
-  const timersRef = useRef({})
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const timersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
 
-  const removeToast = useCallback((id) => {
+  const removeToast = useCallback((id: number) => {
     if (timersRef.current[id]) {
       clearTimeout(timersRef.current[id])
       delete timersRef.current[id]
@@ -43,7 +66,7 @@ export function ToastProvider({ children }) {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
-  const showToast = useCallback((message, { type = 'info', duration = 4000 } = {}) => {
+  const showToast = useCallback<ShowToast>((message, { type = 'info', duration = 4000 } = {}) => {
     const id = ++toastIdCounter
     setToasts(prev => [...prev, { id, message, type }])
     if (duration > 0) {
@@ -113,7 +136,7 @@ export function ToastProvider({ children }) {
 // Context + companion hook co-located on purpose (standard React pattern); the resulting
 // occasional extra Fast Refresh remount is an acceptable dev-only trade-off here.
 // eslint-disable-next-line react-refresh/only-export-components
-export function useToast() {
+export function useToast(): ShowToast {
   const ctx = useContext(ToastContext)
   if (!ctx) throw new Error('useToast must be used within a ToastProvider')
   return ctx

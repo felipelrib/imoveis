@@ -2,20 +2,29 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
-import { fetchPropertiesByIds, fetchPriceHistory } from '../api.js'
+import { fetchPropertiesByIds, fetchPriceHistory, type Property, type PriceHistoryPoint } from '../api.js'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { labelRiskFlag } from '../i18n/index.js'
 import { formatCurrency, formatDate, formatPricePerM2 } from '../i18n/format.js'
 import { decisioningPrice } from '../utils/primaryListing.js'
+import type { TFunction } from '../i18n/LocaleContext.jsx'
 
-function formatScore(value) {
+function formatScore(value: number | null | undefined): string {
   if (value == null || Number.isNaN(Number(value))) return '—'
   return (Number(value) * 100).toFixed(0)
 }
 
-function buildChartData(priceHistory, locale) {
-  const grouped = {}
+interface ChartPoint {
+  date: string
+  [lineKey: string]: string | number
+}
+
+function buildChartData(
+  priceHistory: PriceHistoryPoint[],
+  locale: string,
+): { chartData: ChartPoint[]; lineKeys: string[] } {
+  const grouped: Record<string, { date: string; price: number; lineKey: string }[]> = {}
   for (const ph of priceHistory) {
     const lineKey = `${ph.listing_type || 'sale'}|${ph.platform || 'unknown'}`
     if (!grouped[lineKey]) grouped[lineKey] = []
@@ -25,8 +34,8 @@ function buildChartData(priceHistory, locale) {
   const allDates = [...new Set(
     priceHistory.map((ph) => (ph.start_ts ? formatDate(ph.start_ts, locale) : '?')),
   )]
-  const chartData = allDates.map((date) => {
-    const point = { date }
+  const chartData: ChartPoint[] = allDates.map((date) => {
+    const point: ChartPoint = { date }
     for (const [key, entries] of Object.entries(grouped)) {
       const match = entries.find((e) => e.date === date)
       if (match) point[key] = match.price
@@ -41,7 +50,18 @@ const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), '
   + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const ATTR_ROWS = [
+interface RowContext {
+  t: TFunction
+  locale: string
+}
+
+interface AttrRow {
+  key: string
+  labelKey: string
+  get: (p: Property, ctx: RowContext) => string
+}
+
+const ATTR_ROWS: AttrRow[] = [
   { key: 'title', labelKey: 'attr.title', get: (p) => p.title || '—' },
   { key: 'address', labelKey: 'attr.address', get: (p) => p.address || '—' },
   { key: 'neighborhood', labelKey: 'attr.neighbourhood', get: (p) => p.neighborhood_name || '—' },
@@ -137,34 +157,39 @@ const ATTR_ROWS = [
   { key: 'deal_summary', labelKey: 'attr.dealSummary', get: (p) => p.deal_summary || '—' },
 ]
 
+export interface CompareViewProps {
+  ids: string[]
+  onClose: () => void
+  onClearSelection: () => void
+}
+
 /**
  * Side-by-side compare for 2–4 properties from the batch projection + price history.
- * @param {{ ids: string[], onClose: () => void, onClearSelection: () => void }} props
  */
-export default function CompareView({ ids, onClose, onClearSelection }) {
+export default function CompareView({ ids, onClose, onClearSelection }: CompareViewProps) {
   const { t, locale } = useLocale()
-  const [properties, setProperties] = useState([])
-  const [histories, setHistories] = useState({})
+  const [properties, setProperties] = useState<Property[]>([])
+  const [histories, setHistories] = useState<Record<string, PriceHistoryPoint[]>>({})
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const dialogRef = useRef(null)
+  const [error, setError] = useState<string | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   // Initial focus management: move focus into the dialog on open (mirrors PropertyModal).
   useEffect(() => {
-    const first = dialogRef.current?.querySelector(FOCUSABLE_SELECTOR)
+    const first = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
     first?.focus()
   }, [])
 
-  // Escape-to-close + Tab focus trap (mirrors PropertyModal.jsx's Escape handling).
+  // Escape-to-close + Tab focus trap (mirrors PropertyModal.tsx's Escape handling).
   useEffect(() => {
-    const handler = (e) => {
+    const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
         return
       }
       if (e.key !== 'Tab' || !dialogRef.current) return
-      const focusable = Array.from(dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR))
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
       if (focusable.length === 0) return
       const first = focusable[0]
       const last = focusable[focusable.length - 1]
@@ -192,7 +217,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
         setProperties(list)
 
         const entries = await Promise.all(
-          list.map(async (p) => {
+          list.map(async (p): Promise<[string, PriceHistoryPoint[]]> => {
             try {
               const history = await fetchPriceHistory(p.id)
               return [p.id, Array.isArray(history) ? history : []]
@@ -205,7 +230,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
         setHistories(Object.fromEntries(entries))
       } catch (err) {
         if (!cancelled) {
-          setError(err?.message || t('compare.failedLoad'))
+          setError(err instanceof Error && err.message ? err.message : t('compare.failedLoad'))
           setProperties([])
           setHistories({})
         }
@@ -326,7 +351,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                                 tickLine={false}
                                 axisLine={false}
                                 width={40}
-                                tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
+                                tickFormatter={(v: number) => `R$${(v / 1000).toFixed(0)}k`}
                               />
                               <Tooltip
                                 contentStyle={{
@@ -336,7 +361,7 @@ export default function CompareView({ ids, onClose, onClearSelection }) {
                                   color: 'var(--text-primary)',
                                   fontSize: 11,
                                 }}
-                                formatter={(value) => formatCurrency(value, locale)}
+                                formatter={(value) => formatCurrency(value as number, locale)}
                               />
                               <Legend wrapperStyle={{ fontSize: 10, color: 'var(--text-muted)' }} />
                               {lineKeys.map((key, i) => {

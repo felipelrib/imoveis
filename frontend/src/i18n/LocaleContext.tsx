@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useState,
+  type ReactNode,
 } from 'react'
 import { fetchLocale, hasApiKey, updateLocale } from '../api.js'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -13,9 +14,21 @@ import {
   normalizeLocale,
   SUPPORTED_LOCALES,
   t as translate,
+  type TranslateParams,
 } from './index.js'
 
-const LocaleContext = createContext({
+/** Bound translator: resolves a catalog key against the active locale. */
+export type TFunction = (key: string, params?: TranslateParams) => string
+
+export interface LocaleContextValue {
+  locale: string
+  supported: string[]
+  t: TFunction
+  setLocale: (nextRaw: string) => Promise<void>
+  ready: boolean
+}
+
+const LocaleContext = createContext<LocaleContextValue>({
   locale: DEFAULT_LOCALE,
   supported: SUPPORTED_LOCALES,
   t: (key, params) => translate(DEFAULT_LOCALE, key, params),
@@ -23,10 +36,10 @@ const LocaleContext = createContext({
   ready: false,
 })
 
-export function LocaleProvider({ children }) {
+export function LocaleProvider({ children }: { children: ReactNode }) {
   const showToast = useToast()
   const [locale, setLocaleState] = useState(DEFAULT_LOCALE)
-  const [supported, setSupported] = useState(SUPPORTED_LOCALES)
+  const [supported, setSupported] = useState<string[]>(SUPPORTED_LOCALES)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -42,10 +55,12 @@ export function LocaleProvider({ children }) {
       try {
         const data = await fetchLocale()
         if (cancelled) return
-        const next = normalizeLocale(data.locale)
+        const next = normalizeLocale(data.locale as string | null | undefined)
         setLocaleState(next)
         if (Array.isArray(data.supported) && data.supported.length) {
-          setSupported(data.supported.filter((code) => SUPPORTED_LOCALES.includes(code)))
+          setSupported(data.supported.filter((code): code is string => (
+            typeof code === 'string' && SUPPORTED_LOCALES.includes(code)
+          )))
         }
         document.documentElement.lang = next
         setActiveLocale(next)
@@ -64,7 +79,7 @@ export function LocaleProvider({ children }) {
   }, [])
 
   const setLocale = useCallback(
-    async (nextRaw) => {
+    async (nextRaw: string) => {
       const next = normalizeLocale(nextRaw)
       if (!hasApiKey()) {
         showToast(translate(locale, 'locale.needCredential'), { type: 'warning' })
@@ -72,26 +87,29 @@ export function LocaleProvider({ children }) {
       }
       try {
         const data = await updateLocale(next)
-        const applied = normalizeLocale(data.locale)
+        const applied = normalizeLocale(data.locale as string | null | undefined)
         setLocaleState(applied)
         document.documentElement.lang = applied
         if (Array.isArray(data.supported) && data.supported.length) {
-          setSupported(data.supported.filter((code) => SUPPORTED_LOCALES.includes(code)))
+          setSupported(data.supported.filter((code): code is string => (
+            typeof code === 'string' && SUPPORTED_LOCALES.includes(code)
+          )))
         }
         setActiveLocale(applied)
       } catch (err) {
-        showToast(err.message || translate(locale, 'locale.saveFailed'), { type: 'error' })
+        const message = err instanceof Error && err.message ? err.message : translate(locale, 'locale.saveFailed')
+        showToast(message, { type: 'error' })
       }
     },
     [locale, showToast]
   )
 
-  const t = useCallback(
+  const t = useCallback<TFunction>(
     (key, params) => translate(locale, key, params),
     [locale]
   )
 
-  const value = { locale, supported, t, setLocale, ready }
+  const value: LocaleContextValue = { locale, supported, t, setLocale, ready }
 
   return (
     <LocaleContext.Provider value={value}>
@@ -103,11 +121,11 @@ export function LocaleProvider({ children }) {
 // Context + companion hooks co-located on purpose (standard React pattern); the resulting
 // occasional extra Fast Refresh remount is an acceptable dev-only trade-off here.
 // eslint-disable-next-line react-refresh/only-export-components
-export function useLocale() {
+export function useLocale(): LocaleContextValue {
   return useContext(LocaleContext)
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
-export function useT() {
+export function useT(): TFunction {
   return useLocale().t
 }
