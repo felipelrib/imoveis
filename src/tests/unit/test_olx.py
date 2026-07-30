@@ -682,8 +682,94 @@ class TestOLXFetchLifecycle:
         with pytest.raises(CircuitBreakerOpenError, match="circuit breaker is open"):
             scraper._throttled_request("https://example.test")
 
+    # -- BIN-156: sustained Cloudflare 403 streaks must open the breaker -----
+
+    def test_throttled_request_records_403_as_separate_reason(self, scraper):
+        """403 must NOT call the default (5xx/429) record_failure() bucket."""
+        scraper.session = MagicMock()
+        scraper._cb = MagicMock()
+        scraper._cb.is_open.return_value = False
+        scraper.session.get.return_value = MagicMock(status_code=403)
+        with patch("adapters.scrapers.olx.random.uniform", return_value=0), patch(
+            "adapters.scrapers.olx.time.sleep"
+        ):
+            scraper._throttled_request("https://example.test")
+
+        scraper._cb.record_failure.assert_called_once_with(reason="cloudflare_403")
+
+    def test_throttled_request_sustained_403_opens_real_circuit_breaker(self, scraper):
+        """End-to-end: a streak of 403s (Cloudflare block) trips is_open().
+
+        Regression for BIN-156 — before the fix, `_throttled_request` only
+        called `record_failure()` for >=500/429, so a fully-blocked platform
+        never opened the breaker and kept burning its full jitter-delay ×
+        max_pages budget per window.
+        """
+        from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
+
+        store: dict[str, object] = {}
+
+        def fake_exists(key):
+            return 1 if key in store else 0
+
+        def fake_script(*, keys, args):
+            base, open_key = keys
+            threshold = int(args[0])
+            fail_key = f"{base}:failures"
+            if open_key in store:
+                return 0
+            count = int(store.get(fail_key, 0)) + 1
+            store[fail_key] = count
+            if count >= threshold:
+                store[open_key] = b"1"
+                return 1
+            return 0
+
+        mock_redis = MagicMock()
+        mock_redis.exists = fake_exists
+        mock_redis.register_script = MagicMock(return_value=fake_script)
+
+        with patch("infra.redis_client.get_redis", return_value=mock_redis):
+            scraper._cb = RedisCircuitBreaker(
+                platform="olx", failure_threshold=5, cooldown_seconds=120
+            )
+        scraper._cb.redis_client = mock_redis
+        scraper._cb._record_failure_script = fake_script
+
+        scraper.session = MagicMock()
+        scraper.session.get.return_value = MagicMock(status_code=403)
+
+        with patch("adapters.scrapers.olx.random.uniform", return_value=0), patch(
+            "adapters.scrapers.olx.time.sleep"
+        ):
+            for _ in range(4):
+                scraper._throttled_request("https://example.test")
+            assert not scraper._cb.is_open()  # not yet at threshold
+
+            scraper._throttled_request("https://example.test")  # 5th 403 — trip
+
+        assert scraper._cb.is_open()
+
+        # Fast-fail: is_open() now raises before any further sleep/HTTP call.
+        scraper.session.get.reset_mock()
+        with pytest.raises(CircuitBreakerOpenError):
+            scraper._throttled_request("https://example.test")
+        scraper.session.get.assert_not_called()
+
     def test_fetch_page_handles_request_error(self, scraper):
         scraper._throttled_request = MagicMock(side_effect=RuntimeError("network"))
+
+        with patch("adapters.scrapers.olx.logger"):
+            assert scraper._fetch_page_listings("https://example.test", 1) == []
+
+    def test_fetch_page_listings_on_403_returns_empty_without_error(self, scraper):
+        """BIN-156: a 403 page response yields no listings and never raises —
+        it must never surface as a `scrape_persist_error`/`errors` metric tick
+        at the tasks.py level (403 stays classified `unknown`, not an error).
+        """
+        scraper._throttled_request = MagicMock(
+            return_value=MagicMock(status_code=403, text="")
+        )
 
         with patch("adapters.scrapers.olx.logger"):
             assert scraper._fetch_page_listings("https://example.test", 1) == []

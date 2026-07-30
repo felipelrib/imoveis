@@ -24,9 +24,8 @@ def _make_redis_breaker(failure_threshold=3, cooldown_seconds=60):
 
     def fake_script(*, keys, args):
         """Mirror RECORD_FAILURE_SCRIPT against the in-memory store."""
-        base = keys[0]
+        base, open_key = keys
         threshold = int(args[0])
-        open_key = f"{base}:open"
         fail_key = f"{base}:failures"
         if open_key in store:
             return 0
@@ -89,3 +88,49 @@ def test_redis_cb_failure_count_resets_on_success():
     cb.record_success()
     cb.record_failure()
     assert not cb.is_open()  # count was reset
+
+
+# ---------------------------------------------------------------------------
+# BIN-156: sustained Cloudflare 403 streaks must open the same shared circuit
+# ---------------------------------------------------------------------------
+
+
+def test_redis_cb_sustained_403_reason_opens_breaker():
+    """A streak of same-reason (e.g. cloudflare_403) failures trips is_open()."""
+    cb, _ = _make_redis_breaker(failure_threshold=5)
+    for _ in range(4):
+        opened = cb.record_failure(reason="cloudflare_403")
+        assert opened is False
+    assert not cb.is_open()
+
+    opened = cb.record_failure(reason="cloudflare_403")  # 5th — trip
+    assert opened is True
+    assert cb.is_open()
+
+
+def test_redis_cb_403_reason_has_independent_counter_from_default():
+    """403 failures and 5xx/429 failures accumulate in separate buckets."""
+    cb, _ = _make_redis_breaker(failure_threshold=5)
+    cb.record_failure()  # default (5xx/429) reason, count=1
+    cb.record_failure()  # count=2
+    cb.record_failure(reason="cloudflare_403")  # separate bucket, count=1
+    cb.record_failure(reason="cloudflare_403")  # count=2
+    assert not cb.is_open()  # neither bucket reached threshold=5 alone
+
+
+def test_redis_cb_403_reason_supports_independent_threshold_and_cooldown():
+    """A reason can use its own threshold/cooldown, distinct from the default."""
+    cb, _ = _make_redis_breaker(failure_threshold=5, cooldown_seconds=120)
+    cb.record_failure(reason="cloudflare_403", threshold=2, cooldown=30)
+    opened = cb.record_failure(reason="cloudflare_403", threshold=2, cooldown=30)
+    assert opened is True
+    assert cb.is_open()
+
+
+def test_redis_cb_403_reason_resets_on_success():
+    cb, _ = _make_redis_breaker(failure_threshold=3)
+    cb.record_failure(reason="cloudflare_403")
+    cb.record_failure(reason="cloudflare_403")
+    cb.record_success()
+    cb.record_failure(reason="cloudflare_403")
+    assert not cb.is_open()  # 403 counter was reset by record_success too

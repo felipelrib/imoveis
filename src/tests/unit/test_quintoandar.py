@@ -53,6 +53,20 @@ class TestQuintoAndarLifecycle:
             s._throttled_request("GET", "http://x")
         s._cb.record_failure.assert_called_once()
 
+    def test_throttled_request_records_403_as_separate_reason(self):
+        """BIN-156: sustained Cloudflare 403 streaks must feed a SEPARATE
+        circuit-breaker reason bucket from 5xx/429 — not be dropped entirely.
+        """
+        s = _scraper()
+        s.session = MagicMock()
+        s._cb = MagicMock()
+        s._cb.is_open.return_value = False
+        blocked = MagicMock(status_code=403)
+        s.session.request.return_value = blocked
+        with patch("time.sleep"):
+            s._throttled_request("GET", "http://x")
+        s._cb.record_failure.assert_called_once_with(reason="cloudflare_403")
+
 
 @pytest.mark.unit
 class TestQuintoAndarFetch:

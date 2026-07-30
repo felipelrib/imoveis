@@ -562,6 +562,7 @@ body {
   color: #fff;
 }
 .sms-option--selected:hover { background: rgba(99,102,241,0.45); }
+.sms-option--active { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sms-check { font-weight: 700; }
 .sms-empty {
   padding: 16px 12px;

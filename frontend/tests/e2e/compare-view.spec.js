@@ -101,4 +101,37 @@ test.describe("Side-by-side compare view", () => {
     await expect(page.getByTestId("compare-history-empty-1")).toHaveText("No price history");
     await expect(page.getByTestId("compare-history-empty-3")).toHaveText("No price history");
   });
+
+  test("Escape closes the compare dialog and keeps selection (BIN-157)", async ({ page }) => {
+    await selectAndOpenCompare(page, ["1", "2"]);
+    await expect(page.getByTestId("compare-view")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(page.getByTestId("compare-view")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/properties$/);
+    await expect(page.getByTestId("compare-bar")).toBeVisible();
+    await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
+  });
+
+  test("opening the compare dialog moves focus inside it and traps Tab (BIN-157)", async ({ page }) => {
+    await selectAndOpenCompare(page, ["1", "2"]);
+    await expect(page.getByTestId("compare-view")).toBeVisible();
+
+    // Initial focus lands on a focusable element inside the dialog (the exit button).
+    await expect(page.getByTestId("compare-exit")).toBeFocused();
+
+    // Shift+Tab from the first focusable element wraps to the last one, proving the trap.
+    await page.keyboard.press("Shift+Tab");
+    const active = await page.evaluate(() => document.activeElement?.getAttribute("data-testid"));
+    const dialogFocusables = await page.locator('[data-testid="compare-view"] a[href], [data-testid="compare-view"] button:not([disabled])').count();
+    expect(dialogFocusables).toBeGreaterThan(0);
+    // Focus must remain within the dialog after wrapping.
+    const stillInDialog = await page.evaluate(() => {
+      const dialog = document.querySelector('[data-testid="compare-view"]');
+      return !!dialog && dialog.contains(document.activeElement);
+    });
+    expect(stillInDialog).toBeTruthy();
+    expect(active).toBeTruthy();
+  });
 });

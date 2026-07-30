@@ -64,4 +64,65 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
       )
       .toBeTruthy();
   });
+
+  test("Escape closes the dropdown and returns focus to the trigger (BIN-157)", async ({ page }) => {
+    await installCommonMocks(page);
+    await page.route("**/api/properties?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(PROPERTIES_PAGE),
+      });
+    });
+
+    await page.goto("/properties");
+    await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
+    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+
+    await page.getByTestId("neighborhood-filter-trigger").click();
+    await expect(page.getByTestId("neighborhood-filter-dropdown")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(page.getByTestId("neighborhood-filter-dropdown")).toHaveCount(0);
+    await expect(page.getByTestId("neighborhood-filter-trigger")).toBeFocused();
+  });
+
+  test("ArrowDown/ArrowUp roves the listbox and Enter toggles the highlighted option (BIN-157)", async ({
+    page,
+  }) => {
+    await installCommonMocks(page);
+    /** @type {string[]} */
+    const listUrls = [];
+    await page.route("**/api/properties?**", async (route) => {
+      listUrls.push(route.request().url());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(PROPERTIES_PAGE),
+      });
+    });
+
+    await page.goto("/properties");
+    await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
+    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+
+    await page.getByTestId("neighborhood-filter-trigger").click();
+    await expect(page.getByTestId("neighborhood-filter-dropdown")).toBeVisible();
+
+    await page.getByTestId("neighborhood-filter-search").fill("Pinheiros");
+    await expect(page.getByRole("option", { name: /Pinheiros/i })).toBeVisible();
+
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("option", { name: /Pinheiros/i })).toHaveClass(/sms-option--active/);
+
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("option", { name: /Pinheiros/i })).toHaveAttribute("aria-selected", "true");
+
+    await expect
+      .poll(() =>
+        listUrls.some((u) => decodeURIComponent(u.replace(/\+/g, " ")).includes("Pinheiros"))
+      )
+      .toBeTruthy();
+  });
 });

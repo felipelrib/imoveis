@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Tuple
 
 import aiohttp
 import anyio
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.ai_locale import normalize_sentiment_category, normalize_stat_category, normalize_visual_category
 
@@ -220,6 +220,30 @@ class AIClientError(RuntimeError):
     """Raised when a local AI backend returns a non-success response."""
 
 
+def _clamp_unit_score(value: float, *, field_name: str) -> float:
+    """Clamp an AI-model score onto the ``[0.0, 1.0]`` contract (BIN-148).
+
+    Local VLM/text models occasionally drift to a 0-100 scale or emit a
+    slightly out-of-range float (e.g. ``1.02``) due to rounding. Clamping
+    (rather than hard-rejecting the whole result) keeps a single
+    borderline/drifted value from corrupting downstream deal ranking
+    (``a_score`` in ``adapters/queue/tasks.py``) while preserving the rest
+    of the model's output (category, reasoning, detected features/flags).
+    Genuinely malformed (non-numeric) output still fails loudly via
+    Pydantic's normal type validation before this validator ever runs.
+    A warning is logged so drift is visible rather than silent.
+    """
+    clamped = max(0.0, min(1.0, value))
+    if clamped != value:
+        logger.warning(
+            "ai_score_out_of_range_clamped: field=%s raw=%s clamped=%s",
+            field_name,
+            value,
+            clamped,
+        )
+    return clamped
+
+
 class VisualResult(BaseModel):
     condition_score: float
     analysis: str = ""
@@ -227,6 +251,11 @@ class VisualResult(BaseModel):
     reasoning: str = ""
     features_detected: List[str] = []
     issues_detected: List[str] = []
+
+    @field_validator("condition_score")
+    @classmethod
+    def _clamp_condition_score(cls, value: float) -> float:
+        return _clamp_unit_score(value, field_name="condition_score")
 
 
 class DealVerdictResult(BaseModel):
@@ -243,6 +272,11 @@ class SentimentResult(BaseModel):
     reasoning: str = ""
     green_flags: List[str] = []
     red_flags: List[str] = []
+
+    @field_validator("sentiment_score")
+    @classmethod
+    def _clamp_sentiment_score(cls, value: float) -> float:
+        return _clamp_unit_score(value, field_name="sentiment_score")
 
 
 class LocalAIClient(ABC):

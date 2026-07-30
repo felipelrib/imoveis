@@ -699,11 +699,22 @@ def get_price_history(
     property_id: str,
     listing_type: Annotated[Optional[str], Query(pattern="^(rent|sale)$")] = None,
     platform: Optional[str] = None,
+    property_listing_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Return ordered price-history intervals for a property.
 
-    Optionally filter by listing_type (rent/sale) and/or platform.
-    ``property_id`` may be sequential ``public_id`` or UUID.
+    Optionally filter by listing_type (rent/sale), platform, and/or
+    property_listing_id. ``property_id`` may be sequential ``public_id`` or
+    UUID.
+
+    Note: a property can have multiple distinct listings (ads) sharing the
+    same platform + listing_type (two brokers re-listing the same unit, or a
+    relisted ad under a new platform id) — see BIN-145. Without a
+    property_listing_id filter, this endpoint returns the merged history of
+    every listing under the given property/listing_type/platform scope,
+    which can look like a single corrupted timeline when in fact it is
+    multiple listings' independent intervals interleaved. Callers that need
+    one listing's own timeline should pass property_listing_id explicitly.
     """
     key_kind, key_value = _parse_property_ref(property_id)
     with SessionLocal() as session:
@@ -729,6 +740,9 @@ def get_price_history(
         if platform:
             filters.append("platform = :platform")
             params["platform"] = platform
+        if property_listing_id:
+            filters.append("property_listing_id = :plid")
+            params["plid"] = property_listing_id
 
         where = " AND ".join(filters)
         # filters entries are hardcoded literals ("property_id = :pid", etc.)

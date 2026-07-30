@@ -114,6 +114,22 @@ class TestPropertyModelAiScoreTypes:
         with pytest.raises(ValidationError):
             PropertyModel.model_validate(mapped)
 
+    @pytest.mark.parametrize("field_name,bad_value", [
+        ("condition_score", 1.5),
+        ("condition_score", -0.1),
+        ("sentiment_score", 85.0),
+        ("sentiment_score", -1.0),
+        ("ai_score", 2.0),
+    ])
+    def test_property_model_rejects_out_of_range_scores(self, field_name, bad_value):
+        """BIN-148: response-side safety net — an out-of-range AI score reaching
+        the API layer (e.g. via a bug upstream of the client.py clamp) must fail
+        loudly rather than serialize a corrupted deal-ranking value."""
+        mapped = map_property_list_item(_ai_enriched_row())
+        mapped[field_name] = bad_value
+        with pytest.raises(ValidationError):
+            PropertyModel.model_validate(mapped)
+
 
 @pytest.mark.unit
 class TestListPropertiesEndpointSchema:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.admin import router as admin_router
 from api.auth import router as auth_router
+from api.auth import verify_admin_access
 from api.errors import raise_api_error
 from api.favourites import router as favourites_router
 from api.properties import router as properties_router
@@ -97,8 +98,11 @@ class ScrapeRequest(BaseModel):
 @app.post(
     "/scrape",
     tags=["ingestion"],
+    dependencies=[Depends(verify_admin_access)],
     responses={
         400: {"description": "Unknown platform"},
+        401: {"description": "Missing credentials"},
+        403: {"description": "Invalid credentials"},
         500: {"description": "Internal server error"},
     },
 )
@@ -136,7 +140,15 @@ def trigger_scrape(request: Request, req: ScrapeRequest):
 
 @app.get("/platforms", tags=["ingestion"])
 def list_platforms():
-    """Return registered scraper platforms for the GUI dropdown."""
+    """Return registered scraper platforms for the GUI dropdown.
+
+    Intentionally left unauthenticated (BIN-149): read-only, no PII/secrets,
+    and the ScraperControl dashboard loads it on mount before any credential
+    is entered (the BIN-46 credential gate only covers state-changing admin
+    actions like /scrape, /admin/schedule, recalculate, etc). Gating this
+    with ``verify_api_key_if_configured`` would 403 that initial dropdown
+    populate for every visitor once ``auth.api_key`` is set in production.
+    """
     import adapters.scrapers.olx  # noqa: F401
     import adapters.scrapers.quintoandar  # noqa: F401 — triggers registration
     import adapters.scrapers.zapimoveis  # noqa: F401 — triggers registration
