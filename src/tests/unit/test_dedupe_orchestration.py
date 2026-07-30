@@ -146,6 +146,35 @@ class TestFindFuzzyMatch:
         with patch("core.dedupe.text_similarity", return_value=0.99):
             assert _find_fuzzy_match(session, _candidate(), 50, 0.65, 5, "jaro_winkler") == "x"
 
+    def test_characterization_fuzzy_match_ignores_room_counts_pre_bin146(self):
+        """Characterization lock (BIN-146).
+
+        Documents the pre-fix behaviour of ``_find_fuzzy_match``: a candidate
+        matching purely on geo radius + area tolerance + title similarity is
+        accepted even when its bedroom/bathroom/parking counts differ from the
+        nearby property's. Brazilian towers commonly repeat an identical floor
+        plan per floor with a platform-templated title (e.g. "Apartamento 2
+        quartos para alugar, Savassi"), so this loophole lets two genuinely
+        distinct units get merged into one ``Property`` record. This test
+        locks that (buggy) behaviour as of BIN-145; BIN-146 tightens
+        ``_find_fuzzy_match`` to also require bedroom/bathroom/parking
+        equality, at which point this same scenario should return ``None``
+        instead of matching. See ``TestFuzzyMatchRoomCounts`` below for the
+        post-fix assertions.
+        """
+        session = MagicMock()
+        # Same building slot (geo/area/title all satisfied) but a different
+        # unit: 3 bedrooms vs the candidate's 2.
+        row = SimpleNamespace(id="x", title="Apt", area_m2=50.0, bedrooms=3, bathrooms=2, parking=1)
+        session.execute.return_value.fetchall.return_value = [row]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            result = _find_fuzzy_match(
+                session, _candidate(bedrooms=2, bathrooms=1, parking=0), 50, 0.65, 5, "jaro_winkler"
+            )
+        # Pre-BIN-146 characterization: geo+area+title alone match, so the
+        # distinct 3-bedroom unit is (incorrectly) merged into "x".
+        assert result == "x"
+
 
 @pytest.mark.unit
 class TestUpdateOrNoop:
