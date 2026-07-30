@@ -43,6 +43,37 @@ _RESP_404 = {404: {"description": "Property not found"}}
 # Back-compat aliases for in-module f-strings / detail query
 _LISTINGS_JSON_AGG = LISTINGS_JSON_AGG
 _LIST_SELECT_COLUMNS = LIST_SELECT_COLUMNS
+# Shared FROM/JOIN clause for every properties/metrics_scoring/neighborhoods
+# query below (BIN-135) — a single source avoids Sonar duplicated-lines flags
+# on the near-identical concatenated SQL across list/get/export helpers.
+_PROPERTIES_FROM_JOIN = (
+    "FROM properties p "
+    "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
+    "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
+)
+
+
+def _query_paginated_properties(
+    session: Any, where: str, order: str, params: Dict[str, Any]
+) -> tuple[int, Any]:
+    """Shared paginated-list + count query used by list/export (BIN-135).
+
+    ``where``/``order`` are allow-listed column/enum expressions built by
+    ``_build_list_filters`` (never raw user text); ``params`` supplies the
+    bound values, including ``limit``/``offset``.
+    """
+    sql = text(
+        "SELECT " + _LIST_SELECT_COLUMNS + " "
+        + _PROPERTIES_FROM_JOIN
+        + "WHERE " + where + " "
+        "ORDER BY " + order + " "
+        "LIMIT :limit OFFSET :offset"
+    )
+    count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
+    count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+    total = session.execute(count_sql, count_params).scalar() or 0
+    rows = session.execute(sql, params).mappings().fetchall()
+    return total, rows
 
 
 def _coerce_listing_type(value: Any) -> Any:
@@ -383,27 +414,7 @@ def list_properties(
     where, params, order = _build_list_filters(filters_in, query_vec_literal)
 
     with SessionLocal() as session:
-        sql = text(f"""
-            SELECT {_LIST_SELECT_COLUMNS}
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {where}
-            ORDER BY {order}
-            LIMIT :limit OFFSET :offset
-        """)
-
-        count_sql = text(f"""
-            SELECT COUNT(*)
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {where}
-        """)
-
-        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
-        total = session.execute(count_sql, count_params).scalar() or 0
-        rows = session.execute(sql, params).mappings().fetchall()
+        total, rows = _query_paginated_properties(session, where, order, params)
         page_size = filters_in.page_size
         return {
             "total": total,
@@ -560,13 +571,13 @@ def get_properties_by_ids(
     column = "p.public_id" if key_kind == "public_id" else "p.id"
 
     with SessionLocal() as session:
-        sql = text(f"""
-            SELECT {_LIST_SELECT_COLUMNS}
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {column} IN ({placeholders})
-        """)
+        # column is a hardcoded literal ("p.public_id" or "p.id") chosen above,
+        # never user-supplied text. Plain concatenation per BIN-135.
+        sql = text(
+            "SELECT " + _LIST_SELECT_COLUMNS + " "
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + column + " IN (" + placeholders + ")"
+        )
         rows = session.execute(sql, params).mappings().fetchall()
         if key_kind == "public_id":
             by_key = {int(row["public_id"]): map_property_list_item(row) for row in rows}
@@ -612,25 +623,7 @@ def export_properties(
     params["offset"] = 0
 
     with SessionLocal() as session:
-        sql = text(f"""
-            SELECT {_LIST_SELECT_COLUMNS}
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {where}
-            ORDER BY {order}
-            LIMIT :limit OFFSET :offset
-        """)
-        count_sql = text(f"""
-            SELECT COUNT(*)
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {where}
-        """)
-        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
-        total = session.execute(count_sql, count_params).scalar() or 0
-        rows = session.execute(sql, params).mappings().fetchall()
+        total, rows = _query_paginated_properties(session, where, order, params)
         items = [map_property_list_item(row) for row in rows]
 
     if filters_in.format == "csv":
@@ -657,39 +650,40 @@ def get_property(property_id: str) -> Dict[str, Any]:
     key_kind, key_value = _parse_property_ref(property_id)
     where = "p.public_id = :id" if key_kind == "public_id" else "p.id = :id"
     with SessionLocal() as session:
-        sql = text(f"""
-            SELECT
-                p.id, p.public_id, p.platform, p.platform_id, p.title, p.description,
-                p.price, p.area_m2, p.bedrooms, p.bathrooms, p.parking,
-                p.address, p.image_urls, p.first_seen, p.props_json,
-                ms.stat_score, ms.ai_score, ms.combined_score,
-                ms.percentile_rank, ms.z_score, ms.price_per_m2,
-                ms.neighborhood_mean, ms.neighborhood_median,
-                ms.price_per_m2_rent, ms.price_per_m2_sale,
-                ms.neighborhood_mean_rent, ms.neighborhood_mean_sale,
-                ms.neighborhood_median_rent, ms.neighborhood_median_sale,
-                ms.stat_score_rent, ms.stat_score_sale,
-                ms.z_score_rent, ms.z_score_sale,
-                ms.percentile_rank_rent, ms.percentile_rank_sale,
-                ms.combined_score_rent, ms.combined_score_sale,
-                ms.meta,
-                p.neighborhood_id,
-                n.name AS neighborhood_name,
-                COALESCE(n.city, p.props_json->>'city') AS city,
-                n.amenity_score,
-                n.transit_score,
-                n.access_score,
-                n.safety_score,
-                n.risk_flags,
-                n.quality_meta,
-                n.quality_notes,
-                ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat,
-                {_LISTINGS_JSON_AGG}
-            FROM properties p
-            LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-            WHERE {where}
-        """)
+        # where is one of two hardcoded literals chosen above by key_kind,
+        # never user-supplied text. Plain concatenation per BIN-135.
+        sql = text(
+            "SELECT "
+            "p.id, p.public_id, p.platform, p.platform_id, p.title, p.description, "
+            "p.price, p.area_m2, p.bedrooms, p.bathrooms, p.parking, "
+            "p.address, p.image_urls, p.first_seen, p.props_json, "
+            "ms.stat_score, ms.ai_score, ms.combined_score, "
+            "ms.percentile_rank, ms.z_score, ms.price_per_m2, "
+            "ms.neighborhood_mean, ms.neighborhood_median, "
+            "ms.price_per_m2_rent, ms.price_per_m2_sale, "
+            "ms.neighborhood_mean_rent, ms.neighborhood_mean_sale, "
+            "ms.neighborhood_median_rent, ms.neighborhood_median_sale, "
+            "ms.stat_score_rent, ms.stat_score_sale, "
+            "ms.z_score_rent, ms.z_score_sale, "
+            "ms.percentile_rank_rent, ms.percentile_rank_sale, "
+            "ms.combined_score_rent, ms.combined_score_sale, "
+            "ms.meta, "
+            "p.neighborhood_id, "
+            "n.name AS neighborhood_name, "
+            "COALESCE(n.city, p.props_json->>'city') AS city, "
+            "n.amenity_score, "
+            "n.transit_score, "
+            "n.access_score, "
+            "n.safety_score, "
+            "n.risk_flags, "
+            "n.quality_meta, "
+            "n.quality_notes, "
+            "ST_X(p.location::geometry) AS lon, ST_Y(p.location::geometry) AS lat, "
+            + _LISTINGS_JSON_AGG
+            + " "
+            + _PROPERTIES_FROM_JOIN
+            + "WHERE " + where
+        )
         row = session.execute(sql, {"id": key_value}).mappings().fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Property not found")
@@ -737,11 +731,14 @@ def get_price_history(
             params["platform"] = platform
 
         where = " AND ".join(filters)
+        # filters entries are hardcoded literals ("property_id = :pid", etc.)
+        # with bound values — never raw user text. Plain concatenation
+        # (not an f-string) per BIN-135.
         rows = session.execute(
             text(
                 "SELECT id, price, start_ts, end_ts, listing_type, platform, property_listing_id "
                 "FROM price_history "
-                f"WHERE {where} "
+                "WHERE " + where + " "
                 "ORDER BY start_ts DESC"
             ),
             params,

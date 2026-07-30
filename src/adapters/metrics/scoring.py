@@ -216,13 +216,17 @@ def compute_neighborhood_stats(
     """
     weights = _scoring_weights()
 
+    # where_clause/_COHORT_KEY_SQL are fixed module constants (never
+    # user-supplied text); :nkey is a bound parameter. Assembled via plain
+    # concatenation (not an f-string) per BIN-135.
     where_clause = (
-        f"AND {_COHORT_KEY_SQL} = :nkey"
+        ("AND " + _COHORT_KEY_SQL + " = :nkey")
         if neighborhood_key is not None
         else ""
     )
 
-    sql = text(f"""
+    sql = text(
+        """
         WITH listing_min AS (
             SELECT
                 pl.property_id,
@@ -240,7 +244,9 @@ def compute_neighborhood_stats(
         typed AS (
             SELECT
                 p.id AS property_id,
-                {_COHORT_KEY_SQL} AS n_key,
+                """
+        + _COHORT_KEY_SQL
+        + """ AS n_key,
                 lm.listing_type,
                 lm.price / NULLIF(p.area_m2, 0) AS price_per_m2
             FROM properties p
@@ -249,11 +255,15 @@ def compute_neighborhood_stats(
             WHERE p.area_m2 IS NOT NULL
               AND p.area_m2 > 0
               AND p.active = true
-              {where_clause}
+              """
+        + where_clause
+        + """
             UNION ALL
             SELECT
                 p.id AS property_id,
-                {_COHORT_KEY_SQL} AS n_key,
+                """
+        + _COHORT_KEY_SQL
+        + """ AS n_key,
                 CASE
                     WHEN COALESCE((p.props_json->>'available_for_rent')::boolean, false)
                         THEN 'rent'
@@ -271,7 +281,9 @@ def compute_neighborhood_stats(
               AND NOT EXISTS (
                   SELECT 1 FROM has_listing hl WHERE hl.property_id = p.id
               )
-              {where_clause}
+              """
+        + where_clause
+        + """
         ),
         stats AS (
             SELECT
@@ -332,7 +344,8 @@ def compute_neighborhood_stats(
             percentile_rank_rent,
             percentile_rank_sale
         FROM pivoted
-        """)
+        """
+    )
 
     params: dict = {}
     if neighborhood_key is not None:
@@ -472,32 +485,42 @@ def recalculate_all_combined_scores(
     if weights is None:
         weights = _scoring_weights()
 
+    # _NHOOD_SCORE_SQL is a fixed module constant (never user-supplied text).
+    # Assembled via plain concatenation (not an f-string) per BIN-135.
     result = session.execute(
-        text(f"""
+        text(
+            """
             UPDATE metrics_scoring AS ms
             SET combined_score =
                     COALESCE(ms.stat_score, 0) * :w_stat
                     + COALESCE(ms.ai_score, 0) * :w_ai
-                    + ({_NHOOD_SCORE_SQL}) * :w_nhood,
+                    + ("""
+            + _NHOOD_SCORE_SQL
+            + """) * :w_nhood,
                 combined_score_rent = CASE
                     WHEN ms.stat_score_rent IS NOT NULL THEN
                         COALESCE(ms.stat_score_rent, 0) * :w_stat
                         + COALESCE(ms.ai_score, 0) * :w_ai
-                        + ({_NHOOD_SCORE_SQL}) * :w_nhood
+                        + ("""
+            + _NHOOD_SCORE_SQL
+            + """) * :w_nhood
                     ELSE NULL
                 END,
                 combined_score_sale = CASE
                     WHEN ms.stat_score_sale IS NOT NULL THEN
                         COALESCE(ms.stat_score_sale, 0) * :w_stat
                         + COALESCE(ms.ai_score, 0) * :w_ai
-                        + ({_NHOOD_SCORE_SQL}) * :w_nhood
+                        + ("""
+            + _NHOOD_SCORE_SQL
+            + """) * :w_nhood
                     ELSE NULL
                 END,
                 updated_at = NOW()
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE ms.property_id = p.id
-            """),
+            """
+        ),
         {
             "w_stat": weights.stat_weight,
             "w_ai": weights.ai_weight,
@@ -531,7 +554,11 @@ def get_neighborhood_stats_cached(
     if cached:
         return json.loads(cached)
 
-    sql = text(f"""
+    # _COHORT_KEY_SQL is a fixed module constant (never user-supplied text);
+    # :nkey/:lt are bound parameters. Assembled via plain concatenation
+    # (not an f-string) per BIN-135.
+    sql = text(
+        """
         WITH listing_min AS (
             SELECT
                 pl.property_id,
@@ -550,14 +577,18 @@ def get_neighborhood_stats_cached(
             JOIN listing_min lm ON lm.property_id = p.id
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.area_m2 > 0 AND p.active = true
-              AND {_COHORT_KEY_SQL} = :nkey
+              AND """
+        + _COHORT_KEY_SQL
+        + """ = :nkey
             UNION ALL
             SELECT
                 p.price / NULLIF(p.area_m2, 0) AS price_per_m2
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.area_m2 > 0 AND p.active = true AND p.price > 0
-              AND {_COHORT_KEY_SQL} = :nkey
+              AND """
+        + _COHORT_KEY_SQL
+        + """ = :nkey
               AND NOT EXISTS (
                   SELECT 1 FROM property_listings pl
                   WHERE pl.property_id = p.id AND pl.active = true
@@ -579,7 +610,8 @@ def get_neighborhood_stats_cached(
             COUNT(*) AS count
         FROM typed
         WHERE price_per_m2 IS NOT NULL
-    """)
+    """
+    )
     row = session.execute(sql, {"nkey": n_key, "lt": listing_type}).mappings().fetchone()
     stats = {
         "mean": float(row["mean"]) if row and row["mean"] else 0.0,

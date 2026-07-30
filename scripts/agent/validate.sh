@@ -116,6 +116,14 @@ run_lint() {
   if _require flake8; then
     flake8 src/ --max-line-length=127 --extend-ignore=E203,W503 2>&1 && ok "flake8 OK" || { warn "flake8 FAILED"; rc=1; }
   fi
+  log "Lint: no f-string-built SQL (BIN-135 — see .pre-commit-config.yaml forbid-fstring-sql)"
+  if grep -rnP "(\btext\(\s*f['\"]|\bf['\"][^'\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|ORDER BY)\b)" \
+      "$REPO_ROOT/src/" --include="*.py" | grep -v "/tests/"; then
+    warn "f-string-built SQL FAILED — parameterize or use an enum/allow-listed column map instead"
+    rc=1
+  else
+    ok "no f-string-built SQL"
+  fi
   if [ -f "$REPO_ROOT/frontend/package.json" ]; then
     ( cd "$REPO_ROOT/frontend" && npm run lint 2>/dev/null ) && ok "eslint OK" || warn "eslint not configured — skip"
   fi

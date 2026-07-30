@@ -44,6 +44,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: forbid-fstring-sql
+        name: forbid f-string-built SQL fragments (BIN-135)
+        entry: bash -c '! grep -rnP "(\btext\(\s*f[\x27\"]|\bf[\x27\"][^\x27\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|ORDER BY)\b)" src/ --include="*.py" | grep -v "/tests/"'
+        language: system
+        pass_filenames: false
+
       - id: pytest-unit
         name: pytest (unit only)
         entry: pytest src/tests/unit/ -v --timeout=30

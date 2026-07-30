@@ -75,17 +75,19 @@ def select_top_deals(
         clock = clock.replace(tzinfo=timezone.utc)
     since = clock - timedelta(hours=lookback_hours)
 
-    sql = text(f"""
-        SELECT {LIST_SELECT_COLUMNS}
-        FROM properties p
-        LEFT JOIN metrics_scoring ms ON ms.property_id = p.id
-        LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
-        WHERE p.first_seen >= :since
-          AND {column} IS NOT NULL
-          AND {column} >= :min_score
-        ORDER BY {column} DESC, p.first_seen DESC
-        LIMIT :limit
-    """)
+    # column is enum-mapped via score_column_for_target()/_SCORE_COLUMNS — never
+    # touches string interpolation of arbitrary/user-supplied text (BIN-135).
+    sql = text(
+        "SELECT " + LIST_SELECT_COLUMNS + " "
+        "FROM properties p "
+        "LEFT JOIN metrics_scoring ms ON ms.property_id = p.id "
+        "LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id "
+        "WHERE p.first_seen >= :since "
+        "  AND " + column + " IS NOT NULL "
+        "  AND " + column + " >= :min_score "
+        "ORDER BY " + column + " DESC, p.first_seen DESC "
+        "LIMIT :limit"
+    )
     rows = session.execute(
         sql,
         {

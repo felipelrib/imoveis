@@ -314,7 +314,10 @@ LISTINGS_JSON_AGG = """
     ) AS listings
 """
 
-LIST_SELECT_COLUMNS = f"""
+# Built via plain concatenation (never an f-string) so a future edit cannot
+# accidentally splice an unvalidated fragment into this constant — BIN-135.
+LIST_SELECT_COLUMNS = (
+    """
                 p.id,
                 p.public_id,
                 p.platform,
@@ -362,5 +365,6 @@ LIST_SELECT_COLUMNS = f"""
                 p.props_json,
                 ST_X(p.location::geometry) AS lon,
                 ST_Y(p.location::geometry) AS lat,
-                {LISTINGS_JSON_AGG}
-"""
+                """
+    + LISTINGS_JSON_AGG
+)
