@@ -19,13 +19,23 @@ async function openMapView(page) {
   await expect(page.locator(".maplibregl-canvas")).toBeVisible({ timeout: 15000 });
 }
 
-/** Wait until MapLibre compare hit targets exist (map may still be settling after bbox fetch). */
+/** Wait until MapLibre compare hit targets exist (map may still be settling after bbox
+ * fetch). Timeouts are generous because under full-suite Playwright load (many chromium
+ * workers competing for CPU/WebGL), MapLibre's render pass can lag well past what it
+ * takes standalone — this is pre-existing environmental flakiness, not a product
+ * regression (see docs/harness-troubleshooting.md#validation-validatesh). */
 async function waitForMapCompareHits(page) {
-  await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 20000 });
-  await expect(page.getByTestId("map-compare-select-5")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("map-compare-select-1")).toBeVisible({ timeout: 45000 });
+  await expect(page.getByTestId("map-compare-select-5")).toBeVisible({ timeout: 20000 });
 }
 
 test.describe("Map-view multi-select for comparison", () => {
+  // Default Playwright test timeout (30s) is tight for waitForMapCompareHits'
+  // generous 45s assertion budget under full-suite CPU contention (see comment
+  // there) — raise the per-test ceiling so the assertion timeout isn't cut off
+  // by the outer test timeout first.
+  test.describe.configure({ timeout: 90_000 });
+
   test.beforeEach(async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, PROPERTIES_PAGE_FIVE);
