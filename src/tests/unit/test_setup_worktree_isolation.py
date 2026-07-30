@@ -129,6 +129,40 @@ def test_setup_worktree_skips_nested_creation_when_already_isolated(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_generated_env_local_sets_required_api_key(tmp_path: Path):
+    """Regression: docker-compose.yml hard-requires API_KEY (``${API_KEY:?...}``),
+    so a generated .env.local that omits it makes run-services.sh abort before the
+    stack ever starts — no worktree could boot. The generator must seed a
+    non-empty API_KEY (the non-secret dev default) alongside the port block.
+    """
+    primary = _init_primary_repo(tmp_path)
+
+    completed = subprocess.run(
+        ["bash", str(_SETUP_WORKTREE), "feat/needs-api-key"],
+        cwd=primary,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    env_local = tmp_path / "primary_repo-wt-needs-api-key" / ".env.local"
+    assert env_local.exists(), completed.stdout + completed.stderr
+
+    api_key_lines = [
+        line
+        for line in env_local.read_text().splitlines()
+        if line.startswith("API_KEY=")
+    ]
+    assert api_key_lines, (
+        "generated .env.local is missing API_KEY, which docker-compose.yml "
+        "hard-requires (${API_KEY:?...}); run-services.sh would abort"
+    )
+    value = api_key_lines[-1].split("=", 1)[1].strip()
+    assert value, "API_KEY must be non-empty so the compose :? guard passes"
+
+
+@pytest.mark.unit
 def test_setup_worktree_still_creates_sibling_when_not_already_isolated(tmp_path: Path):
     """Unchanged behavior: invoked from the PRIMARY (not already isolated),
     setup-worktree.sh must still create the sibling worktree as before."""

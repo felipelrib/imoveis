@@ -147,6 +147,10 @@ REDIS_PORT=$RD
 API_PORT=$API
 FRONTEND_PORT=$FE
 PLAYWRIGHT_PORT=$PW
+# docker-compose.yml hard-requires API_KEY (\${API_KEY:?...}); without it
+# run-services.sh aborts before starting the stack. Seed the same non-secret
+# dev default the primary/setup template uses so admin endpoints work locally.
+API_KEY=local-dev-api-key
 EOF
 ok ".env.local written"
 
