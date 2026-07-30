@@ -184,7 +184,7 @@ Every versioned milestone (`v0.N`) is delivered as one or more Linear parent epi
 
 - All settings from `AppConfig` (YAML + env). Never `os.getenv()` outside `config.py`.
 - Never hardcode ports/URLs — env or config.
-- New feature = numbered doc in `docs/features/` + README link when user-facing.
+- New feature = `docs/features/BIN-<id>-<slug>.md` (Linear-ID-prefixed) + README link when user-facing.
 - **Bug fixes require a regression spec** (Playwright and/or pytest) that fails without the fix; do not ship `fix:` as code-only.
 - Single-user for now — design tables with nullable `owner`.
 
@@ -207,13 +207,10 @@ Risk-tiered — not blanket 100% coverage or universal TDD:
 
 ## Feature documentation (NON-NEGOTIABLE)
 
-Every completed feature: `docs/features/<NN>-<feature-slug>.md` using `docs/features/_template.md` verbatim (all sections mandatory). Next number — take `max(local, origin/main) + 1` and never reuse a prefix already on `main` (duplicates like two `31-*` already exist; parallel PRs can race):
+Every completed feature: `docs/features/BIN-<id>-<feature-slug>.md` using `docs/features/_template.md` verbatim (all sections mandatory). **The filename prefix is the Linear issue ID** (`BIN-<id>`) — unique by construction, so parallel PRs never collide (this replaced the old `max(NN)+1` sequential numbering, which raced; see the BIN-146…BIN-147 v0.10 batch). Keep the `Linear: \`BIN-<id>\`` header field in sync with the filename.
 
-```bash
-git fetch origin main
-ls docs/features/ | grep -E '^[0-9]' | sort | tail -1
-git ls-tree --name-only origin/main docs/features/ | grep -E '^[0-9]' | sort | tail -1
-```
+- One doc per ticket. A follow-up/regression with no ticket of its own needs a **placeholder Linear issue** (create it, then name the doc after it) — do not reuse another ticket's ID or fall back to a number.
+- Legacy numeric-prefixed docs (`docs/features/<NN>-*.md`) were migrated to `BIN-<id>-*` in bulk; if you touch one that somehow still has a numeric prefix, rename it to its Linear ID at the same time.
 
 Bugs found during review go only in **Notes / Follow-ups** as `**BUG (Severity)**: description — fix hint.`
 

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# gen-docs.sh <feature-slug> "<Human Readable Title>"
+# gen-docs.sh <feature-slug> "<Human Readable Title>" [BIN-id]
 #
-# Scaffolds docs/features/<NN>-<slug>.md (if absent) from the next free
-# number and adds it to the mkdocs.yml Features nav. The agent fills in
-# the prose, then commits.
+# Scaffolds docs/features/BIN-<id>-<slug>.md (if absent) — named after the
+# Linear issue ID (unique, so parallel PRs never collide) — and adds it to the
+# mkdocs.yml Features nav. The agent fills in the prose, then commits.
+#
+# The BIN id may be passed as the 3rd arg; otherwise it is derived from the
+# current branch name (e.g. `bin-147-...` or `feat/bin-147-...` -> BIN-147).
+# If it cannot be derived, a BIN-XXX placeholder is used and the agent is
+# warned to rename the doc to the real Linear ID before committing.
 #
 # Prints the doc path on the last line.
 # ---------------------------------------------------------------------------
@@ -13,35 +18,35 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-[ $# -ge 1 ] || die "usage: gen-docs.sh <feature-slug> \"<Title>\""
+[ $# -ge 1 ] || die "usage: gen-docs.sh <feature-slug> \"<Title>\" [BIN-id]"
 SLUG="$(sanitize_proj "$1")"
 TITLE="${2:-$SLUG}"
+BIN_ARG="${3:-}"
 cd "$REPO_ROOT"
 
 mkdir -p docs/features
 
-# Next NN from existing numbered docs (01, 02, …)
-LAST_NN="$(
-  find docs/features -maxdepth 1 -name '[0-9][0-9]-*.md' -printf '%f\n' 2>/dev/null \
-    | sed -n 's/^\([0-9][0-9]\)-.*/\1/p' \
-    | sort -n \
-    | tail -1
-)"
-if [ -z "$LAST_NN" ]; then
-  NEXT_NN=1
+# Resolve the Linear issue ID for the filename prefix.
+BRANCH="$(current_branch)"
+if [ -n "$BIN_ARG" ]; then
+  BIN_ID="$(printf '%s' "$BIN_ARG" | grep -oiE 'BIN-[0-9]+' | head -1 || true)"
 else
-  NEXT_NN=$((10#$LAST_NN + 1))
+  # derive from branch: bin-147-... / feat/bin-147-... -> BIN-147
+  BIN_ID="$(printf '%s' "$BRANCH" | grep -oiE 'bin-[0-9]+' | head -1 | tr 'a-z' 'A-Z' || true)"
 fi
-NN="$(printf '%02d' "$NEXT_NN")"
+if [ -z "$BIN_ID" ]; then
+  BIN_ID="BIN-XXX"
+  warn "could not resolve Linear ID (arg or branch) — using placeholder $BIN_ID; RENAME the doc to the real BIN-<id> before committing"
+fi
 
-DOC="docs/features/${NN}-${SLUG}.md"
+DOC="docs/features/${BIN_ID}-${SLUG}.md"
 
 if [ ! -f "$DOC" ]; then
   DIFFSTAT="$(git diff --stat "$(git merge-base HEAD main 2>/dev/null || echo HEAD)"...HEAD 2>/dev/null | tail -n 20 || true)"
   cat > "$DOC" <<EOF
 # $TITLE — <one-line description>
 
-> Feature branch: \`$(current_branch)\` · Linear: \`BIN-XX\` · Status: implemented
+> Feature branch: \`$BRANCH\` · Linear: \`$BIN_ID\` · Status: implemented
 
 ## Problem
 _What user/business problem does this solve? (fill in)_
@@ -74,9 +79,9 @@ fi
 # --- Add to mkdocs.yml Features nav if present --------------------------------
 MKDOCS="mkdocs.yml"
 if [ -f "$MKDOCS" ]; then
-  REL="features/${NN}-${SLUG}.md"
+  REL="features/${BIN_ID}-${SLUG}.md"
   if ! grep -q "$REL" "$MKDOCS"; then
-    LAST_FEATURE=$(grep -n "features/[0-9]" "$MKDOCS" | tail -1 || true)
+    LAST_FEATURE=$(grep -nE "features/(BIN-[0-9]+|[0-9])" "$MKDOCS" | tail -1 || true)
     if [ -n "$LAST_FEATURE" ]; then
       LINE_NUM=$(echo "$LAST_FEATURE" | cut -d: -f1)
       sed -i "${LINE_NUM}a\\      - $TITLE: $REL" "$MKDOCS"

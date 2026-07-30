@@ -9,7 +9,7 @@
 #     PYTHONPATH=src python scripts/dev/build_bh_safety_rates.py \
 #       --bairro-csv data/safety/sejusp_bh_bairro.csv \
 #       --out data/safety/bh_crime_rates.yaml
-#   See docs/features/73-bh-crime-safety-rates.md.
+#   See docs/features/BIN-96-bh-crime-safety-rates.md.
 #
 # São Paulo (secondary):
 #   1. Download BO microdata from SSP-SP Transparência / Dados Abertos.

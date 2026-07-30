@@ -4,7 +4,7 @@
 # Large municipal dumps belong under data/geo/ (gitignored); do not commit them.
 #
 # Convert SHP/WFS exports to GeoJSON locally (ogr2ogr / QGIS). The loader never
-# fetches municipal URLs — see docs/features/68-flood-environmental-risk-overlays.md.
+# fetches municipal URLs — see docs/features/BIN-91-flood-environmental-risk-overlays.md.
 
 cities:
   - city: Belo Horizonte
