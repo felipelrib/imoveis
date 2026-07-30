@@ -349,6 +349,13 @@ export default function MapView({
       updateMarkersRef.current?.(map, propertiesRef.current || [])
     })
 
+    // Deterministic readiness signal for tests / consumers: the map has fully
+    // settled (style + tiles rendered) at least once. Lets e2e wait on a real
+    // event instead of a guessed timeout (BIN-189).
+    map.once('idle', () => {
+      mapContainer.current?.setAttribute('data-map-ready', 'true')
+    })
+
     map.on('moveend', () => {
       const b = map.getBounds()
       const bboxStr = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`
@@ -365,11 +372,20 @@ export default function MapView({
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update markers when properties / compare selection change
+  // Update markers when properties / compare selection change.
+  // If the style is still settling (`isStyleLoaded()` false — common under CPU
+  // contention, and transiently even after `load` during tile/style diffing),
+  // defer to the next `idle` instead of dropping the sync forever (BIN-189).
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !map.isStyleLoaded()) return
-    updateMarkers(map, properties || [])
+    if (!map) return
+    const run = () => updateMarkers(map, properties || [])
+    if (map.isStyleLoaded()) {
+      run()
+      return
+    }
+    map.once('idle', run)
+    return () => map.off('idle', run)
   }, [properties, listingType, compareMode, selectedIds, updateMarkers])
 
   return (
