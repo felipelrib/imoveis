@@ -1,4 +1,11 @@
+import type { Dispatch, SetStateAction } from 'react'
 import { getPageWindow } from '../../hooks/usePropertiesPagination.js'
+
+export interface PropertiesPaginationProps {
+  page: number
+  pages: number
+  onPageChange: Dispatch<SetStateAction<number>>
+}
 
 /**
  * Numbered pager for the properties grid. Mirrors the exact button set +
@@ -10,7 +17,7 @@ import { getPageWindow } from '../../hooks/usePropertiesPagination.js'
  * Rendering (whether `pages > 1`, whether we're in the favourites view) is
  * still gated by the caller, same as pre-split.
  */
-export default function PropertiesPagination({ page, pages, onPageChange }) {
+export default function PropertiesPagination({ page, pages, onPageChange }: PropertiesPaginationProps) {
   return (
     <div className="pagination">
       <button className="page-btn" onClick={() => onPageChange(1)} disabled={page === 1}>«</button>

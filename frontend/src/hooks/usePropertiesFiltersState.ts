@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { fromSavedSearchWire } from '../savedSearchFilters.js'
+import type { PropertyFilterOptions, ListingType, PriceType, SortDir } from '../api.js'
 
 export const DEFAULT_FILTERS = {
   sortBy: 'combined_score',
@@ -23,7 +24,7 @@ export const DEFAULT_FILTERS = {
  * Owns every filter/sort/search input on the Properties page (the "toolbar +
  * advanced filters" state slice), plus the derived query-filter shape and
  * saved-search apply/clear helpers. Pure state + derivations — fetching
- * (`load()`, the refetch effects) stays owned by Properties.jsx since it
+ * (`load()`, the refetch effects) stays owned by Properties.tsx since it
  * also depends on `page`/`viewMode`, which live outside this hook.
  *
  * Extracted verbatim from the pre-split Properties.jsx (BIN-141) — no
@@ -55,21 +56,21 @@ export function usePropertiesFiltersState() {
     minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
   }
 
-  const buildListQueryFilters = useCallback(() => {
+  const buildListQueryFilters = useCallback((): PropertyFilterOptions => {
     const isPriceDesc = sortBy === 'price_desc'
     const actualSortBy = isPriceDesc ? 'price' : sortBy
     const actualSortDir = sortBy === 'price' ? 'asc' : isPriceDesc ? 'desc' : sortDir
     return {
       sortBy: actualSortBy,
-      sortDir: actualSortDir,
+      sortDir: actualSortDir as SortDir,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-      priceType: maxPrice ? priceType : undefined,
+      priceType: maxPrice ? (priceType as PriceType) : undefined,
       minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
       minScore: minScore ? parseFloat(minScore) : undefined,
       minParking: minParking ? parseInt(minParking) : undefined,
       neighborhoodName: neighborhood || undefined,
       cityName: city || undefined,
-      listingType,
+      listingType: listingType as ListingType,
       propertyType: propertyType || undefined,
       platform: platform || undefined,
       isFurnished: isFurnished ? true : undefined,
@@ -78,25 +79,25 @@ export function usePropertiesFiltersState() {
     }
   }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
 
-  const applyFilters = useCallback((rawFilters) => {
+  const applyFilters = useCallback((rawFilters: Record<string, unknown>) => {
     const filters = fromSavedSearchWire(rawFilters)
-    if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
-    if (filters.sortDir !== undefined) setSortDir(filters.sortDir)
-    if (filters.listingType !== undefined) setListingType(filters.listingType)
-    if (filters.propertyType !== undefined) setPropertyType(filters.propertyType)
-    if (filters.platform !== undefined) setPlatform(filters.platform)
+    if (filters.sortBy !== undefined) setSortBy(filters.sortBy as string)
+    if (filters.sortDir !== undefined) setSortDir(filters.sortDir as string)
+    if (filters.listingType !== undefined) setListingType(filters.listingType as string)
+    if (filters.propertyType !== undefined) setPropertyType(filters.propertyType as string)
+    if (filters.platform !== undefined) setPlatform(filters.platform as string)
     if (filters.maxPrice !== undefined) setMaxPrice(String(filters.maxPrice))
-    if (filters.priceType !== undefined) setPriceType(filters.priceType)
+    if (filters.priceType !== undefined) setPriceType(filters.priceType as string)
     if (filters.minBedrooms !== undefined) setMinBedrooms(String(filters.minBedrooms))
     if (filters.minParking !== undefined) setMinParking(String(filters.minParking))
     if (filters.minScore !== undefined) setMinScore(String(filters.minScore))
-    if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood)
-    if (filters.city !== undefined) setCity(filters.city)
-    if (filters.isFurnished !== undefined) setIsFurnished(filters.isFurnished)
-    if (filters.acceptsPets !== undefined) setAcceptsPets(filters.acceptsPets)
+    if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood as string)
+    if (filters.city !== undefined) setCity(filters.city as string)
+    if (filters.isFurnished !== undefined) setIsFurnished(Boolean(filters.isFurnished))
+    if (filters.acceptsPets !== undefined) setAcceptsPets(Boolean(filters.acceptsPets))
     if (filters.q !== undefined) {
-      setQ(filters.q)
-      setQDraft(filters.q)
+      setQ(filters.q as string)
+      setQDraft(filters.q as string)
     }
   }, [])
 
@@ -121,7 +122,7 @@ export function usePropertiesFiltersState() {
 
   const hasActiveFilters = Object.entries(currentFilters).some(([key, value]) => {
     if (key === 'priceType') return Boolean(maxPrice)
-    const defaults = DEFAULT_FILTERS[key]
+    const defaults = (DEFAULT_FILTERS as Record<string, string | boolean>)[key]
     if (defaults !== undefined) return value !== defaults && Boolean(value)
     return Boolean(value)
   })

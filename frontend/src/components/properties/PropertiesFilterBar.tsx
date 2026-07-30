@@ -1,5 +1,8 @@
+import type { Dispatch, SetStateAction } from 'react'
 import SearchableMultiSelect from '../SearchableMultiSelect.jsx'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../../labels.js'
+import type { City, Neighborhood, ExportFormat } from '../../api.js'
+import type { TFunction } from '../../i18n/LocaleContext.jsx'
 
 const SORT_OPTIONS = [
   { value: 'combined_score', labelKey: 'properties.sortBestScore' },
@@ -8,6 +11,53 @@ const SORT_OPTIONS = [
   { value: 'created_at', labelKey: 'properties.sortNewest' },
   { value: 'area_m2', labelKey: 'properties.sortArea' },
 ]
+
+export interface PropertiesFilterBarProps {
+  t: TFunction
+  qDraft: string
+  setQDraft: Dispatch<SetStateAction<string>>
+  q: string
+  setQ: Dispatch<SetStateAction<string>>
+  sortBy: string
+  setSortBy: Dispatch<SetStateAction<string>>
+  listingType: string
+  setListingType: Dispatch<SetStateAction<string>>
+  setPriceType: Dispatch<SetStateAction<string>>
+  platform: string
+  setPlatform: Dispatch<SetStateAction<string>>
+  propertyType: string
+  setPropertyType: Dispatch<SetStateAction<string>>
+  exporting: boolean
+  onExport: (format: ExportFormat) => void
+  viewType: string
+  setViewType: Dispatch<SetStateAction<string>>
+  compareMode: boolean
+  onToggleCompareMode: () => void
+  showAdvanced: boolean
+  setShowAdvanced: Dispatch<SetStateAction<boolean>>
+  maxPrice: string
+  setMaxPrice: Dispatch<SetStateAction<string>>
+  priceType: string
+  minBedrooms: string
+  setMinBedrooms: Dispatch<SetStateAction<string>>
+  minParking: string
+  setMinParking: Dispatch<SetStateAction<string>>
+  minScore: string
+  setMinScore: Dispatch<SetStateAction<string>>
+  isFurnished: boolean
+  setIsFurnished: Dispatch<SetStateAction<boolean>>
+  acceptsPets: boolean
+  setAcceptsPets: Dispatch<SetStateAction<boolean>>
+  citiesLoading: boolean
+  cities: City[]
+  city: string
+  setCity: Dispatch<SetStateAction<string>>
+  neighborhoodsLoading: boolean
+  neighborhoods: Neighborhood[]
+  neighborhood: string
+  setNeighborhood: Dispatch<SetStateAction<string>>
+  onClearAdvanced: () => void
+}
 
 /**
  * Toolbar (search / sort / transaction / source / type / export / view /
@@ -62,7 +112,7 @@ export default function PropertiesFilterBar({
   neighborhood,
   setNeighborhood,
   onClearAdvanced,
-}) {
+}: PropertiesFilterBarProps) {
   return (
     <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>

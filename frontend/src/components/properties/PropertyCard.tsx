@@ -1,3 +1,4 @@
+import type { SyntheticEvent } from 'react'
 import { Star, Bell } from 'lucide-react'
 import {
   combinedScoreForListingType,
@@ -12,42 +13,59 @@ import {
 import { formatPlatform } from '../../labels.js'
 import { formatNumber, formatCurrency } from '../../i18n/format.js'
 import { linkIdForProperty } from '../../routes/propertyPaths.js'
+import type { Property, PropertyListing } from '../../api.js'
+import type { TFunction } from '../../i18n/LocaleContext.jsx'
 
 // Moved verbatim from the pre-split Properties.jsx (BIN-141) — no behavior,
 // DOM, or data-testid change.
 
-function scoreColor(v) {
+function scoreColor(v: number | null | undefined): string {
   if (v == null) return 'var(--text-muted)'
   if (v >= 0.7) return 'var(--score-high)'
   if (v >= 0.4) return 'var(--score-mid)'
   return 'var(--score-low)'
 }
 
-function displayScore(v) {
-  const n = parseFloat(v);
+function displayScore(v: number | string | null | undefined): string {
+  const n = parseFloat(String(v));
   return isNaN(n) ? '—' : (n * 100).toFixed(0);
 }
 
-function getPlatformCount(listings) {
+function getPlatformCount(listings: PropertyListing[] | null | undefined): number {
   if (!listings || listings.length === 0) return 0
   return new Set(listings.map(l => l.platform)).size
 }
 
-function formatListingType(type, t) {
+function formatListingType(type: string, t: TFunction): string {
   if (type === 'rent') return t('common.rentUpper')
   return t('common.saleUpper')
 }
 
-function listingTypeColor(type) {
+function listingTypeColor(type: string): { bg: string; color: string } {
   if (type === 'rent') return { bg: 'rgba(99,102,241,0.2)', color: '#818cf8' }
   return { bg: 'rgba(16,185,129,0.2)', color: '#34d399' }
 }
 
-function formatLocationLabel(neighborhoodName, city) {
+function formatLocationLabel(neighborhoodName: string | null | undefined, city: string | null | undefined): string {
   const nb = (neighborhoodName || '').trim()
   const c = (city || '').trim()
   if (nb && c && nb.toLowerCase() !== c.toLowerCase()) return `${nb}, ${c}`
   return nb || c || ''
+}
+
+export interface PropertyCardProps {
+  property: Property
+  listingType?: string
+  onClick: () => void
+  isWatched: boolean
+  onToggleWatchlist: (e: SyntheticEvent, id: string) => void
+  isFavourited: boolean
+  onToggleFavourite: (e: SyntheticEvent, id: string) => void
+  compareMode?: boolean
+  isCompareSelected: boolean
+  onToggleCompare: (e: SyntheticEvent, property: Property) => void
+  t: TFunction
+  locale: string
 }
 
 export default function PropertyCard({
@@ -63,7 +81,7 @@ export default function PropertyCard({
   onToggleCompare,
   t,
   locale,
-}) {
+}: PropertyCardProps) {
   const img = (p.image_urls || [])[0]
   const listings = p.listings || []
   const groups = groupListings(listings)
@@ -106,7 +124,7 @@ export default function PropertyCard({
         </label>
       )}
       {img
-        ? <img className="property-image" src={img} alt={p.title || t('common.propertyAlt')} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
+        ? <img className="property-image" src={img} alt={p.title || t('common.propertyAlt')} loading="lazy" onError={(e) => { const el = e.currentTarget; el.style.display = 'none'; const sib = el.nextSibling; if (sib instanceof HTMLElement) sib.style.display = 'flex' }} />
         : null
       }
       <div className="property-image-placeholder" style={{ display: img ? 'none' : 'flex' }}>🏠</div>

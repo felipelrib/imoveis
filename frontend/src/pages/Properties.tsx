@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type SyntheticEvent } from 'react'
 import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
-import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods, fetchCities } from '../api.js'
+import {
+  fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist,
+  fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite,
+  removeFavourite, fetchNeighborhoods, fetchCities,
+  type Property, type PaginatedProperties, type FavouriteWithProperty,
+  type SavedSearchItem, type Neighborhood, type City, type ExportFormat,
+  type SortDir, type PriceType, type ListingType,
+} from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
@@ -24,6 +31,8 @@ import {
   linkIdForProperty,
 } from '../routes/propertyPaths.js'
 
+const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 export default function Properties() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -34,7 +43,7 @@ export default function Properties() {
     || location.pathname.startsWith(`${FAVOURITES_PATH}/`)
   const isCompareRoute = location.pathname.startsWith('/compare/')
 
-  const [data, setData] = useState(null)
+  const [data, setData] = useState<PaginatedProperties | null>(null)
   const [loading, setLoading] = useState(true)
   const { page, setPage } = usePropertiesPagination()
   const {
@@ -62,9 +71,9 @@ export default function Properties() {
     clearAllFilters,
     clearFiltersKeepSearch,
   } = usePropertiesFiltersState()
-  const [loadError, setLoadError] = useState(null)
-  const [watchedIds, setWatchedIds] = useState(new Set())
-  const [favouriteIds, setFavouriteIds] = useState(new Set())
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set())
+  const [favouriteIds, setFavouriteIds] = useState<Set<string>>(new Set())
   const showToast = useToast()
   const { t, locale } = useLocale()
 
@@ -87,7 +96,7 @@ export default function Properties() {
   const listReturnPath = isFavouritesRoute ? FAVOURITES_PATH : PROPERTIES_PATH
   const returnToRef = useRef(listReturnPath)
 
-  const openProperty = useCallback((propertyOrId) => {
+  const openProperty = useCallback((propertyOrId: Property | string | number) => {
     const linkId = typeof propertyOrId === 'object'
       ? linkIdForProperty(propertyOrId)
       : (parsePropertyId(String(propertyOrId)) || String(propertyOrId))
@@ -96,7 +105,7 @@ export default function Properties() {
     navigate(propertyPath(linkId), { state: { returnTo: returnToRef.current, compareIds } })
   }, [navigate, isFavouritesRoute, compareIds])
 
-  const handleToggleCompare = useCallback((e, property) => {
+  const handleToggleCompare = useCallback((e: SyntheticEvent, property: Property) => {
     e.stopPropagation()
     const linkId = linkIdForProperty(property)
     if (!linkId) return
@@ -138,23 +147,23 @@ export default function Properties() {
   }, [clearCompare, navigate, location.state])
 
   // Saved searches state
-  const [savedSearches, setSavedSearches] = useState([])
+  const [savedSearches, setSavedSearches] = useState<SavedSearchItem[]>([])
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [saveName, setSaveName] = useState('')
 
   // View mode derived from URL: 'all' | 'favourites'
   const viewMode = isFavouritesRoute ? 'favourites' : 'all'
-  const [favouritesData, setFavouritesData] = useState({ items: [], total: 0 })
+  const [favouritesData, setFavouritesData] = useState<{ items: FavouriteWithProperty[]; total: number }>({ items: [], total: 0 })
 
   // Dynamic neighborhoods / cities from backend
-  const [neighborhoods, setNeighborhoods] = useState([])
+  const [neighborhoods, setNeighborhoods] = useState<Neighborhood[]>([])
   const [neighborhoodsLoading, setNeighborhoodsLoading] = useState(false)
-  const [cities, setCities] = useState([])
+  const [cities, setCities] = useState<City[]>([])
   const [citiesLoading, setCitiesLoading] = useState(false)
 
   // View mode: 'grid' | 'map'
   const [viewType, setViewType] = useState('grid')
-  const [mapProperties, setMapProperties] = useState([])
+  const [mapProperties, setMapProperties] = useState<Property[]>([])
   const [mapLoading, setMapLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
 
@@ -187,35 +196,35 @@ export default function Properties() {
     }
   }, [propertyIdParam, routePropertyId, navigate])
 
-  const handleExport = useCallback(async (format) => {
+  const handleExport = useCallback(async (format: ExportFormat) => {
     if (exporting) return
     setExporting(true)
     try {
       await exportProperties({ format, ...buildListQueryFilters() })
     } catch (err) {
       console.error('Export failed:', err)
-      showToast(t('properties.toastExportFailed', { message: err.message || t('common.unknownError') }), { type: 'error' })
+      showToast(t('properties.toastExportFailed', { message: errMessage(err) || t('common.unknownError') }), { type: 'error' })
     } finally {
       setExporting(false)
     }
   }, [exporting, buildListQueryFilters, showToast, t])
 
-  const handleBboxChange = useCallback(async (bboxStr) => {
+  const handleBboxChange = useCallback(async (bboxStr: string) => {
     setMapLoading(true)
     try {
       const res = await fetchProperties({
         page: 1,
         pageSize: 200,
         sortBy: sortBy === 'price_desc' ? 'price' : sortBy,
-        sortDir: sortBy === 'price_desc' ? 'desc' : sortDir,
+        sortDir: (sortBy === 'price_desc' ? 'desc' : sortDir) as SortDir,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-        priceType: maxPrice ? priceType : undefined,
+        priceType: maxPrice ? (priceType as PriceType) : undefined,
         minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
         neighborhoodName: neighborhood || undefined,
         cityName: city || undefined,
-        listingType: listingType,
+        listingType: listingType as ListingType,
         propertyType: propertyType || undefined,
         platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
@@ -240,11 +249,11 @@ export default function Properties() {
       setLoading(true)
       setLoadError(null)
       try {
-        const favs = await fetchFavourites({ page: p, pageSize: 24, sortBy: actualSortBy, sortDir: actualSortDir })
+        const favs = await fetchFavourites({ page: p, pageSize: 24, sortBy: actualSortBy, sortDir: actualSortDir as SortDir })
         setFavouritesData(favs)
       } catch (e) {
         console.error(e)
-        setLoadError(e.message || t('properties.failedToLoadFavourites'))
+        setLoadError(errMessage(e) || t('properties.failedToLoadFavourites'))
       } finally {
         setLoading(false)
       }
@@ -254,22 +263,18 @@ export default function Properties() {
     setLoading(true)
     setLoadError(null)
     try {
-      const isPriceDesc = sortBy === 'price_desc'
-      const actualSortBy = isPriceDesc ? 'price' : sortBy
-      const actualSortDir = sortBy === 'price' ? 'asc' : isPriceDesc ? 'desc' : sortDir
-
       const res = await fetchProperties({
         page: p,
         sortBy: actualSortBy,
-        sortDir: actualSortDir,
+        sortDir: actualSortDir as SortDir,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-        priceType: maxPrice ? priceType : undefined,
+        priceType: maxPrice ? (priceType as PriceType) : undefined,
         minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
         minScore: minScore ? parseFloat(minScore) : undefined,
         minParking: minParking ? parseInt(minParking) : undefined,
         neighborhoodName: neighborhood || undefined,
         cityName: city || undefined,
-        listingType: listingType,
+        listingType: listingType as ListingType,
         propertyType: propertyType || undefined,
         platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
@@ -279,7 +284,7 @@ export default function Properties() {
       setData(res)
     } catch (e) {
       console.error(e)
-      setLoadError(e.message || t('properties.failedToLoad'))
+      setLoadError(errMessage(e) || t('properties.failedToLoad'))
       setData(null)
     } finally {
       setLoading(false)
@@ -311,7 +316,7 @@ export default function Properties() {
       .finally(() => setCitiesLoading(false))
   }, [])
 
-  const toggleWatchlist = useCallback(async (e, propertyId) => {
+  const toggleWatchlist = useCallback(async (e: SyntheticEvent, propertyId: string) => {
     e.stopPropagation()
     try {
       if (watchedIds.has(propertyId)) {
@@ -327,7 +332,7 @@ export default function Properties() {
     }
   }, [watchedIds, showToast, t])
 
-  const toggleFavourite = useCallback(async (e, propertyId) => {
+  const toggleFavourite = useCallback(async (e: SyntheticEvent, propertyId: string) => {
     e.stopPropagation()
     try {
       if (favouriteIds.has(propertyId)) {
@@ -373,7 +378,7 @@ export default function Properties() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
   }, [page])
 
-  const handleViewModeChange = (mode) => {
+  const handleViewModeChange = (mode: string) => {
     setPage(1)
     if (mode === 'favourites') {
       navigate(FAVOURITES_PATH, { state: { compareIds } })
@@ -397,7 +402,7 @@ export default function Properties() {
     }
   }
 
-  const handleDeleteSavedSearch = async (e, id) => {
+  const handleDeleteSavedSearch = async (e: SyntheticEvent, id: string) => {
     e.stopPropagation()
     try {
       await deleteSavedSearch(id)
@@ -409,19 +414,21 @@ export default function Properties() {
     }
   }
 
-  const handleApplySavedSearch = (filters) => {
+  const handleApplySavedSearch = (filters: Record<string, unknown>) => {
     navigate(PROPERTIES_PATH, { state: { compareIds } })
     applyFilters(filters)
   }
 
   const totalResults = viewMode === 'favourites' ? favouritesData.total : (data?.total || 0)
   // Favourites API uses property_id (+ public_id); cards need UUID on `id` for watchlist/favourites.
-  const properties = viewMode === 'favourites'
+  // The favourites projection is a partial Property (many fields absent); PropertyCard tolerates
+  // the missing fields at runtime, so we assert the reshaped rows as Property[] for the grid.
+  const properties: Property[] = viewMode === 'favourites'
     ? (favouritesData.items || []).map((f) => ({
         ...f,
         id: f.property_id || f.id,
         public_id: f.public_id,
-      }))
+      })) as unknown as Property[]
     : (data?.properties || [])
   const pages = viewMode === 'favourites' ? Math.ceil(totalResults / 24) : (data?.pages || 1)
 
@@ -572,11 +579,6 @@ export default function Properties() {
               compareMode={compareMode}
               selectedIds={compareIds}
               onToggleCompare={(propertyOrId) => {
-                if (propertyOrId && typeof propertyOrId === 'object') {
-                  const linkId = linkIdForProperty(propertyOrId)
-                  if (linkId) toggleCompare(linkId)
-                  return
-                }
                 const list = mapProperties.length > 0 ? mapProperties : (data?.properties || [])
                 const key = String(propertyOrId)
                 const match = list.find(
