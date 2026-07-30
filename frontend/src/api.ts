@@ -395,16 +395,13 @@ export async function triggerScrape(
   checkpoint: ScrapeCheckpoint = {},
   scrapeType = 'both',
 ): Promise<ScrapeTriggerResult> {
-  const r = await fetch(`${BASE}/scrape`, {
+  // /scrape requires an admin credential (BIN-149) — routed through apiFetch
+  // so the stored X-API-Key is attached like other gated admin actions
+  // (enrichMissing, triggerAvailabilityRecheck, ...).
+  return apiFetch<ScrapeTriggerResult>('/scrape', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform, checkpoint, scrape_type: scrapeType }),
+    body: { platform, checkpoint, scrape_type: scrapeType },
   })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    throw new Error(apiError('errors.scrapeTriggerFailed', err.detail))
-  }
-  return r.json()
 }
 
 /** Shared filter query params for list + export (same surface as GET /properties). */

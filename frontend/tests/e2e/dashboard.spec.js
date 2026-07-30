@@ -9,7 +9,6 @@ import {
   mockPlatforms,
   mockPropertiesList,
   mockPropertyDetail,
-  mockScrapeTrigger,
 } from "./helpers/apiMocks.js";
 
 test.describe("Dashboard page", () => {
@@ -259,20 +258,50 @@ test.describe("Properties critical path", () => {
 });
 
 test.describe("Scraper control critical path", () => {
-  test("shows platforms and triggers scrape", async ({ page }) => {
+  test("requires an API credential and triggers scrape once set (BIN-149)", async ({ page }) => {
+    /** @type {string[]} */
+    const scrapeKeys = [];
+    let scrapePosts = 0;
+
     await installCommonMocks(page);
     await mockPlatforms(page);
-    await mockScrapeTrigger(page, { task_id: "task-e2e-1" });
+    await mockAdminHealth(page, { validKey: "e2e-test-api-key" });
+
+    await page.route("**/api/scrape", async (route) => {
+      scrapePosts += 1;
+      scrapeKeys.push(route.request().headers()["x-api-key"] || "");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ task_id: "task-e2e-1", platform: "olx", status: "queued" }),
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate(() => sessionStorage.clear());
 
     await page.goto("/scraper");
     await expect(page.locator("select.form-select").first()).toBeVisible();
     await expect(page.locator("option[value='olx']")).toHaveCount(1);
     await expect(page.locator("option[value='quintoandar']")).toHaveCount(1);
 
+    // /scrape is now admin-gated (BIN-149): without a stored credential the
+    // client short-circuits before any request reaches the (mocked) server.
+    await page.getByRole("button", { name: /Run Scraper/i }).click();
+    await expect(page.getByText("Set an API credential to trigger a scrape")).toBeVisible();
+    await expect.poll(() => scrapePosts, { timeout: 1500 }).toBe(0);
+
+    await page.getByTestId("credential-input").fill("e2e-test-api-key");
+    await page.getByTestId("credential-save").click();
+    await expect(page.getByTestId("credential-status")).toHaveText("set");
+
+    await page.goto("/scraper");
     await page.getByRole("button", { name: /Run Scraper/i }).click();
     await expect(page.getByText(/Scraper enqueued|Task enqueued|Enqueuing/i).first()).toBeVisible({
       timeout: 10000,
     });
+    await expect.poll(() => scrapePosts).toBe(1);
+    await expect.poll(() => scrapeKeys.some((k) => k === "e2e-test-api-key")).toBeTruthy();
   });
 
   test("skips schedule poll without credential and attaches key when set", async ({ page }) => {
