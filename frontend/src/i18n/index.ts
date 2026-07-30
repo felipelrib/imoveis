@@ -13,8 +13,12 @@ export type MessageNode = string | { [key: string]: MessageNode }
 /** A full message catalog for one locale (dotted keys resolved via `lookup`). */
 export type Catalog = Record<string, MessageNode>
 
-/** `{placeholder}` interpolation params passed to `t()`. */
-export type TranslateParams = Record<string, string | number>
+/**
+ * `{placeholder}` interpolation params passed to `t()`. Values may be null/undefined —
+ * `interpolate` renders those as the literal `{key}` placeholder (unchanged runtime
+ * behaviour), so callers can forward optional fields without pre-coercing them.
+ */
+export type TranslateParams = Record<string, string | number | null | undefined>
 
 export const CATALOGS: Record<string, Catalog> = {
   en,

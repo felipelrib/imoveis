@@ -17,7 +17,15 @@ function RouteMatch() {
   return null
 }
 
-const NAV = [
+interface NavEntry {
+  path: string
+  icon: string
+  labelKey: string
+  end: boolean
+  propertiesSurface?: boolean
+}
+
+const NAV: NavEntry[] = [
   { path: '/',           icon: '⚡', labelKey: 'nav.dashboard', end: true },
   { path: '/scraper',    icon: '🕸️', labelKey: 'nav.scraper', end: true },
   { path: '/properties', icon: '🏘️', labelKey: 'nav.properties', end: false, propertiesSurface: true },
@@ -122,7 +130,15 @@ function AppShell() {
   )
 }
 
-function NavItem({ path, icon, label, end, propertiesSurface }) {
+interface NavItemProps {
+  path: string
+  icon: string
+  label: string
+  end: boolean
+  propertiesSurface?: boolean
+}
+
+function NavItem({ path, icon, label, end, propertiesSurface }: NavItemProps) {
   const location = useLocation()
   return (
     <NavLink
@@ -141,7 +157,13 @@ function NavItem({ path, icon, label, end, propertiesSurface }) {
   )
 }
 
-function ServiceDot({ label, ok, loading }) {
+interface ServiceDotProps {
+  label: string
+  ok: boolean
+  loading: boolean
+}
+
+function ServiceDot({ label, ok, loading }: ServiceDotProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
       <span
