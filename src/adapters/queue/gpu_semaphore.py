@@ -7,6 +7,11 @@ from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
 
+# Fallback TTL (seconds) for the "held slot" Redis key when a caller does not
+# pass an explicit `slot_ttl`. Matches the pre-BIN-147 default so callers that
+# don't opt in keep their prior (already generous) behavior.
+DEFAULT_SLOT_TTL_SECONDS = 3600
+
 
 class GPUSemaphore:
     """A Redis-backed counting semaphore to control concurrent GPU jobs.
@@ -17,7 +22,7 @@ class GPUSemaphore:
     Usage::
 
         sem = GPUSemaphore()
-        if sem.acquire(timeout=30):
+        if sem.acquire(slot_ttl=TASK_HARD_TIME_LIMIT_SECONDS + margin):
             try:
                 # Do work
                 pass
@@ -46,8 +51,27 @@ class GPUSemaphore:
             # Fallback para valor padrão em caso de falha
             return self._default_limit
 
-    def acquire(self, timeout: Optional[int] = None) -> bool:
-        """Acquire a semaphore slot."""
+    def acquire(self, timeout: Optional[int] = None, *, slot_ttl: Optional[int] = None) -> bool:
+        """Acquire a semaphore slot.
+
+        Args:
+            timeout: caller's wait-intent in seconds, e.g. the countdown a
+                Celery task plans to `self.retry()` with. NOTE: ``acquire()``
+                is a one-shot check-and-decrement with no retry/wait loop —
+                this value is accepted for call-site documentation / backward
+                compatibility only and is **not** used as the Redis key TTL.
+                Using it that way was BIN-147: a 30s wait-intent expired the
+                "held slot" marker mid-task (VLM+sentiment analysis routinely
+                runs longer), silently reporting the slot free again and
+                oversubscribing the GPU. Use ``slot_ttl`` instead.
+            slot_ttl: seconds the "held slot" Redis key should live once
+                acquired. Callers should pass a value that exceeds the actual
+                caller task's hard time limit (e.g. Celery ``time_limit``) so
+                the slot marker cannot expire before the task finishes or is
+                force-killed. Defaults to ``DEFAULT_SLOT_TTL_SECONDS`` when
+                not given.
+        """
+        ttl = slot_ttl if slot_ttl is not None else DEFAULT_SLOT_TTL_SECONDS
         try:
             # Usar transação Redis para garantir atomicidade
             pipe = self.redis_client.pipeline()
@@ -64,7 +88,7 @@ class GPUSemaphore:
                     if current_value > 0:
                         # Reduzir o contador
                         pipe.multi()
-                        pipe.setex(f"semaphore:{self.name}", timeout or 3600, current_value - 1)
+                        pipe.setex(f"semaphore:{self.name}", ttl, current_value - 1)
                         pipe.execute()
                         return True
                     else:

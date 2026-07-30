@@ -64,6 +64,25 @@ REDIS_KEY_AI_PAUSED = "workers:ai:paused"
 REDIS_KEY_SCRAPER_TELEMETRY = "pipeline:scraper:telemetry"
 SCRAPER_TELEMETRY_MAX = 100
 
+# ai_enrich hard/soft Celery time limits (BIN-147). analyze_visual_and_sentiment
+# runs the VLM + text calls sequentially (enrich_pipeline.py), each bounded by
+# cfg.ai.timeout (default 120s) with up to 3 JSON-retry attempts, plus image
+# download time for up to cfg.ai.max_images_per_property images — routinely
+# well past a 30s budget. `soft_time_limit` raises SoftTimeLimitExceeded inside
+# the task so our own `finally: sem.release()` still runs; `time_limit` is the
+# hard SIGKILL backstop Celery applies to the worker child, which bypasses
+# Python exception handling entirely (no `finally`).
+AI_ENRICH_TIME_LIMIT_SECONDS = 600
+AI_ENRICH_SOFT_TIME_LIMIT_SECONDS = 570
+
+# GPUSemaphore "held slot" Redis key TTL for ai_enrich (BIN-147). Must exceed
+# AI_ENRICH_TIME_LIMIT_SECONDS so the slot marker cannot expire — and silently
+# report `available` slots to another task — before this task actually
+# finishes or is hard-killed. Previously this reused the caller's 30s
+# wait-intent `timeout`, which is unrelated to how long the held task actually
+# runs (the root cause of BIN-147's GPU oversubscription).
+AI_ENRICH_GPU_SLOT_TTL_SECONDS = AI_ENRICH_TIME_LIMIT_SECONDS + 60
+
 celery = make_celery()
 
 
@@ -670,6 +689,8 @@ def _persist_ai_scores(session, property_id: str, a_score: float, meta: dict, cf
     name="tasks.ai_enrich",
     bind=True,
     max_retries=5,
+    time_limit=AI_ENRICH_TIME_LIMIT_SECONDS,
+    soft_time_limit=AI_ENRICH_SOFT_TIME_LIMIT_SECONDS,
 )
 def ai_enrich(
     self,
@@ -704,7 +725,10 @@ def ai_enrich(
         raise self.retry(countdown=60, exc=Exception("AI workers paused"))
 
     sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
-    acquired = sem.acquire(timeout=30)
+    # `timeout` here is the retry/backoff wait-intent for the caller (see
+    # self.retry(countdown=30) below), NOT the held-slot TTL — that comes from
+    # `slot_ttl`, decoupled per BIN-147.
+    acquired = sem.acquire(timeout=30, slot_ttl=AI_ENRICH_GPU_SLOT_TTL_SECONDS)
     if not acquired:
         logger.warning("ai_enrich_gpu_busy", property_id=property_id)
         raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
