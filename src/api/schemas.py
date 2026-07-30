@@ -34,7 +34,7 @@ class PropertyModel(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
     stat_score: Optional[float] = None
-    ai_score: Optional[float] = None
+    ai_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     combined_score: Optional[float] = None
     percentile_rank: Optional[float] = None
     z_score: Optional[float] = None
@@ -63,9 +63,10 @@ class PropertyModel(BaseModel):
     ai_issues: List[str] = []
     ai_green_flags: List[str] = []
     ai_red_flags: List[str] = []
-    # AI domain scores are floats in [0.0, 1.0] (see VisualResult / SentimentResult).
-    condition_score: Optional[float] = None
-    sentiment_score: Optional[float] = None
+    # AI domain scores are floats in [0.0, 1.0] (see VisualResult / SentimentResult;
+    # clamped at the Ollama-response parsing boundary in adapters/ai/client.py — BIN-148).
+    condition_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    sentiment_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     stat_category: Optional[str] = None
     stat_reasoning: Optional[str] = None
     deal_summary: Optional[str] = None
@@ -155,7 +156,9 @@ class PropertyDetailModel(BaseModel):
     created_at: Optional[str] = None
     props_json: Dict[str, Any]
     stat_score: Optional[float] = None
-    ai_score: Optional[float] = None
+    # AI domain score is a float in [0.0, 1.0] (see VisualResult / SentimentResult;
+    # clamped at the Ollama-response parsing boundary in adapters/ai/client.py — BIN-148).
+    ai_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     combined_score: Optional[float] = None
     percentile_rank: Optional[float] = None
     z_score: Optional[float] = None

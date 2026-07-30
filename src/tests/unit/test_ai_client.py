@@ -569,6 +569,36 @@ class TestAIModels:
         assert issubclass(OllamaClient, LocalAIClient)
         assert issubclass(LMStudioClient, LocalAIClient)
 
+    # BIN-148: model drift / malformed output must not flow unclamped into
+    # a_score (adapters/queue/tasks.py) and MetricsScoring.
+
+    def test_visual_result_clamps_scale_drift_above_one(self):
+        """A model drifting to a 0-100 scale (e.g. 85) clamps to 1.0, not overflow."""
+        v = VisualResult(condition_score=85)
+        assert v.condition_score == 1.0
+
+    def test_visual_result_clamps_slightly_out_of_range(self):
+        """Minor float overflow (e.g. 1.02 from rounding) clamps to the bound."""
+        v = VisualResult(condition_score=1.02)
+        assert v.condition_score == 1.0
+
+    def test_visual_result_clamps_negative_score(self):
+        v = VisualResult(condition_score=-0.3)
+        assert v.condition_score == 0.0
+
+    def test_sentiment_result_clamps_scale_drift_above_one(self):
+        s = SentimentResult(sentiment_score=70)
+        assert s.sentiment_score == 1.0
+
+    def test_sentiment_result_clamps_negative_score(self):
+        s = SentimentResult(sentiment_score=-1.5)
+        assert s.sentiment_score == 0.0
+
+    def test_visual_result_in_range_score_unchanged(self):
+        """Values already inside [0, 1] pass through untouched (no false clamping)."""
+        v = VisualResult(condition_score=0.42)
+        assert v.condition_score == 0.42
+
 
 @pytest.mark.unit
 class TestSummarizeAndSession:
@@ -643,6 +673,25 @@ class TestSummarizeAndSession:
         client.generate = AsyncMock(return_value=_make_ollama_response(FAKE_VISUAL_RESPONSE))
         result = asyncio.run(client.analyze_visuals([str(image)], "p"))
         assert result.condition_score == 0.85
+
+    def test_ollama_analyze_visuals_clamps_out_of_range_model_output(self, tmp_path):
+        """BIN-148: a raw Ollama JSON response with a 0-100-scale score must not
+        flow unclamped through analyze_visuals into the caller's a_score math."""
+        image = tmp_path / "x.jpg"
+        image.write_bytes(b"img")
+        client = OllamaClient()
+        drifted_response = {**FAKE_VISUAL_RESPONSE, "condition_score": 92}
+        client.generate = AsyncMock(return_value=_make_ollama_response(drifted_response))
+        result = asyncio.run(client.analyze_visuals([str(image)], "p"))
+        assert result.condition_score == 1.0
+
+    def test_ollama_analyze_text_clamps_out_of_range_model_output(self):
+        """BIN-148: same clamping guarantee on the sentiment/text analysis path."""
+        client = OllamaClient()
+        drifted_response = {**FAKE_SENTIMENT_RESPONSE, "sentiment_score": -12}
+        client.generate = AsyncMock(return_value=_make_ollama_response(drifted_response))
+        result = asyncio.run(client.analyze_text("desc", "p"))
+        assert result.sentiment_score == 0.0
 
 
 @pytest.mark.unit
