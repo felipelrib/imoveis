@@ -37,6 +37,20 @@ function sanitizeListingUrl(url) {
     }
 }
 
+/**
+ * Build a "View Original" fallback URL from a platform + platform_id when no
+ * listing rows carry a real URL. Only platforms whose detail page is reachable
+ * from the id alone get a template; others (OLX, ZapImóveis — slug-based URLs)
+ * return null so we never render a wrong-platform link (BIN-158).
+ */
+function platformFallbackUrl(platform, platformId) {
+    if (!platformId) return null;
+    if (platform === 'quintoandar') {
+        return sanitizeListingUrl(`https://www.quintoandar.com.br/imovel/${platformId}`);
+    }
+    return null;
+}
+
 export default function PropertyModal({ id, onClose }) {
   const { t, locale } = useLocale()
   const [property, setProperty] = useState(null)
@@ -180,17 +194,22 @@ export default function PropertyModal({ id, onClose }) {
                 </a>
               )
             })}
-            {!loading && (!p?.listings || p.listings.length === 0) && p?.platform_id && (
-              <a
-                href={`https://www.quintoandar.com.br/imovel/${p.platform_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-                style={{ fontSize: 13 }}
-              >
-                🔗 {t('modal.viewOriginal')}
-              </a>
-            )}
+            {!loading && (!p?.listings || p.listings.length === 0) && (() => {
+              const fallbackUrl = platformFallbackUrl(p?.platform, p?.platform_id);
+              if (!fallbackUrl) return null;
+              return (
+                <a
+                  href={fallbackUrl}
+                  data-testid="modal-fallback-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 13 }}
+                >
+                  🔗 {t('modal.viewOriginal')}
+                </a>
+              );
+            })()}
             <button className="modal-close" onClick={onClose} aria-label={t('modal.closeModal')}>✕</button>
           </div>
         </div>
