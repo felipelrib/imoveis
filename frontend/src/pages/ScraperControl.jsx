@@ -539,10 +539,12 @@ export default function ScraperControl() {
                     <span style={{ color: 'var(--text-muted)' }}>{t('scraper.interval')}</span>
                     {editingPlatform === s.platform ? (
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        data-testid="schedule-interval-input"
                         value={editInterval}
-                        onChange={e => setEditInterval(e.target.value)}
-                        min="0"
+                        onChange={e => setEditInterval(e.target.value.replace(/[^\d]/g, ''))}
                         style={{ width: 56, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-subtle)', background: 'var(--bg-app)', color: 'var(--text-primary)', fontSize: 12 }}
                       />
                     ) : (
