@@ -109,6 +109,10 @@ class GPUConfig(BaseModel, frozen=True):
 
     enabled: bool = True
     semaphore_limit: int = 2
+    # Hard ceiling the admin /gpu/scale endpoint will accept (BIN-159). Prevents
+    # an operator setting an unbounded limit that oversubscribes the GPU beyond
+    # what the Ollama server's OLLAMA_NUM_PARALLEL can actually serve.
+    max_semaphore_limit: int = 8
 
 
 class AIConfig(BaseModel, frozen=True):

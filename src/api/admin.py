@@ -108,12 +108,24 @@ def resume_workers():
 
 
 class GPUScaleRequest(BaseModel):
-    limit: int
+    # Lower bound at the schema level: a limit of 0 or negative would wedge the
+    # semaphore so no GPU task could ever acquire a slot (BIN-159).
+    limit: int = Field(..., ge=1)
 
 
 @router.post("/gpu/scale")
 def set_gpu_limit(payload: GPUScaleRequest):
     cfg = get_config()
+    # Upper bound from config: never let an operator scale past what the Ollama
+    # server can actually serve concurrently (BIN-159).
+    if payload.limit > cfg.gpu.max_semaphore_limit:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"gpu limit {payload.limit} exceeds max_semaphore_limit "
+                f"{cfg.gpu.max_semaphore_limit}"
+            ),
+        )
     sem = GPUSemaphore(max_concurrent=cfg.gpu.semaphore_limit)
     sem.scale(payload.limit)
     logger.info("gpu_limit_scaled", new_limit=payload.limit)

@@ -20,9 +20,19 @@ class QuintoAndarCheckpoint(BaseModel):
     processed_ids: list[str] = []
 
 
+class ZapImoveisCheckpoint(BaseModel):
+    # ZapImóveis runs a stateless price/type BFS per run; the only checkpoint
+    # field it reads back is scrape_type. Modelled (BIN-159) so a corrupt
+    # zapimoveis checkpoint resets to a fresh start like olx/quintoandar,
+    # instead of being passed through raw.
+    scrape_type: str | None = None
+    processed_ids: list[str] = []
+
+
 CHECKPOINT_MODELS = {
     "olx": OLXCheckpoint,
     "quintoandar": QuintoAndarCheckpoint,
+    "zapimoveis": ZapImoveisCheckpoint,
 }
 
 

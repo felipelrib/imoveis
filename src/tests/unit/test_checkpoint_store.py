@@ -6,7 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.scrapers.checkpoint_store import CheckpointStore, OLXCheckpoint
+from adapters.scrapers.checkpoint_store import (
+    CHECKPOINT_MODELS,
+    CheckpointStore,
+    OLXCheckpoint,
+    ZapImoveisCheckpoint,
+)
 
 
 @pytest.mark.unit
@@ -37,6 +42,29 @@ class TestCheckpointStore:
         row.data = {"custom": True}
         session.query.return_value.filter_by.return_value.first.return_value = row
         assert CheckpointStore(session).get("other") == {"custom": True}
+
+    def test_zapimoveis_is_a_known_checkpoint_model(self):
+        # BIN-159: zapimoveis now gets the same validate/reset protection as the
+        # other price-funnel scrapers instead of falling through as a raw dict.
+        assert CHECKPOINT_MODELS.get("zapimoveis") is ZapImoveisCheckpoint
+
+    def test_get_validates_zapimoveis_and_preserves_scrape_type(self):
+        session = MagicMock()
+        row = MagicMock()
+        row.data = {"scrape_type": "rent", "processed_ids": ["z1"]}
+        session.query.return_value.filter_by.return_value.first.return_value = row
+        data = CheckpointStore(session).get("zapimoveis")
+        assert data == ZapImoveisCheckpoint(
+            scrape_type="rent", processed_ids=["z1"]
+        ).model_dump()
+        assert data["scrape_type"] == "rent"
+
+    def test_get_zapimoveis_invalid_data_returns_empty(self):
+        session = MagicMock()
+        row = MagicMock()
+        row.data = {"processed_ids": "not-a-list"}
+        session.query.return_value.filter_by.return_value.first.return_value = row
+        assert CheckpointStore(session).get("zapimoveis") == {}
 
     def test_set_updates_existing(self):
         session = MagicMock()
