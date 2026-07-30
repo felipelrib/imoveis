@@ -445,7 +445,9 @@
     "claimsPositives": "Alegações do anúncio (pontos positivos)",
     "claimsConcerns": "Alegações do anúncio (pontos de atenção)",
     "priceHistory": "Histórico de preços",
-    "priceHistoryNeedPoints": "Requer pelo menos dois pontos de dados para exibir o gráfico"
+    "priceHistoryNeedPoints": "Requer pelo menos dois pontos de dados para exibir o gráfico",
+    "loadErrorTitle": "Não foi possível carregar este imóvel",
+    "loadErrorBody": "Ele pode ter sido removido ou está temporariamente indisponível. Tente novamente mais tarde."
   },
   "map": {
     "score": "Score: {value}",

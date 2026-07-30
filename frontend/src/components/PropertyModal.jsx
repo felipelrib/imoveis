@@ -198,6 +198,18 @@ export default function PropertyModal({ id, onClose }) {
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <span className="spinner" style={{ width: 36, height: 36 }} />
             </div>
+          ) : !p ? (
+            <div
+              data-testid="property-modal-error"
+              style={{ padding: '40px 20px', textAlign: 'center' }}
+            >
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
+                {t('modal.loadErrorTitle')}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                {t('modal.loadErrorBody')}
+              </div>
+            </div>
           ) : (
             <>
               {images.length > 0 && (
