@@ -53,6 +53,29 @@ _PROPERTIES_FROM_JOIN = (
 )
 
 
+def _query_paginated_properties(
+    session: Any, where: str, order: str, params: Dict[str, Any]
+) -> tuple[int, Any]:
+    """Shared paginated-list + count query used by list/export (BIN-135).
+
+    ``where``/``order`` are allow-listed column/enum expressions built by
+    ``_build_list_filters`` (never raw user text); ``params`` supplies the
+    bound values, including ``limit``/``offset``.
+    """
+    sql = text(
+        "SELECT " + _LIST_SELECT_COLUMNS + " "
+        + _PROPERTIES_FROM_JOIN
+        + "WHERE " + where + " "
+        "ORDER BY " + order + " "
+        "LIMIT :limit OFFSET :offset"
+    )
+    count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
+    count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+    total = session.execute(count_sql, count_params).scalar() or 0
+    rows = session.execute(sql, params).mappings().fetchall()
+    return total, rows
+
+
 def _coerce_listing_type(value: Any) -> Any:
     """Normalize PT listing_type aliases to EN before pattern validation."""
     if value is None or not isinstance(value, str):
@@ -391,23 +414,7 @@ def list_properties(
     where, params, order = _build_list_filters(filters_in, query_vec_literal)
 
     with SessionLocal() as session:
-        # where/order are built by _build_list_filters from an allow-listed
-        # column/enum map (sort_col_map, _effective_combined_score_expr) plus
-        # bind params for user values — never raw user text. Assembled here via
-        # plain concatenation (not an f-string) per BIN-135.
-        sql = text(
-            "SELECT " + _LIST_SELECT_COLUMNS + " "
-            + _PROPERTIES_FROM_JOIN
-            + "WHERE " + where + " "
-            "ORDER BY " + order + " "
-            "LIMIT :limit OFFSET :offset"
-        )
-
-        count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
-
-        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
-        total = session.execute(count_sql, count_params).scalar() or 0
-        rows = session.execute(sql, params).mappings().fetchall()
+        total, rows = _query_paginated_properties(session, where, order, params)
         page_size = filters_in.page_size
         return {
             "total": total,
@@ -616,19 +623,7 @@ def export_properties(
     params["offset"] = 0
 
     with SessionLocal() as session:
-        # Same allow-listed where/order as list_properties — plain
-        # concatenation (not an f-string) per BIN-135.
-        sql = text(
-            "SELECT " + _LIST_SELECT_COLUMNS + " "
-            + _PROPERTIES_FROM_JOIN
-            + "WHERE " + where + " "
-            "ORDER BY " + order + " "
-            "LIMIT :limit OFFSET :offset"
-        )
-        count_sql = text("SELECT COUNT(*) " + _PROPERTIES_FROM_JOIN + "WHERE " + where)
-        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
-        total = session.execute(count_sql, count_params).scalar() or 0
-        rows = session.execute(sql, params).mappings().fetchall()
+        total, rows = _query_paginated_properties(session, where, order, params)
         items = [map_property_list_item(row) for row in rows]
 
     if filters_in.format == "csv":
