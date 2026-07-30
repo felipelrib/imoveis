@@ -13,7 +13,11 @@ from infra.config import get_config
 
 
 @pytest.fixture(autouse=True)
-def _clear_config_cache():
+def _clear_config_cache(monkeypatch: pytest.MonkeyPatch):
+    # BIN-150 gated /system/status behind verify_api_key_if_configured; force
+    # the anonymous-access branch (no API_KEY configured) so this data-shape
+    # test stays independent of ambient env (validate.sh exports a real API_KEY).
+    monkeypatch.setenv("API_KEY", "")
     get_config.cache_clear()
     yield
     get_config.cache_clear()

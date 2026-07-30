@@ -501,10 +501,17 @@ class TestAdminEndpoints:
         assert response.status_code == 200
         assert data == {"status": "ok"}
 
-    def test_system_status_shape(self, client):
-        response = client.get("/system/status")
+    def test_system_status_shape(self, client, admin_headers):
+        # BIN-150: /system/status now requires a credential whenever an admin
+        # API key is configured (this fixture always configures one).
+        response = client.get("/system/status", headers=admin_headers)
         data = response.json()
         assert isinstance(data, dict)
+
+    def test_system_status_requires_key_when_configured(self, client):
+        response = client.get("/system/status")
+        assert response.status_code == 403
+        assert "detail" in response.json()
 
     def test_schedule_get_returns_shape(self, client, admin_headers):
         """GET /admin/schedule must return a dict with a schedules list."""

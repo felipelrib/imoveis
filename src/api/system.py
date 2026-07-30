@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends
 
-from api.auth import verify_admin_access
+from api.auth import verify_admin_access, verify_api_key_if_configured
 from api.schemas import PipelineHistoryResponse, PipelineResponse, SystemStatusResponse
 from infra.config import get_config
 from infra.logging import get_logger
@@ -82,7 +82,11 @@ def _check_workers() -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
-@router.get("/status", response_model=SystemStatusResponse)
+@router.get(
+    "/status",
+    response_model=SystemStatusResponse,
+    dependencies=[Depends(verify_api_key_if_configured)],
+)
 async def system_status() -> Dict[str, Any]:
     """Return health of all system components — polled by the GUI dashboard."""
     r = get_redis()
@@ -107,9 +111,13 @@ async def system_status() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/ollama/status")
+@router.get("/ollama/status", dependencies=[Depends(verify_admin_access)])
 async def ollama_status():
-    """Check ollama connectivity."""
+    """Check ollama connectivity.
+
+    Not called by the SPA today (only ``POST /ollama/ensure`` is, which already
+    requires admin credentials) — full admin gate here, no dashboard risk.
+    """
     return await _check_ollama()
 
 
@@ -171,7 +179,11 @@ async def ollama_ensure():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/pipeline", response_model=PipelineResponse)
+@router.get(
+    "/pipeline",
+    response_model=PipelineResponse,
+    dependencies=[Depends(verify_api_key_if_configured)],
+)
 def system_pipeline() -> Dict[str, Any]:
     """Return live status of the ingestion pipeline (queues and active tasks)."""
     r = get_redis()
@@ -184,7 +196,11 @@ def system_pipeline() -> Dict[str, Any]:
     }
 
 
-@router.get("/pipeline/history", response_model=PipelineHistoryResponse)
+@router.get(
+    "/pipeline/history",
+    response_model=PipelineHistoryResponse,
+    dependencies=[Depends(verify_api_key_if_configured)],
+)
 def system_pipeline_history(minutes: int = 60) -> Dict[str, Any]:
     """Return persisted pipeline metric snapshots for Dashboard charts (BIN-61)."""
     from datetime import datetime, timedelta, timezone
@@ -295,7 +311,7 @@ def _ai_pipeline_metrics(telemetry: list) -> dict:
 # Alerts
 # ---------------------------------------------------------------------------
 
-@router.get("/alerts")
+@router.get("/alerts", dependencies=[Depends(verify_api_key_if_configured)])
 def get_alerts() -> List[Dict[str, Any]]:
     """Return the last 100 price drop alerts from Redis."""
     import json
