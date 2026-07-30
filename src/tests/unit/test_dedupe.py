@@ -200,6 +200,67 @@ class TestRecordPriceChange:
         assert params["platform"] == "olx"
         assert params["price"] == 1900.0
 
+    def test_distinct_listings_same_platform_and_type_independent(self):
+        """Two distinct listings sharing property_id/listing_type/platform but
+        different property_listing_id maintain independent open intervals
+        (BIN-145).
+
+        Regression for the interval-collision bug: PropertyListing's unique
+        constraint is (platform, platform_listing_id, listing_type) — not
+        property_id — so the fuzzy matcher can attach two distinct ads (e.g.
+        two brokers re-listing the same unit) to one property under the same
+        platform + listing_type. Before the fix, closing/extending the open
+        interval was scoped only by (property_id, listing_type, platform),
+        so recording listing B's price could close/rewrite listing A's open
+        interval as if it were the same ad.
+        """
+        # Seed listing A's open interval
+        session_a = _make_mock_session(open_row=None)
+        _record_price_change(
+            session_a, "prop-1", 2000.0,
+            listing_type="rent", platform="olx", property_listing_id="listing-a",
+        )
+        assert session_a.execute.call_count == 2  # SELECT + INSERT (seed)
+
+        # Seed listing B's open interval — same property/type/platform, different ad
+        session_b = _make_mock_session(open_row=None)
+        _record_price_change(
+            session_b, "prop-1", 2200.0,
+            listing_type="rent", platform="olx", property_listing_id="listing-b",
+        )
+        # Listing B's own open-interval lookup finds nothing (scoped by its
+        # own property_listing_id) — it seeds independently, it does not see
+        # listing A's open row.
+        assert session_b.execute.call_count == 2  # SELECT + INSERT (seed)
+
+        # The open-interval lookup itself must be scoped by property_listing_id
+        select_call = session_b.execute.call_args_list[0]
+        select_sql = str(select_call[0][0])
+        assert "property_listing_id IS NOT DISTINCT FROM :plid" in select_sql
+        select_params = select_call[0][1]
+        assert select_params["plid"] == "listing-b"
+
+        # Now change listing A's price — must only affect listing A's interval
+        listing_a_open = FakeRow("hist-listing-a", 2000.0)
+        session_update = _make_mock_session(open_row=listing_a_open)
+        _record_price_change(
+            session_update, "prop-1", 1900.0,
+            listing_type="rent", platform="olx", property_listing_id="listing-a",
+        )
+        # SELECT + UPDATE (close listing A's interval) + INSERT (new) + SELECT watchlist
+        assert session_update.execute.call_count == 4
+
+        select_call = session_update.execute.call_args_list[0]
+        assert select_call[0][1]["plid"] == "listing-a"
+
+        update_call = session_update.execute.call_args_list[1]
+        assert update_call[0][1]["id"] == "hist-listing-a"
+
+        insert_call = session_update.execute.call_args_list[2]
+        insert_params = insert_call[0][1]
+        assert insert_params["plid"] == "listing-a"
+        assert insert_params["price"] == 1900.0
+
     def test_property_listing_id_in_insert(self):
         """property_listing_id is included in INSERT statements."""
         session = _make_mock_session(open_row=None)
