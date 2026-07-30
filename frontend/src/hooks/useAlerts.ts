@@ -1,10 +1,17 @@
-import { useState, useEffect } from 'react'
-import { fetchAlerts } from '../api.js'
+import { useState, useEffect, type Dispatch, type SetStateAction } from 'react'
+import { fetchAlerts, type AlertItem } from '../api.js'
 
-export function useAlerts(pollInterval = 30000) {
-  const [alerts, setAlerts] = useState([])
+export interface UseAlertsResult {
+  alerts: AlertItem[]
+  loading: boolean
+  error: string | null
+  setAlerts: Dispatch<SetStateAction<AlertItem[]>>
+}
+
+export function useAlerts(pollInterval = 30000): UseAlertsResult {
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -15,7 +22,7 @@ export function useAlerts(pollInterval = 30000) {
         setAlerts(data)
         setError(null)
       } catch (err) {
-        if (!cancelled) setError(err.message)
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
