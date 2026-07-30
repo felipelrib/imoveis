@@ -30,7 +30,7 @@ Files touched:
  alembic/versions/b65411932ef9_add_indexes_properties_active_metrics_.py | NEW — CONCURRENTLY create ix_properties_active + ix_metrics_scoring_property_id
  src/adapters/db/models.py                                              | index=True on Property.active and MetricsScoring.property_id
  src/tests/integration/test_missing_db_indexes.py                       | NEW — index presence lock (full, non-partial on active; btree on property_id)
- docs/features/112-add-missing-db-indexes.md                            | NEW — this doc
+ docs/features/119-add-missing-db-indexes.md                            | NEW — this doc
 ```
 
 ## New Dependencies
