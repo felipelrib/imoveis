@@ -41,6 +41,7 @@ nav:
   - Home: index.md
   - Setup: setup.md
   - Add a locale: i18n/add-a-locale.md
+  - Harness Troubleshooting: harness-troubleshooting.md
   - Architecture: architecture.md
   - API Reference: api.md
   - Features:
