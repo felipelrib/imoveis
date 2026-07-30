@@ -1,0 +1,123 @@
+# admin-control-panel — Authenticated admin API for worker management, GPU scaling, scoring recalculation, and schedule editing
+
+> Feature branch: `feat/admin-panel` · Linear: `BIN-176` · Status: implemented
+
+## Problem
+
+Operating the ingestion pipeline required direct Redis/DB access or re-deploying config
+files. There was no safe, authenticated way to:
+- Pause AI enrichment workers during low-resource periods without stopping scraping.
+- Adjust the number of concurrent GPU jobs at runtime.
+- Recalculate property scores after tuning the stat/AI weight ratio.
+- Change per-platform scrape intervals without restarting Celery beat.
+
+## Approach
+
+All admin endpoints are grouped under the `/admin` prefix with
+`api.auth.verify_admin_access`. The canonical credential is `X-API-Key` validated
+against `AppConfig.auth.api_key` (env: `API_KEY`). A valid admin JWT is still
+accepted and maps to the same `auth.principal_id`. The SPA paste-once gate (Story 2.2 / BIN-46) stores the key in sessionStorage and sends `X-API-Key` via `api.js`.
+If the API key is unset in config, API-key requests are rejected with 403; requests
+with neither credential receive 401.
+
+### Worker Management
+
+- `GET /admin/workers/status` — returns `{"ai_workers_paused": bool}` by checking
+  `r.exists("workers:ai:paused")` (fixed from the original broken `r.get() is not None`).
+- `POST /admin/workers/pause` — sets `workers:ai:paused = "1"` in Redis.
+- `POST /admin/workers/resume` — deletes `workers:ai:paused` from Redis.
+- The `ai_enrich` Celery task checks this key at the start of every execution and calls
+  `self.retry(countdown=60)` if paused, effectively queueing jobs without losing them.
+
+### GPU Resource Control
+
+- `POST /admin/gpu/scale` — calls `GPUSemaphore.scale(new_limit)` which atomically
+  updates `semaphore:gpu` in Redis using `WATCH`/`MULTI`/`EXEC`. New tasks respect
+  the new limit immediately without a restart.
+
+### Scoring Recalculation
+
+- `POST /admin/scoring/recalculate` — two-phase operation:
+  1. `compute_neighborhood_stats(session)` — SQL window functions computing per-neighbourhood
+     mean, median, stddev, z-score, percentile rank. Stored in `metrics_scoring`.
+  2. `recalculate_all_combined_scores(session, weights)` — single `UPDATE metrics_scoring SET combined_score = ...` across all rows. O(1) memory regardless of table size.
+  Optional `ScoringWeights` body overrides the YAML defaults for this recalculation.
+- `POST /admin/scoring/weights` — persists new weights to `scoring:weights` Redis key
+  for fast retrieval without a config reload.
+
+### AI enrichment backfill
+
+- `POST /admin/enrichment/missing` — enqueue `ai_enrich` for active properties that are
+  not yet enriched (`ai_score` missing/0), with at least one image URL. Dashboard Quick
+  Action: **Enrich Missing**. See `docs/features/BIN-180-enrich-missing.md`.
+  Selective re-run (force / filters / stages / dry-run): Dashboard **AI Enrichment re-run**
+  panel → `POST /admin/enrichment/rerun`. See `docs/features/BIN-95-selective-ai-enrichment-rerun.md`.
+
+### Schedule Management
+
+- `GET /admin/schedule` — returns per-platform `{interval_minutes, last_run, next_run}`
+  by merging YAML config with Redis overrides (`scheduler:interval:<platform>`).
+- `POST /admin/schedule` — writes a Redis override for a platform's interval. The change
+  takes effect when Celery beat next restarts (since beat reads the schedule at startup).
+
+## Changes
+
+Files touched:
+
+```
+ src/api/admin.py             | NEW — all admin endpoints (workers, GPU, scoring, schedule)
+ src/api/auth.py              | NEW — X-API-Key header guard (verify_api_key dependency)
+ src/api/main.py              | Registered admin router
+ src/adapters/queue/gpu_semaphore.py | GPUSemaphore.scale() for runtime GPU limit adjustment
+ src/adapters/metrics/scoring.py    | compute_neighborhood_stats(), recalculate_all_combined_scores(), score_single_property()
+ src/core/entities.py         | ScoringWeights Pydantic model
+ frontend/src/api.js          | pauseWorkers(), resumeWorkers(), recalculateScores(), fetchSchedule(), updateSchedule()
+ frontend/src/pages/ScraperControl.jsx | Worker pause/resume toggle, schedule edit UI
+```
+
+## New Dependencies
+
+None.
+
+## How to Test
+
+```bash
+# Set admin key
+export API_KEY=test-local-api-key
+
+# Pause AI workers
+curl -X POST http://localhost:8000/admin/workers/pause \
+  -H 'X-API-Key: test-local-api-key'
+
+# Check status
+curl http://localhost:8000/admin/workers/status -H 'X-API-Key: test-local-api-key'
+# {"ai_workers_paused": true}
+
+# Resume workers
+curl -X POST http://localhost:8000/admin/workers/resume -H 'X-API-Key: test-local-api-key'
+
+# Scale GPU to 2 concurrent jobs
+curl -X POST http://localhost:8000/admin/gpu/scale \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
+  -d '{"limit": 2}'
+
+# Recalculate scores with custom weights
+curl -X POST http://localhost:8000/admin/scoring/recalculate \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
+  -d '{"stat_weight": 0.4, "ai_weight": 0.6}'
+
+# View / update schedule
+curl http://localhost:8000/admin/schedule -H 'X-API-Key: test-local-api-key'
+curl -X POST http://localhost:8000/admin/schedule \
+  -H 'Content-Type: application/json' -H 'X-API-Key: test-local-api-key' \
+  -d '{"platform": "olx", "interval_minutes": 120}'
+```
+
+## Implementation Notes
+- **API Key Security**: Prefer `API_KEY` via AppConfig / env. The SPA must not ship
+  hardcoded secrets (`VITE_API_KEY` was removed from the bundle). Story 2.2 / BIN-46
+  provides a paste-once sessionStorage credential gate; `api.js` attaches `X-API-Key`.
+  Admin JWT remains accepted at the API edge for non-SPA clients.
+- **Resource Management**: Fixed generator leaks in the admin scoring endpoints by using the `SessionLocal` context manager directly, preventing connection exhaustion.
+- **Schedule Limitations**: Changes via `POST /admin/schedule` currently require restarting the Celery beat process to take effect.
+- **GPU Semaphore**: The `GPUSemaphore.scale()` logic correctly reads limits from Redis so it scales uniformly across all processes instead of relying on an isolated instance field.

@@ -245,8 +245,8 @@ Prefer `bash scripts/agent/validate.sh` for the CI-equivalent gate. Host pytest 
 an isolated Postgres DB (`realestate_test`) and Redis logical DB **15**
 (`REDIS_TEST_DB`); Compose API/Celery keep Postgres `realestate` and Redis DB **0**
 so fixtures that truncate tables / `flushdb` do not wipe scraped data or Celery
-queues. See `docs/features/50-isolate-integration-test-db.md` and
-`docs/features/90-isolate-redis-test-db.md`.
+queues. See `docs/features/BIN-71-isolate-integration-test-db.md` and
+`docs/features/BIN-117-isolate-redis-test-db.md`.
 
 ### Frontend Development
 

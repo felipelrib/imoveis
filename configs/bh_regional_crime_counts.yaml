@@ -9,7 +9,7 @@
 # listed regionals (2903 − 2643 = 260) for H1 2026 violent crimes.
 #
 # Prefer replacing this file with a LAI / on-demand SEJUSP bairro extract when
-# available (see docs/features/73-bh-crime-safety-rates.md).
+# available (see docs/features/BIN-96-bh-crime-safety-rates.md).
 
 period_start: "2026-01"
 period_end: "2026-06"

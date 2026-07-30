@@ -5,7 +5,7 @@ Canonical **DB / API wire values stay English**. This guide does **not** cover b
 
 **Shipped today:** `en` (default) + `pt-BR`. Preference: Redis `ui:locale` via `GET`/`POST /admin/locale`, allowlisted by `ui.supported_locales`.
 
-Epic close: [Product i18n](../features/83-product-i18n.md) (BIN-63 / BIN-103). Seed ADR: [Locale foundation](../features/77-locale-foundation.md).
+Epic close: [Product i18n](../features/BIN-103-product-i18n.md) (BIN-63 / BIN-103). Seed ADR: [Locale foundation](../features/BIN-98-locale-foundation.md).
 
 ---
 
