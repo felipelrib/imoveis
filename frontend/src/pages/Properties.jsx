@@ -1,27 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
-import { Star, Bell } from 'lucide-react'
 import { fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist, fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite, removeFavourite, fetchNeighborhoods, fetchCities } from '../api.js'
 import PropertyModal from '../components/PropertyModal.jsx'
 import CompareView from '../components/CompareView.jsx'
-import SearchableMultiSelect from '../components/SearchableMultiSelect.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
-import {
-  combinedScoreForListingType,
-  hasDualScores,
-  statScoreForListingType,
-} from '../utils/scores.js'
-import {
-  bestListingForType,
-  decisioningPrice,
-  groupListings,
-} from '../utils/primaryListing.js'
+import PropertiesFilterBar from '../components/properties/PropertiesFilterBar.jsx'
+import PropertiesResultsGrid from '../components/properties/PropertiesResultsGrid.jsx'
+import PropertiesPagination from '../components/properties/PropertiesPagination.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
-import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../labels.js'
+import { usePropertiesFiltersState } from '../hooks/usePropertiesFiltersState.js'
+import { usePropertiesPagination } from '../hooks/usePropertiesPagination.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
-import { formatNumber, formatCurrency } from '../i18n/format.js'
-import { fromSavedSearchWire, toSavedSearchWire } from '../savedSearchFilters.js'
+import { formatNumber } from '../i18n/format.js'
+import { toSavedSearchWire } from '../savedSearchFilters.js'
 import {
   PROPERTIES_PATH,
   FAVOURITES_PATH,
@@ -31,32 +23,6 @@ import {
   parsePropertyId,
   linkIdForProperty,
 } from '../routes/propertyPaths.js'
-
-const SORT_OPTIONS = [
-  { value: 'combined_score', labelKey: 'properties.sortBestScore' },
-  { value: 'price', labelKey: 'properties.sortPriceAsc' },
-  { value: 'price_desc', labelKey: 'properties.sortPriceDesc' },
-  { value: 'created_at', labelKey: 'properties.sortNewest' },
-  { value: 'area_m2', labelKey: 'properties.sortArea' },
-]
-
-const DEFAULT_FILTERS = {
-  sortBy: 'combined_score',
-  sortDir: 'desc',
-  listingType: 'both',
-  propertyType: '',
-  platform: '',
-  maxPrice: '',
-  priceType: 'rent',
-  minBedrooms: '',
-  minParking: '',
-  minScore: '',
-  neighborhood: '',
-  city: '',
-  isFurnished: false,
-  acceptsPets: false,
-  q: '',
-}
 
 export default function Properties() {
   const navigate = useNavigate()
@@ -70,24 +36,32 @@ export default function Properties() {
 
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [page, setPage] = useState(1)
-  const [sortBy, setSortBy] = useState(DEFAULT_FILTERS.sortBy)
-  const [sortDir, setSortDir] = useState(DEFAULT_FILTERS.sortDir)
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [listingType, setListingType] = useState(DEFAULT_FILTERS.listingType)
-  const [propertyType, setPropertyType] = useState(DEFAULT_FILTERS.propertyType)
-  const [platform, setPlatform] = useState(DEFAULT_FILTERS.platform)
-  const [maxPrice, setMaxPrice] = useState(DEFAULT_FILTERS.maxPrice)
-  const [priceType, setPriceType] = useState(DEFAULT_FILTERS.priceType)
-  const [minBedrooms, setMinBedrooms] = useState(DEFAULT_FILTERS.minBedrooms)
-  const [minParking, setMinParking] = useState(DEFAULT_FILTERS.minParking)
-  const [minScore, setMinScore] = useState(DEFAULT_FILTERS.minScore)
-  const [neighborhood, setNeighborhood] = useState(DEFAULT_FILTERS.neighborhood)
-  const [city, setCity] = useState(DEFAULT_FILTERS.city)
-  const [isFurnished, setIsFurnished] = useState(DEFAULT_FILTERS.isFurnished)
-  const [acceptsPets, setAcceptsPets] = useState(DEFAULT_FILTERS.acceptsPets)
-  const [q, setQ] = useState(DEFAULT_FILTERS.q)
-  const [qDraft, setQDraft] = useState(DEFAULT_FILTERS.q)
+  const { page, setPage } = usePropertiesPagination()
+  const {
+    sortBy, setSortBy,
+    sortDir,
+    showAdvanced, setShowAdvanced,
+    listingType, setListingType,
+    propertyType, setPropertyType,
+    platform, setPlatform,
+    maxPrice, setMaxPrice,
+    priceType, setPriceType,
+    minBedrooms, setMinBedrooms,
+    minParking, setMinParking,
+    minScore, setMinScore,
+    neighborhood, setNeighborhood,
+    city, setCity,
+    isFurnished, setIsFurnished,
+    acceptsPets, setAcceptsPets,
+    q, setQ,
+    qDraft, setQDraft,
+    currentFilters,
+    hasActiveFilters,
+    buildListQueryFilters,
+    applyFilters,
+    clearAllFilters,
+    clearFiltersKeepSearch,
+  } = usePropertiesFiltersState()
   const [loadError, setLoadError] = useState(null)
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [favouriteIds, setFavouriteIds] = useState(new Set())
@@ -213,34 +187,6 @@ export default function Properties() {
     }
   }, [propertyIdParam, routePropertyId, navigate])
 
-  const currentFilters = {
-    sortBy, sortDir, listingType, propertyType, platform, maxPrice, priceType,
-    minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
-  }
-
-  const buildListQueryFilters = useCallback(() => {
-    const isPriceDesc = sortBy === 'price_desc'
-    const actualSortBy = isPriceDesc ? 'price' : sortBy
-    const actualSortDir = sortBy === 'price' ? 'asc' : isPriceDesc ? 'desc' : sortDir
-    return {
-      sortBy: actualSortBy,
-      sortDir: actualSortDir,
-      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-      priceType: maxPrice ? priceType : undefined,
-      minBedrooms: minBedrooms ? parseInt(minBedrooms) : undefined,
-      minScore: minScore ? parseFloat(minScore) : undefined,
-      minParking: minParking ? parseInt(minParking) : undefined,
-      neighborhoodName: neighborhood || undefined,
-      cityName: city || undefined,
-      listingType,
-      propertyType: propertyType || undefined,
-      platform: platform || undefined,
-      isFurnished: isFurnished ? true : undefined,
-      acceptsPets: acceptsPets ? true : undefined,
-      q: q || undefined,
-    }
-  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
-
   const handleExport = useCallback(async (format) => {
     if (exporting) return
     setExporting(true)
@@ -284,28 +230,6 @@ export default function Properties() {
       setMapLoading(false)
     }
   }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
-
-  const applyFilters = useCallback((rawFilters) => {
-    const filters = fromSavedSearchWire(rawFilters)
-    if (filters.sortBy !== undefined) setSortBy(filters.sortBy)
-    if (filters.sortDir !== undefined) setSortDir(filters.sortDir)
-    if (filters.listingType !== undefined) setListingType(filters.listingType)
-    if (filters.propertyType !== undefined) setPropertyType(filters.propertyType)
-    if (filters.platform !== undefined) setPlatform(filters.platform)
-    if (filters.maxPrice !== undefined) setMaxPrice(String(filters.maxPrice))
-    if (filters.priceType !== undefined) setPriceType(filters.priceType)
-    if (filters.minBedrooms !== undefined) setMinBedrooms(String(filters.minBedrooms))
-    if (filters.minParking !== undefined) setMinParking(String(filters.minParking))
-    if (filters.minScore !== undefined) setMinScore(String(filters.minScore))
-    if (filters.neighborhood !== undefined) setNeighborhood(filters.neighborhood)
-    if (filters.city !== undefined) setCity(filters.city)
-    if (filters.isFurnished !== undefined) setIsFurnished(filters.isFurnished)
-    if (filters.acceptsPets !== undefined) setAcceptsPets(filters.acceptsPets)
-    if (filters.q !== undefined) {
-      setQ(filters.q)
-      setQDraft(filters.q)
-    }
-  }, [])
 
   const load = async (p = page) => {
     const isPriceDesc = sortBy === 'price_desc'
@@ -428,8 +352,13 @@ export default function Properties() {
   // restructuring tracked separately under BIN-141 (Properties.jsx split), not this
   // lint-tooling ticket — narrowly suppressed here instead of a risky untested refactor.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
+    // `setPage` here comes from usePropertiesPagination(), not a literal
+    // useState() in this file, so the lint rule below can no longer trace it
+    // back to a recognized state setter — no disable comment needed for
+    // this line post-BIN-141 (it doesn't flag it). `load(1)` still does,
+    // since it synchronously calls setLoading/setData underneath.
     setPage(1)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
     load(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
   }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
@@ -495,12 +424,6 @@ export default function Properties() {
       }))
     : (data?.properties || [])
   const pages = viewMode === 'favourites' ? Math.ceil(totalResults / 24) : (data?.pages || 1)
-  const hasActiveFilters = Object.entries(currentFilters).some(([key, value]) => {
-    if (key === 'priceType') return Boolean(maxPrice)
-    const defaults = DEFAULT_FILTERS[key]
-    if (defaults !== undefined) return value !== defaults && Boolean(value)
-    return Boolean(value)
-  })
 
   return (
     <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 60px)' }}>
@@ -563,263 +486,52 @@ export default function Properties() {
         </div>
 
         {/* Toolbar */}
-          <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
-              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0, flex: '1 1 220px' }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }} htmlFor="semantic-search">{t('properties.searchLabel')}</label>
-                <input
-                  id="semantic-search"
-                  className="form-input"
-                  style={{ flex: 1, minWidth: 160 }}
-                  type="search"
-                  placeholder={t('properties.searchPlaceholder')}
-                  value={qDraft}
-                  onChange={e => setQDraft(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      setQ(qDraft.trim())
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => setQ(qDraft.trim())}
-                >
-                  {t('properties.searchButton')}
-                </button>
-                {q && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => { setQ(''); setQDraft('') }}
-                    title={t('properties.clearSearch')}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.sortBy')}</label>
-                <select className="form-select" style={{ width: 140 }} value={sortBy} onChange={e => setSortBy(e.target.value)} data-testid="sort-by-filter">
-                  {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
-                </select>
-              </div>
-
-              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.transaction')}</label>
-                <select
-                  className="form-select"
-                  style={{ width: 110 }}
-                  value={listingType}
-                  onChange={e => {
-                    const next = e.target.value
-                    setListingType(next)
-                    if (next === 'rent' || next === 'sale') setPriceType(next)
-                  }}
-                  data-testid="listing-type-filter"
-                >
-                  <option value="both">{t('properties.rentAndSale')}</option>
-                  <option value="rent">{t('properties.rentOnly')}</option>
-                  <option value="sale">{t('properties.saleOnly')}</option>
-                </select>
-              </div>
-
-              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.source')}</label>
-                <select
-                  className="form-select"
-                  style={{ width: 130 }}
-                  value={platform}
-                  onChange={e => setPlatform(e.target.value)}
-                  data-testid="platform-filter"
-                >
-                  <option value="">{t('common.any')}</option>
-                  <option value="olx">{formatPlatform('olx')}</option>
-                  <option value="quintoandar">{formatPlatform('quintoandar')}</option>
-                </select>
-              </div>
-
-              <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.type')}</label>
-                <select className="form-select" style={{ width: 120 }} value={propertyType} onChange={e => setPropertyType(e.target.value)} data-testid="property-type-filter">
-                  <option value="">{t('common.any')}</option>
-                  {PROPERTY_TYPE_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  data-testid="export-csv"
-                  disabled={exporting}
-                  onClick={() => handleExport('csv')}
-                  title={t('properties.exportCsvTitle')}
-                >
-                  {exporting ? t('properties.exporting') : t('properties.exportCsv')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  data-testid="export-json"
-                  disabled={exporting}
-                  onClick={() => handleExport('json')}
-                  title={t('properties.exportJsonTitle')}
-                >
-                  {exporting ? t('properties.exporting') : t('properties.exportJson')}
-                </button>
-                <div style={{ display: 'flex', border: '1px solid var(--border-subtle)', borderRadius: 6, overflow: 'hidden' }}>
-                  <button
-                    className={`btn btn-sm ${viewType === 'grid' ? '' : 'btn-ghost'}`}
-                    style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'grid' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'grid' ? 'white' : 'var(--text-secondary)' }}
-                    onClick={() => setViewType('grid')}
-                  >
-                    {t('properties.viewList')}
-                  </button>
-                  <button
-                    className={`btn btn-sm ${viewType === 'map' ? '' : 'btn-ghost'}`}
-                    style={{ borderRadius: 0, padding: '4px 10px', fontSize: 12, fontWeight: 600, background: viewType === 'map' ? 'var(--accent, #6366f1)' : 'transparent', color: viewType === 'map' ? 'white' : 'var(--text-secondary)', borderLeft: '1px solid var(--border-subtle)' }}
-                    onClick={() => setViewType('map')}
-                  >
-                    {t('properties.viewMap')}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className={`btn btn-sm ${compareMode ? 'btn-primary' : 'btn-ghost'}`}
-                  data-testid="compare-mode-toggle"
-                  aria-pressed={compareMode}
-                  title={compareMode ? t('properties.compareModeOn') : t('properties.compareModeOff')}
-                  onClick={toggleCompareMode}
-                >
-                  {compareMode ? t('properties.exitCompare') : t('properties.compare')}
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  {showAdvanced ? t('properties.hideAdvanced') : t('properties.showAdvanced')}
-                </button>
-              </div>
-            </div>
-
-            {showAdvanced && (
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'flex-start', background: 'rgba(0,0,0,0.1)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.maxPrice')} R$</label>
-                  <input
-                    className="form-input"
-                    data-testid="max-price-input"
-                    style={{ width: 110 }}
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    placeholder={t('common.any')}
-                    value={maxPrice}
-                    onChange={e => {
-                      const raw = e.target.value.replace(/[^\d]/g, '')
-                      setMaxPrice(raw)
-                    }}
-                  />
-                  <select
-                    className="form-select"
-                    data-testid="price-type-filter"
-                    style={{ width: 90 }}
-                    value={priceType}
-                    onChange={e => setPriceType(e.target.value)}
-                    aria-label={t('properties.priceType')}
-                  >
-                    <option value="rent">{t('common.rent')}</option>
-                    <option value="sale">{t('common.sale')}</option>
-                  </select>
-                </div>
-                <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.beds')}</label>
-                  <select className="form-select" style={{ width: 70 }} value={minBedrooms} onChange={e => setMinBedrooms(e.target.value)}>
-                    <option value="">{t('common.any')}</option>
-                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{t('properties.bedsPlus', { n })}</option>)}
-                  </select>
-                </div>
-                <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.parking')}</label>
-                  <select className="form-select" style={{ width: 70 }} value={minParking} onChange={e => setMinParking(e.target.value)}>
-                    <option value="">{t('common.any')}</option>
-                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{t('properties.bedsPlus', { n })}</option>)}
-                  </select>
-                </div>
-                <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>{t('properties.minCombinedScore')}</label>
-                  <select className="form-select" style={{ width: 80 }} value={minScore} onChange={e => setMinScore(e.target.value)}>
-                    <option value="">{t('common.any')}</option>
-                    <option value="0.7">{t('properties.scorePlus', { n: 0.7 })}</option>
-                    <option value="0.8">{t('properties.scorePlus', { n: 0.8 })}</option>
-                    <option value="0.9">{t('properties.scorePlus', { n: 0.9 })}</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} data-testid="furnished-filter" />
-                    {t('properties.furnished')}
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={acceptsPets} onChange={e => setAcceptsPets(e.target.checked)} data-testid="pets-filter" />
-                    {t('properties.petFriendly')}
-                  </label>
-                </div>
-                <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '200px' }}>
-                  <label className="form-label" style={{ marginBottom: 0 }}>
-                    {t('properties.cities')}
-                    {citiesLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{t('common.loading')}</span>}
-                  </label>
-                  <SearchableMultiSelect
-                    data-testid="city-filter"
-                    placeholder={t('properties.selectCities')}
-                    searchPlaceholder={t('properties.searchCities')}
-                    loading={citiesLoading}
-                    value={city ? city.split(',') : []}
-                    onChange={(vals) => setCity(vals.join(','))}
-                    options={cities.map((c) => ({
-                      value: c.name,
-                      label: `${c.name} (${c.count})`,
-                    }))}
-                  />
-                </div>
-                <div style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: '220px' }}>
-                  <label className="form-label" style={{ marginBottom: 0 }}>
-                    {t('properties.neighborhoods')}
-                    {neighborhoodsLoading && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{t('common.loading')}</span>}
-                  </label>
-                  <SearchableMultiSelect
-                    data-testid="neighborhood-filter"
-                    placeholder={t('properties.selectNeighborhoods')}
-                    searchPlaceholder={t('properties.searchNeighborhoods')}
-                    loading={neighborhoodsLoading}
-                    groupByCity
-                    value={neighborhood ? neighborhood.split(',') : []}
-                    onChange={(vals) => setNeighborhood(vals.join(','))}
-                    options={neighborhoods.map((n) => ({
-                      value: n.name,
-                      label: `${n.name} (${n.count})`,
-                      group: n.city || null,
-                    }))}
-                  />
-                </div>
-                <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => {
-                  setMaxPrice(''); setPriceType(DEFAULT_FILTERS.priceType); setMinBedrooms(''); setMinScore(''); setMinParking('');
-                  setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
-                  setPlatform('');
-                  setIsFurnished(false); setAcceptsPets(false);
-                  setQ(''); setQDraft('');
-                }}>{t('properties.clearAll')}</button>
-              </div>
-            )}
-          </div>
+        <PropertiesFilterBar
+          t={t}
+          qDraft={qDraft}
+          setQDraft={setQDraft}
+          q={q}
+          setQ={setQ}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          listingType={listingType}
+          setListingType={setListingType}
+          setPriceType={setPriceType}
+          platform={platform}
+          setPlatform={setPlatform}
+          propertyType={propertyType}
+          setPropertyType={setPropertyType}
+          exporting={exporting}
+          onExport={handleExport}
+          viewType={viewType}
+          setViewType={setViewType}
+          compareMode={compareMode}
+          onToggleCompareMode={toggleCompareMode}
+          showAdvanced={showAdvanced}
+          setShowAdvanced={setShowAdvanced}
+          maxPrice={maxPrice}
+          setMaxPrice={setMaxPrice}
+          priceType={priceType}
+          minBedrooms={minBedrooms}
+          setMinBedrooms={setMinBedrooms}
+          minParking={minParking}
+          setMinParking={setMinParking}
+          minScore={minScore}
+          setMinScore={setMinScore}
+          isFurnished={isFurnished}
+          setIsFurnished={setIsFurnished}
+          acceptsPets={acceptsPets}
+          setAcceptsPets={setAcceptsPets}
+          citiesLoading={citiesLoading}
+          cities={cities}
+          city={city}
+          setCity={setCity}
+          neighborhoodsLoading={neighborhoodsLoading}
+          neighborhoods={neighborhoods}
+          neighborhood={neighborhood}
+          setNeighborhood={setNeighborhood}
+          onClearAdvanced={clearAllFilters}
+        />
 
         {/* Error state */}
         {loadError && !loading && (
@@ -885,66 +597,30 @@ export default function Properties() {
 
         {/* Grid */}
         {!loadError && viewType === 'grid' && (
-          loading ? (
-            <div className="loading-grid">
-              {Array.from({ length: 12 }).map((_, i) => <div key={i} className="skeleton" />)}
-            </div>
-          ) : properties.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">{viewMode === 'favourites' ? '☆' : '🏚️'}</div>
-              <h3>{viewMode === 'favourites' ? t('properties.emptyFavouritesTitle') : t('properties.emptyPropertiesTitle')}</h3>
-              <p>{viewMode === 'favourites' ? t('properties.emptyFavouritesBody') : (
-                hasActiveFilters
-                  ? t('properties.emptyAdjustFilters')
-                  : t('properties.emptyFirstIngest')
-              )}</p>
-              {viewMode !== 'favourites' && (
-                hasActiveFilters
-                  ? <button className="btn btn-ghost" onClick={() => {
-                      setMaxPrice(''); setPriceType(DEFAULT_FILTERS.priceType); setMinBedrooms(''); setMinScore(''); setMinParking('');
-                      setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both');
-                      setPlatform('');
-                      setIsFurnished(false); setAcceptsPets(false);
-                    }}>{t('properties.clearFilters')}</button>
-                  : <a href="/scraper" className="btn btn-primary">{t('properties.goToScraper')} →</a>
-              )}
-            </div>
-          ) : (
-            <>
-              <div className="property-grid">
-                {properties.map(p => (
-                  <PropertyCard
-                    key={p.id}
-                    property={p}
-                    listingType={listingType}
-                    onClick={() => openProperty(p)}
-                    isWatched={watchedIds.has(p.id)}
-                    onToggleWatchlist={toggleWatchlist}
-                    isFavourited={favouriteIds.has(p.id)}
-                    onToggleFavourite={toggleFavourite}
-                    compareMode={compareMode}
-                    isCompareSelected={isCompareSelected(linkIdForProperty(p))}
-                    onToggleCompare={handleToggleCompare}
-                    t={t}
-                    locale={locale}
-                  />
-                ))}
-              </div>
+          <>
+            <PropertiesResultsGrid
+              loading={loading}
+              properties={properties}
+              viewMode={viewMode}
+              hasActiveFilters={hasActiveFilters}
+              onClearFilters={clearFiltersKeepSearch}
+              listingType={listingType}
+              watchedIds={watchedIds}
+              onToggleWatchlist={toggleWatchlist}
+              favouriteIds={favouriteIds}
+              onToggleFavourite={toggleFavourite}
+              compareMode={compareMode}
+              isCompareSelected={isCompareSelected}
+              onToggleCompare={handleToggleCompare}
+              onOpenProperty={openProperty}
+              t={t}
+              locale={locale}
+            />
 
-              {viewMode === 'all' && pages > 1 && (
-                <div className="pagination">
-                  <button className="page-btn" onClick={() => setPage(1)} disabled={page === 1}>«</button>
-                  <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>‹</button>
-                  {Array.from({ length: Math.min(7, pages) }, (_, i) => {
-                    const n = Math.max(1, Math.min(pages - 6, page - 3)) + i
-                    return <button key={n} className={`page-btn ${n === page ? 'active' : ''}`} onClick={() => setPage(n)}>{n}</button>
-                  })}
-                  <button className="page-btn" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}>›</button>
-                  <button className="page-btn" onClick={() => setPage(pages)} disabled={page === pages}>»</button>
-                </div>
-              )}
-            </>
-          )
+            {!loading && properties.length > 0 && viewMode === 'all' && pages > 1 && (
+              <PropertiesPagination page={page} pages={pages} onPageChange={setPage} />
+            )}
+          </>
         )}
       </div>
 
@@ -1006,275 +682,6 @@ export default function Properties() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function scoreColor(v) {
-  if (v == null) return 'var(--text-muted)'
-  if (v >= 0.7) return 'var(--score-high)'
-  if (v >= 0.4) return 'var(--score-mid)'
-  return 'var(--score-low)'
-}
-
-function displayScore(v) {
-  const n = parseFloat(v);
-  return isNaN(n) ? '—' : (n * 100).toFixed(0);
-}
-
-function getPlatformCount(listings) {
-  if (!listings || listings.length === 0) return 0
-  return new Set(listings.map(l => l.platform)).size
-}
-
-function formatListingType(type, t) {
-  if (type === 'rent') return t('common.rentUpper')
-  return t('common.saleUpper')
-}
-
-function listingTypeColor(type) {
-  if (type === 'rent') return { bg: 'rgba(99,102,241,0.2)', color: '#818cf8' }
-  return { bg: 'rgba(16,185,129,0.2)', color: '#34d399' }
-}
-
-function formatLocationLabel(neighborhoodName, city) {
-  const nb = (neighborhoodName || '').trim()
-  const c = (city || '').trim()
-  if (nb && c && nb.toLowerCase() !== c.toLowerCase()) return `${nb}, ${c}`
-  return nb || c || ''
-}
-
-function PropertyCard({
-  property: p,
-  listingType = 'both',
-  onClick,
-  isWatched,
-  onToggleWatchlist,
-  isFavourited,
-  onToggleFavourite,
-  compareMode = false,
-  isCompareSelected,
-  onToggleCompare,
-  t,
-  locale,
-}) {
-  const img = (p.image_urls || [])[0]
-  const listings = p.listings || []
-  const groups = groupListings(listings)
-  const groupKeys = Object.keys(groups)
-  const platformCount = getPlatformCount(listings)
-  const hasListings = listings.length > 0
-  const locationLabel = formatLocationLabel(p.neighborhood_name, p.city)
-  const compareKey = linkIdForProperty(p) || String(p.id)
-  const fallbackPrice = decisioningPrice(p)
-
-  return (
-    <div
-      className={`property-card${compareMode && isCompareSelected ? ' property-card--selected' : ''}`}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      data-property-id={p.id}
-      data-public-id={p.public_id ?? undefined}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-    >
-      {compareMode && (
-        <label
-          className="property-compare-select"
-          title={t('properties.selectForComparison')}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          <input
-            type="checkbox"
-            checked={!!isCompareSelected}
-            onChange={(e) => onToggleCompare(e, p)}
-            aria-label={isCompareSelected ? t('properties.removeFromComparison') : t('properties.selectForComparison')}
-            data-testid={`compare-select-${compareKey}`}
-          />
-        </label>
-      )}
-      {img
-        ? <img className="property-image" src={img} alt={p.title || t('common.propertyAlt')} loading="lazy" onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex' }} />
-        : null
-      }
-      <div className="property-image-placeholder" style={{ display: img ? 'none' : 'flex' }}>🏠</div>
-
-      <div className="property-body">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            {hasListings ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }} data-testid="card-price-rows">
-                {groupKeys.map(type => {
-                  const best = bestListingForType(p, type, groups)
-                  const colors = listingTypeColor(type)
-                  return (
-                    <div key={type} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                      <span className="property-price" style={{ fontSize: groupKeys.length > 1 ? 16 : 20 }}>
-                        {best?.price ? formatCurrency(best.price, locale) : t('common.emDash')}
-                      </span>
-                      <span style={{ padding: '1px 5px', fontSize: 9, background: colors.bg, color: colors.color, borderRadius: 3, fontWeight: 700 }}>
-                        {formatListingType(type, t)}
-                      </span>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        {formatPlatform(best?.platform)}
-                      </span>
-                      {groups[type].length > 1 && (
-                        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                          ({groups[type].length})
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="property-price" data-testid="card-decisioning-price">
-                {fallbackPrice ? formatCurrency(fallbackPrice, locale) : t('common.emDash')}
-              </div>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {platformCount > 1 && (
-              <span style={{ padding: '2px 6px', fontSize: 9, background: 'rgba(251,191,36,0.15)', color: '#fbbf24', borderRadius: 4, fontWeight: 700 }}>
-                {t('properties.platformsBadge', { n: platformCount })}
-              </span>
-            )}
-            <div
-              className={`icon-btn ${isFavourited ? 'active' : ''}`}
-              data-testid={`favourite-toggle-${p.id}`}
-              title={t('properties.addToFavourites')}
-              aria-label={isFavourited ? t('properties.removeFromFavourites') : t('properties.addToFavourites')}
-              role="button"
-              tabIndex={0}
-              onClick={(e) => onToggleFavourite(e, p.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onToggleFavourite(e, p.id);
-                }
-              }}
-            >
-              <Star size={18} strokeWidth={2} fill={isFavourited ? 'currentColor' : 'none'} aria-hidden />
-            </div>
-            <div
-              className={`icon-btn icon-btn--watch ${isWatched ? 'active' : ''}`}
-              data-testid={`watchlist-toggle-${p.id}`}
-              title={t('properties.watchForPriceDrops')}
-              aria-label={isWatched ? t('properties.removeFromWatchlist') : t('properties.watchForPriceDrops')}
-              role="button"
-              tabIndex={0}
-              onClick={(e) => onToggleWatchlist(e, p.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onToggleWatchlist(e, p.id);
-                }
-              }}
-            >
-              <Bell size={18} strokeWidth={2} fill={isWatched ? 'currentColor' : 'none'} aria-hidden />
-            </div>
-          </div>
-        </div>
-        <div className="property-title">{p.title || p.address || t('common.untitled')}</div>
-        {p.deal_summary && (
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent, #6366f1)', marginTop: 6, lineHeight: 1.4 }}>
-            💡 {p.deal_summary}
-          </div>
-        )}
-
-        <div className="property-attrs">
-          {p.bedrooms != null  && <span className="property-attr">🛏 {p.bedrooms}</span>}
-          {p.bathrooms != null && <span className="property-attr">🚿 {p.bathrooms}</span>}
-          {p.parking != null   && <span className="property-attr">🚗 {p.parking}</span>}
-          {p.area_m2 != null   && <span className="property-attr">📐 {p.area_m2}m²</span>}
-          {p.price_per_m2      && <span className="property-attr" style={{ color: 'var(--text-muted)' }}>R${formatNumber(Math.round(p.price_per_m2), locale)}/m²</span>}
-          {locationLabel && <span className="property-attr" style={{ color: 'var(--text-muted)' }} data-testid="property-location">📍 {locationLabel}</span>}
-        </div>
-
-        {p.description && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-            {p.description}
-          </div>
-        )}
-
-        <div className="property-scores" style={{ marginTop: 12 }}>
-          {listingType === 'both' && hasDualScores(p) ? (
-            <>
-              {p.combined_score_rent != null && (
-                <div className="score-badge combined" style={{ borderColor: listingTypeColor('rent').color }}>
-                  <span className="score-badge-label">{t('properties.score')} {t('properties.scoreRent')}</span>
-                  <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_rent) }}>
-                    {displayScore(p.combined_score_rent)}
-                  </span>
-                </div>
-              )}
-              {p.combined_score_sale != null && (
-                <div className="score-badge combined" style={{ borderColor: listingTypeColor('sale').color }}>
-                  <span className="score-badge-label">{t('properties.score')} {t('properties.scoreSale')}</span>
-                  <span className="score-badge-val" style={{ color: scoreColor(p.combined_score_sale) }}>
-                    {displayScore(p.combined_score_sale)}
-                  </span>
-                </div>
-              )}
-              {p.stat_score_rent != null && (
-                <div className="score-badge stat" style={{ borderColor: listingTypeColor('rent').color }}>
-                  <span className="score-badge-label">{t('properties.statRent')}</span>
-                  <span className="score-badge-val">{displayScore(p.stat_score_rent)}</span>
-                </div>
-              )}
-              {p.stat_score_sale != null && (
-                <div className="score-badge stat" style={{ borderColor: listingTypeColor('sale').color }}>
-                  <span className="score-badge-label">{t('properties.statSale')}</span>
-                  <span className="score-badge-val">{displayScore(p.stat_score_sale)}</span>
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {combinedScoreForListingType(p, listingType) != null && (
-                <div className="score-badge combined">
-                  <span className="score-badge-label">{t('properties.score')}</span>
-                  <span className="score-badge-val" style={{ color: scoreColor(combinedScoreForListingType(p, listingType)) }}>
-                    {displayScore(combinedScoreForListingType(p, listingType))}
-                  </span>
-                </div>
-              )}
-              <div className="score-badge stat">
-                <span className="score-badge-label">{t('properties.stat')}</span>
-                <span className="score-badge-val">
-                  {statScoreForListingType(p, listingType) != null
-                    ? displayScore(statScoreForListingType(p, listingType))
-                    : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ {t('common.calcPending')}</span>}
-                </span>
-              </div>
-            </>
-          )}
-          <div className="score-badge ai">
-            <span className="score-badge-label">{t('properties.ai')}</span>
-            <span className="score-badge-val">{p.ai_score != null ? displayScore(p.ai_score) : <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 'normal' }}>⌛ {t('common.calcPending')}</span>}</span>
-          </div>
-          {p.neighbourhood_quality?.neighbourhood_score != null && (
-            <div className="score-badge" data-testid="card-nhood-score" title={t('properties.nhoodTitle')}>
-              <span className="score-badge-label">{t('properties.nhood')}</span>
-              <span className="score-badge-val">{displayScore(p.neighbourhood_quality.neighbourhood_score)}</span>
-            </div>
-          )}
-        </div>
-
-        {((p.ai_green_flags || []).length > 0 || (p.ai_red_flags || []).length > 0) && (
-          <div className="flags" style={{ marginTop: 10 }} data-testid="card-ad-claims">
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 6 }}>{t('properties.adClaims')}</span>
-            {(p.ai_green_flags || []).slice(0, 2).map(f => <span key={f} className="flag green">✔ {f}</span>)}
-            {(p.ai_red_flags || []).slice(0, 1).map(f => <span key={f} className="flag red">✖ {f}</span>)}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
