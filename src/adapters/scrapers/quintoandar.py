@@ -109,17 +109,7 @@ class QuintoAndarScraper(BaseScraper):
         time.sleep(random.uniform(1.0, 2.5))
         response = self.session.request(method, url, **kwargs)
 
-        # Track success/failure for circuit breaker. 403 (Cloudflare block) is
-        # NOT an `errors` metric — it stays classified `unknown` — but sustained
-        # 403 streaks must still open the SAME breaker (BIN-156) via their own
-        # failure-reason bucket, so a fully blocked run fast-fails instead of
-        # burning its full jitter-delay × max_pages budget.
-        if 200 <= response.status_code < 300:
-            self._cb.record_success()
-        elif response.status_code == 403:
-            self._cb.record_failure(reason="cloudflare_403")
-        elif response.status_code >= 500 or response.status_code == 429:
-            self._cb.record_failure()
+        self._record_circuit_outcome(self._cb, response.status_code)
         return response
 
     def fetch_pages(self, checkpoint: Any = None) -> Iterator[Dict[str, Any]]:

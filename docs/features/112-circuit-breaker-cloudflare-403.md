@@ -30,8 +30,13 @@ breaker so `_throttled_request` fast-fails once a platform is confirmed blocked.
 - `record_success()` now resets the default counter plus every reason bucket the instance has seen
   (tracked in `self._known_reasons`), so a single successful request fully clears prior 403 and 5xx
   streaks alike — matching the existing all-clear semantics.
-- Each scraper's `_throttled_request` gained one new branch: `elif response.status_code == 403:
-  self._cb.record_failure(reason="cloudflare_403")`, ahead of the existing `>=500 or == 429` branch.
+- Each scraper's `_throttled_request` originally grew an identical `if/elif` block (success / 403 /
+  5xx-429) inline — SonarCloud's new-code duplication gate (≤3%) failed at 6.1% because the same
+  ~10-line block was now copy-pasted 3x. Extracted it into `BaseScraper._record_circuit_outcome(cb,
+  status_code)` (`base.py`, a `@staticmethod` so it also works standalone in unit tests) and each
+  scraper's `_throttled_request` now calls `self._record_circuit_outcome(self._cb,
+  response.status_code)` — one line, matching the DRY precedent BIN-133 already set for other
+  cross-scraper helpers (`common.py`, `funnel.py`, `flight_html.py`).
   Used the SAME threshold/cooldown as the default bucket (5 failures / 120s) for now — the ticket
   allows tuning 403 timing separately but no data yet justifies a different number; the `reason`
   parameter makes that a one-line change later without touching `redis_circuit_breaker.py` again.
@@ -49,9 +54,11 @@ Files touched:
 
 ```
 src/adapters/scrapers/redis_circuit_breaker.py | record_failure() takes reason/threshold/cooldown; record_success() clears all seen reason buckets; RECORD_FAILURE_SCRIPT takes an explicit shared open_key
-src/adapters/scrapers/olx.py                   | _throttled_request: 403 -> record_failure(reason="cloudflare_403")
-src/adapters/scrapers/quintoandar.py           | _throttled_request: 403 -> record_failure(reason="cloudflare_403")
-src/adapters/scrapers/zapimoveis.py            | _throttled_request: 403 -> record_failure(reason="cloudflare_403")
+src/adapters/scrapers/base.py                  | NEW _record_circuit_outcome() static helper — shared success/403/5xx-429 classification, de-duplicates identical logic across the 3 scrapers (Sonar new-code duplication gate)
+src/adapters/scrapers/olx.py                   | _throttled_request: inline if/elif -> self._record_circuit_outcome(self._cb, response.status_code)
+src/adapters/scrapers/quintoandar.py           | _throttled_request: inline if/elif -> self._record_circuit_outcome(self._cb, response.status_code)
+src/adapters/scrapers/zapimoveis.py            | _throttled_request: inline if/elif -> self._record_circuit_outcome(self._cb, response.status_code)
+src/tests/unit/test_scraper_base.py            | NEW — direct unit tests for _record_circuit_outcome: 2xx/403/5xx-429/other-4xx-3xx branches
 src/tests/unit/test_cb.py                      | fake_script updated for 2-key signature; new tests: sustained-403-reason opens breaker, independent counters, independent threshold/cooldown, reset-on-success
 src/tests/unit/test_olx.py                     | new tests: 403 uses separate reason bucket; end-to-end sustained-403 opens a REAL RedisCircuitBreaker + fast-fails without further sleep/HTTP; 403 page fetch still yields [] without raising
 src/tests/unit/test_quintoandar.py             | new test: 403 uses separate reason bucket
