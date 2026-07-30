@@ -171,9 +171,68 @@ class TestFindFuzzyMatch:
             result = _find_fuzzy_match(
                 session, _candidate(bedrooms=2, bathrooms=1, parking=0), 50, 0.65, 5, "jaro_winkler"
             )
-        # Pre-BIN-146 characterization: geo+area+title alone match, so the
-        # distinct 3-bedroom unit is (incorrectly) merged into "x".
-        assert result == "x"
+        # BIN-146: tightened matcher must NOT merge distinct units — differing
+        # bedroom/bathroom/parking counts now block the fuzzy match.
+        assert result is None
+
+
+@pytest.mark.unit
+class TestFuzzyMatchRoomCounts:
+    """BIN-146: bedrooms/bathrooms/parking as an additional required-match gate."""
+
+    def _row(self, **overrides):
+        base = dict(id="x", title="Apt", area_m2=50.0, bedrooms=2, bathrooms=1, parking=0)
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_differing_bedrooms_does_not_match(self):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = [self._row(bedrooms=3)]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            assert (
+                _find_fuzzy_match(session, _candidate(bedrooms=2), 50, 0.65, 5, "jaro_winkler")
+                is None
+            )
+
+    def test_differing_bathrooms_does_not_match(self):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = [self._row(bathrooms=2)]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            assert (
+                _find_fuzzy_match(session, _candidate(bathrooms=1), 50, 0.65, 5, "jaro_winkler")
+                is None
+            )
+
+    def test_differing_parking_does_not_match(self):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = [self._row(parking=1)]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            assert (
+                _find_fuzzy_match(session, _candidate(parking=0), 50, 0.65, 5, "jaro_winkler")
+                is None
+            )
+
+    def test_identical_rooms_still_matches(self):
+        """Legitimate match: geo/area/title AND bedrooms/bathrooms/parking all align."""
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = [self._row()]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            assert (
+                _find_fuzzy_match(session, _candidate(), 50, 0.65, 5, "jaro_winkler") == "x"
+            )
+
+    def test_missing_room_data_falls_back_to_permissive_match(self):
+        """Older/incomplete rows without bedroom/bathroom/parking data should not
+        become permanently unmatchable — only block when BOTH sides report a
+        value and they differ, mirroring the existing area-tolerance pattern."""
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = [
+            self._row(bedrooms=None, bathrooms=None, parking=None)
+        ]
+        with patch("core.dedupe.text_similarity", return_value=0.99):
+            assert (
+                _find_fuzzy_match(session, _candidate(), 50, 0.65, 5, "jaro_winkler") == "x"
+            )
 
 
 @pytest.mark.unit
