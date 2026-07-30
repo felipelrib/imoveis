@@ -366,21 +366,38 @@ async function apiFetch<T = unknown>(endpoint: string, options: ApiFetchOptions 
   return r.json()
 }
 
+/** Attaches X-API-Key when present (Epic 2 edge auth) — these routes accept
+ * anonymous access only when no admin API key is configured server-side
+ * (BIN-150: consistent with the rest of the admin surface). */
+function authHeaders(): Record<string, string> {
+  const apiKey = getApiKey()
+  return apiKey ? { 'X-API-Key': apiKey } : {}
+}
+
 export async function fetchStatus(): Promise<SystemStatus> {
-  const r = await fetch(`${BASE}/system/status`)
-  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.statusFetchFailed'))
+  const r = await fetch(`${BASE}/system/status`, { headers: authHeaders() })
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error(authErrorMessage())
+    throw new Error(t(getActiveLocale(), 'errors.statusFetchFailed'))
+  }
   return r.json()
 }
 
 export async function fetchPipeline(): Promise<PipelineStatus> {
-  const r = await fetch(`${BASE}/system/pipeline`)
-  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.pipelineFetchFailed'))
+  const r = await fetch(`${BASE}/system/pipeline`, { headers: authHeaders() })
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error(authErrorMessage())
+    throw new Error(t(getActiveLocale(), 'errors.pipelineFetchFailed'))
+  }
   return r.json()
 }
 
 export async function fetchPipelineHistory(minutes = 60): Promise<PipelineHistory> {
-  const r = await fetch(`${BASE}/system/pipeline/history?minutes=${minutes}`)
-  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.pipelineHistoryFetchFailed'))
+  const r = await fetch(`${BASE}/system/pipeline/history?minutes=${minutes}`, { headers: authHeaders() })
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error(authErrorMessage())
+    throw new Error(t(getActiveLocale(), 'errors.pipelineHistoryFetchFailed'))
+  }
   return r.json()
 }
 
@@ -645,8 +662,11 @@ export async function updateLocale(locale: string): Promise<LocaleResponse> {
 // ---------------------------------------------------------------------------
 
 export async function fetchAlerts(): Promise<AlertItem[]> {
-  const r = await fetch(`${BASE}/system/alerts`)
-  if (!r.ok) throw new Error(t(getActiveLocale(), 'errors.alertsFetchFailed'))
+  const r = await fetch(`${BASE}/system/alerts`, { headers: authHeaders() })
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403) throw new Error(authErrorMessage())
+    throw new Error(t(getActiveLocale(), 'errors.alertsFetchFailed'))
+  }
   return r.json()
 }
 
