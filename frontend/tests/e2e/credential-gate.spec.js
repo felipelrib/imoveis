@@ -47,6 +47,25 @@ test.describe("Frontend credential gate", () => {
     await expect(page.locator("text=Service Status")).toBeVisible();
   });
 
+  test("error toast is announced and keyboard-dismissible (BIN-157)", async ({ page }) => {
+    await installCommonMocks(page);
+    await mockAdminHealth(page, { validKey: VALID_KEY });
+
+    await page.goto("/");
+    await page.getByTestId("credential-input").fill("wrong-key");
+    await page.getByTestId("credential-save").click();
+
+    const toast = page.getByText("Invalid or missing API credential");
+    await expect(toast).toBeVisible();
+
+    const toastContainer = page.locator('[role="status"]', { hasText: "Invalid or missing API credential" });
+    await expect(toastContainer).toHaveAttribute("aria-live", "polite");
+
+    await toastContainer.focus();
+    await page.keyboard.press("Escape");
+    await expect(toast).toHaveCount(0);
+  });
+
   test("clear removes the session credential", async ({ page }) => {
     await installCommonMocks(page);
     await mockAdminHealth(page, { validKey: VALID_KEY });
