@@ -132,6 +132,41 @@ def test_fallback_retries_403_through_flaresolverr():
     flare.get.assert_called_once()
 
 
+def test_fallback_supports_request_method_like_quintoandar():
+    """Regression: QuintoAndar calls ``session.request('GET', url)``, not
+    ``.get`` — the wrapper must expose ``.request`` or the live scrape crashes
+    with AttributeError (caught by the CI scrapers dry-run, not by mocks)."""
+    direct = MagicMock()
+    direct.request.return_value = _resp(200)
+    flare = MagicMock()
+    sess = CloudflareFallbackSession(direct, _cfg(), flare=flare)
+    resp = sess.request("GET", "https://www.quintoandar.com.br/x")
+    assert resp.status_code == 200
+    direct.request.assert_called_once_with("GET", "https://www.quintoandar.com.br/x")
+    flare.get.assert_not_called()
+
+
+def test_fallback_request_403_falls_back_to_flaresolverr():
+    direct = MagicMock()
+    direct.request.return_value = _resp(403)
+    flare = MagicMock()
+    flare.get.return_value = _resp(200)
+    sess = CloudflareFallbackSession(direct, _cfg(), flare=flare)
+    resp = sess.request("GET", "https://www.zapimoveis.com.br/x")
+    assert resp.status_code == 200
+    flare.get.assert_called_once()
+
+
+def test_flaresolverr_session_request_maps_to_get():
+    client = _fake_client(
+        json_data={"status": "ok", "solution": {"status": 200, "response": "<html>x</html>"}}
+    )
+    resp = FlareSolverrSession(_cfg(), client=client).request(
+        "GET", "https://www.quintoandar.com.br/x"
+    )
+    assert resp.status_code == 200
+
+
 def test_fallback_is_sticky_after_first_block():
     direct = MagicMock()
     direct.get.return_value = _resp(403)

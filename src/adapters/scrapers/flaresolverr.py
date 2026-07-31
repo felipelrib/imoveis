@@ -95,6 +95,14 @@ class FlareSolverrSession:
         )
         return httpx.Response(status_code=status_code, text=html, request=request)
 
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """``httpx.Client.request`` shim — QuintoAndar calls ``session.request``.
+
+        FlareSolverr solves pages in a browser (GET only); other verbs are not
+        used by the scrapers, so every request is treated as a GET solve.
+        """
+        return self.get(url, **kwargs)
+
     def close(self) -> None:
         self._client.close()
 
@@ -136,9 +144,16 @@ class CloudflareFallbackSession:
         return self._flare
 
     def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self._fetch(url, lambda: self._direct.get(url, **kwargs), kwargs)
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """``httpx.Client.request`` shim — QuintoAndar calls ``session.request``."""
+        return self._fetch(url, lambda: self._direct.request(method, url, **kwargs), kwargs)
+
+    def _fetch(self, url: str, direct_call: Any, kwargs: dict) -> httpx.Response:
         if self._use_flare:
             return self._flare_session().get(url, **kwargs)
-        response = self._direct.get(url, **kwargs)
+        response = direct_call()
         if response.status_code != 403:
             return response
         try:

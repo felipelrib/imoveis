@@ -25,8 +25,10 @@ allowlist (`platforms: [olx]`) through it. Two gaps:
   pay a wasted direct 403 (and trip its circuit breaker) on every subsequent request. Un-gated
   providers (QuintoAndar) never touch FlareSolverr. This makes a newly Cloudflare-gated provider —
   ZAP today, anything later — handled automatically with zero config and zero overhead for the rest.
-- Implemented as `CloudflareFallbackSession`, a drop-in for the `.get()` / `.headers` / `.close()`
-  subset the scrapers use (like `FlareSolverrSession`), wired in `BaseScraper.create_http_session`.
+- Implemented as `CloudflareFallbackSession`, a drop-in for the `.get()` / `.request()` / `.headers`
+  / `.close()` surface the scrapers use — OLX/ZAP call `.get()`, QuintoAndar calls
+  `.request("GET", …)` — wired in `BaseScraper.create_http_session` (both session types expose both
+  verbs).
   403 is the Cloudflare signal the pipeline already uses (`_record_circuit_outcome` buckets it as
   `cloudflare_403`), so no new heuristic is introduced.
 
