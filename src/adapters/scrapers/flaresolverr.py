@@ -58,11 +58,12 @@ class FlareSolverrSession:
         timeout = config.max_timeout_ms / 1000.0 + 15.0
         self._client = client or httpx.Client(timeout=timeout)
 
-    def get(self, url: str, follow_redirects: bool = True) -> httpx.Response:
+    def get(self, url: str, **_kwargs: Any) -> httpx.Response:
         """Solve ``url`` via FlareSolverr and return an ``httpx.Response``.
 
-        ``follow_redirects`` is accepted for signature compatibility;
-        FlareSolverr follows redirects inside the browser regardless.
+        Extra kwargs (e.g. ``follow_redirects=True``) are accepted for drop-in
+        compatibility with ``httpx.Client.get`` and ignored — FlareSolverr always
+        follows redirects inside the browser.
         """
         payload = {
             "cmd": "request.get",

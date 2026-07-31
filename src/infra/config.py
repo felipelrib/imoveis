@@ -217,7 +217,8 @@ class CloudflareBypassConfig(BaseModel, frozen=True):
     """
 
     enabled: bool = False
-    endpoint: str = "http://flaresolverr:8191/v1"
+    # Internal compose-network service; FlareSolverr serves plain HTTP only (no TLS).
+    endpoint: str = "http://flaresolverr:8191/v1"  # NOSONAR - internal, no HTTPS
     max_timeout_ms: int = 60000
     platforms: list[str] = Field(default_factory=lambda: ["olx"])
 

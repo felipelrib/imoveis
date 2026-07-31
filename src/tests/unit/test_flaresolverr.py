@@ -66,14 +66,16 @@ def test_get_propagates_upstream_403_as_response_not_error():
 
 def test_get_raises_when_service_reports_failure():
     client = _fake_client(json_data={"status": "error", "message": "timeout"})
+    session = FlareSolverrSession(_cfg(), client=client)
     with pytest.raises(FlareSolverrError):
-        FlareSolverrSession(_cfg(), client=client).get("https://www.olx.com.br/x")
+        session.get("https://www.olx.com.br/x")
 
 
 def test_get_raises_on_transport_error():
     client = _fake_client(raise_http=True)
+    session = FlareSolverrSession(_cfg(), client=client)
     with pytest.raises(FlareSolverrError):
-        FlareSolverrSession(_cfg(), client=client).get("https://www.olx.com.br/x")
+        session.get("https://www.olx.com.br/x")
 
 
 def test_headers_update_is_supported():
