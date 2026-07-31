@@ -210,6 +210,42 @@ scrape uses a direct connection — no code changes. Logs/status show `proxy_mod
 Platform `extra.proxy` in scraping config, when set to a non-null URL, overrides the global
 pool for that platform only.
 
+## Cloudflare bypass (OLX) — headless-browser fetch (BIN-246)
+
+OLX serves a Cloudflare JS challenge (HTTP 403) to plain HTTP clients, so proxy rotation
+alone does not help (free/datacenter proxy IPs are challenged the same way). The bypass
+routes a platform's GETs through a [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)
+sidecar — a real headless browser that solves the challenge and returns rendered HTML. A
+residential exit IP plus a real browser clears the challenge; no paid proxy is required.
+
+It is **off by default** and opt-in in two steps:
+
+1. Start the sidecar (a compose profile, so the default stack never runs it):
+
+   ```bash
+   docker compose --profile bypass up -d flaresolverr
+   ```
+
+2. Enable it in `configs/app_config.yaml` (or via env) and restart scraper workers:
+
+   ```yaml
+   scraping:
+     cloudflare_bypass:
+       enabled: true
+       endpoint: http://flaresolverr:8191/v1   # compose-network address
+       max_timeout_ms: 60000
+       platforms:
+         - olx
+   ```
+
+   Env override: `IMOVEIS_SCRAPING__CLOUDFLARE_BYPASS__ENABLED=true`.
+
+On the next scrape, listed platforms log `scraper_cloudflare_bypass` (platform + endpoint)
+and per-request `flaresolverr_fetch` (url, status, bytes); `proxy_summary` carries
+`cloudflare_bypass: true`. Throttling and circuit breakers are unchanged — only the
+transport swaps. Disable by setting `enabled: false` and restarting workers (and optionally
+`docker compose --profile bypass stop flaresolverr`).
+
 ## Development
 
 ### Code Quality (pre-commit)
