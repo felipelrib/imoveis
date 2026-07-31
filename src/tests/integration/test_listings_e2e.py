@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.db.models import PropertyListing
+from adapters.db.models import Property, PropertyListing
 from core.dedupe import match_or_create_property
 from core.entities import PropertyCandidate
 
@@ -172,3 +172,81 @@ class TestListingPersistence:
 
         assert result.action == "created"
         assert result.property_id is not None
+
+
+class TestDescriptionPersistence:
+    """Description must round-trip to the DB and survive a blank re-scrape (BIN-243).
+
+    The DB was 100% empty because every row predated the description-enrich step,
+    not because persistence drops the field. These tests lock the persist
+    invariant so a future regression (or an over-eager "blank overwrites" change)
+    is caught: a candidate carrying a description is stored non-empty, and a
+    later thin re-scrape with an empty description does not wipe it.
+    """
+
+    def test_description_round_trips_non_empty(self, session):
+        """A candidate with a description persists that text to the DB."""
+        candidate = _make_candidate(
+            platform_id="qa-desc-001",
+            description="Apartamento reformado, andar alto, sol da manhã.",
+            listings=[
+                {
+                    "platform": "quintoandar",
+                    "platform_listing_id": "qa-desc-001",
+                    "listing_type": "rent",
+                    "price": 3000.0,
+                    "currency": "BRL",
+                    "url": "https://www.quintoandar.com.br/imovel/qa-desc-001",
+                }
+            ],
+        )
+        result = match_or_create_property(session, candidate)
+        session.flush()
+
+        assert result.action == "created"
+        prop = session.get(Property, result.property_id)
+        assert prop is not None
+        assert prop.description == "Apartamento reformado, andar alto, sol da manhã."
+
+    def test_blank_rescrape_does_not_wipe_stored_description(self, session):
+        """A later re-scrape with an empty description must not blank the DB text."""
+        original = "Casa ampla com quintal e churrasqueira."
+        first = _make_candidate(
+            platform_id="qa-desc-002",
+            description=original,
+            listings=[
+                {
+                    "platform": "quintoandar",
+                    "platform_listing_id": "qa-desc-002",
+                    "listing_type": "rent",
+                    "price": 2500.0,
+                    "currency": "BRL",
+                    "url": "https://www.quintoandar.com.br/imovel/qa-desc-002",
+                }
+            ],
+        )
+        created = match_or_create_property(session, first)
+        session.flush()
+
+        # Re-scrape: thin search payload carries an empty description, price moved.
+        blank = _make_candidate(
+            platform_id="qa-desc-002",
+            description="",
+            price=2600.0,
+            listings=[
+                {
+                    "platform": "quintoandar",
+                    "platform_listing_id": "qa-desc-002",
+                    "listing_type": "rent",
+                    "price": 2600.0,
+                    "currency": "BRL",
+                    "url": "https://www.quintoandar.com.br/imovel/qa-desc-002",
+                }
+            ],
+        )
+        updated = match_or_create_property(session, blank)
+        session.flush()
+
+        assert updated.property_id == created.property_id
+        prop = session.get(Property, created.property_id)
+        assert prop.description == original
