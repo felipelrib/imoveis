@@ -13,6 +13,8 @@ import asyncio
 import base64
 import json
 import logging
+import random
+import re
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, Dict, List, Tuple
@@ -773,6 +775,190 @@ class LMStudioClient(LocalAIClient):
         return [float(x) for x in data[0]["embedding"]]
 
 
+class GeminiClient(LMStudioClient):
+    """Client for Google Gemini via its OpenAI-compatible endpoint.
+
+    Reuses ``LMStudioClient``'s OpenAI-style ``analyze_visuals`` /
+    ``analyze_text`` / ``_llm_verdict`` (base64 ``image_url`` data-URIs + chat
+    completions), overriding only transport: the Gemini base URL, bearer-key
+    auth, JSON ``response_format``, and exponential-backoff retry on
+    429/5xx / connection resets (the reliability gap vs a local backend that
+    has no rate limit).
+
+    Embeddings are intentionally out of scope for the A/B — semantic-search
+    vectors stay on the local ``bge-m3`` backend (the ``properties.embedding``
+    column is ``vector(1024)`` and mixing model vector spaces corrupts cosine
+    search), so :meth:`embed` raises.
+
+    The ``request_count`` / ``retry_count`` / ``rate_limit_hits`` counters are
+    read by the A/B harness (``scripts/dev/ab_gemini_vs_ollama.py``) to report
+    observed quota headroom empirically.
+    """
+
+    DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+    _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+    _MAX_BACKOFF_SECONDS = 30.0
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-2.5-flash",
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: int = 120,
+        max_retries: int = 5,
+    ):
+        if not api_key:
+            raise AIClientError(
+                "GeminiClient requires a non-empty api_key (set GEMINI_API_KEY)"
+            )
+        # Both visual + text run on the same Gemini model; embedding_model is
+        # unused (embed() raises).
+        super().__init__(
+            base_url=base_url,
+            timeout=timeout,
+            visual_model=model,
+            text_model=model,
+            embedding_model="",
+        )
+        self.api_key = api_key
+        self.model = model
+        self.max_retries = max(1, max_retries)
+        self.request_count = 0
+        self.retry_count = 0
+        self.rate_limit_hits = 0
+        # Last hard failure (status + short body), surfaced by the A/B harness so
+        # a run that fully fell back is self-explanatory (e.g. depleted billing
+        # credits vs a genuine rate limit vs a bad request).
+        self.last_error = ""
+
+    async def _sleep_backoff(self, backoff: float) -> float:
+        """Sleep ``backoff`` + jitter and return the next (doubled) backoff."""
+        await asyncio.sleep(backoff + random.uniform(0, backoff))
+        return min(backoff * 2, self._MAX_BACKOFF_SECONDS)
+
+    async def chat_completions(self, model: str, messages: list, **kwargs) -> Dict[str, Any]:
+        """POST to Gemini's OpenAI-compatible chat endpoint with retry.
+
+        Adds bearer-key auth and forces JSON output via ``response_format``
+        (all three call sites — visual / sentiment / verdict — want JSON).
+        Retries 429/5xx and connection errors with exponential backoff +
+        jitter; a persistent failure raises ``AIClientError`` so the caller's
+        existing try/except applies its template fallback.
+        """
+        self._ensure_session()
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        payload = {
+            "model": model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            **kwargs,
+        }
+
+        backoff = 1.0
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries):
+            self.request_count += 1
+            final_attempt = attempt == self.max_retries - 1
+            try:
+                async with self.session.post(url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    error_text = await response.text()
+                    if response.status in self._RETRY_STATUS and not final_attempt:
+                        if response.status == 429:
+                            self.rate_limit_hits += 1
+                        self.retry_count += 1
+                        logger.warning(
+                            "gemini_retry status=%s attempt=%s body=%s",
+                            response.status,
+                            attempt,
+                            error_text[:200],
+                        )
+                        backoff = await self._sleep_backoff(backoff)
+                        continue
+                    logger.error("Gemini API error: %s - %s", response.status, error_text)
+                    self.last_error = f"{response.status}: {error_text[:200].strip()}"
+                    raise AIClientError(f"Gemini API error: {response.status}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_exc = exc
+                if final_attempt:
+                    logger.exception("Error calling Gemini API")
+                    self.last_error = f"connection: {str(exc)[:200]}"
+                    raise
+                self.retry_count += 1
+                logger.warning("gemini_conn_retry attempt=%s err=%s", attempt, str(exc))
+                backoff = await self._sleep_backoff(backoff)
+
+        if last_exc is not None:
+            raise last_exc
+        raise AIClientError("Gemini API error: retries exhausted")
+
+    async def embed(self, text: str) -> List[float]:
+        raise NotImplementedError(
+            "GeminiClient embeddings are out of scope; embeddings stay on the "
+            "local bge-m3 backend (see docs/features/BIN-*-gemini-ab-enrich.md)"
+        )
+
+
+class GemmaClient(GeminiClient):
+    """Gemma models served through the Gemini OpenAI-compatible endpoint.
+
+    Identical transport to :class:`GeminiClient` (same base URL / bearer auth /
+    retry), but Gemma emits a ``<thought>…</thought>`` reasoning preamble before
+    the JSON body **even in JSON mode**, which breaks the strict ``json.loads``
+    in the shared retry loop. This strips that wrapper (and any prose outside the
+    outermost JSON object) from each response so the inherited
+    ``analyze_visuals`` / ``analyze_text`` / ``_llm_verdict`` parsing works
+    unchanged. Gemma is vision-capable via ``image_url`` data-URIs (verified).
+    """
+
+    _THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL)
+
+    def __init__(self, api_key: str, model: str = "gemma-4-31b-it", **kwargs):
+        super().__init__(api_key=api_key, model=model, **kwargs)
+
+    @classmethod
+    def _sanitize_content(cls, text: str) -> str:
+        """Strip a Gemma ``<thought>`` preamble and isolate the JSON object."""
+        if not text:
+            return text
+        cleaned = cls._THOUGHT_RE.sub("", text)
+        # Handle a truncated/unclosed block: keep only what follows the marker.
+        if "</thought>" in cleaned:
+            cleaned = cleaned.rsplit("</thought>", 1)[-1]
+        cleaned = cleaned.strip()
+        # Trim stray prose around the JSON object so json.loads succeeds.
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end > start:
+            return cleaned[start : end + 1]
+        return cleaned
+
+    # Gemma spends completion tokens on its <thought> preamble before the JSON
+    # body. The inherited verdict call caps max_tokens at 256, which Gemma can
+    # exhaust mid-thought — truncating away the JSON and leaving an empty body
+    # after sanitisation. Enforce a floor so thought + answer both fit.
+    _MIN_MAX_TOKENS = 2048
+
+    async def chat_completions(self, model: str, messages: list, **kwargs) -> Dict[str, Any]:
+        kwargs["max_tokens"] = max(int(kwargs.get("max_tokens") or 0), self._MIN_MAX_TOKENS)
+        result = await super().chat_completions(model, messages, **kwargs)
+        try:
+            message = (result.get("choices") or [{}])[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = self._sanitize_content(content)
+        except (IndexError, AttributeError, TypeError):
+            pass  # leave the raw response; the JSON retry loop will fall back
+        return result
+
+
+def _gemini_client_for(model: str, **kwargs) -> "GeminiClient":
+    """Pick GemmaClient for gemma-* model ids, else GeminiClient."""
+    cls = GemmaClient if model.lower().startswith("gemma") else GeminiClient
+    return cls(model=model, **kwargs)
+
+
 def create_ai_client() -> LocalAIClient:
     """Factory to create an AI client based on configuration.
 
@@ -784,7 +970,14 @@ def create_ai_client() -> LocalAIClient:
     cfg = get_config()
     backend = cfg.ai.backend
 
-    if backend == "lmstudio":
+    if backend == "gemini":
+        return _gemini_client_for(
+            cfg.ai.gemini_model,
+            api_key=cfg.ai.gemini_api_key,
+            base_url=cfg.ai.gemini_url,
+            timeout=cfg.ai.timeout,
+        )
+    elif backend == "lmstudio":
         return LMStudioClient(
             base_url=cfg.ai.lmstudio_url,
             timeout=cfg.ai.timeout,

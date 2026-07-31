@@ -123,9 +123,14 @@ class AIConfig(BaseModel, frozen=True):
     (text) environment variables.
     """
 
-    backend: str = "ollama"  # ollama | lmstudio
+    backend: str = "ollama"  # ollama | lmstudio | gemini
     ollama_url: str = "http://localhost:11434"
     lmstudio_url: str = "http://localhost:1234"
+    # Gemini/Gemma (OpenAI-compatible endpoint) — used by the A/B harness and,
+    # if promoted, by ``backend: gemini``. Key comes from env only (never YAML).
+    gemini_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_api_key: str = ""
     visual_model: str = "qwen2.5vl:7b"
     text_model: str = "qwen2.5vl:7b"
     embedding_model: str = "bge-m3"
@@ -630,6 +635,16 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     if ollama_host:
         data.setdefault("ai", {})
         data["ai"]["ollama_url"] = ollama_host
+
+    # 3.7 GEMINI_API_KEY / GEMINI_MODEL → ai.* (secret via env only, never YAML)
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_api_key:
+        data.setdefault("ai", {})
+        data["ai"]["gemini_api_key"] = gemini_api_key
+    gemini_model = os.environ.get("GEMINI_MODEL")
+    if gemini_model:
+        data.setdefault("ai", {})
+        data["ai"]["gemini_model"] = gemini_model
 
     # 3.6 Auth credentials → auth.* (prefer dedicated env names for DX / CI)
     data.setdefault("auth", {})
