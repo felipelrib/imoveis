@@ -3,7 +3,12 @@ from typing import Generator
 
 import httpx
 
+from adapters.scrapers.flaresolverr import FlareSolverrSession
 from adapters.scrapers.http_client import create_scraper_http_client
+from infra.config import get_config
+from infra.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class CircuitBreakerException(Exception):
@@ -26,15 +31,30 @@ class BaseScraper(ABC):
         self.config = config
         self.proxy_summary: dict = {}
 
-    def create_http_session(self) -> httpx.Client:
-        """Build an HTTP client using global proxy config + optional override.
+    def create_http_session(self):
+        """Build the HTTP session for this scraper.
 
         Non-null ``extra.proxy`` is a fixed per-platform override; ``null`` /
-        absent defers to ``AppConfig.proxy`` rotation.
+        absent defers to ``AppConfig.proxy`` rotation. When
+        ``scraping.cloudflare_bypass`` is enabled for this platform, GETs route
+        through a FlareSolverr sidecar instead (BIN-246) — a drop-in session, so
+        throttling/circuit-breaker in the scraper stay unchanged.
         """
         override = (self.config.get("extra") or {}).get("proxy")
         client = create_scraper_http_client(platform_override=override)
         self.proxy_summary = getattr(client, "imoveis_proxy_summary", {}) or {}
+
+        bypass = get_config().scraping.cloudflare_bypass
+        if bypass.enabled and self.platform_name in bypass.platforms:
+            headers = httpx.Headers(client.headers)
+            client.close()
+            self.proxy_summary = {**self.proxy_summary, "cloudflare_bypass": True}
+            logger.info(
+                "scraper_cloudflare_bypass",
+                platform=self.platform_name,
+                endpoint=bypass.endpoint,
+            )
+            return FlareSolverrSession(bypass, headers=headers)
         return client
 
     @abstractmethod

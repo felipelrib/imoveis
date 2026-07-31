@@ -80,6 +80,16 @@ scraping:
   # Never invents street precision — uses ST_PointOnSurface of the polygon.
   olx_location:
     backfill_coords_from_neighbourhood: true
+  # Cloudflare bypass (BIN-246). OLX 403s plain HTTP clients with a JS challenge;
+  # when enabled, listed platforms fetch through the FlareSolverr sidecar (a real
+  # headless browser) instead. Requires `docker compose --profile bypass up -d
+  # flaresolverr`. Default off → direct httpx. See docs/setup.md § Cloudflare bypass.
+  cloudflare_bypass:
+    enabled: false
+    endpoint: http://flaresolverr:8191/v1   # FlareSolverr /v1 API (compose network)
+    max_timeout_ms: 60000                    # max browser solve time per request
+    platforms:
+      - olx
   platforms:
     quintoandar:
       base_url: https://www.quintoandar.com.br/alugar/imovel/belo-horizonte-mg-brasil

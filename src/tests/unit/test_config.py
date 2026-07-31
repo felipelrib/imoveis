@@ -128,6 +128,10 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.scraping.availability_recheck.interval_minutes == 360
     assert cfg.scraping.availability_recheck.batch_size == 50
     assert cfg.scraping.availability_recheck.stale_after_hours == 24
+    # Cloudflare bypass (BIN-246) defaults off; OLX is the default target.
+    assert cfg.scraping.cloudflare_bypass.enabled is False
+    assert cfg.scraping.cloudflare_bypass.platforms == ["olx"]
+    assert cfg.scraping.cloudflare_bypass.endpoint.endswith("/v1")
 
 
 @pytest.mark.unit

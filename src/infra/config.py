@@ -204,6 +204,24 @@ class OlxLocationConfig(BaseModel, frozen=True):
     backfill_coords_from_neighbourhood: bool = True
 
 
+class CloudflareBypassConfig(BaseModel, frozen=True):
+    """Headless-browser fetch backend for Cloudflare-gated platforms (BIN-246).
+
+    OLX returns a Cloudflare JS challenge (HTTP 403) to plain HTTP clients. When
+    ``enabled`` and the platform is listed, the scraper routes its GETs through a
+    `FlareSolverr <https://github.com/FlareSolverr/FlareSolverr>`_ sidecar, which
+    solves the challenge in a real browser and returns rendered HTML. Default off
+    (direct httpx). ``endpoint`` points at the FlareSolverr ``/v1`` API; the
+    docker-compose ``flaresolverr`` service exposes it at
+    ``http://flaresolverr:8191/v1`` inside the compose network.
+    """
+
+    enabled: bool = False
+    endpoint: str = "http://flaresolverr:8191/v1"
+    max_timeout_ms: int = 60000
+    platforms: list[str] = Field(default_factory=lambda: ["olx"])
+
+
 class ScrapingConfig(BaseModel, frozen=True):
     """Web scraping defaults and per-platform overrides."""
 
@@ -216,6 +234,9 @@ class ScrapingConfig(BaseModel, frozen=True):
         default_factory=AvailabilityRecheckConfig
     )
     olx_location: OlxLocationConfig = Field(default_factory=OlxLocationConfig)
+    cloudflare_bypass: CloudflareBypassConfig = Field(
+        default_factory=CloudflareBypassConfig
+    )
 
 
 class FeaturesConfig(BaseModel, frozen=True):

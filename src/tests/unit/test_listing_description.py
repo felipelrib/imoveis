@@ -69,6 +69,18 @@ def test_extract_olx_description_from_flight():
     assert len(text) > 20
 
 
+def test_extract_olx_description_from_real_captured_page():
+    """BIN-246: byte-exact slice of a real OLX detail page fetched via the
+    headless-browser bypass. Confirms extract_olx_description works on production
+    HTML (the synthetic stubs never were oracle-verified). Feeds BIN-244."""
+    html = (FIXTURES / "olx_detail_real.html").read_text(encoding="utf-8")
+    text = extract_olx_description(html)
+    assert "Excelente Apartamento" in text
+    assert "Lagoa Santa" in text
+    assert "Campinho" in text
+    assert len(text) > 500
+
+
 def test_extract_olx_description_empty_html():
     assert extract_olx_description("") == ""
 
