@@ -14,6 +14,7 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from adapters.ai.client import (
@@ -834,6 +835,40 @@ class TestGeminiClient:
         assert client.request_count == 1
         assert client.retry_count == 0
 
+    def test_sleep_backoff_doubles_and_caps(self):
+        client = GeminiClient(api_key="k")
+        with patch("adapters.ai.client.asyncio.sleep", new=AsyncMock()) as slept:
+            nxt = asyncio.run(client._sleep_backoff(1.0))
+            slept.assert_awaited_once()
+            assert nxt == 2.0  # min(1*2, 30)
+            capped = asyncio.run(client._sleep_backoff(100.0))
+            assert capped == client._MAX_BACKOFF_SECONDS
+
+    def test_retries_on_connection_error_then_succeeds(self):
+        """A transient aiohttp.ClientError is retried, not surfaced."""
+        client = GeminiClient(api_key="k", max_retries=3)
+        client._sleep_backoff = AsyncMock(return_value=0.0)
+        ok = AsyncMock(status=200)
+        ok.json.return_value = _make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE))
+        client.session = MagicMock()
+        client.session.post.side_effect = [aiohttp.ClientError("boom"), self._ctx(ok)]
+
+        result = asyncio.run(client.chat_completions("m", []))
+
+        assert result["choices"][0]["message"]["content"]
+        assert client.retry_count == 1
+
+    def test_connection_error_exhausted_raises_and_records(self):
+        """Persistent connection error re-raises and records last_error."""
+        client = GeminiClient(api_key="k", max_retries=2)
+        client._sleep_backoff = AsyncMock(return_value=0.0)
+        client.session = MagicMock()
+        client.session.post.side_effect = aiohttp.ClientError("down")
+
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(client.chat_completions("m", []))
+        assert client.last_error.startswith("connection:")
+
 
 @pytest.mark.unit
 class TestGemmaClient:
@@ -884,6 +919,22 @@ class TestGemmaClient:
         with patch.object(GeminiClient, "chat_completions", _fake):
             asyncio.run(client.chat_completions("gemma-4-31b-it", [], max_tokens=256))
         assert captured["max_tokens"] == GemmaClient._MIN_MAX_TOKENS
+
+    def test_sanitize_no_json_returns_stripped_text(self):
+        """No JSON object present → return the thought-stripped remainder as-is."""
+        assert GemmaClient._sanitize_content("<thought>just thinking</thought>no json here") == "no json here"
+
+    def test_sanitize_edge_cases(self):
+        assert GemmaClient._sanitize_content("") == ""  # empty early-return
+        # orphan closing tag (no opening) → keep what follows </thought>
+        assert GemmaClient._sanitize_content('junk</thought>{"a": 1}') == '{"a": 1}'
+
+    def test_chat_completions_tolerates_malformed_response(self):
+        """A response without the expected choices shape is returned unchanged, no crash."""
+        client = GemmaClient(api_key="k")
+        with patch.object(GeminiClient, "chat_completions", AsyncMock(return_value={"choices": "not-a-list"})):
+            result = asyncio.run(client.chat_completions("gemma-4-31b-it", []))
+        assert result == {"choices": "not-a-list"}
 
     def test_gemini_client_for_selects_gemma(self):
         gemma = _gemini_client_for("gemma-4-31b-it", api_key="k")

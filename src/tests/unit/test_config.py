@@ -61,6 +61,8 @@ _CONFIG_ENV_KEYS = [
     "REDIS_URL",
     "AI_MODEL",
     "OLLAMA_HOST",
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
     "API_KEY",
     "JWT_SECRET",
     "ADMIN_USER",
@@ -261,6 +263,19 @@ def test_ai_model_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     cfg = load_config(cfg_file)
 
     assert cfg.ai.visual_model == "deepseek-r1:14b"
+
+
+@pytest.mark.unit
+def test_gemini_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """GEMINI_API_KEY / GEMINI_MODEL env vars land on ai.* (key never in YAML)."""
+    cfg_file = _write_yaml(tmp_path, MINIMAL_YAML)
+    monkeypatch.setenv("GEMINI_API_KEY", "env-gemini-key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemma-4-31b-it")
+
+    cfg = load_config(cfg_file)
+
+    assert cfg.ai.gemini_api_key == "env-gemini-key"
+    assert cfg.ai.gemini_model == "gemma-4-31b-it"
 
 
 @pytest.mark.unit
