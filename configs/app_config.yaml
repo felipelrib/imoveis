@@ -263,9 +263,14 @@ scoring:
 # Local AI / VLM
 # ---------------------------------------------------------------------------
 ai:
-  backend: ollama             # ollama | lmstudio
+  backend: ollama             # ollama | lmstudio | gemini
   ollama_url: http://localhost:11434
   lmstudio_url: http://localhost:1234
+  # Gemini/Gemma (OpenAI-compatible endpoint). GEMINI_API_KEY comes from env
+  # only — never commit a key here. GEMINI_MODEL env overrides gemini_model.
+  gemini_url: https://generativelanguage.googleapis.com/v1beta/openai
+  gemini_model: gemini-2.5-flash
+  gemini_api_key: ""          # env: GEMINI_API_KEY (leave blank in YAML)
   # Single generative VLM for photos + text JSON (sentiment, OLX location, verdict)
   visual_model: qwen2.5vl:7b
   text_model: qwen2.5vl:7b

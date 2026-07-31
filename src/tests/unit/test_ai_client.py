@@ -14,15 +14,19 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from adapters.ai.client import (
     AIClientError,
+    GeminiClient,
+    GemmaClient,
     LMStudioClient,
     LocalAIClient,
     OllamaClient,
     SentimentResult,
     VisualResult,
+    _gemini_client_for,
     create_ai_client,
 )
 
@@ -322,6 +326,26 @@ class TestCreateAIClient:
         assert client.embedding_model == "text-embedding-nomic"
         assert client.num_ctx == 4096
         assert client.timeout.total == 90
+
+    @patch("infra.config.get_config")
+    def test_gemini_backend(self, mock_get_config):
+        """backend=gemini should return GeminiClient with correct params."""
+        mock_cfg = MagicMock()
+        mock_cfg.ai.backend = "gemini"
+        mock_cfg.ai.gemini_api_key = "secret-key"
+        mock_cfg.ai.gemini_model = "gemini-2.5-flash-lite"
+        mock_cfg.ai.gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+        mock_cfg.ai.timeout = 45
+        mock_get_config.return_value = mock_cfg
+
+        client = create_ai_client()
+        assert isinstance(client, GeminiClient)
+        assert client.api_key == "secret-key"
+        assert client.model == "gemini-2.5-flash-lite"
+        assert client.visual_model == "gemini-2.5-flash-lite"
+        assert client.text_model == "gemini-2.5-flash-lite"
+        assert client.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+        assert client.timeout.total == 45
 
     @patch("infra.config.get_config")
     def test_unknown_backend_defaults_to_ollama(self, mock_get_config):
@@ -719,3 +743,201 @@ class TestContextManagers:
         stub = Stub("http://x")
         with pytest.raises(NotImplementedError):
             asyncio.run(stub._llm_verdict("p"))
+
+
+# ---------------------------------------------------------------------------
+# GeminiClient (OpenAI-compatible endpoint) — thin transport over LMStudioClient
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGeminiClient:
+    """Verify GeminiClient transport: URL, auth, JSON mode, 429 backoff."""
+
+    GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+    @staticmethod
+    def _ctx(response):
+        return AsyncMock(
+            __aenter__=AsyncMock(return_value=response),
+            __aexit__=AsyncMock(return_value=None),
+        )
+
+    def test_requires_api_key(self):
+        with pytest.raises(AIClientError, match="api_key"):
+            GeminiClient(api_key="")
+
+    def test_embed_not_implemented(self):
+        client = GeminiClient(api_key="k")
+        with pytest.raises(NotImplementedError):
+            asyncio.run(client.embed("text"))
+
+    def test_chat_completions_builds_authed_json_request(self):
+        """POST hits the OpenAI-compat path with bearer auth + JSON response_format."""
+        client = GeminiClient(api_key="secret", model="gemini-2.5-flash")
+        response = AsyncMock(status=200)
+        response.json.return_value = _make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE))
+        client.session = MagicMock()
+        client.session.post.return_value = self._ctx(response)
+
+        result = asyncio.run(
+            client.chat_completions("gemini-2.5-flash", [{"role": "user", "content": "hi"}])
+        )
+
+        assert result["choices"][0]["message"]["content"]
+        args, kwargs = client.session.post.call_args
+        assert args[0] == f"{self.GEMINI_URL}/chat/completions"
+        assert kwargs["headers"]["Authorization"] == "Bearer secret"
+        assert kwargs["json"]["response_format"] == {"type": "json_object"}
+        assert kwargs["json"]["model"] == "gemini-2.5-flash"
+        assert client.request_count == 1
+        assert client.retry_count == 0
+
+    def test_analyze_text_parses_openai_payload(self):
+        """End-to-end happy path through the inherited LMStudio-style parser."""
+        client = GeminiClient(api_key="k")
+        client.chat_completions = AsyncMock(
+            return_value=_make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE))
+        )
+        result = asyncio.run(client.analyze_text("nice place", "prompt"))
+        assert result.sentiment_score == 0.70
+
+    def test_retries_on_429_then_succeeds(self):
+        """A 429 is retried with backoff; counters record the throttle."""
+        client = GeminiClient(api_key="k", max_retries=3)
+        client._sleep_backoff = AsyncMock(return_value=0.0)  # no real sleep
+
+        resp_429 = AsyncMock(status=429)
+        resp_429.text.return_value = "rate limited"
+        resp_200 = AsyncMock(status=200)
+        resp_200.json.return_value = _make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE))
+
+        client.session = MagicMock()
+        client.session.post.side_effect = [self._ctx(resp_429), self._ctx(resp_200)]
+
+        result = asyncio.run(client.chat_completions("m", []))
+
+        assert result["choices"][0]["message"]["content"]
+        assert client.request_count == 2
+        assert client.retry_count == 1
+        assert client.rate_limit_hits == 1
+
+    def test_non_retryable_status_raises(self):
+        """A 400 is a hard error (no retry) surfaced as AIClientError."""
+        client = GeminiClient(api_key="k")
+        response = AsyncMock(status=400)
+        response.text.return_value = "bad request"
+        client.session = MagicMock()
+        client.session.post.return_value = self._ctx(response)
+
+        with pytest.raises(AIClientError, match="400"):
+            asyncio.run(client.chat_completions("m", []))
+        assert client.request_count == 1
+        assert client.retry_count == 0
+
+    def test_sleep_backoff_doubles_and_caps(self):
+        client = GeminiClient(api_key="k")
+        with patch("adapters.ai.client.asyncio.sleep", new=AsyncMock()) as slept:
+            nxt = asyncio.run(client._sleep_backoff(1.0))
+            slept.assert_awaited_once()
+            assert nxt == 2.0  # min(1*2, 30)
+            capped = asyncio.run(client._sleep_backoff(100.0))
+            assert capped == client._MAX_BACKOFF_SECONDS
+
+    def test_retries_on_connection_error_then_succeeds(self):
+        """A transient aiohttp.ClientError is retried, not surfaced."""
+        client = GeminiClient(api_key="k", max_retries=3)
+        client._sleep_backoff = AsyncMock(return_value=0.0)
+        ok = AsyncMock(status=200)
+        ok.json.return_value = _make_chat_completion(json.dumps(FAKE_SENTIMENT_RESPONSE))
+        client.session = MagicMock()
+        client.session.post.side_effect = [aiohttp.ClientError("boom"), self._ctx(ok)]
+
+        result = asyncio.run(client.chat_completions("m", []))
+
+        assert result["choices"][0]["message"]["content"]
+        assert client.retry_count == 1
+
+    def test_connection_error_exhausted_raises_and_records(self):
+        """Persistent connection error re-raises and records last_error."""
+        client = GeminiClient(api_key="k", max_retries=2)
+        client._sleep_backoff = AsyncMock(return_value=0.0)
+        client.session = MagicMock()
+        client.session.post.side_effect = aiohttp.ClientError("down")
+
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(client.chat_completions("m", []))
+        assert client.last_error.startswith("connection:")
+
+
+@pytest.mark.unit
+class TestGemmaClient:
+    """Gemma strips its <thought> preamble so shared JSON parsing works."""
+
+    def test_sanitize_strips_thought_and_isolates_json(self):
+        raw = '<thought>Let me think.\nMaybe {not json}.</thought>{"ok": true}'
+        assert GemmaClient._sanitize_content(raw) == '{"ok": true}'
+
+    def test_sanitize_trims_prose_around_json(self):
+        raw = 'Here is the answer:\n{"condition_score": 0.9}\nHope that helps!'
+        assert GemmaClient._sanitize_content(raw) == '{"condition_score": 0.9}'
+
+    def test_sanitize_passes_through_clean_json(self):
+        assert GemmaClient._sanitize_content('{"a": 1}') == '{"a": 1}'
+
+    def test_chat_completions_sanitizes_response(self):
+        client = GemmaClient(api_key="k")
+        thought_wrapped = _make_chat_completion(
+            '<thought>reasoning...</thought>' + json.dumps(FAKE_SENTIMENT_RESPONSE)
+        )
+        # Stub the transport (GeminiClient.chat_completions) to return the wrapped body.
+        with patch.object(GeminiClient, "chat_completions", AsyncMock(return_value=thought_wrapped)):
+            result = asyncio.run(client.chat_completions("gemma-4-31b-it", []))
+        content = result["choices"][0]["message"]["content"]
+        assert content == json.dumps(FAKE_SENTIMENT_RESPONSE)
+
+    def test_analyze_text_parses_thought_wrapped_json(self):
+        """End-to-end: a <thought>-wrapped payload still yields a real result."""
+        client = GemmaClient(api_key="k")
+        wrapped = _make_chat_completion(
+            '<thought>hmm</thought>' + json.dumps(FAKE_SENTIMENT_RESPONSE)
+        )
+        with patch.object(GeminiClient, "chat_completions", AsyncMock(return_value=wrapped)):
+            result = asyncio.run(client.analyze_text("desc", "prompt"))
+        assert result.sentiment_score == 0.70
+
+    def test_chat_completions_enforces_max_tokens_floor(self):
+        """Regression: Gemma's <thought> eats the 256-tok verdict budget, truncating
+        away the JSON. GemmaClient must raise max_tokens to a floor so both fit."""
+        client = GemmaClient(api_key="k")
+        captured = {}
+
+        async def _fake(self, model, messages, **kwargs):  # noqa: ANN001
+            captured.update(kwargs)
+            return _make_chat_completion(json.dumps({"verdict": "ok", "confidence": 0.8}))
+
+        with patch.object(GeminiClient, "chat_completions", _fake):
+            asyncio.run(client.chat_completions("gemma-4-31b-it", [], max_tokens=256))
+        assert captured["max_tokens"] == GemmaClient._MIN_MAX_TOKENS
+
+    def test_sanitize_no_json_returns_stripped_text(self):
+        """No JSON object present → return the thought-stripped remainder as-is."""
+        assert GemmaClient._sanitize_content("<thought>just thinking</thought>no json here") == "no json here"
+
+    def test_sanitize_edge_cases(self):
+        assert GemmaClient._sanitize_content("") == ""  # empty early-return
+        # orphan closing tag (no opening) → keep what follows </thought>
+        assert GemmaClient._sanitize_content('junk</thought>{"a": 1}') == '{"a": 1}'
+
+    def test_chat_completions_tolerates_malformed_response(self):
+        """A response without the expected choices shape is returned unchanged, no crash."""
+        client = GemmaClient(api_key="k")
+        with patch.object(GeminiClient, "chat_completions", AsyncMock(return_value={"choices": "not-a-list"})):
+            result = asyncio.run(client.chat_completions("gemma-4-31b-it", []))
+        assert result == {"choices": "not-a-list"}
+
+    def test_gemini_client_for_selects_gemma(self):
+        gemma = _gemini_client_for("gemma-4-31b-it", api_key="k")
+        gemini = _gemini_client_for("gemini-2.5-flash", api_key="k")
+        assert isinstance(gemma, GemmaClient)
+        assert isinstance(gemini, GeminiClient) and not isinstance(gemini, GemmaClient)
