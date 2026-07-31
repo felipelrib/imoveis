@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<!--
+  BIN-249 oracle: trimmed capture of QuintoAndar's "listing gone" placeholder shell
+  served at a bare /imovel/{id} for a delisted listing (live probe 2026-07-31,
+  id 119842623). The real page is a ~127KB generic SPA shell; the defining trait is
+  an empty `houseInfo` (blank id/displayId/status, empty listings, null forRent/forSale)
+  with no rentPrice / DescriptionsSection payload. Fields below mirror the observed shape.
+-->
+<html lang="pt-BR"><head><title>QuintoAndar</title></head>
+<body>
+<div id="__next"></div>
+<script id="__NEXT_DATA__" type="application/json">
+{"props":{"pageProps":{"listingFeatureFlags":{},"initialState":{"house":{"houseInfo":{"id":"","displayId":"","status":"","listings":[],"forRent":null,"forSale":null,"businessContext":null,"closingStatus":{"loading":false},"error":false,"address":null,"area":null,"bedrooms":null,"bathrooms":null},"markers":[]}}}},"page":"/imovel/[id]","query":{"id":"119842623"},"buildId":"placeholder"}
+</script>
+</body></html>
