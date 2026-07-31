@@ -28,7 +28,7 @@ repos:
     hooks:
       - id: forbid-hardcoded-secrets
         name: forbid imoveis/dev secrets
-        entry: bash -c '! grep -rnP "(imoveis_secret|dev-secret-key)" src/ frontend/src/ --include="*.py" --include="*.js" --include="*.jsx"'
+        entry: bash -c '! grep -rnP "(imoveis_secret|dev-secret-key)" src/ frontend/src/ --include="*.py" --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx"'
         language: system
         pass_filenames: false
 
