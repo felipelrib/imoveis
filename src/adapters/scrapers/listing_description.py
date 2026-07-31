@@ -29,6 +29,33 @@ _BODY_IN_JSON_RE = re.compile(
 _OLX_AD_KEYS = ("ad", "adData", "listing", "detail")
 _OLX_ID_KEYS = ("listId", "list_id", "id", "adId")
 
+# BIN-244: real OLX detail pages carry the seller's ad body in a schema.org
+# JSON-LD block (``RentAction``/``SaleAction`` → ``Object`` → ``description``, or
+# a bare ``Product`` with a top-level ``description``), NOT in ``__NEXT_DATA__``
+# or the Flight payload. The field is HTML (``<br>``-separated lines), so it must
+# be tag-stripped before it enters the corpus. Nested-entity keys are checked
+# before an object's own ``description`` so the ad's Product wins over the
+# enclosing action.
+_LD_JSON_RE = re.compile(
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
+)
+_LD_NESTED_KEYS = ("Object", "mainEntity", "item", "itemOffered")
+_LD_AD_TYPES = frozenset(
+    {
+        "rentaction",
+        "saleaction",
+        "product",
+        "offer",
+        "realestatelisting",
+        "residence",
+        "apartment",
+        "house",
+        "singlefamilyresidence",
+    }
+)
+_BR_RE = re.compile(r"(?i)<br\s*/?>")
+
 
 def _strip_text(value: Any) -> str:
     if not isinstance(value, str):
@@ -239,8 +266,95 @@ def _olx_from_next_data(data: dict) -> str:
     return _olx_walk_for_body(page_props)
 
 
-def extract_olx_description(html: str) -> str:
-    """Pull ad body from an OLX detail page (``__NEXT_DATA__`` or Flight)."""
+def _ld_type_is_ad(obj: dict) -> bool:
+    raw = obj.get("@type")
+    types = raw if isinstance(raw, list) else [raw]
+    return any(isinstance(t, str) and t.lower() in _LD_AD_TYPES for t in types)
+
+
+def _ld_ad_description(obj: Any) -> str:
+    """Description reachable only through a nested ad entity or an ad-typed node.
+
+    Prefers the ad's ``Product`` under a Rent/Sale action; a generic ``WebPage``
+    / breadcrumb ``description`` (SEO decoys) is ignored by this pass.
+    """
+    if isinstance(obj, list):
+        for item in obj:
+            found = _ld_ad_description(item)
+            if found:
+                return found
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+    for key in _LD_NESTED_KEYS:
+        if key in obj:
+            found = _ld_ad_description(obj.get(key))
+            if found:
+                return found
+    if _ld_type_is_ad(obj):
+        return _strip_text(obj.get("description"))
+    return ""
+
+
+def _ld_any_description(obj: Any) -> str:
+    """Fallback: the first ``description`` anywhere in a JSON-LD node."""
+    if isinstance(obj, list):
+        for item in obj:
+            found = _ld_any_description(item)
+            if found:
+                return found
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+    for key in _LD_NESTED_KEYS:
+        if key in obj:
+            found = _ld_any_description(obj.get(key))
+            if found:
+                return found
+    return _strip_text(obj.get("description"))
+
+
+def _olx_from_json_ld(html: str) -> str:
+    """Ad body from a schema.org JSON-LD block (BIN-244 real-page oracle).
+
+    Two passes across all blocks: the ad-typed/nested description wins over any
+    generic top-level ``description`` (meta/breadcrumb SEO decoys).
+    """
+    blocks = []
+    for match in _LD_JSON_RE.finditer(html or ""):
+        try:
+            blocks.append(json.loads(match.group(1)))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    for block in blocks:
+        found = _ld_ad_description(block)
+        if found:
+            return found
+    for block in blocks:
+        found = _ld_any_description(block)
+        if found:
+            return found
+    return ""
+
+
+def _clean_olx_body(text: str) -> str:
+    """Strip HTML markup OLX ships inside description fields (BIN-244).
+
+    OLX ad bodies (JSON-LD or, occasionally, ``__NEXT_DATA__``) are HTML with
+    ``<br>`` line breaks. Turn breaks into separators so words don't glue,
+    drop any remaining tags, then collapse whitespace — matching the plain-text
+    contract the QuintoAndar extractor already honours.
+    """
+    if not text:
+        return ""
+    if "<" not in text:
+        return _normalize_dom_text(text)
+    with_breaks = _BR_RE.sub("\n", text)
+    stripped = BeautifulSoup(with_breaks, "html.parser").get_text(" ")
+    return _normalize_dom_text(stripped)
+
+
+def _olx_raw_description(html: str) -> str:
     data = _load_next_data(html)
     if data:
         found = _olx_from_next_data(data)
@@ -250,7 +364,21 @@ def extract_olx_description(html: str) -> str:
     found = _olx_from_flight(html)
     if found:
         return found
+    found = _olx_from_json_ld(html)
+    if found:
+        return found
     return _first_body_in_text(html or "")
+
+
+def extract_olx_description(html: str) -> str:
+    """Pull the ad body from an OLX detail page and return clean plain text.
+
+    Sources, in order: ``__NEXT_DATA__`` → Flight payload → schema.org JSON-LD
+    (the real-page location, BIN-244) → a crude whole-page regex fallback (for
+    truncated captures). Whatever is found is tag-stripped (BIN-244) so ``<br>``
+    markup never reaches sentiment enrichment or the dashboard.
+    """
+    return _clean_olx_body(_olx_raw_description(html))
 
 
 def candidate_listing_url(candidate: Any) -> str:

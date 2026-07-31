@@ -70,15 +70,128 @@ def test_extract_olx_description_from_flight():
 
 
 def test_extract_olx_description_from_real_captured_page():
-    """BIN-246: byte-exact slice of a real OLX detail page fetched via the
-    headless-browser bypass. Confirms extract_olx_description works on production
-    HTML (the synthetic stubs never were oracle-verified). Feeds BIN-244."""
+    """BIN-246/BIN-244: byte-exact slice of a real OLX detail page fetched via
+    the headless-browser bypass. The real oracle carries the ad body in a
+    JSON-LD ``RentAction`` block whose ``description`` is HTML (``<br>``-laden),
+    not in ``__NEXT_DATA__`` / Flight. Confirm extract_olx_description returns
+    the body AND cleans the markup (BIN-244) so downstream sentiment (BIN-242)
+    and the dashboard get plain text."""
     html = (FIXTURES / "olx_detail_real.html").read_text(encoding="utf-8")
     text = extract_olx_description(html)
     assert "Excelente Apartamento" in text
     assert "Lagoa Santa" in text
     assert "Campinho" in text
     assert len(text) > 500
+    # BIN-244: markup must be stripped — no raw HTML tags leak into the corpus.
+    assert "<br>" not in text
+    assert "<" not in text and ">" not in text
+    # Words that were separated only by <br> must not glue together.
+    assert "com:2 quartos" not in text
+    assert "2 quartos" in text
+
+
+def test_extract_olx_description_from_json_ld_prefers_ad_over_decoy():
+    """BIN-244: real OLX detail pages expose the ad body in a schema.org
+    ``RentAction``/``SaleAction`` JSON-LD block (``Object.description``). Parse it
+    explicitly rather than grabbing the first ``"description"`` in the page — an
+    earlier decoy (meta / breadcrumb) must not win, and the ``<br>`` markup that
+    OLX ships inside that field must be cleaned."""
+    html = (
+        "<html><head>"
+        '<script type="application/ld+json">'
+        '{"@type":"WebPage","description":"DECOY meta description that must not win here."}'
+        "</script>"
+        '<script type="application/ld+json">'
+        '{"@context":"https://schema.org","@type":"RentAction",'
+        '"identifier":1497362999,"Object":{"@type":"Product",'
+        '"name":"Aluguel: Apartamento 2 quartos",'
+        '"description":"Excelente apartamento no Campinho.<br><br>2 quartos;<br>Sala."}}'
+        "</script>"
+        "</head><body></body></html>"
+    )
+    text = extract_olx_description(html)
+    assert text.startswith("Excelente apartamento no Campinho.")
+    assert "DECOY" not in text
+    assert "<br>" not in text
+    assert "Campinho. 2 quartos" in text  # <br> became a separator, words not glued
+
+
+def test_extract_olx_description_json_ld_array_with_ad_typed_item():
+    """OLX often ships JSON-LD as an array of schema.org entities; the ad-typed
+    item (``@type`` may itself be a list) supplies the body."""
+    html = (
+        '<script type="application/ld+json">'
+        '[{"@type":"BreadcrumbList","itemListElement":[]},'
+        '{"@type":["Thing","Product"],'
+        '"description":"Body inside an array item, long enough to qualify."}]'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Body inside an array item, long enough to qualify."
+
+
+def test_extract_olx_description_json_ld_generic_description_fallback():
+    """No ad-typed / nested entity: the second pass returns the first
+    ``description`` anywhere (still preferred over the crude regex fallback)."""
+    html = (
+        '<script type="application/ld+json">'
+        '[{"@type":"WebPage","description":"Generic page description, no ad type, long enough."}]'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Generic page description, no ad type, long enough."
+
+
+def test_extract_olx_description_json_ld_skips_malformed_block():
+    """A malformed JSON-LD block is skipped; a later valid ad block still wins."""
+    html = (
+        '<script type="application/ld+json">{ this is not valid json }</script>'
+        '<script type="application/ld+json">'
+        '{"@type":"Product","description":"Valid ad body after a malformed block, long enough."}'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Valid ad body after a malformed block, long enough."
+
+
+def test_extract_olx_description_json_ld_nested_generic_description():
+    """The generic-description fallback also descends nested schema.org entities
+    (``mainEntity``) when no ad-typed node carries the body."""
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"WebPage","mainEntity":'
+        '{"description":"Nested generic description, long enough to count."}}'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Nested generic description, long enough to count."
+
+
+def test_extract_olx_description_json_ld_array_without_description_is_empty():
+    """A JSON-LD array carrying no description anywhere yields no body (and the
+    extractor does not invent one)."""
+    html = '<script type="application/ld+json">[{"@type":"WebPage"}]</script>'
+    assert extract_olx_description(html) == ""
+
+
+def test_extract_olx_description_json_ld_non_object_is_ignored():
+    """A JSON-LD payload that is a bare scalar carries no ad body; with no other
+    source the extractor returns empty rather than inventing text."""
+    html = '<script type="application/ld+json">"just a bare string"</script>'
+    assert extract_olx_description(html) == ""
+
+
+def test_extract_olx_description_next_data_body_is_cleaned():
+    """A ``__NEXT_DATA__`` body carrying inline ``<br>`` markup is cleaned too."""
+    html = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        '{"props":{"pageProps":{"ad":{"listId":1,'
+        '"body":"Linha um.<br>Linha dois com bastante texto aqui."}}}}'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert "<br>" not in text
+    assert "Linha um. Linha dois" in text
 
 
 def test_extract_olx_description_empty_html():
