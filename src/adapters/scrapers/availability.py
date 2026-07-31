@@ -28,6 +28,9 @@ _NEXT_DATA_RE = re.compile(
 )
 _OLX_LISTING_ID_RE = re.compile(r"(?:/vi/|/imoveis/[^?\s]*?-)(\d{6,})(?:\.htm)?", re.I)
 _ZAP_LISTING_ID_RE = re.compile(r"(?:id-|/imovel/)(?:[^\s\"']*?-)?(\d{6,})", re.I)
+# QuintoAndar detail URLs: bare /imovel/{id} for a fetch; live listings 301-redirect
+# to /imovel/{id}/{alugar|comprar}/{slug}. The trailing slug segment is the "live" tell.
+_QA_LISTING_ID_RE = re.compile(r"/imovel/(\d{4,})(?:/([^/?#]+))?", re.I)
 
 _TRANSIENT_HTTP = frozenset({403, 429})
 _QA_INACTIVE_HOUSE = frozenset({"despublicado", "unpublished", "inactive"})
@@ -110,16 +113,53 @@ def _qa_status_from_house(house_info: dict, html: str) -> AvailabilityResult:
     return AvailabilityResult(AvailabilityStatus.UNKNOWN, "qa_status_unclear")
 
 
+def _qa_url_has_slug(url: str | None) -> bool:
+    """True when a QA detail URL carries a trailing slug segment (a live listing)."""
+    if not url:
+        return False
+    match = _QA_LISTING_ID_RE.search(url)
+    return bool(match and match.group(2))
+
+
+def _qa_is_placeholder_shell(
+    house_info: dict, request_url: str | None, final_url: str | None
+) -> bool:
+    """Detect QuintoAndar's "listing gone" SSR placeholder (BIN-249).
+
+    A delisted ``/imovel/{id}`` serves a generic SPA shell whose ``houseInfo`` is
+    present but empty — blank ``id``/``displayId``/``status`` and no ``listings`` —
+    and it never 301-redirects to a slug URL. Live listings always carry a real id
+    and redirect to ``/imovel/{id}/{alugar|comprar}/{slug}``. The empty payload is
+    the self-contained signal; a slug in the final URL vetoes it as a safety guard.
+    """
+    has_payload = (
+        str(house_info.get("id") or "").strip()
+        or str(house_info.get("displayId") or "").strip()
+        or str(house_info.get("status") or "").strip()
+        or house_info.get("listings")
+    )
+    if has_payload:
+        return False
+    # A slug redirect means the page resolved to a live listing — never a placeholder.
+    if _qa_url_has_slug(final_url):
+        return False
+    return True
+
+
 def parse_quintoandar_availability(
     *,
     status_code: int,
     html: str,
     listing_type: str | None = None,
+    request_url: str | None = None,
+    final_url: str | None = None,
 ) -> AvailabilityResult:
     """Classify a QuintoAndar detail response.
 
     Prefer ``__NEXT_DATA__`` listing status for the matching business context.
     HTTP 404 alone is not enough — QA still SSR's despublicado houses as 404.
+    Delisted listings serve an empty-``houseInfo`` placeholder shell (BIN-249),
+    which is UNAVAILABLE, not merely status-unclear.
     """
     transient = _transient_or_server_error(status_code)
     if transient:
@@ -132,6 +172,9 @@ def parse_quintoandar_availability(
         return err
 
     assert house_info is not None
+    if _qa_is_placeholder_shell(house_info, request_url, final_url):
+        return AvailabilityResult(AvailabilityStatus.UNAVAILABLE, "qa_placeholder_shell")
+
     from_listings = _qa_status_from_listings(
         house_info, _listing_type_to_qa_context(listing_type)
     )
@@ -351,6 +394,8 @@ def classify_response(
             status_code=status_code,
             html=html,
             listing_type=listing_type,
+            request_url=request_url,
+            final_url=final_url,
         )
     if name == "olx":
         return parse_olx_availability(

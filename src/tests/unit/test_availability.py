@@ -58,6 +58,54 @@ class TestQuintoAndarAvailability:
         assert result.status == AvailabilityStatus.UNKNOWN
         assert result.reason == "qa_404_no_next_data"
 
+    def test_delisted_placeholder_shell_is_unavailable(self):
+        # BIN-249: bare /imovel/{id} placeholder with empty houseInfo -> delisted.
+        html = _load("quintoandar_delisted_placeholder.html")
+        result = parse_quintoandar_availability(
+            status_code=200,
+            html=html,
+            listing_type="rent",
+            request_url="https://www.quintoandar.com.br/imovel/119842623",
+            final_url="https://www.quintoandar.com.br/imovel/119842623",
+        )
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+        assert result.reason == "qa_placeholder_shell"
+
+    def test_placeholder_detected_without_urls(self):
+        # The empty payload alone is sufficient; URL args are corroboration only.
+        html = _load("quintoandar_delisted_placeholder.html")
+        result = parse_quintoandar_availability(status_code=200, html=html)
+        assert result.status == AvailabilityStatus.UNAVAILABLE
+        assert result.reason == "qa_placeholder_shell"
+
+    def test_empty_payload_with_slug_redirect_not_placeholder(self):
+        # Safety guard: a slug redirect means the page resolved to a live listing,
+        # so an (unexpected) empty payload must not be flagged as a placeholder.
+        html = _load("quintoandar_delisted_placeholder.html")
+        result = parse_quintoandar_availability(
+            status_code=200,
+            html=html,
+            listing_type="rent",
+            request_url="https://www.quintoandar.com.br/imovel/894353786",
+            final_url=(
+                "https://www.quintoandar.com.br/imovel/894353786/alugar/"
+                "apartamento-3-quartos-santo-antonio-belo-horizonte"
+            ),
+        )
+        assert result.status != AvailabilityStatus.UNAVAILABLE
+
+    def test_live_listing_with_slug_still_available(self):
+        # Populated houseInfo -> normal available path, placeholder check is skipped.
+        html = _load("quintoandar_available.html")
+        result = parse_quintoandar_availability(
+            status_code=200,
+            html=html,
+            listing_type="rent",
+            request_url="https://www.quintoandar.com.br/imovel/894353786",
+            final_url="https://www.quintoandar.com.br/imovel/894353786/alugar/x",
+        )
+        assert result.status == AvailabilityStatus.AVAILABLE
+
     def test_ui_indisponivel_fallback(self):
         html = (
             '<html><body><p>Esse imóvel está indisponível :(</p>'
