@@ -34,6 +34,8 @@ Full docs: `docs/setup.md` (install/run), `docs/architecture.md` (data flow/comp
 
 **Linear + this pipeline** own execution. Sprint file: `_bmad-output/implementation-artifacts/sprint-status.yaml`. After `bmad-create-story` (optional), implement via feature-pipeline gates — never skip `validate.sh` / `finish-feature.sh`.
 
+**Ticket → ship is ALWAYS `feature-pipeline` — never a BMad dev-side skill.** BMad installs generic implementation loops (`bmad-dev-story`, `bmad-dev-auto`, `bmad-quick-dev`) whose trigger phrases ("implement the next story", "dev this story", "build/fix/tweak…") shadow this pipeline. Do **not** let them run for Imoveis ticket delivery: they bypass `validate.sh` / `finish-feature.sh` / the squash-merge gate and the contract/scraper/AI + docker-rebuild rules, and `bmad-dev-story` explicitly overrides the STOP-at-3-unexpected-files and Plan-Mode discipline this repo requires. BMad dev/review skills are opt-in *assists inside* the pipeline (a task checklist, an adversarial review pass) — they can never replace or short-circuit it.
+
 Use **Plan Mode** for non-trivial work, then implement in the same session. An optional `implementation_plan.md` is fine for long tasks — not a dual-model handoff.
 
 For "work on the next ticket", "run feature X", or the full pipeline: read and follow [`.claude/skills/feature-pipeline/SKILL.md`](.claude/skills/feature-pipeline/SKILL.md).
@@ -216,18 +218,14 @@ Bugs found during review go only in **Notes / Follow-ups** as `**BUG (Severity)*
 
 ## Domain validation hooks
 
-- After scraper change: `bash scripts/agent/validate-scrapers.sh --require-live` (merge-blocking). On HTML drift, refresh cassettes via `python scripts/dev/record_scraper_cassettes.py` — never drop the CI gate.
-- After AI prompt/client change: `bash scripts/agent/validate-ai.sh` (from WSL set `OLLAMA_HOST=http://$(ip route show default | awk '/default/{print $3}'):11434` when Ollama binds on Windows; keep host `OLLAMA_NUM_PARALLEL` equal to `gpu.semaphore_limit` — oversized parallel × `num_ctx` spills VRAM into system RAM). After concurrency/VRAM changes: `PYTHONPATH=src python scripts/dev/bench_ollama_vram.py --cases A,D`.
-- API schema changes: update/run `src/tests/contract/`
-- DB schema changes: `alembic check`
-- Mass scrape `0 processed / N errors` with successful HTTP: check `AppConfig` still exposes every YAML section `tasks.scrape_listings` reads (e.g. `cfg.dedup`) and worker logs for `scrape_persist_error` / `AttributeError`. Rebuild `worker_scraper` after config/scraper fixes.
-- OLX `olx_no_listing_payload` / missing `__NEXT_DATA__`: parse Flight (`__next_f.push`) ads; intermittent Cloudflare 403 is environmental (proxy pool), not a parse regression.
-- OLX detail URLs often omit `/venda|/aluguel` — stamp `_olx_listing_type` from the search window and prefer path segments (not substring `venda`, which matches `venda-nova`). `locationDetails` is often the **seller/region**, not the property: run `core.olx_location` reconcile before geo allowlist; backfill with `scripts/dev/fix_olx_listings.py`.
-- Never recreate the API with bare `docker compose up` — always `compose_cmd` / `./scripts/start.sh` / `--env-file .env.local`. Empty `API_KEY` makes SPA admin calls (`/admin/schedule`, recalculate, …) return **403 Admin API key not configured**.
-- Celery beat tasks must be in `task_routes` for a queue workers consume (`scrapers` or `ai`). Unrouted tasks land on default `celery` and never run (BIN-76: empty Dashboard `/system/pipeline/history`). After adding a beat entry, assert the route in `test_schedule.py` and rebuild `beat` + the consuming worker.
-- Properties `max_price` must filter `property_listings` by `price_type` (`rent`|`sale`), not decisioning `p.price` (lowest listing, rent-preferred) — otherwise sale budgets match dual-listed homes on cheap rent (BIN-77). Hide number steppers on typed amount inputs (`type="text"` + `inputMode="numeric"`; CSS alone is not enough — BIN-79).
-- API image does **not** bind-mount `src/` — after `src/api/` filter/route changes, `docker compose --env-file .env.local build api && docker compose --env-file .env.local up -d api` before trusting local UI against Docker (BIN-79 stale-image miss).
-- Deep links use sequential `public_id` in URLs; UUID remains the PK. Any endpoint that stores `property_id` (favourites, watchlist, …) must resolve via `api.property_refs.resolve_property_uuid` — digit-only refs are `public_id`, not UUID (BIN-82 / #85 UUID cast 500).
+After a change to one of these surfaces, run its gate before calling the work done:
+
+- **Scraper change:** `bash scripts/agent/validate-scrapers.sh --require-live` (merge-blocking). On HTML drift, refresh cassettes via `python scripts/dev/record_scraper_cassettes.py` — never drop the CI gate.
+- **AI prompt/client change:** `bash scripts/agent/validate-ai.sh` (from WSL set `OLLAMA_HOST=http://$(ip route show default | awk '/default/{print $3}'):11434` when Ollama binds on Windows; keep host `OLLAMA_NUM_PARALLEL` equal to `gpu.semaphore_limit` — oversized parallel × `num_ctx` spills VRAM into system RAM). After concurrency/VRAM changes: `PYTHONPATH=src python scripts/dev/bench_ollama_vram.py --cases A,D`.
+- **API schema change:** update/run `src/tests/contract/`.
+- **DB schema change:** `alembic check`.
+
+The incident-derived gotchas behind these surfaces — mass-scrape `0 processed`, OLX Flight/`__NEXT_DATA__` parsing & listing-type stamping, bare `docker compose up` / `API_KEY` 403, Celery beat `task_routes`, `max_price` `price_type` filtering (BIN-77), API-image rebuild after `src/api/` changes (BIN-79), `public_id` vs UUID resolution (BIN-82) — live in [`docs/harness-troubleshooting.md`](docs/harness-troubleshooting.md#domain-validation-hooks-scraper--ai--db--api). Read it when a symptom matches.
 
 ## Harness notes (Cursor → Claude translation)
 
