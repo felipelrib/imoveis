@@ -220,7 +220,15 @@ class CloudflareBypassConfig(BaseModel, frozen=True):
     # Internal compose-network service; FlareSolverr serves plain HTTP only (no TLS).
     endpoint: str = "http://flaresolverr:8191/v1"  # NOSONAR - internal, no HTTPS
     max_timeout_ms: int = 60000
+    # ``platforms`` is the ALWAYS-bypass list: every GET goes straight to
+    # FlareSolverr (for providers that 403 on ~100% of requests, e.g. OLX, so a
+    # direct attempt is pure waste). ``auto_fallback`` covers everything else —
+    # any platform NOT in ``platforms`` fetches directly first and only retries a
+    # Cloudflare 403 through FlareSolverr (then sticks to it), so a newly
+    # Cloudflare-gated provider is handled automatically with zero overhead for
+    # un-gated ones like QuintoAndar (BIN-247).
     platforms: list[str] = Field(default_factory=lambda: ["olx"])
+    auto_fallback: bool = True
 
 
 class ScrapingConfig(BaseModel, frozen=True):

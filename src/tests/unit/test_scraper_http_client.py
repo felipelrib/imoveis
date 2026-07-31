@@ -191,9 +191,13 @@ class TestBaseScraperCreateHttpSession:
             "pool_size": 0,
             "proxy_host": "http://platform.example:1",
         }
+        cfg = MagicMock()
+        cfg.scraping.cloudflare_bypass.enabled = False  # isolate proxy concern
         with patch(
             "adapters.scrapers.base.create_scraper_http_client", return_value=fake
-        ) as factory:
+        ) as factory, patch(
+            "adapters.scrapers.base.get_config", return_value=cfg
+        ):
             assert scraper.create_http_session() is fake
         factory.assert_called_once_with(platform_override="http://platform.example:1")
         assert scraper.proxy_summary["proxy_mode"] == "override"

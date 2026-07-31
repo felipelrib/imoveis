@@ -3,7 +3,7 @@ from typing import Generator
 
 import httpx
 
-from adapters.scrapers.flaresolverr import FlareSolverrSession
+from adapters.scrapers.flaresolverr import CloudflareFallbackSession, FlareSolverrSession
 from adapters.scrapers.http_client import create_scraper_http_client
 from infra.config import get_config
 from infra.logging import get_logger
@@ -36,25 +36,40 @@ class BaseScraper(ABC):
 
         Non-null ``extra.proxy`` is a fixed per-platform override; ``null`` /
         absent defers to ``AppConfig.proxy`` rotation. When
-        ``scraping.cloudflare_bypass`` is enabled for this platform, GETs route
-        through a FlareSolverr sidecar instead (BIN-246) — a drop-in session, so
-        throttling/circuit-breaker in the scraper stay unchanged.
+        ``scraping.cloudflare_bypass`` is enabled, GETs route through a
+        FlareSolverr sidecar (BIN-246/BIN-247) — a drop-in session, so
+        throttling/circuit-breaker in the scraper stay unchanged. Platforms on
+        the ``platforms`` always-list bypass on every request; any other platform
+        gets an auto-fallback session (direct first, FlareSolverr only on a
+        Cloudflare 403) when ``auto_fallback`` is on.
         """
         override = (self.config.get("extra") or {}).get("proxy")
         client = create_scraper_http_client(platform_override=override)
         self.proxy_summary = getattr(client, "imoveis_proxy_summary", {}) or {}
 
         bypass = get_config().scraping.cloudflare_bypass
-        if bypass.enabled and self.platform_name in bypass.platforms:
-            headers = httpx.Headers(client.headers)
-            client.close()
-            self.proxy_summary = {**self.proxy_summary, "cloudflare_bypass": True}
-            logger.info(
-                "scraper_cloudflare_bypass",
-                platform=self.platform_name,
-                endpoint=bypass.endpoint,
-            )
-            return FlareSolverrSession(bypass, headers=headers)
+        if bypass.enabled:
+            if self.platform_name in bypass.platforms:
+                headers = httpx.Headers(client.headers)
+                client.close()
+                self.proxy_summary = {**self.proxy_summary, "cloudflare_bypass": True}
+                logger.info(
+                    "scraper_cloudflare_bypass",
+                    platform=self.platform_name,
+                    endpoint=bypass.endpoint,
+                )
+                return FlareSolverrSession(bypass, headers=headers)
+            if bypass.auto_fallback:
+                self.proxy_summary = {
+                    **self.proxy_summary,
+                    "cloudflare_autofallback": True,
+                }
+                logger.info(
+                    "scraper_cloudflare_autofallback",
+                    platform=self.platform_name,
+                    endpoint=bypass.endpoint,
+                )
+                return CloudflareFallbackSession(client, bypass)
         return client
 
     @abstractmethod
