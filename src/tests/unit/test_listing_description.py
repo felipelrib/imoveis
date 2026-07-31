@@ -21,6 +21,35 @@ def test_extract_quintoandar_description_prefers_remarks():
     assert "metrô" in text or "metro" in text.lower() or "compacto" in text
 
 
+def test_extract_quintoandar_description_from_dom_fallback():
+    """BIN-245: real QA detail pages render the seller description in the DOM
+    (``DescriptionsSection`` block), not always in ``__NEXT_DATA__``. The
+    fixture is a byte-exact capture of listing 894353786, whose description is
+    absent from the JSON blob — the extractor must fall back to the DOM."""
+    html = (FIXTURES / "quintoandar_detail_dom.html").read_text(encoding="utf-8")
+    text = extract_quintoandar_description(html)
+    assert "aconchegante" in text
+    assert "Greenwich Schools" in text
+    assert "Santo Antônio" in text
+    assert "Colégio Santa Dorotéia" in text
+    assert "<" not in text and ">" not in text  # tags stripped
+    assert "Belo Horizonte." in text  # spacing normalized around nested links
+    assert len(text) > 300
+
+
+def test_extract_quintoandar_description_json_precedes_dom():
+    """When the JSON blob carries the description, it wins over any DOM block."""
+    json_html = (FIXTURES / "quintoandar_detail.html").read_text(encoding="utf-8")
+    dom_block = (
+        '<div class="DescriptionsSection_wrapper__x"><p><span>'
+        "SHOULD NOT WIN dom text</span></p></div>"
+    )
+    combined = json_html.replace("</body>", f"{dom_block}</body>")
+    text = extract_quintoandar_description(combined)
+    assert "Alvorada" in text
+    assert "SHOULD NOT WIN" not in text
+
+
 def test_extract_quintoandar_description_empty_html():
     assert extract_quintoandar_description("") == ""
     assert extract_quintoandar_description("<html></html>") == ""

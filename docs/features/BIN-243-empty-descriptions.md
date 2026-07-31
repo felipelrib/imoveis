@@ -23,15 +23,23 @@ single "enrich is broken" bug the ticket assumed:
    and `_update_or_noop` refuses to blank a stored value with an empty re-scrape
    (`_description_effectively_unchanged`). The empty DB is stale data, not a
    persist bug.
-2. **QuintoAndar exposes no seller free-text (data reality).** Three live QA detail
-   pages (HTTP 200) were probed: the SSR `__NEXT_DATA__` `remarks` field is empty
-   and the entire payload contains no string longer than 45 chars (an asset URL).
-   The only description-like text is a templated one-liner in the *search* payload
-   (`shortRentDescription`, e.g. *"Apartamento para alugar no Betânia com 2
-   quartos"*), often empty. The existing `extract_quintoandar_description` was
-   written against a 1.2 KB synthetic fixture and can never work on real QA HTML.
-   **Decision:** treat QA as legitimately having no description; do not feed the
-   templated line into sentiment.
+2. **QuintoAndar `__NEXT_DATA__` often lacks the description (data reality).** Three
+   live QA detail pages (HTTP 200) were probed: the SSR `__NEXT_DATA__` `remarks`
+   field is empty and the payload contains no long string. Because
+   `extract_quintoandar_description` only parsed `__NEXT_DATA__`, it returned empty.
+   > **⚠️ Corrected by [BIN-245] (2026-07-31).** The conclusion below — "QA exposes
+   > no seller free-text, treat it as legitimately description-less" — was **wrong**.
+   > A wider probe (and an operator screenshot) showed real QA detail pages **do**
+   > carry rich seller descriptions, rendered in the **DOM** (`DescriptionsSection`
+   > block) and frequently absent from the JSON blob. The bug was that our extractor
+   > was `__NEXT_DATA__`-only. BIN-245 adds a DOM fallback + a real captured fixture,
+   > and a backfill now populates QA descriptions. QA is **not** excluded from
+   > sentiment.
+
+   *(Original, now-superseded reasoning:)* The only description-like text is a
+   templated one-liner in the *search* payload (`shortRentDescription`), often
+   empty; the existing `extract_quintoandar_description` was written against a 1.2 KB
+   synthetic fixture.
 3. **OLX unverifiable in dev (89% of rows).** OLX has rich seller ad bodies, but
    every request (search + detail) returns Cloudflare 403 in this environment
    (`proxy: null`). Per repo convention this is environmental, not a parse
@@ -85,8 +93,13 @@ skipped."* with `sentiment_score = 0.5`, and no text-model call is made.
   to populate existing OLX rows. Requires the residential proxy pool (OLX 403s
   here). Then re-run the BIN-242 sentiment A/B on properties that now have real
   descriptions.
-- The committed `olx_detail*.html` / `quintoandar_detail.html` fixtures are
-  hand-written synthetic stubs, never validated against production HTML — BIN-244
-  should replace the OLX one with a real captured page.
-- QuintoAndar is intentionally excluded from meaningful sentiment: it is an
-  institutional platform with no seller free-text. This is expected, not a bug.
+- The committed `olx_detail*.html` fixtures are hand-written synthetic stubs,
+  never validated against production HTML — BIN-244 should replace the OLX one with
+  a real captured page. (**BIN-245** already added a real captured QA fixture,
+  `quintoandar_detail_dom.html`.)
+- ~~QuintoAndar is intentionally excluded from meaningful sentiment: it is an
+  institutional platform with no seller free-text.~~ **Corrected by [BIN-245]:** QA
+  *does* expose seller free-text (DOM-rendered); the extractor was JSON-only. QA is
+  included in sentiment once descriptions are backfilled.
+
+[BIN-245]: https://linear.app/felipelrib/issue/BIN-245

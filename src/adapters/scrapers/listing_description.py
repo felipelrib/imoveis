@@ -9,6 +9,15 @@ import json
 import re
 from typing import Any, Optional
 
+from bs4 import BeautifulSoup
+
+# BIN-245: QuintoAndar renders the seller description in a CSS-module DOM block
+# whose class name starts with ``DescriptionsSection`` (the hashed suffix, e.g.
+# ``DescriptionsSection_descriptionsWrapper__HNAzX``, is build-specific and must
+# not be matched literally). Many real listings carry this text ONLY in the DOM,
+# not in ``__NEXT_DATA__``, so the JSON-only extractor missed them.
+_QA_DESCRIPTION_CLASS_RE = re.compile(r"DescriptionsSection")
+
 _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
@@ -82,8 +91,8 @@ def _qa_from_houses_map(houses: Any) -> str:
     return ""
 
 
-def extract_quintoandar_description(html: str) -> str:
-    """Pull description from a QuintoAndar detail ``__NEXT_DATA__`` payload."""
+def _qa_from_next_data(html: str) -> str:
+    """Description from the QuintoAndar detail ``__NEXT_DATA__`` payload, if any."""
     data = _load_next_data(html)
     if not data:
         return ""
@@ -102,6 +111,38 @@ def extract_quintoandar_description(html: str) -> str:
         if found:
             return found
     return _qa_from_houses_map(initial.get("houses"))
+
+
+def _normalize_dom_text(text: str) -> str:
+    """Collapse whitespace and tidy spaces left before punctuation by inline links."""
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+([.,;:!?])", r"\1", collapsed)
+
+
+def _qa_from_dom(html: str) -> str:
+    """Seller description rendered in the ``DescriptionsSection`` DOM block (BIN-245).
+
+    Real QA detail pages often carry the description only here, not in
+    ``__NEXT_DATA__``. Class suffixes are build-hashed, so match on the stable
+    ``DescriptionsSection`` prefix and take the first (outermost) match.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    node = soup.find(class_=_QA_DESCRIPTION_CLASS_RE)
+    if node is None:
+        return ""
+    return _normalize_dom_text(node.get_text(" ", strip=True))
+
+
+def extract_quintoandar_description(html: str) -> str:
+    """Description from a QuintoAndar detail page.
+
+    JSON (``__NEXT_DATA__``) first; falls back to the ``DescriptionsSection``
+    DOM block when the JSON payload carries no description (BIN-245).
+    """
+    found = _qa_from_next_data(html)
+    if found:
+        return found
+    return _qa_from_dom(html)
 
 
 def _olx_body_from_mapping(obj: Any) -> str:
