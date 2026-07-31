@@ -95,5 +95,82 @@ class FlareSolverrSession:
         )
         return httpx.Response(status_code=status_code, text=html, request=request)
 
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """``httpx.Client.request`` shim — QuintoAndar calls ``session.request``.
+
+        FlareSolverr solves pages in a browser (GET only); other verbs are not
+        used by the scrapers, so every request is treated as a GET solve.
+        """
+        return self.get(url, **kwargs)
+
     def close(self) -> None:
         self._client.close()
+
+
+class CloudflareFallbackSession:
+    """Direct httpx first; retry a Cloudflare 403 through FlareSolverr (BIN-247).
+
+    A drop-in for the ``.get()`` / ``.headers`` / ``.close()`` subset the scrapers
+    use, for platforms NOT on the always-bypass list. It issues a normal (cheap,
+    fast) httpx GET and only when the response is a Cloudflare block (HTTP 403 —
+    the signal the rest of the pipeline already treats as Cloudflare, see
+    ``BaseScraper._record_circuit_outcome``) does it retry that request via a
+    FlareSolverr solve. After the first block it is *sticky*: subsequent GETs go
+    straight to FlareSolverr, so a gated provider does not pay a wasted direct
+    403 (and trip its circuit breaker) on every request. Un-gated providers never
+    touch FlareSolverr at all.
+    """
+
+    def __init__(
+        self,
+        direct: Any,
+        config: CloudflareBypassConfig,
+        *,
+        flare: Any = None,
+    ) -> None:
+        self._direct = direct
+        self._config = config
+        # Share the direct client's headers object so ``session.headers.update``
+        # in the scraper's ``start()`` reaches the real transport.
+        self.headers = getattr(direct, "headers", None)
+        if self.headers is None:
+            self.headers = httpx.Headers()
+        self._flare = flare
+        self._use_flare = False
+
+    def _flare_session(self) -> Any:
+        if self._flare is None:
+            self._flare = FlareSolverrSession(self._config, headers=self.headers)
+        return self._flare
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self._fetch(url, lambda: self._direct.get(url, **kwargs), kwargs)
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """``httpx.Client.request`` shim — QuintoAndar calls ``session.request``."""
+        return self._fetch(url, lambda: self._direct.request(method, url, **kwargs), kwargs)
+
+    def _fetch(self, url: str, direct_call: Any, kwargs: dict) -> httpx.Response:
+        if self._use_flare:
+            return self._flare_session().get(url, **kwargs)
+        response = direct_call()
+        if response.status_code != 403:
+            return response
+        try:
+            solved = self._flare_session().get(url, **kwargs)
+        except FlareSolverrError as exc:
+            # Sidecar down / not deployed: degrade to the original 403 so the
+            # scraper behaves exactly as it did before the bypass existed
+            # (403 → handled gracefully), rather than surfacing a new error.
+            logger.warning("cloudflare_autofallback_unavailable", url=url, error=str(exc))
+            return response
+        logger.info("cloudflare_autofallback_engaged", url=url)
+        self._use_flare = True
+        return solved
+
+    def close(self) -> None:
+        try:
+            self._direct.close()
+        finally:
+            if self._flare is not None:
+                self._flare.close()

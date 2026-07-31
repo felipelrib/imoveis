@@ -128,10 +128,21 @@ def test_load_config_from_yaml(tmp_path: Path):
     assert cfg.scraping.availability_recheck.interval_minutes == 360
     assert cfg.scraping.availability_recheck.batch_size == 50
     assert cfg.scraping.availability_recheck.stale_after_hours == 24
-    # Cloudflare bypass (BIN-246) defaults off; OLX is the default target.
+    # Cloudflare bypass (BIN-246/BIN-247): model defaults when the section is
+    # absent from the (minimal) fixture — off, OLX target, auto-fallback on.
     assert cfg.scraping.cloudflare_bypass.enabled is False
     assert cfg.scraping.cloudflare_bypass.platforms == ["olx"]
+    assert cfg.scraping.cloudflare_bypass.auto_fallback is True
     assert cfg.scraping.cloudflare_bypass.endpoint.endswith("/v1")
+
+
+@pytest.mark.unit
+def test_cloudflare_bypass_auto_fallback_defaults_on():
+    """A new Cloudflare-gated provider must be covered without config edits:
+    the model default for auto_fallback is on (BIN-247)."""
+    from infra.config import CloudflareBypassConfig
+
+    assert CloudflareBypassConfig().auto_fallback is True
 
 
 @pytest.mark.unit
@@ -455,6 +466,17 @@ def test_proxy_from_default_app_config_yaml():
     assert cfg.proxy.url is None
     assert cfg.proxy.rotation_strategy == "round_robin"
     assert cfg.proxy.pool == []
+
+
+@pytest.mark.unit
+def test_cloudflare_bypass_enabled_in_default_app_config_yaml():
+    """Real configs/app_config.yaml ships the bypass ON: OLX always-bypass +
+    auto-fallback for other Cloudflare-gated providers (BIN-247)."""
+    cfg = get_config()
+    bypass = cfg.scraping.cloudflare_bypass
+    assert bypass.enabled is True
+    assert bypass.platforms == ["olx"]
+    assert bypass.auto_fallback is True
 
 
 @pytest.mark.unit
