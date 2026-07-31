@@ -116,6 +116,71 @@ def test_extract_olx_description_from_json_ld_prefers_ad_over_decoy():
     assert "Campinho. 2 quartos" in text  # <br> became a separator, words not glued
 
 
+def test_extract_olx_description_json_ld_array_with_ad_typed_item():
+    """OLX often ships JSON-LD as an array of schema.org entities; the ad-typed
+    item (``@type`` may itself be a list) supplies the body."""
+    html = (
+        '<script type="application/ld+json">'
+        '[{"@type":"BreadcrumbList","itemListElement":[]},'
+        '{"@type":["Thing","Product"],'
+        '"description":"Body inside an array item, long enough to qualify."}]'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Body inside an array item, long enough to qualify."
+
+
+def test_extract_olx_description_json_ld_generic_description_fallback():
+    """No ad-typed / nested entity: the second pass returns the first
+    ``description`` anywhere (still preferred over the crude regex fallback)."""
+    html = (
+        '<script type="application/ld+json">'
+        '[{"@type":"WebPage","description":"Generic page description, no ad type, long enough."}]'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Generic page description, no ad type, long enough."
+
+
+def test_extract_olx_description_json_ld_skips_malformed_block():
+    """A malformed JSON-LD block is skipped; a later valid ad block still wins."""
+    html = (
+        '<script type="application/ld+json">{ this is not valid json }</script>'
+        '<script type="application/ld+json">'
+        '{"@type":"Product","description":"Valid ad body after a malformed block, long enough."}'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Valid ad body after a malformed block, long enough."
+
+
+def test_extract_olx_description_json_ld_nested_generic_description():
+    """The generic-description fallback also descends nested schema.org entities
+    (``mainEntity``) when no ad-typed node carries the body."""
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"WebPage","mainEntity":'
+        '{"description":"Nested generic description, long enough to count."}}'
+        "</script>"
+    )
+    text = extract_olx_description(html)
+    assert text == "Nested generic description, long enough to count."
+
+
+def test_extract_olx_description_json_ld_array_without_description_is_empty():
+    """A JSON-LD array carrying no description anywhere yields no body (and the
+    extractor does not invent one)."""
+    html = '<script type="application/ld+json">[{"@type":"WebPage"}]</script>'
+    assert extract_olx_description(html) == ""
+
+
+def test_extract_olx_description_json_ld_non_object_is_ignored():
+    """A JSON-LD payload that is a bare scalar carries no ad body; with no other
+    source the extractor returns empty rather than inventing text."""
+    html = '<script type="application/ld+json">"just a bare string"</script>'
+    assert extract_olx_description(html) == ""
+
+
 def test_extract_olx_description_next_data_body_is_cleaned():
     """A ``__NEXT_DATA__`` body carrying inline ``<br>`` markup is cleaned too."""
     html = (
