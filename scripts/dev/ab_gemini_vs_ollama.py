@@ -51,7 +51,6 @@ for _p in (str(_ROOT), str(_ROOT / "src")):
 from adapters.ai.client import OllamaClient, _gemini_client_for, create_ai_client
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import (
-    build_deal_verdict_prompt,
     build_sentiment_prompt,
     build_visual_condition_prompt,
 )
