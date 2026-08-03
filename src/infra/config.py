@@ -115,6 +115,25 @@ class GPUConfig(BaseModel, frozen=True):
     max_semaphore_limit: int = 8
 
 
+class BackfillConfig(BaseModel, frozen=True):
+    """Resumable Gemma (free-tier) enrichment backfill runner (BIN-248).
+
+    The runner paces on the remote provider's request-per-day / tokens-per-minute
+    budget instead of the local GPU semaphore. Defaults stay just under Gemma's
+    free-tier 14,400 RPD / 16K TPM so a full ~26k-property pass spreads over the
+    expected ~6 days without tripping rate limits.
+    """
+
+    # Daily request cap. 3 requests/property (visual + sentiment + verdict) →
+    # ~4,600 properties/day at the default 14,000. Below the 14,400 free-tier RPD.
+    daily_request_budget: int = 14000
+    tpm_limit: int = 16000
+    requests_per_property: int = 3
+    batch_size: int = 50
+    # Redis key namespace for the daily budget counter, checkpoint, and heartbeat.
+    redis_prefix: str = "backfill:gemma"
+
+
 class AIConfig(BaseModel, frozen=True):
     """AI / VLM settings.
 
@@ -123,13 +142,17 @@ class AIConfig(BaseModel, frozen=True):
     (text) environment variables.
     """
 
-    backend: str = "ollama"  # ollama | lmstudio | gemini
+    backend: str = "ollama"  # ollama | lmstudio | gemini | gemma
     ollama_url: str = "http://localhost:11434"
     lmstudio_url: str = "http://localhost:1234"
     # Gemini/Gemma (OpenAI-compatible endpoint) — used by the A/B harness and,
-    # if promoted, by ``backend: gemini``. Key comes from env only (never YAML).
+    # if promoted, by ``backend: gemini`` / ``backend: gemma``. Key comes from
+    # env only (never YAML).
     gemini_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     gemini_model: str = "gemini-2.5-flash"
+    # Gemma model id for ``backend: gemma`` and the free-tier backfill runner
+    # (BIN-248). ``gemma-*`` ids route to GemmaClient via ``_gemini_client_for``.
+    gemma_model: str = "gemma-4-31b-it"
     gemini_api_key: str = ""
     visual_model: str = "qwen2.5vl:7b"
     text_model: str = "qwen2.5vl:7b"
@@ -142,6 +165,11 @@ class AIConfig(BaseModel, frozen=True):
     max_images_per_property: int = 8
     max_description_chars: int = 1000
     output_language: str = "en"
+    # Longest-side pixel cap applied to every image before it is sent to the
+    # VLM (BIN-248). 768px matched full-res quality for Gemma and *fixed*
+    # Ollama's visual-error rate in the BIN-242 A/B, while shrinking payloads
+    # (TPM headroom). 0 disables downscaling.
+    image_max_dimension: int = 768
 
 
 class PlatformConfig(BaseModel, frozen=True):
@@ -507,6 +535,7 @@ class AppConfig(BaseModel, frozen=True):
     celery: CeleryConfig = Field(default_factory=CeleryConfig)
     gpu: GPUConfig = Field(default_factory=GPUConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
+    backfill: BackfillConfig = Field(default_factory=BackfillConfig)
     scraping: ScrapingConfig = Field(default_factory=ScrapingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)

@@ -122,6 +122,8 @@ packaging==26.2
     #   pytest
 pgvector==0.5.0
     # via -r requirements.in
+pillow==12.3.0
+    # via -r requirements.in
 pluggy==1.6.0
     # via
     #   pytest

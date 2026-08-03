@@ -502,6 +502,19 @@ def test_ai_stack_from_default_app_config_yaml():
     assert cfg.ai.text_model == "qwen2.5vl:7b"
     assert cfg.ai.embedding_model == "bge-m3"
     assert cfg.ai.num_ctx == 16384
+    # BIN-248: Gemma backfill model + image downscaling defaults.
+    assert cfg.ai.gemma_model == "gemma-4-31b-it"
+    assert cfg.ai.image_max_dimension == 768
+
+
+@pytest.mark.unit
+def test_backfill_from_default_app_config_yaml():
+    """Real configs/app_config.yaml exposes the BIN-248 backfill budget."""
+    cfg = get_config()
+    assert cfg.backfill.daily_request_budget == 14000
+    assert cfg.backfill.requests_per_property == 3
+    assert cfg.backfill.tpm_limit == 16000
+    assert cfg.backfill.redis_prefix == "backfill:gemma"
 
 
 @pytest.mark.unit

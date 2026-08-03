@@ -697,6 +697,76 @@ def _persist_ai_scores(session, property_id: str, a_score: float, meta: dict, cf
     score_single_property(session, property_id)
 
 
+async def run_enrichment(
+    client,
+    image_store: "ImageStore",
+    property_id: str,
+    image_urls: List[str],
+    description: str,
+    stages: str,
+    cfg,
+):
+    """Download images, run visual+sentiment (+verdict), persist scores.
+
+    Extracted from the ``ai_enrich`` task closure so it can be reused **without**
+    the GPU semaphore by the free-tier Gemma backfill runner (BIN-248), which
+    paces on the remote API budget instead. The caller owns the client HTTP
+    session lifecycle (``async with client.session_context(): ...``) so a
+    long-running backfill can enrich many properties over one open session.
+
+    Returns ``(ai_score, VisualResult, SentimentResult, local_paths)``.
+    """
+    from adapters.db.models import MetricsScoring
+    from core.enrichment_rerun import STAGES_ALL
+
+    paths: List[str] = await image_store.download_images(
+        property_id, image_urls, max_images=cfg.ai.max_images_per_property
+    )
+    visual_prompt = build_visual_condition_prompt(
+        len(paths), output_language=resolve_ai_output_language()
+    )
+    sentiment_prompt = build_sentiment_prompt(
+        description,
+        max_chars=cfg.ai.max_description_chars,
+        output_language=resolve_ai_output_language(),
+    )
+    v_res, s_res = await analyze_visual_and_sentiment(
+        client,
+        paths,
+        description,
+        visual_prompt,
+        sentiment_prompt,
+    )
+    a_score = (
+        v_res.condition_score * cfg.ai.visual_weight
+        + s_res.sentiment_score * cfg.ai.text_weight
+    )
+    session = SessionLocal()
+    try:
+        ms = (
+            session.query(MetricsScoring)
+            .filter_by(property_id=property_id)
+            .one_or_none()
+        )
+        meta = dict(ms.meta or {}) if ms is not None else {}
+        meta.update(
+            {
+                "visual": v_res.model_dump(),
+                "sentiment": s_res.model_dump(),
+            }
+        )
+        _persist_ai_scores(session, property_id, a_score, meta, cfg)
+
+        if stages == STAGES_ALL:
+            await _write_deal_verdict(client, session, property_id, meta)
+
+        session.commit()
+    finally:
+        session.close()
+
+    return a_score, v_res, s_res, paths
+
+
 @celery.task(
     name="tasks.ai_enrich",
     bind=True,
@@ -770,54 +840,15 @@ def ai_enrich(
 
         async def _run_enrichment():
             async with client.session_context():
-                paths: List[str] = await image_store.download_images(
-                    property_id, image_urls, max_images=cfg.ai.max_images_per_property
-                )
-                visual_prompt = build_visual_condition_prompt(
-                    len(paths), output_language=resolve_ai_output_language()
-                )
-                sentiment_prompt = build_sentiment_prompt(
-                    description,
-                    max_chars=cfg.ai.max_description_chars,
-                    output_language=resolve_ai_output_language(),
-                )
-                v_res, s_res = await analyze_visual_and_sentiment(
+                return await run_enrichment(
                     client,
-                    paths,
+                    image_store,
+                    property_id,
+                    image_urls,
                     description,
-                    visual_prompt,
-                    sentiment_prompt,
+                    stages,
+                    cfg,
                 )
-                a_score = (
-                    v_res.condition_score * cfg.ai.visual_weight
-                    + s_res.sentiment_score * cfg.ai.text_weight
-                )
-                session = SessionLocal()
-                try:
-                    from adapters.db.models import MetricsScoring
-
-                    ms = (
-                        session.query(MetricsScoring)
-                        .filter_by(property_id=property_id)
-                        .one_or_none()
-                    )
-                    meta = dict(ms.meta or {}) if ms is not None else {}
-                    meta.update(
-                        {
-                            "visual": v_res.model_dump(),
-                            "sentiment": s_res.model_dump(),
-                        }
-                    )
-                    _persist_ai_scores(session, property_id, a_score, meta, cfg)
-
-                    if stages == STAGES_ALL:
-                        await _write_deal_verdict(client, session, property_id, meta)
-
-                    session.commit()
-                finally:
-                    session.close()
-
-                return a_score, v_res, s_res, paths
 
         if stages == STAGES_VERDICT_ONLY:
             visual_meta, sentiment_meta = run_coro(_run_verdict_only())
