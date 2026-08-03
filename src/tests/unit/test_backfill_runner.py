@@ -18,7 +18,7 @@ from core.backfill_runner import (
     Checkpoint,
     DailyBudget,
     estimate_eta_days,
-    pace_seconds_for_budget,
+    launch_interval_for_rpm,
     run_backfill,
 )
 
@@ -276,7 +276,7 @@ def test_row_error_isolated_and_counted():
     assert _checkpoint(r).processed_total() == 2
 
 
-def test_pacing_sleep_invoked_between_properties():
+def test_launch_interval_gates_between_properties():
     r = FakeRedis()
     calls = []
 
@@ -293,12 +293,14 @@ def test_pacing_sleep_invoked_between_properties():
             budget=_budget(r, 100),
             checkpoint=_checkpoint(r),
             requests_per_property=3,
-            pace_seconds=6.0,
+            launch_interval=6.0,
             sleep_fn=sleep_fn,
+            clock=lambda: 0.0,  # frozen clock → each gap needs the full interval
         )
 
     asyncio.run(_go())
-    assert calls == [6.0, 6.0, 6.0]
+    # First launch is immediate; the next two wait the full interval → n-1 sleeps.
+    assert calls == [6.0, 6.0]
 
 
 def test_run_limit_caps_attempted_properties():
@@ -374,17 +376,100 @@ def test_limit_does_not_count_skipped_rows():
     assert result.processed == 2
 
 
+def test_concurrency_bounds_in_flight_properties():
+    """At most `concurrency` enrich_fn calls run at once; all still complete."""
+    r = FakeRedis()
+    inflight = 0
+    peak = 0
+
+    async def enrich_fn(prop):
+        nonlocal inflight, peak
+        inflight += 1
+        peak = max(peak, inflight)
+        for _ in range(3):  # yield so siblings reach the peak before we exit
+            await asyncio.sleep(0)
+        inflight -= 1
+
+    async def _go():
+        return await run_backfill(
+            _rows(8),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=3,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    assert result.processed == 8
+    assert peak == 3  # never more than the configured concurrency
+    assert _checkpoint(r).processed_total() == 8
+
+
+def test_concurrency_processes_all_and_counts():
+    r = FakeRedis()
+    seen = []
+
+    async def enrich_fn(prop):
+        await asyncio.sleep(0)
+        seen.append(prop.id)
+
+    async def _go():
+        return await run_backfill(
+            _rows(6),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=4,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    assert result.processed == 6
+    assert result.requests_consumed == 18
+    assert sorted(seen) == [f"prop-{i}" for i in range(6)]
+
+
+def test_concurrency_respects_limit_and_budget():
+    r = FakeRedis()
+    seen = []
+
+    async def enrich_fn(prop):
+        await asyncio.sleep(0)
+        seen.append(prop.id)
+
+    async def _go():
+        return await run_backfill(
+            _rows(10),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 6),  # 6 / 3-per-prop → only 2 properties
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=4,
+            limit=5,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    # Budget (2) is tighter than limit (5) → 2 processed, then budget_exhausted.
+    assert result.processed == 2
+    assert result.budget_exhausted is True
+    assert len(seen) == 2
+
+
 def test_estimate_eta_days():
     assert estimate_eta_days(9200, 4600) == 2.0
     assert estimate_eta_days(0, 4600) == 0.0
     assert estimate_eta_days(100, 0) == float("inf")
 
 
-def test_pace_seconds_for_budget():
-    # 3 req/prop over 14,000/day → ~18.5s between properties (well under 30 RPM).
-    assert pace_seconds_for_budget(3, 14000) == pytest.approx(18.51, abs=0.1)
-    # Disabled when budget non-positive.
-    assert pace_seconds_for_budget(3, 0) == 0.0
+def test_launch_interval_for_rpm():
+    # 3 req/prop under 30 RPM → launch at most one property every 6s.
+    assert launch_interval_for_rpm(3, 30) == pytest.approx(6.0)
+    # No gate when rpm_limit is non-positive.
+    assert launch_interval_for_rpm(3, 0) == 0.0
 
 
 def test_result_to_dict_shape():

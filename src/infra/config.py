@@ -128,7 +128,14 @@ class BackfillConfig(BaseModel, frozen=True):
     # ~4,600 properties/day at the default 14,000. Below the 14,400 free-tier RPD.
     daily_request_budget: int = 14000
     tpm_limit: int = 16000
+    # Requests/min ceiling (free-tier Gemma ~30 RPM). Bounds the launch rate so
+    # concurrency can't exceed the per-minute cap (BIN-269).
+    rpm_limit: int = 30
     requests_per_property: int = 3
+    # Properties enriched in parallel (BIN-269). 1 = sequential. Each property is
+    # ~3 sequential Gemma calls, so wall-clock latency (not RPD) is the backfill
+    # bottleneck; parallelism lifts throughput toward the RPM/TPM ceilings.
+    concurrency: int = 1
     batch_size: int = 50
     # Redis key namespace for the daily budget counter, checkpoint, and heartbeat.
     redis_prefix: str = "backfill:gemma"

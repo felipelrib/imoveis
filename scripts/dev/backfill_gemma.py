@@ -27,6 +27,11 @@ the DB; a real run also needs ``GEMINI_API_KEY``.
     # (best under tmux/nohup/systemd so it survives a closed terminal):
     GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py --continuous
 
+    # Faster: enrich several properties in parallel (each is ~3 sequential Gemma
+    # calls, so latency — not quota — is the limit). Start conservative; the
+    # client auto-backs-off if the 16K TPM ceiling throttles:
+    GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py --continuous --concurrency 4
+
     # Plan only — how many would run today, no API calls / no writes (no key needed):
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --dry-run
 
@@ -64,7 +69,7 @@ from core.backfill_runner import (  # noqa: E402
     DailyBudget,
     Heartbeat,
     estimate_eta_days,
-    pace_seconds_for_budget,
+    launch_interval_for_rpm,
     run_backfill,
 )
 from core.enrichment_rerun import (  # noqa: E402
@@ -108,13 +113,36 @@ def _build_client(cfg):
     )
 
 
-def _pace_seconds(cfg, override: float | None) -> float:
-    """Seconds to sleep per property (``--min-interval`` overrides the default)."""
+def _launch_interval(cfg, override: float | None) -> float:
+    """Seconds between property launches (``--min-interval`` overrides the default).
+
+    Default keeps the request rate under the free-tier RPM cap regardless of
+    concurrency.
+    """
     if override is not None:
         return max(0.0, override)
-    return pace_seconds_for_budget(
-        cfg.backfill.requests_per_property, cfg.backfill.daily_request_budget
+    return launch_interval_for_rpm(
+        cfg.backfill.requests_per_property, cfg.backfill.rpm_limit
     )
+
+
+def _observed_rate_per_day(session) -> float | None:
+    """Enrichments in the last hour × 24 — the *actual* throughput, or None if idle.
+
+    The request-budget ETA assumes the RPD cap is the bottleneck; in practice each
+    property is ~3 sequential Gemma calls, so wall-clock latency dominates. This
+    reports what's really happening so the ETA is honest.
+    """
+    try:
+        rate = session.execute(
+            sqlalchemy.text(
+                "SELECT count(*) FROM metrics_scoring "
+                "WHERE (meta->>'enriched_at')::timestamptz > now() - interval '60 minutes'"
+            )
+        ).scalar()
+    except Exception:  # noqa: BLE001 - status must never crash
+        return None
+    return float(rate) * 24.0 if rate else None
 
 
 async def _enrich_one(prop, *, client, cfg) -> None:
@@ -143,18 +171,26 @@ def _print_status(cfg, session, redis) -> None:
     )
     consumed = budget.consumed()
     checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix)
-    daily_props = cfg.backfill.daily_request_budget / cfg.backfill.requests_per_property
-    eta = estimate_eta_days(remaining_props, daily_props)
+    observed = _observed_rate_per_day(session)
+    if observed:
+        rate_str = f"~{observed:.0f}/day (last hour ×24)"
+        eta_str = f"{estimate_eta_days(remaining_props, observed):.1f} (observed)"
+    else:
+        # No recent activity — fall back to the request-budget ceiling.
+        budget_rate = cfg.backfill.daily_request_budget / cfg.backfill.requests_per_property
+        rate_str = "idle"
+        eta_str = f"{estimate_eta_days(remaining_props, budget_rate):.1f} (budget ceiling; not running)"
     cp = checkpoint.load()
 
     print("Gemma backfill status (BIN-248)")
     print(f"  enriched / total     : {enriched} / {total}")
     print(f"  remaining            : {remaining_props}")
     print(f"  budget today         : {consumed} / {cfg.backfill.daily_request_budget} requests")
+    print(f"  observed rate        : {rate_str}")
     print(f"  processed (all-time) : {checkpoint.processed_total()}")
     print(f"  last property        : {cp.get('last_property_id', '—')}")
     print(f"  last run date        : {cp.get('last_run_date', '—')}")
-    print(f"  ETA (~days)          : {eta:.1f}")
+    print(f"  ETA (~days)          : {eta_str}")
 
 
 def _run(cfg, session, redis, args) -> BackfillResult:
@@ -179,7 +215,8 @@ def _run(cfg, session, redis, args) -> BackfillResult:
     )
     checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix)
     heartbeat = Heartbeat(redis, prefix=cfg.backfill.redis_prefix)
-    pace = _pace_seconds(cfg, args.min_interval)
+    launch_interval = _launch_interval(cfg, args.min_interval)
+    concurrency = args.concurrency or cfg.backfill.concurrency
 
     def _on_progress(res: BackfillResult) -> None:
         heartbeat.beat()
@@ -203,7 +240,8 @@ def _run(cfg, session, redis, args) -> BackfillResult:
             limit=args.limit,
             force=args.force,
             dry_run=args.dry_run,
-            pace_seconds=0.0 if args.dry_run else pace,
+            concurrency=concurrency,
+            launch_interval=launch_interval,
             on_progress=_on_progress,
         )
 
@@ -290,10 +328,16 @@ def main(argv: list[str] | None = None) -> int:
         "--daily-budget", type=int, default=None, help="override daily request budget"
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="properties to enrich in parallel (default: config; 1 = sequential)",
+    )
+    parser.add_argument(
         "--min-interval",
         type=float,
         default=None,
-        help="seconds between properties (default: spread budget across 24h)",
+        help="min seconds between property launches (default: RPM-safe from config)",
     )
     parser.add_argument(
         "--continuous",

@@ -310,7 +310,9 @@ gpu:
 backfill:
   daily_request_budget: 14000  # < 14,400 free-tier RPD; ~4,600 props/day
   tpm_limit: 16000
+  rpm_limit: 30                # free-tier Gemma ~30 RPM; bounds the launch rate
   requests_per_property: 3     # visual + sentiment + verdict
+  concurrency: 1               # parallel properties (BIN-269); 1 = sequential
   batch_size: 50
   redis_prefix: "backfill:gemma"
 

@@ -18,6 +18,7 @@ if a live worker enriched a row in between.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional, Tuple
@@ -213,16 +214,40 @@ def estimate_eta_days(remaining_properties: int, daily_property_rate: float) -> 
     return remaining_properties / daily_property_rate
 
 
-def pace_seconds_for_budget(requests_per_property: int, daily_request_budget: int) -> float:
-    """Seconds to wait per property so the daily budget spreads evenly over 24h.
+def launch_interval_for_rpm(requests_per_property: int, rpm_limit: int) -> float:
+    """Min seconds between property launches to stay under ``rpm_limit`` req/min.
 
-    Spreading the budget across the full day keeps the request rate far under the
-    free-tier per-minute cap (30 RPM) as well as the daily RPD ceiling. Returns 0
-    when the budget is non-positive (pacing disabled).
+    Each property fires ``requests_per_property`` requests, so launching one every
+    ``60 * rpp / rpm_limit`` seconds caps the request rate at ``rpm_limit``/min
+    regardless of concurrency. Returns 0 when ``rpm_limit`` is non-positive.
     """
-    if daily_request_budget <= 0:
+    if rpm_limit <= 0:
         return 0.0
-    return requests_per_property * 86400.0 / daily_request_budget
+    return 60.0 * requests_per_property / rpm_limit
+
+
+def _run_dry(
+    rows: Iterable[Tuple[Any, Any]],
+    *,
+    budget: DailyBudget,
+    requests_per_property: int,
+    limit: Optional[int],
+    force: bool,
+) -> BackfillResult:
+    """Count how many rows would be processed within budget — no side effects."""
+    result = BackfillResult()
+    for prop, metrics in rows:
+        if not force and not mode_is_missing_ai(metrics):
+            result.skipped_already_enriched += 1
+            continue
+        if limit is not None and result.would_process >= limit:
+            break
+        projected = (result.would_process + 1) * requests_per_property
+        if projected > budget.remaining():
+            result.budget_exhausted = True
+            break
+        result.would_process += 1
+    return result
 
 
 async def run_backfill(
@@ -235,26 +260,58 @@ async def run_backfill(
     limit: Optional[int] = None,
     force: bool = False,
     dry_run: bool = False,
-    pace_seconds: float = 0.0,
+    concurrency: int = 1,
+    launch_interval: float = 0.0,
     sleep_fn: SleepFn = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
     on_progress: Optional[Callable[[BackfillResult], None]] = None,
 ) -> BackfillResult:
-    """Iterate candidate ``(property, metrics)`` rows, enriching within budget.
+    """Enrich candidate ``(property, metrics)`` rows, up to ``concurrency`` at once.
 
     Stops when the daily budget can no longer fund another property
     (``budget_exhausted``), the optional ``limit`` of attempted properties is
-    reached, or the rows run out — either way it's safe to invoke again the next
-    day to resume. ``enrich_fn`` raises on hard failure; the row is counted as an
-    error and the loop continues.
+    reached, or the rows run out — safe to invoke again to resume. ``enrich_fn``
+    raises on hard failure; the row is counted as an error and the run continues.
+
+    Up to ``concurrency`` properties run in parallel (each is ~3 sequential Gemma
+    calls, so parallelism is what lifts throughput). ``launch_interval`` spaces
+    successive launches to keep the request rate under the per-minute cap; the
+    daily budget still gates total requests.
 
     ``limit`` caps the number of properties *attempted* this run (skipped rows do
-    not count), so a small ``--limit`` trial touches exactly that many.
-
-    ``dry_run`` reports how many rows *would* be processed within the remaining
-    budget without calling the API or consuming budget.
+    not count). ``dry_run`` reports how many rows *would* be processed within the
+    remaining budget without calling the API or consuming budget.
     """
+    if dry_run:
+        return _run_dry(
+            rows,
+            budget=budget,
+            requests_per_property=requests_per_property,
+            limit=limit,
+            force=force,
+        )
+
     result = BackfillResult()
     attempted = 0
+    last_launch: Optional[float] = None
+    sem = asyncio.Semaphore(max(1, concurrency))
+    tasks: list[asyncio.Task] = []
+
+    async def _worker(prop: Any) -> None:
+        try:
+            await enrich_fn(prop)
+        except Exception as exc:  # noqa: BLE001 - one bad row must not abort
+            result.errors += 1
+            result.error_ids.append(str(getattr(prop, "id", "?")))
+            _log_row_error(prop, exc)
+        else:
+            result.processed += 1
+            result.last_property_id = str(getattr(prop, "id", ""))
+            checkpoint.advance(result.last_property_id)
+            if on_progress is not None:
+                on_progress(result)
+        finally:
+            sem.release()
 
     for prop, metrics in rows:
         # Idempotency: skip rows a concurrent live worker already enriched,
@@ -262,43 +319,27 @@ async def run_backfill(
         if not force and not mode_is_missing_ai(metrics):
             result.skipped_already_enriched += 1
             continue
-
         if limit is not None and attempted >= limit:
             break
 
-        if dry_run:
-            # Simulate budget without reserving it.
-            projected = (result.would_process + 1) * requests_per_property
-            if projected > budget.remaining():
-                result.budget_exhausted = True
-                break
-            result.would_process += 1
-            attempted += 1
-            continue
+        # Rate-limit launches (RPM smoothing) before reserving budget.
+        if launch_interval > 0 and last_launch is not None:
+            wait = launch_interval - (clock() - last_launch)
+            if wait > 0:
+                await sleep_fn(wait)
 
         if not budget.try_consume(requests_per_property):
             result.budget_exhausted = True
             break
 
+        await sem.acquire()  # bound in-flight properties to ``concurrency``
         attempted += 1
         result.requests_consumed += requests_per_property
-        try:
-            await enrich_fn(prop)
-        except Exception as exc:  # noqa: BLE001 - one bad row must not abort
-            result.errors += 1
-            result.error_ids.append(str(getattr(prop, "id", "?")))
-            _log_row_error(prop, exc)
-            continue
+        last_launch = clock()
+        tasks.append(asyncio.create_task(_worker(prop)))
 
-        result.processed += 1
-        result.last_property_id = str(getattr(prop, "id", ""))
-        checkpoint.advance(result.last_property_id)
-        if on_progress is not None:
-            on_progress(result)
-
-        if pace_seconds > 0:
-            await sleep_fn(pace_seconds)
-
+    if tasks:
+        await asyncio.gather(*tasks)
     return result
 
 

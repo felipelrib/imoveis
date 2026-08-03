@@ -515,6 +515,9 @@ def test_backfill_from_default_app_config_yaml():
     assert cfg.backfill.requests_per_property == 3
     assert cfg.backfill.tpm_limit == 16000
     assert cfg.backfill.redis_prefix == "backfill:gemma"
+    # BIN-269: RPM ceiling + parallelism.
+    assert cfg.backfill.rpm_limit == 30
+    assert cfg.backfill.concurrency == 1
 
 
 @pytest.mark.unit
