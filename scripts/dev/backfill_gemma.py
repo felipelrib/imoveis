@@ -23,6 +23,10 @@ the DB; a real run also needs ``GEMINI_API_KEY``.
     # Full daily slice (stops at the daily budget, resume tomorrow):
     GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py
 
+    # Unattended: run to completion, auto-waiting across daily-budget resets
+    # (best under tmux/nohup/systemd so it survives a closed terminal):
+    GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py --continuous
+
     # Plan only — how many would run today, no API calls / no writes (no key needed):
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --dry-run
 
@@ -37,7 +41,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 
@@ -215,6 +220,67 @@ def _run(cfg, session, redis, args) -> BackfillResult:
     return asyncio.run(_go())
 
 
+def _remaining(cfg, redis, session) -> int:
+    total, enriched = _counts(session)
+    return max(0, total - enriched)
+
+
+def _run_continuous(cfg, redis, args) -> int:
+    """Run passes until the backfill completes, sleeping across RPD-window resets.
+
+    Each pass enriches until the daily budget is exhausted (or candidates run
+    out), then — if properties remain — sleeps until the rolling 24h budget
+    window resets and resumes. Checkpointed, so a killed process resumes.
+    """
+    budget = DailyBudget(
+        redis,
+        prefix=cfg.backfill.redis_prefix,
+        daily_limit=args.daily_budget or cfg.backfill.daily_request_budget,
+    )
+    cycle = 0
+    while True:
+        cycle += 1
+        with SessionLocal() as session:
+            result = _run(cfg, session, redis, args)
+            remaining = _remaining(cfg, redis, session)
+        logger.info(
+            "backfill_cycle_done",
+            cycle=cycle,
+            processed=result.processed,
+            errors=result.errors,
+            remaining=remaining,
+            budget_exhausted=result.budget_exhausted,
+        )
+        print(
+            f"[cycle {cycle}] enriched {result.processed}, "
+            f"errors {result.errors}, remaining {remaining}"
+        )
+
+        if remaining == 0:
+            print("Backfill complete — all properties enriched.")
+            return 0
+        if not result.budget_exhausted:
+            # Budget left but nothing more processed this pass → no further
+            # progress is possible right now (e.g. remaining rows un-enrichable);
+            # stop rather than spin.
+            if result.processed == 0:
+                print(
+                    f"Stopping: {remaining} remaining but no progress this cycle "
+                    "(re-run later or inspect those rows)."
+                )
+                return 0
+            continue  # made progress, more may be fetchable → next pass now
+
+        wait = budget.seconds_until_reset() + args.reset_margin
+        resume_at = datetime.now().astimezone() + timedelta(seconds=wait)
+        logger.info("backfill_waiting_for_reset", seconds=round(wait), resume_at=str(resume_at))
+        print(
+            f"Daily budget spent; sleeping {wait / 3600:.1f}h until the window "
+            f"resets (~{resume_at:%Y-%m-%d %H:%M %Z}). Ctrl-C to stop; safe to resume."
+        )
+        time.sleep(wait)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resumable Gemma enrichment backfill (BIN-248)")
     parser.add_argument("--limit", type=int, default=None, help="cap candidates this run")
@@ -229,16 +295,36 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="seconds between properties (default: spread budget across 24h)",
     )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="run until the whole backfill is done, waiting across daily-budget resets",
+    )
+    parser.add_argument(
+        "--reset-margin",
+        type=float,
+        default=120.0,
+        help="extra seconds to wait past the budget-window reset (default: 120)",
+    )
     parser.add_argument("--status", action="store_true", help="print status and exit")
     args = parser.parse_args(argv)
 
     cfg = get_config()
     redis = get_redis()
 
-    with SessionLocal() as session:
-        if args.status:
+    if args.status:
+        with SessionLocal() as session:
             _print_status(cfg, session, redis)
-            return 0
+        return 0
+
+    if args.continuous:
+        if args.dry_run:
+            parser.error("--continuous cannot be combined with --dry-run")
+        # --continuous processes to completion; a per-run --limit would loop.
+        args.limit = None
+        return _run_continuous(cfg, redis, args)
+
+    with SessionLocal() as session:
         result = _run(cfg, session, redis, args)
 
     logger.info("backfill_done", **result.to_dict())

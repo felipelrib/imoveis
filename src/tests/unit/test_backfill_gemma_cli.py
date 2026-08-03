@@ -94,3 +94,61 @@ def test_real_run_without_key_exits_cleanly(monkeypatch):
     # Real run with no key → the _build_client guard raises SystemExit.
     with pytest.raises(SystemExit):
         mod.main(["--limit", "1"])
+
+
+def _br(mod, **kw):
+    from core.backfill_runner import BackfillResult
+
+    return BackfillResult(**kw)
+
+
+def test_continuous_waits_between_cycles_then_completes(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k")
+
+    # Cycle 1: budget exhausted, 5 remain → sleep, resume.
+    # Cycle 2: processed the rest, 0 remain → done.
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=0, budget_exhausted=True),
+                _br(mod, processed=5, budget_exhausted=False),
+            ]
+        ),
+    )
+    monkeypatch.setattr(mod, "_counts", MagicMock(side_effect=[(5, 0), (5, 5)]))
+    sleep_spy = MagicMock()
+    monkeypatch.setattr(mod.time, "sleep", sleep_spy)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == 0
+    assert mod._run.call_count == 2
+    sleep_spy.assert_called_once()  # slept once between the two cycles
+    assert sleep_spy.call_args[0][0] > 0
+
+
+def test_continuous_stops_when_no_progress(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k")
+    # Budget not exhausted, nothing processed, rows still remain → stop, no sleep.
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=_br(mod, processed=0, budget_exhausted=False))
+    )
+    monkeypatch.setattr(mod, "_counts", MagicMock(return_value=(5, 2)))
+    sleep_spy = MagicMock()
+    monkeypatch.setattr(mod.time, "sleep", sleep_spy)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == 0
+    sleep_spy.assert_not_called()
+
+
+def test_continuous_rejects_dry_run(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k")
+    with pytest.raises(SystemExit):
+        mod.main(["--continuous", "--dry-run"])
