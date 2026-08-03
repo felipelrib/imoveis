@@ -1,15 +1,21 @@
-# PostGIS 15 + pgvector (compiled from source) for semantic search (BIN-18).
-FROM postgis/postgis:15-3.3-alpine
+# PostGIS 17 + pgvector (compiled from source) for semantic search (BIN-18).
+# NOTE: the build-deps below are version-coupled to this base image's toolchain —
+# postgis:17-3.5-alpine is Alpine 3.24 and its Postgres is built --with-llvm using
+# LLVM 21, so pgvector's JIT bitcode must be compiled with the matching clang21 /
+# llvm21. When Dependabot bumps this FROM tag to a new Postgres/Alpine major, these
+# clang/llvm/postgresql*-dev versions must be bumped in lockstep (check
+# `pg_config --configure` for LLVM_CONFIG and `apk search clang*`). See BIN-272.
+FROM postgis/postgis:17-3.5-alpine
 
 ARG PGVECTOR_VERSION=v0.8.0
 
 RUN set -eux; \
     apk add --no-cache --virtual .build-deps \
         build-base \
-        clang15 \
-        llvm15 \
+        clang21 \
+        llvm21-dev \
         git \
-        postgresql15-dev; \
+        postgresql17-dev; \
     git clone --branch "${PGVECTOR_VERSION}" --depth 1 \
         https://github.com/pgvector/pgvector.git /tmp/pgvector; \
     make -C /tmp/pgvector OPTFLAGS="" PG_CONFIG=/usr/local/bin/pg_config; \
