@@ -278,6 +278,79 @@ def test_pacing_sleep_invoked_between_properties():
     assert calls == [6.0, 6.0, 6.0]
 
 
+def test_run_limit_caps_attempted_properties():
+    """--limit N must cap enrichment to N props even when budget/rows allow more."""
+    r = FakeRedis()
+    seen = []
+
+    async def enrich_fn(prop):
+        seen.append(prop.id)
+
+    async def _go():
+        return await run_backfill(
+            _rows(10),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            limit=2,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    assert result.processed == 2
+    assert seen == ["prop-0", "prop-1"]
+    assert result.requests_consumed == 6
+
+
+def test_dry_run_respects_limit():
+    r = FakeRedis()
+
+    async def enrich_fn(prop):
+        raise AssertionError("dry-run must not call enrich_fn")
+
+    async def _go():
+        return await run_backfill(
+            _rows(10),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            limit=3,
+            dry_run=True,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    assert result.would_process == 3
+
+
+def test_limit_does_not_count_skipped_rows():
+    """Skipped already-enriched rows don't consume the --limit budget."""
+    r = FakeRedis()
+    rows = _rows(5, enriched_ids={"prop-0", "prop-1"})
+    seen = []
+
+    async def enrich_fn(prop):
+        seen.append(prop.id)
+
+    async def _go():
+        return await run_backfill(
+            rows,
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            limit=2,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    # prop-0/1 skipped (enriched); limit=2 → next two unenriched.
+    assert seen == ["prop-2", "prop-3"]
+    assert result.processed == 2
+
+
 def test_estimate_eta_days():
     assert estimate_eta_days(9200, 4600) == 2.0
     assert estimate_eta_days(0, 4600) == 0.0
