@@ -263,13 +263,14 @@ scoring:
 # Local AI / VLM
 # ---------------------------------------------------------------------------
 ai:
-  backend: ollama             # ollama | lmstudio | gemini
+  backend: ollama             # ollama | lmstudio | gemini | gemma
   ollama_url: http://localhost:11434
   lmstudio_url: http://localhost:1234
   # Gemini/Gemma (OpenAI-compatible endpoint). GEMINI_API_KEY comes from env
   # only — never commit a key here. GEMINI_MODEL env overrides gemini_model.
   gemini_url: https://generativelanguage.googleapis.com/v1beta/openai
   gemini_model: gemini-2.5-flash
+  gemma_model: gemma-4-31b-it # backend: gemma + the BIN-248 backfill runner
   gemini_api_key: ""          # env: GEMINI_API_KEY (leave blank in YAML)
   # Single generative VLM for photos + text JSON (sentiment, OLX location, verdict)
   visual_model: qwen2.5vl:7b
@@ -285,6 +286,10 @@ ai:
   max_images_per_property: 8
   max_description_chars: 1000
   output_language: "en"
+  # Longest-side px cap applied before every VLM call (BIN-248). 768 matched
+  # full-res Gemma quality and fixed Ollama's visual errors in the BIN-242 A/B.
+  # 0 disables downscaling.
+  image_max_dimension: 768
 
 # ---------------------------------------------------------------------------
 # GPU Resource Management
@@ -295,6 +300,19 @@ gpu:
   semaphore_limit: 2    # max concurrent GPU-bound tasks
   max_semaphore_limit: 8  # hard ceiling accepted by admin /gpu/scale (BIN-159)
   semaphore_name: gpu
+
+# ---------------------------------------------------------------------------
+# Gemma free-tier enrichment backfill runner (BIN-248)
+# ---------------------------------------------------------------------------
+# Standalone RPD-paced runner (scripts/dev/backfill_gemma.py). Paces on the
+# remote provider's daily request budget instead of the GPU semaphore. Defaults
+# stay under Gemma's free-tier 14,400 RPD / 16K TPM (~6-day full pass).
+backfill:
+  daily_request_budget: 14000  # < 14,400 free-tier RPD; ~4,600 props/day
+  tpm_limit: 16000
+  requests_per_property: 3     # visual + sentiment + verdict
+  batch_size: 50
+  redis_prefix: "backfill:gemma"
 
 # ---------------------------------------------------------------------------
 # Proxy Configuration (scraper HTTP layer — FR-20 / AD-5)

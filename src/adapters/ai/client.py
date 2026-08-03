@@ -17,6 +17,7 @@ import random
 import re
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Tuple
 
 import aiohttp
@@ -365,10 +366,51 @@ class LocalAIClient(ABC):
         if self.session is None:
             self.session = aiohttp.ClientSession(timeout=self.timeout)
 
+    @staticmethod
+    def _image_max_dimension() -> int:
+        """Configured longest-side px cap for VLM images (0 = disabled)."""
+        try:
+            from infra.config import get_config
+
+            return int(get_config().ai.image_max_dimension)
+        except Exception:  # noqa: BLE001 - never break the image path on config
+            return 0
+
+    @staticmethod
+    def _read_or_make_variant(path: str, max_dim: int) -> bytes:
+        """Return downscaled bytes for *path*, caching the variant on disk.
+
+        Synchronous (Pillow + disk); call via a worker thread. Fail-open: any
+        error falls back to the original file bytes so enrich never breaks.
+        """
+        from adapters.ai.image_ops import downscale_jpeg, variant_path
+
+        variant = variant_path(path, max_dim)
+        try:
+            if variant.exists():
+                return variant.read_bytes()
+            raw = Path(path).read_bytes()
+            out = downscale_jpeg(raw, max_dim)
+            if out is not raw:  # only cache when a real downscale happened
+                variant.write_bytes(out)
+            return out
+        except Exception:  # noqa: BLE001 - fall back to the original bytes
+            return Path(path).read_bytes()
+
     async def _read_image_b64(self, path: str) -> str:
-        """Read an image file asynchronously and return base64 text."""
-        async with await anyio.open_file(path, "rb") as image_file:
-            raw = await image_file.read()
+        """Read an image file and return base64 text, downscaled if configured.
+
+        When ``ai.image_max_dimension`` > 0 the image is capped to that longest
+        side (BIN-248) and the variant is cached next to the original.
+        """
+        max_dim = self._image_max_dimension()
+        if max_dim > 0:
+            raw = await anyio.to_thread.run_sync(
+                self._read_or_make_variant, path, max_dim
+            )
+        else:
+            async with await anyio.open_file(path, "rb") as image_file:
+                raw = await image_file.read()
         return base64.b64encode(raw).decode("utf-8")
 
     async def _run_json_retry_loop(
@@ -970,9 +1012,13 @@ def create_ai_client() -> LocalAIClient:
     cfg = get_config()
     backend = cfg.ai.backend
 
-    if backend == "gemini":
+    if backend in ("gemini", "gemma"):
+        # Both route through the same OpenAI-compatible endpoint; the model id
+        # selects the concrete client (``gemma-*`` → GemmaClient) via
+        # ``_gemini_client_for``. ``backend: gemma`` picks ``ai.gemma_model``.
+        model = cfg.ai.gemma_model if backend == "gemma" else cfg.ai.gemini_model
         return _gemini_client_for(
-            cfg.ai.gemini_model,
+            model,
             api_key=cfg.ai.gemini_api_key,
             base_url=cfg.ai.gemini_url,
             timeout=cfg.ai.timeout,

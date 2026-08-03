@@ -348,6 +348,23 @@ class TestCreateAIClient:
         assert client.timeout.total == 45
 
     @patch("infra.config.get_config")
+    def test_gemma_backend(self, mock_get_config):
+        """backend=gemma should return GemmaClient using ai.gemma_model (BIN-248)."""
+        mock_cfg = MagicMock()
+        mock_cfg.ai.backend = "gemma"
+        mock_cfg.ai.gemini_api_key = "secret-key"
+        mock_cfg.ai.gemma_model = "gemma-4-31b-it"
+        mock_cfg.ai.gemini_model = "gemini-2.5-flash"  # must NOT be used
+        mock_cfg.ai.gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+        mock_cfg.ai.timeout = 120
+        mock_get_config.return_value = mock_cfg
+
+        client = create_ai_client()
+        assert isinstance(client, GemmaClient)
+        assert client.model == "gemma-4-31b-it"
+        assert client.visual_model == "gemma-4-31b-it"
+
+    @patch("infra.config.get_config")
     def test_unknown_backend_defaults_to_ollama(self, mock_get_config):
         """Unknown backend should default to Ollama."""
         mock_cfg = MagicMock()
@@ -941,3 +958,62 @@ class TestGemmaClient:
         gemini = _gemini_client_for("gemini-2.5-flash", api_key="k")
         assert isinstance(gemma, GemmaClient)
         assert isinstance(gemini, GeminiClient) and not isinstance(gemini, GemmaClient)
+
+
+# ---------------------------------------------------------------------------
+# Image downscaling in _read_image_b64 (BIN-248)
+# ---------------------------------------------------------------------------
+
+
+class TestReadImageB64Downscale:
+    """_read_image_b64 downscales + caches when ai.image_max_dimension > 0."""
+
+    @staticmethod
+    def _jpeg(width, height):
+        import io as _io
+
+        from PIL import Image
+
+        buf = _io.BytesIO()
+        Image.new("RGB", (width, height), (10, 20, 30)).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    @patch("infra.config.get_config")
+    def test_downscales_and_caches_variant(self, mock_get_config, tmp_path):
+        import base64 as _b64
+        import io as _io
+
+        from PIL import Image
+
+        mock_cfg = MagicMock()
+        mock_cfg.ai.image_max_dimension = 768
+        mock_get_config.return_value = mock_cfg
+
+        src = tmp_path / "photo.jpg"
+        src.write_bytes(self._jpeg(2000, 1000))
+
+        client = OllamaClient()
+        b64 = asyncio.run(client._read_image_b64(str(src)))
+
+        decoded = _b64.b64decode(b64)
+        with Image.open(_io.BytesIO(decoded)) as img:
+            assert max(img.size) == 768
+        # Variant cached next to the original.
+        assert (tmp_path / "photo.d768.jpg").exists()
+
+    @patch("infra.config.get_config")
+    def test_disabled_returns_original_bytes(self, mock_get_config, tmp_path):
+        import base64 as _b64
+
+        mock_cfg = MagicMock()
+        mock_cfg.ai.image_max_dimension = 0
+        mock_get_config.return_value = mock_cfg
+
+        raw = self._jpeg(2000, 1000)
+        src = tmp_path / "photo.jpg"
+        src.write_bytes(raw)
+
+        client = OllamaClient()
+        b64 = asyncio.run(client._read_image_b64(str(src)))
+        assert _b64.b64decode(b64) == raw
+        assert not (tmp_path / "photo.d0.jpg").exists()

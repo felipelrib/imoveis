@@ -5,6 +5,7 @@ geoalchemy2
 pgvector
 psycopg2-binary
 httpx
+pillow  # image downscaling in the AI enrich path (BIN-248)
 celery[redis]
 redis
 shapely
