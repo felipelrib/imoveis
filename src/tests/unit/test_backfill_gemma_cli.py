@@ -61,6 +61,8 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None):
     cfg.backfill.redis_prefix = "t"
     cfg.backfill.daily_request_budget = 14000
     cfg.backfill.requests_per_property = 3
+    cfg.backfill.rpm_limit = 30
+    cfg.backfill.concurrency = 1
     cfg.ai.gemini_api_key = api_key
     rows = [
         (
@@ -152,3 +154,37 @@ def test_continuous_rejects_dry_run(monkeypatch):
     _wire(mod, monkeypatch, api_key="k")
     with pytest.raises(SystemExit):
         mod.main(["--continuous", "--dry-run"])
+
+
+class _FakeSession:
+    def __init__(self, scalar):
+        self._scalar = scalar
+
+    def execute(self, *_a, **_k):
+        return SimpleNamespace(scalar=lambda: self._scalar)
+
+
+def test_observed_rate_per_day(monkeypatch):
+    mod = _load_module()
+    # 42 enrichments in the last hour → ~1008/day.
+    assert mod._observed_rate_per_day(_FakeSession(42)) == 1008.0
+    # Idle (0 / None) → None so status falls back to the budget ceiling.
+    assert mod._observed_rate_per_day(_FakeSession(0)) is None
+    assert mod._observed_rate_per_day(_FakeSession(None)) is None
+
+
+def test_concurrency_flag_passes_through(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="")
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured.update(kwargs)
+        from core.backfill_runner import BackfillResult
+
+        return BackfillResult()
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+    # dry-run so no client is needed; concurrency still threads through.
+    mod.main(["--dry-run", "--concurrency", "5"])
+    assert captured["concurrency"] == 5
