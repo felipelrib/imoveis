@@ -39,12 +39,30 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class DailyBudget:
-    """Redis-backed daily request counter enforcing an RPD ceiling.
+_WINDOW_SECONDS = 24 * 3600
 
-    The counter key rolls over per UTC calendar day (matching a provider's
-    once-a-day RPD reset). ``try_consume`` is the gate: it reserves ``n``
-    requests only if that keeps the day under ``daily_limit``.
+
+def _parse_iso(raw: Any) -> Optional[datetime]:
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+class DailyBudget:
+    """Redis-backed request counter enforcing an RPD ceiling over a rolling 24h.
+
+    A **rolling 24-hour window** (counter + window-start stored in a Redis hash)
+    rather than a calendar day: the window opens on the first reserved request
+    and closes 24h later. This is provider-clock-agnostic — RPD resets on the
+    provider's calendar day (an unknown, changeable time), and keeping under the
+    budget in *any* rolling 24h is automatically under any calendar-day cap when
+    ``daily_limit`` < the provider's RPD. It also makes the auto-wait timing
+    exact: :meth:`seconds_until_reset` is simply the time left in the window.
     """
 
     def __init__(
@@ -59,12 +77,26 @@ class DailyBudget:
         self._prefix = prefix
         self._daily_limit = int(daily_limit)
         self._now_fn = now_fn
+        self._key = f"{prefix}:budget"
 
-    def _key(self) -> str:
-        return f"{self._prefix}:budget:{_utc_today(self._now_fn).isoformat()}"
+    def _active_window(self, now: datetime) -> tuple[int, Optional[datetime]]:
+        """Return ``(count, window_start)`` for the live window, or ``(0, None)``.
+
+        An expired or absent window reads as empty so the next reservation opens
+        a fresh one.
+        """
+        raw = self._redis.hgetall(self._key) or {}
+        decoded = {
+            (k.decode() if isinstance(k, bytes) else k): v for k, v in raw.items()
+        }
+        start = _parse_iso(decoded.get("start"))
+        if start is None or (now - start).total_seconds() >= _WINDOW_SECONDS:
+            return 0, None
+        count = int(decoded.get("count", 0) or 0)
+        return count, start
 
     def consumed(self) -> int:
-        return int(self._redis.get(self._key()) or 0)
+        return self._active_window(self._now_fn())[0]
 
     def remaining(self) -> int:
         return max(0, self._daily_limit - self.consumed())
@@ -73,14 +105,27 @@ class DailyBudget:
         """Reserve ``n`` requests; return False (and reserve nothing) if over."""
         if n <= 0:
             return True
-        key = self._key()
-        new_total = int(self._redis.incrby(key, n))
-        if new_total == n:  # first write today → set expiry once
-            self._redis.expire(key, _BUDGET_TTL_SECONDS)
-        if new_total > self._daily_limit:
-            self._redis.incrby(key, -n)  # roll back the over-reservation
+        now = self._now_fn()
+        count, start = self._active_window(now)
+        if count + n > self._daily_limit:
             return False
+        if start is None:  # open a fresh window on first reservation
+            start = now
+        self._redis.hset(
+            self._key,
+            mapping={"count": count + n, "start": start.isoformat()},
+        )
+        # Expire well after the window so a stale window can't linger forever.
+        self._redis.expire(self._key, _BUDGET_TTL_SECONDS)
         return True
+
+    def seconds_until_reset(self) -> float:
+        """Seconds until the current window resets (0 when no window is open)."""
+        now = self._now_fn()
+        _, start = self._active_window(now)
+        if start is None:
+            return 0.0
+        return max(0.0, _WINDOW_SECONDS - (now - start).total_seconds())
 
 
 class Checkpoint:

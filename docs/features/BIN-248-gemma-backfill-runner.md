@@ -85,8 +85,9 @@ Files touched:
   per property. Retries (on 429/5xx) issue extra HTTP requests not counted against the daily budget; at the
   paced rate the A/B observed 0 retries, and `--status` / progress logs surface `rate_limit_hits` /
   `retry_count` so drift is visible. Default budget (14,000) sits under the 14,400 RPD cap for headroom.
-- **Day boundary is UTC**, which may not align exactly with the provider's RPD reset (Pacific). The default
-  budget margin absorbs the small overlap; confirm live RPD on the AI Studio dashboard before raising it.
+- **Budget window:** originally a UTC calendar day; **BIN-268** changed it to a rolling 24h window
+  (provider-clock-agnostic and safe under any calendar-day RPD) and added `--continuous` auto-wait. Confirm
+  live RPD on the AI Studio dashboard before raising the budget.
 - Embeddings stay on local `bge-m3` (out of scope). No schema change — enrichment writes to the existing
   `metrics_scoring.meta` JSON.
 - Actually running the full ~6-day backfill is an operator action (daily invocation), not part of this PR.

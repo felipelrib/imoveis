@@ -107,11 +107,34 @@ def test_budget_try_consume_stops_at_limit():
     assert b.consumed() == 6
 
 
-def test_budget_resets_per_utc_day():
+def test_budget_rolling_window_resets_after_24h():
     r = FakeRedis()
     _budget(r, 10, day="2026-08-03").try_consume(9)
-    # New day → fresh counter.
+    # 24h later → the rolling window has rolled over, fresh counter.
     assert _budget(r, 10, day="2026-08-04").consumed() == 0
+
+
+def test_budget_window_still_active_before_24h():
+    r = FakeRedis()
+    start = datetime.fromisoformat("2026-08-03T12:00:00+00:00")
+    later = datetime.fromisoformat("2026-08-03T20:00:00+00:00")  # +8h, same window
+    DailyBudget(r, prefix="t", daily_limit=10, now_fn=lambda: start).try_consume(9)
+    b = DailyBudget(r, prefix="t", daily_limit=10, now_fn=lambda: later)
+    assert b.consumed() == 9  # window not yet reset
+    assert b.try_consume(2) is False  # 9+2 > 10
+
+
+def test_budget_seconds_until_reset():
+    r = FakeRedis()
+    start = datetime.fromisoformat("2026-08-03T12:00:00+00:00")
+    DailyBudget(r, prefix="t", daily_limit=10, now_fn=lambda: start).try_consume(3)
+    # 6h into the window → 18h left.
+    now = datetime.fromisoformat("2026-08-03T18:00:00+00:00")
+    b = DailyBudget(r, prefix="t", daily_limit=10, now_fn=lambda: now)
+    assert b.seconds_until_reset() == pytest.approx(18 * 3600)
+    # No window open yet → 0 (can start immediately).
+    empty = DailyBudget(FakeRedis(), prefix="t", daily_limit=10)
+    assert empty.seconds_until_reset() == 0.0
 
 
 # ---------------------------------------------------------------------------
