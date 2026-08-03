@@ -10,19 +10,26 @@ daily request budget that survives stop/restart.
 
 Usage
 -----
+Like every dev script it talks to the DB via ``SessionLocal``, so point it at the
+running stack with ``DATABASE_URL`` (the primary Compose Postgres publishes on the
+host port from ``.env.local``, e.g. 5433). ``--dry-run`` / ``--status`` need only
+the DB; a real run also needs ``GEMINI_API_KEY``.
+
+    export DATABASE_URL="postgresql://<user>:<pass>@localhost:<port>/realestate"
+
     # Small trial run (writes real Gemma scores for 2 oldest un-enriched props):
     GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py --limit 2
 
     # Full daily slice (stops at the daily budget, resume tomorrow):
     GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py
 
-    # Plan only — how many would run today, no API calls / no writes:
+    # Plan only — how many would run today, no API calls / no writes (no key needed):
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --dry-run
 
     # Status: enriched vs total, budget consumed today, ETA:
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --status
 
-This calls the live Gemma endpoint (free tier) and mutates DB scores.
+A real run calls the live Gemma endpoint (free tier) and mutates DB scores.
 """
 
 from __future__ import annotations
@@ -146,7 +153,9 @@ def _print_status(cfg, session, redis) -> None:
 
 
 def _run(cfg, session, redis, args) -> BackfillResult:
-    client = _build_client(cfg)
+    # A dry-run makes no API calls, so it must not require a key/client — build
+    # the Gemma client only for a real run.
+    client = None if args.dry_run else _build_client(cfg)
     params = EnrichmentRerunParams(
         mode=MODE_MISSING,
         stages=STAGES_ALL,
@@ -179,21 +188,27 @@ def _run(cfg, session, redis, args) -> BackfillResult:
                 retry_count=getattr(client, "retry_count", 0),
             )
 
+    async def _run_backfill() -> BackfillResult:
+        return await run_backfill(
+            rows,
+            enrich_fn=partial(_enrich_one, client=client, cfg=cfg),
+            budget=budget,
+            checkpoint=checkpoint,
+            requests_per_property=cfg.backfill.requests_per_property,
+            limit=args.limit,
+            force=args.force,
+            dry_run=args.dry_run,
+            pace_seconds=0.0 if args.dry_run else pace,
+            on_progress=_on_progress,
+        )
+
     async def _go() -> BackfillResult:
         heartbeat.beat()
         try:
+            if args.dry_run:  # no client / no HTTP session needed
+                return await _run_backfill()
             async with client.session_context():
-                return await run_backfill(
-                    rows,
-                    enrich_fn=partial(_enrich_one, client=client, cfg=cfg),
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    requests_per_property=cfg.backfill.requests_per_property,
-                    force=args.force,
-                    dry_run=args.dry_run,
-                    pace_seconds=0.0 if args.dry_run else pace,
-                    on_progress=_on_progress,
-                )
+                return await _run_backfill()
         finally:
             heartbeat.clear()
 

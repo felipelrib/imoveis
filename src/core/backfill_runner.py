@@ -187,6 +187,7 @@ async def run_backfill(
     budget: DailyBudget,
     checkpoint: Checkpoint,
     requests_per_property: int,
+    limit: Optional[int] = None,
     force: bool = False,
     dry_run: bool = False,
     pace_seconds: float = 0.0,
@@ -196,14 +197,19 @@ async def run_backfill(
     """Iterate candidate ``(property, metrics)`` rows, enriching within budget.
 
     Stops when the daily budget can no longer fund another property
-    (``budget_exhausted``) or the rows run out — either way it's safe to invoke
-    again the next day to resume. ``enrich_fn`` raises on hard failure; the row
-    is counted as an error and the loop continues.
+    (``budget_exhausted``), the optional ``limit`` of attempted properties is
+    reached, or the rows run out — either way it's safe to invoke again the next
+    day to resume. ``enrich_fn`` raises on hard failure; the row is counted as an
+    error and the loop continues.
+
+    ``limit`` caps the number of properties *attempted* this run (skipped rows do
+    not count), so a small ``--limit`` trial touches exactly that many.
 
     ``dry_run`` reports how many rows *would* be processed within the remaining
     budget without calling the API or consuming budget.
     """
     result = BackfillResult()
+    attempted = 0
 
     for prop, metrics in rows:
         # Idempotency: skip rows a concurrent live worker already enriched,
@@ -212,6 +218,9 @@ async def run_backfill(
             result.skipped_already_enriched += 1
             continue
 
+        if limit is not None and attempted >= limit:
+            break
+
         if dry_run:
             # Simulate budget without reserving it.
             projected = (result.would_process + 1) * requests_per_property
@@ -219,12 +228,14 @@ async def run_backfill(
                 result.budget_exhausted = True
                 break
             result.would_process += 1
+            attempted += 1
             continue
 
         if not budget.try_consume(requests_per_property):
             result.budget_exhausted = True
             break
 
+        attempted += 1
         result.requests_consumed += requests_per_property
         try:
             await enrich_fn(prop)
