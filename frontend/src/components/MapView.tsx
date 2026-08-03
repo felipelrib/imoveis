@@ -1,7 +1,9 @@
 import { useRef, useEffect, useCallback } from 'react'
-import maplibregl, {
-  type Map as MLMap,
-  type Marker as MLMarker,
+import {
+  Map as MLMap,
+  Marker as MLMarker,
+  Popup,
+  NavigationControl,
   type GeoJSONSource,
   type MapLayerMouseEvent,
   type StyleSpecification,
@@ -57,6 +59,10 @@ export default function MapView({
   const mapRef = useRef<MLMap | null>(null)
   const markersRef = useRef<MLMarker[]>([])
   const layersReadyRef = useRef(false)
+  // True once the map has fired `load` (style parsed, safe to add sources/layers/
+  // markers). Used instead of `isStyleLoaded()`, which under maplibre-gl v6 keeps
+  // returning false while raster tiles are still pending.
+  const loadedRef = useRef(false)
   const { t, locale } = useLocale()
 
   const compareModeRef = useRef(compareMode)
@@ -116,7 +122,7 @@ export default function MapView({
           onToggleCompareRef.current?.(linkId)
         })
 
-        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        const marker = new MLMarker({ element: el, anchor: 'center' })
           .setLngLat([p.lon, p.lat])
           .addTo(map)
         markersRef.current.push(marker)
@@ -231,7 +237,7 @@ export default function MapView({
       },
     })
 
-    const popup = new maplibregl.Popup({
+    const popup = new Popup({
       offset: 12,
       maxWidth: '280px',
       className: 'map-popup',
@@ -370,23 +376,24 @@ export default function MapView({
       }],
     }
 
-    const map = new maplibregl.Map({
+    const map = new MLMap({
       container,
       style,
       center: [-43.94, -19.92],  // Belo Horizonte
       zoom: 13,
     })
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    map.addControl(new NavigationControl(), 'top-right')
 
     map.on('load', () => {
+      loadedRef.current = true
       updateMarkersRef.current?.(map, propertiesRef.current || [])
-    })
-
-    // Deterministic readiness signal for tests / consumers: the map has fully
-    // settled (style + tiles rendered) at least once. Lets e2e wait on a real
-    // event instead of a guessed timeout (BIN-189).
-    map.once('idle', () => {
+      // Deterministic readiness signal for tests / consumers: the style has
+      // loaded and the first frame rendered. Previously keyed off `idle`, but
+      // maplibre-gl v6 no longer fires `idle` while raster tiles stay pending
+      // (offline, or when the OSM tile host blocks automated requests), which
+      // hung the signal forever. `load` does not depend on tile fetch success
+      // and still guarantees `isStyleLoaded()` is true for marker syncing.
       mapContainer.current?.setAttribute('data-map-ready', 'true')
     })
 
@@ -403,23 +410,25 @@ export default function MapView({
       map.remove()
       mapRef.current = null
       layersReadyRef.current = false
+      loadedRef.current = false
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update markers when properties / compare selection change.
-  // If the style is still settling (`isStyleLoaded()` false — common under CPU
-  // contention, and transiently even after `load` during tile/style diffing),
-  // defer to the next `idle` instead of dropping the sync forever (BIN-189).
+  // Gate on the `load` event (via loadedRef), not `isStyleLoaded()`: the latter
+  // stays false under maplibre-gl v6 while raster tiles are pending, and the old
+  // `once('idle')` fallback then never fired when tiles fail to load (offline, or
+  // OSM blocking automated requests) — dropping the sync forever (BIN-189/#33).
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     const run = () => updateMarkers(map, properties || [])
-    if (map.isStyleLoaded()) {
+    if (loadedRef.current) {
       run()
       return
     }
-    map.once('idle', run)
-    return () => { map.off('idle', run) }
+    map.once('load', run)
+    return () => { map.off('load', run) }
   }, [properties, listingType, compareMode, selectedIds, updateMarkers])
 
   return (
