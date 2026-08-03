@@ -55,6 +55,12 @@ jobs:
 
   unit:
     runs-on: ubuntu-latest
+    # Exposed at job level so the SONAR_TOKEN presence check below works in `if:`.
+    # Dependabot-triggered runs cannot read Actions secrets (they only see the
+    # separate Dependabot secrets store), so this resolves to "" for them and the
+    # Sonar steps are skipped instead of failing the whole job. See BIN-270.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,9 +75,9 @@ jobs:
         run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30 -m "not slow"
 
       # Prefer CI-based Sonar (with coverage) over Automatic Analysis.
+      # Skipped when SONAR_TOKEN is unavailable (e.g. Dependabot PRs).
       - name: Disable SonarCloud Automatic Analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           set -euo pipefail
           code=$(curl -sS -o /tmp/sonar-autoscan.json -w "%{http_code}" \
@@ -85,9 +91,8 @@ jobs:
           fi
 
       - name: SonarCloud Scan
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@v5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
             -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
