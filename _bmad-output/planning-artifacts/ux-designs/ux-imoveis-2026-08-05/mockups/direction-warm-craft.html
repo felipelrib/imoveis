@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Direção 4: warm-craft</title>
+<!--
+RATIONALE (warm-craft):
+Escuro mas acolhedor, como procurar casa deveria ser: cinzas quentes com subtom âmbar,
+cartões táteis com sombra real e cantos de 10px (arredondado, nunca bolha), tipografia
+humana e generosa. O score vira uma "barra de brasa" — um preenchimento horizontal que
+esquenta do barro ao musgo — porque aqui a decisão é doméstica, não um pregão.
+-->
+<style>
+/* ============================================================
+   PALETA — warm-craft
+   Fundo:     #171310 (base, marrom-carvão) · #201a15 (cartão) · #2a2119 (apoio)
+   Bordas:    #322a21 · realce #47392b
+   Texto:     #efe6d9 (primário, linho) · #b3a692 (secundário) · #7d715f (mudo)
+   Acento:    âmbar #e0a458 (favoritos, POIs, links, faixa de tempo)
+   Queda de preço: #7fb069 (musgo — boa notícia em tom de jardim)
+   ------------------------------------------------------------
+   SCORE-COLOUR SEMANTICS — rampa divergente "brasa": barro → âmbar → musgo.
+   Renderizada como barra horizontal preenchida s×100% no rodapé do card
+   + leve véu da mesma cor atrás do rótulo do veredito.
+     0.00–0.39  "esfria"   #c65f43  (barro queimado)
+     0.40–0.69  "morno"    #e0a458  (âmbar)
+     0.70–1.00  "acende"   #7fb069  (musgo)
+   Interpolação dentro do bucket (comprimento = score exato); trilho
+   vazio #322a21. Sem score: trilho pontilhado, sem preenchimento.
+   ============================================================ */
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#100d0b; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Trebuchet MS","Helvetica Neue",sans-serif;
+  color:#efe6d9; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; background:
+  radial-gradient(900px 400px at 50% -10%, #1d1712 0%, transparent 70%), #171310;
+  min-height:100vh; padding:0 40px 56px; }
+
+/* ---------- top ---------- */
+.topbar { display:flex; align-items:center; gap:26px; padding:20px 4px 18px; border-bottom:1px solid #322a21; }
+.brand { font-size:18px; font-weight:700; letter-spacing:.01em; display:flex; align-items:center; gap:10px; }
+.brand .mark { width:22px; height:22px; border-radius:7px; background:linear-gradient(135deg,#e0a458,#b5773a); box-shadow:0 2px 6px #00000066; }
+.topnav { display:flex; gap:6px; }
+.topnav a { color:#b3a692; text-decoration:none; font-size:13.5px; padding:7px 13px; border-radius:9px; }
+.topnav a.active { color:#171310; background:#e0a458; font-weight:600; }
+.top-right { margin-left:auto; color:#7d715f; font-size:13px; }
+
+/* ---------- since-last-visit: aviso na porta de casa ---------- */
+.since { display:flex; align-items:center; gap:18px; margin:22px 0 0; padding:16px 20px;
+  background:linear-gradient(180deg,#241c15,#201a15); border:1px solid #47392b; border-radius:12px;
+  box-shadow:0 6px 18px #00000055, inset 0 1px 0 #ffffff0a; }
+.since .lamp { width:38px; height:38px; border-radius:10px; background:#2a2119; border:1px solid #47392b; display:flex; align-items:center; justify-content:center; color:#e0a458; font-size:17px; }
+.since h2 { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:#e0a458; font-weight:600; }
+.since .items { display:flex; gap:26px; margin-top:3px; font-size:14.5px; color:#b3a692; }
+.since .items b { color:#efe6d9; font-weight:700; font-size:16px; }
+.since .items .up b { color:#7fb069; }
+.since a { margin-left:auto; color:#e0a458; text-decoration:none; font-size:13.5px; font-weight:600; border:1px solid #e0a45855; border-radius:9px; padding:7px 14px; }
+
+/* ---------- health: bancada da oficina ---------- */
+.health { display:flex; gap:14px; margin:12px 0 0; font-size:12.5px; color:#7d715f; flex-wrap:wrap; }
+.h { display:flex; align-items:center; gap:8px; background:#1c1611; border:1px solid #322a21; border-radius:9px; padding:6px 12px; }
+.dot { width:8px; height:8px; border-radius:50%; background:#7fb069; box-shadow:0 0 5px #7fb06955; }
+.h .v { color:#b3a692; }
+.cov .track { width:84px; height:6px; border-radius:3px; background:#322a21; position:relative; overflow:hidden; }
+.cov .track i { position:absolute; inset:0; right:18%; background:linear-gradient(90deg,#e0a458,#7fb069); border-radius:3px; }
+
+/* ---------- filtros ---------- */
+.filters { display:flex; align-items:center; gap:10px; margin:16px 0 20px; flex-wrap:wrap; }
+.f-lbl { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:#7d715f; }
+.chip { border:1px solid #322a21; background:#201a15; color:#d8cdbb; border-radius:9px; padding:6px 13px; font-size:13px; box-shadow:0 2px 4px #00000033; }
+.chip.on { border-color:#e0a458; color:#e0a458; background:#2a2119; }
+.chip .x { color:#7d715f; margin-left:6px; }
+.seg { display:inline-flex; border:1px solid #322a21; border-radius:9px; overflow:hidden; box-shadow:0 2px 4px #00000033; }
+.seg span { padding:6px 15px; font-size:13px; color:#b3a692; background:#201a15; }
+.seg span.on { background:#e0a458; color:#171310; font-weight:600; }
+.search { flex:1; min-width:280px; display:flex; align-items:center; gap:9px; border:1px solid #322a21; background:#14100d; border-radius:9px; padding:8px 14px; color:#7d715f; font-size:13px; }
+.count { color:#7d715f; font-size:12.5px; }
+.count b { color:#b3a692; }
+
+/* ---------- split ---------- */
+.split { display:grid; grid-template-columns:1fr 460px; gap:26px; }
+
+/* ---------- cards: objetos táteis ---------- */
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-content:start; }
+.card { position:relative; background:linear-gradient(180deg,#221c16,#1e1813); border:1px solid #322a21; border-radius:10px; overflow:hidden;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; }
+.card:hover { border-color:#47392b; }
+.photo { height:140px; position:relative;
+  background:
+    radial-gradient(240px 140px at 32% 25%, #3d3226 0%, transparent 65%),
+    linear-gradient(155deg,#2c241b 0%, #1e1912 70%); }
+.photo .fresh { position:absolute; bottom:9px; left:11px; font-size:11.5px; color:#d8cdbb; background:#171310d9; border-radius:7px; padding:3px 9px; }
+.photo .src { position:absolute; bottom:9px; right:11px; font-size:11.5px; color:#e0a458; background:#171310d9; border-radius:7px; padding:3px 9px; }
+.acts { position:absolute; top:9px; right:9px; display:flex; gap:7px; }
+.acts span { width:28px; height:28px; border-radius:8px; background:#171310d9; color:#b3a692; display:flex; align-items:center; justify-content:center; font-size:14px; border:1px solid #322a21; }
+.acts .fav.on { color:#e0a458; border-color:#e0a45866; }
+.body { padding:13px 15px 14px; }
+.row1 { display:flex; align-items:baseline; gap:10px; }
+.price { font-size:19px; font-weight:700; }
+.price small { font-size:12px; color:#7d715f; font-weight:400; }
+.pctl { margin-left:auto; font-size:11.5px; font-weight:600; color:#7fb069; background:#22291d; border:1px solid #7fb06944; border-radius:7px; padding:2px 8px; }
+.hood { font-size:13.5px; color:#d8cdbb; margin-top:1px; }
+.hood span { color:#7d715f; font-size:12px; }
+.badges { display:flex; gap:7px; margin-top:9px; flex-wrap:wrap; }
+.tag { font-size:11.5px; border-radius:7px; padding:2px 9px; background:#2a2119; color:#b3a692; }
+.tag.drop { color:#7fb069; background:#22291d; }
+.tag.pend { color:#7d715f; border:1px dashed #47392b; background:transparent; }
+.tag.gone { color:#c65f43; background:#2b1d18; }
+/* barra de brasa */
+.ember { margin-top:11px; }
+.ember .lbl { display:flex; justify-content:space-between; font-size:10.5px; color:#7d715f; margin-bottom:4px; }
+.ember .lbl b { font-weight:600; }
+.ember .lbl b.hot { color:#7fb069; } .ember .lbl b.mid { color:#e0a458; } .ember .lbl b.low { color:#c65f43; }
+.ember .track { height:7px; border-radius:4px; background:#322a21; position:relative; overflow:hidden; }
+.ember .track i { position:absolute; left:0; top:0; bottom:0; border-radius:4px; }
+.ember .track i.hot { background:linear-gradient(90deg,#e0a458,#7fb069); }
+.ember .track i.mid { background:linear-gradient(90deg,#c65f43,#e0a458); }
+.ember.none .track { background:repeating-linear-gradient(90deg,#322a21 0 6px,transparent 6px 11px); }
+.card.gone { opacity:.6; }
+.card.gone .photo { filter:grayscale(.8) brightness(.75); }
+
+/* ---------- mapa: mesa de madeira à noite ---------- */
+.map { position:relative; border:1px solid #322a21; border-radius:12px; overflow:hidden; min-height:840px;
+  background:#141110; box-shadow:0 8px 20px #00000055; }
+.map-canvas { position:absolute; inset:0;
+  background:
+    radial-gradient(380px 300px at 68% 26%, #1d1813 0%, transparent 68%),
+    radial-gradient(440px 350px at 22% 74%, #191510 0%, transparent 68%), #141110; }
+.streets { position:absolute; inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 58px, #201a14 58px 59px),
+    repeating-linear-gradient(90deg, transparent 0 70px, #201a14 70px 71px),
+    repeating-linear-gradient(30deg, transparent 0 148px, #262017 148px 149px); }
+.park { position:absolute; width:126px; height:92px; left:58%; top:55%; background:#1b2416; border:1px solid #2b3a24; border-radius:14px; transform:rotate(-6deg); }
+.map-head { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; align-items:center; gap:10px; padding:12px 16px; font-size:13px; color:#7d715f;
+  background:linear-gradient(180deg,#141110f2 60%, transparent); }
+.map-head b { color:#d8cdbb; font-weight:600; }
+.map-head .sync { margin-left:auto; color:#e0a458; font-size:12px; }
+.band { position:absolute; left:13%; top:17%; width:315px; height:285px; border:2px dashed #e0a45866; border-radius:52% 46% 54% 47%/47% 54% 46% 53%; }
+.band-lbl { position:absolute; left:16%; top:14%; z-index:4; font-size:12px; font-weight:600; color:#171310; background:#e0a458; border-radius:8px; padding:3px 10px; box-shadow:0 3px 8px #00000066; }
+.poi { position:absolute; z-index:4; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.poi .pin { width:14px; height:14px; border-radius:50% 50% 50% 4px; transform:rotate(-45deg); background:#e0a458; border:2px solid #171310; box-shadow:0 2px 6px #00000088; }
+.poi .plbl { font-size:12px; color:#efe6d9; background:#171310e0; border:1px solid #322a21; border-radius:8px; padding:2px 9px; white-space:nowrap; }
+.pt { position:absolute; width:12px; height:12px; border-radius:50%; border:2px solid #171310; z-index:3; box-shadow:0 2px 5px #00000077; }
+.pt.hot { background:#7fb069; } .pt.mid { background:#e0a458; } .pt.low { background:#c65f43; } .pt.pen { background:#4d4237; }
+.pt.hover { box-shadow:0 0 0 4px #e0a45833, 0 2px 5px #00000077; }
+.suggest { position:absolute; bottom:16px; left:16px; right:16px; z-index:5; background:#221c16f2; border:1px solid #47392b; border-radius:10px; padding:13px 16px; font-size:13px; color:#b3a692; display:flex; align-items:center; gap:10px; box-shadow:0 6px 16px #00000066; }
+.suggest b { color:#e0a458; }
+.suggest .btn { margin-left:auto; background:#e0a458; color:#171310; font-weight:600; border-radius:8px; padding:6px 13px; font-size:12.5px; white-space:nowrap; }
+.legend { position:absolute; bottom:80px; right:16px; z-index:5; background:#141110ee; border:1px solid #322a21; border-radius:10px; padding:10px 13px; font-size:11px; color:#7d715f; }
+.legend .row { display:flex; align-items:center; gap:8px; margin-top:5px; }
+.legend .sw { width:10px; height:10px; border-radius:50%; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand"><span class="mark"></span>Imoveis</div>
+    <nav class="topnav">
+      <a class="active" href="#">Imóveis</a><a href="#">Favoritos</a><a href="#">Buscas salvas</a><a href="#">Alertas</a><a href="#">Admin</a>
+    </nav>
+    <div class="top-right num">terça, 5 de agosto · 09:42</div>
+  </div>
+
+  <!-- Desde sua última visita -->
+  <div class="since">
+    <div class="lamp">☀</div>
+    <div>
+      <h2>Desde sua última visita</h2>
+      <div class="items">
+        <span class="up"><b class="num">7</b> novos imóveis nos seus filtros</span>
+        <span><b class="num">3</b> quedas de preço</span>
+        <span><b class="num">2</b> anúncios removidos</span>
+      </div>
+    </div>
+    <a href="#">Ver novidades</a>
+  </div>
+
+  <!-- Health -->
+  <div class="health">
+    <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+    <span class="h"><span class="dot"></span>OLX <span class="v num">5h atrás</span></span>
+    <span class="h">Enriquecimento: <span class="v">local — qwen2.5-vl</span></span>
+    <span class="h"><span class="dot"></span>Workers <span class="v">OK</span></span>
+    <span class="h cov">Cobertura IA <span class="track"><i></i></span><span class="v num">82%</span></span>
+  </div>
+
+  <!-- Filtros -->
+  <div class="filters">
+    <span class="f-lbl">Bairro</span>
+    <span class="chip on">Savassi<span class="x">×</span></span>
+    <span class="chip on">Lourdes<span class="x">×</span></span>
+    <span class="chip">+ bairro</span>
+    <span class="f-lbl">Preço</span><span class="chip num">até R$ 3.500</span>
+    <span class="seg"><span class="on">Aluguel</span><span>Venda</span></span>
+    <span class="f-lbl">Percentil</span><span class="chip on num">≤ P25</span>
+    <span class="chip on">bairro seguro</span><span class="chip">reformado</span><span class="chip">silencioso</span>
+    <span class="search">⌕ Conte o que procura — "arejado, perto de padaria, aceita pets"</span>
+    <span class="count"><b class="num">28</b> imóveis · <b class="num">12</b> no mapa</span>
+  </div>
+
+  <div class="split">
+    <!-- ====== GRID ====== -->
+    <div class="grid">
+
+      <!-- 0.87 acende -->
+      <div class="card">
+        <div class="photo">
+          <span class="fresh">visto hoje</span><span class="src">OLX · 2 fontes</span>
+          <div class="acts"><span class="fav on">★</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 2.450<small> /mês</small></span><span class="pctl num">P25</span></div>
+          <div class="hood">Savassi <span>· 2 quartos · 68 m²</span></div>
+          <div class="badges"><span class="tag drop num">−8% desde julho</span></div>
+          <div class="ember">
+            <div class="lbl"><span>negócio</span><b class="hot num">0.87 · acende</b></div>
+            <div class="track"><i class="hot" style="width:87%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 0.91 acende -->
+      <div class="card">
+        <div class="photo">
+          <span class="fresh">visto hoje</span><span class="src">QuintoAndar</span>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 2.150<small> /mês</small></span><span class="pctl num">P12</span></div>
+          <div class="hood">Serra <span>· 3 quartos · 82 m²</span></div>
+          <div class="badges"><span class="tag drop num">−5% desde junho</span></div>
+          <div class="ember">
+            <div class="lbl"><span>negócio</span><b class="hot num">0.91 · acende</b></div>
+            <div class="track"><i class="hot" style="width:91%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 0.62 morno -->
+      <div class="card">
+        <div class="photo">
+          <span class="fresh">visto ontem</span><span class="src">QuintoAndar</span>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 3.100<small> /mês</small></span><span class="pctl num">P41</span></div>
+          <div class="hood">Lourdes <span>· 3 quartos · 95 m²</span></div>
+          <div class="badges"></div>
+          <div class="ember">
+            <div class="lbl"><span>negócio</span><b class="mid num">0.62 · morno</b></div>
+            <div class="track"><i class="mid" style="width:62%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 0.45 morno — percentil suprimido (ausente) -->
+      <div class="card">
+        <div class="photo">
+          <span class="fresh">há 3 dias</span><span class="src">OLX</span>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 2.780<small> /mês</small></span></div>
+          <div class="hood">Funcionários <span>· 2 quartos · 74 m²</span></div>
+          <div class="badges"></div>
+          <div class="ember">
+            <div class="lbl"><span>negócio</span><b class="mid num">0.45 · morno</b></div>
+            <div class="track"><i class="mid" style="width:45%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- pendente -->
+      <div class="card">
+        <div class="photo">
+          <span class="fresh">visto hoje</span><span class="src">OLX</span>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 1.890<small> /mês</small></span></div>
+          <div class="hood">Buritis <span>· 2 quartos · 60 m²</span></div>
+          <div class="badges"><span class="tag pend">análise de IA pendente</span></div>
+          <div class="ember none">
+            <div class="lbl"><span>negócio</span><b>aguardando</b></div>
+            <div class="track"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- gone -->
+      <div class="card gone">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="body">
+          <div class="row1"><span class="price num">R$ 2.900<small> /mês</small></span></div>
+          <div class="hood">Savassi <span>· 2 quartos · 70 m²</span></div>
+          <div class="badges"><span class="tag gone">provavelmente alugado</span><span class="tag">sem atualização há 14 dias</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ====== MAPA ====== -->
+    <div class="map">
+      <div class="map-canvas"></div>
+      <div class="streets"></div>
+      <div class="park"></div>
+      <div class="map-head"><b>Seu mapa</b> · BH, centro-sul <span class="sync">filtrando pela área visível</span></div>
+
+      <div class="band"></div>
+      <div class="band-lbl">até 15 min da Igreja</div>
+
+      <div class="poi" style="left:30%; top:35%"><span class="pin"></span><span class="plbl">Igreja</span></div>
+      <div class="poi" style="left:60%; top:23%"><span class="pin"></span><span class="plbl">Casa dos pais</span></div>
+      <div class="poi" style="left:68%; top:67%"><span class="pin"></span><span class="plbl">Casa da namorada</span></div>
+
+      <span class="pt hot hover" style="left:38%; top:45%"></span>
+      <span class="pt hot" style="left:26%; top:31%"></span>
+      <span class="pt mid" style="left:48%; top:39%"></span>
+      <span class="pt mid" style="left:55%; top:57%"></span>
+      <span class="pt pen" style="left:22%; top:63%"></span>
+      <span class="pt hot" style="left:43%; top:71%"></span>
+      <span class="pt low" style="left:64%; top:45%"></span>
+
+      <div class="legend">
+        Score do negócio
+        <div class="row"><span class="sw" style="background:#7fb069"></span>0.70–1.00 acende</div>
+        <div class="row"><span class="sw" style="background:#e0a458"></span>0.40–0.69 morno</div>
+        <div class="row"><span class="sw" style="background:#c65f43"></span>0.00–0.39 esfria</div>
+        <div class="row"><span class="sw" style="background:#4d4237"></span>pendente</div>
+      </div>
+
+      <div class="suggest">Que tal uma <b>faixa de 20 min a pé</b> ao redor de "Casa da namorada"? Mais 4 imóveis entrariam na busca.<span class="btn">Ativar faixa</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

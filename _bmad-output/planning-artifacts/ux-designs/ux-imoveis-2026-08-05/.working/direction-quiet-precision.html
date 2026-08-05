@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Direção 3: quiet-precision</title>
+<!--
+RATIONALE (quiet-precision):
+Escola Linear/Vercel: cinzas neutros, bordas hairline, um único acento verde que é ao mesmo
+tempo a cor de interação e o topo da rampa de score — nada mais grita. O score se manifesta
+como uma rampa monocromática cinza→verde num pequeno medidor circular; estados ruins não
+ganham vermelho: ficam simplesmente neutros, porque a calma da hierarquia é o produto.
+-->
+<style>
+/* ============================================================
+   PALETA — quiet-precision
+   Fundo:     #0e0f11 (base) · #131417 (superfície) · #17181c (elevada)
+   Hairline:  #1f2126 · foco/hover #2c2f36
+   Texto:     #e6e8eb (primário) · #9ba1ab (secundário) · #5c6370 (mudo)
+   Acento único: #2fbf71 (verde) — interação E topo da rampa de score.
+   Queda de preço: usa o próprio acento (#2fbf71) — queda é boa notícia.
+   Nenhum vermelho no grid; erro/aviso só em toasts (#e5484d, fora deste hero).
+   ------------------------------------------------------------
+   SCORE-COLOUR SEMANTICS — rampa contínua monocromática cinza→verde.
+   score s ∈ [0,1] interpola em 5 paradas (medidor circular + texto):
+     0.00  #5c6370  (cinza — sem opinião visual, não "ruim")
+     0.25  #56705f
+     0.50  #48815f
+     0.75  #37a468
+     1.00  #2fbf71  (acento pleno)
+   A cor aparece SÓ no anel do medidor e no ponto do mapa; o card
+   permanece neutro. Sem score: anel vazio tracejado #2c2f36.
+   ============================================================ */
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0a0b0c; }
+body {
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter",Roboto,"Helvetica Neue",Arial,sans-serif;
+  color:#e6e8eb; font-size:13px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; background:#0e0f11; min-height:100vh; }
+
+/* ---------- top ---------- */
+.topbar { display:flex; align-items:center; gap:28px; padding:14px 28px; border-bottom:1px solid #1f2126; }
+.brand { font-size:13.5px; font-weight:600; letter-spacing:-.01em; display:flex; align-items:center; gap:8px; }
+.brand .mark { width:16px; height:16px; border-radius:4px; background:linear-gradient(135deg,#2fbf71,#1e7a4b); }
+.topnav { display:flex; gap:4px; }
+.topnav a { color:#9ba1ab; text-decoration:none; font-size:13px; padding:5px 10px; border-radius:6px; }
+.topnav a.active { color:#e6e8eb; background:#17181c; }
+.top-right { margin-left:auto; color:#5c6370; font-size:12px; }
+
+/* ---------- since-last-visit ---------- */
+.since { display:flex; align-items:center; gap:12px; margin:20px 28px 0; padding:12px 16px; border:1px solid #1f2126; border-radius:8px; background:#131417; }
+.since .icon { width:26px; height:26px; border-radius:6px; background:#17181c; border:1px solid #2c2f36; display:flex; align-items:center; justify-content:center; color:#2fbf71; font-size:13px; }
+.since .title { font-size:12px; color:#5c6370; }
+.since .items { display:flex; gap:20px; margin-left:8px; }
+.since .it { font-size:13px; color:#9ba1ab; }
+.since .it b { color:#e6e8eb; font-weight:600; }
+.since .it.hot b { color:#2fbf71; }
+.since a { margin-left:auto; font-size:12.5px; color:#2fbf71; text-decoration:none; }
+
+/* ---------- health strip ---------- */
+.health { display:flex; align-items:center; gap:22px; margin:10px 28px 0; padding:8px 16px 8px 16px; font-size:12px; color:#5c6370; }
+.h { display:flex; align-items:center; gap:7px; }
+.dot { width:6px; height:6px; border-radius:50%; background:#2fbf71; }
+.h .v { color:#9ba1ab; }
+.cov { display:flex; align-items:center; gap:8px; }
+.cov .track { width:90px; height:4px; border-radius:2px; background:#1f2126; position:relative; overflow:hidden; }
+.cov .track i { position:absolute; inset:0; right:18%; background:#2fbf71; border-radius:2px; }
+
+/* ---------- filters ---------- */
+.filters { display:flex; align-items:center; gap:8px; margin:14px 28px; flex-wrap:wrap; }
+.pill { display:inline-flex; align-items:center; gap:6px; border:1px solid #1f2126; background:#131417; color:#9ba1ab; border-radius:6px; padding:5px 10px; font-size:12.5px; }
+.pill b { color:#e6e8eb; font-weight:500; }
+.pill.on { border-color:#2fbf7155; color:#e6e8eb; }
+.pill.on .k { color:#2fbf71; }
+.pill .x { color:#5c6370; }
+.seg { display:inline-flex; border:1px solid #1f2126; border-radius:6px; overflow:hidden; }
+.seg span { padding:5px 12px; font-size:12.5px; color:#9ba1ab; background:#131417; }
+.seg span.on { background:#1c2a22; color:#2fbf71; }
+.search { flex:1; min-width:280px; display:flex; align-items:center; gap:8px; border:1px solid #1f2126; background:#0f1012; border-radius:6px; padding:6px 12px; color:#5c6370; font-size:12.5px; }
+.count { color:#5c6370; font-size:12px; }
+.count b { color:#9ba1ab; font-weight:500; }
+
+/* ---------- split ---------- */
+.split { display:grid; grid-template-columns:1fr 480px; gap:0; border-top:1px solid #1f2126; }
+.list { padding:18px 24px 40px 28px; }
+.list-head { display:flex; align-items:center; margin-bottom:14px; font-size:12px; color:#5c6370; }
+.list-head .sort { margin-left:auto; color:#9ba1ab; }
+.list-head .sort b { color:#e6e8eb; font-weight:500; }
+
+/* ---------- cards ---------- */
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.card { position:relative; border:1px solid #1f2126; border-radius:8px; background:#131417; overflow:hidden; }
+.card:hover { border-color:#2c2f36; }
+.photo { height:132px; position:relative;
+  background:linear-gradient(150deg,#1b1d21 0%,#22252b 55%,#191b1f 100%); }
+.photo::after { content:""; position:absolute; inset:0; background:
+  radial-gradient(220px 120px at 70% 20%, #ffffff06 0%, transparent 70%); }
+.photo .fresh { position:absolute; bottom:8px; left:10px; font-size:11px; color:#9ba1ab; background:#0e0f11cc; border:1px solid #1f2126; border-radius:4px; padding:2px 7px; }
+.photo .src { position:absolute; bottom:8px; right:10px; font-size:11px; color:#9ba1ab; background:#0e0f11cc; border:1px solid #1f2126; border-radius:4px; padding:2px 7px; }
+.acts { position:absolute; top:8px; right:8px; display:flex; gap:6px; }
+.acts span { width:24px; height:24px; border-radius:6px; background:#0e0f11cc; border:1px solid #1f2126; color:#9ba1ab; display:flex; align-items:center; justify-content:center; font-size:12px; }
+.acts .fav.on { color:#2fbf71; border-color:#2fbf7155; }
+.body { padding:12px 14px 13px; }
+.row1 { display:flex; align-items:center; gap:10px; }
+.price { font-size:16px; font-weight:600; letter-spacing:-.01em; }
+.price small { font-size:11.5px; color:#5c6370; font-weight:400; }
+/* medidor de score: anel cônico na cor da rampa */
+.gauge { margin-left:auto; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:600; position:relative; }
+.gauge i { position:absolute; inset:3px; border-radius:50%; background:#131417; display:flex; align-items:center; justify-content:center; }
+.g87 { background:conic-gradient(#2fbf71 0 87%, #1f2126 87% 100%); color:#2fbf71; }
+.g91 { background:conic-gradient(#2fbf71 0 91%, #1f2126 91% 100%); color:#2fbf71; }
+.g62 { background:conic-gradient(#48815f 0 62%, #1f2126 62% 100%); color:#8fae9c; }
+.g45 { background:conic-gradient(#56705f 0 45%, #1f2126 45% 100%); color:#7e8a82; }
+.g-none { border:1px dashed #2c2f36; color:#5c6370; }
+.row2 { display:flex; align-items:center; gap:8px; margin-top:2px; }
+.hood { font-size:12.5px; color:#9ba1ab; }
+.det { font-size:11.5px; color:#5c6370; }
+.badges { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+.tag { font-size:11px; border:1px solid #1f2126; border-radius:4px; padding:1px 7px; color:#9ba1ab; background:#0f1012; }
+.tag.pctl { color:#2fbf71; border-color:#2fbf7133; background:#101512; }
+.tag.drop { color:#2fbf71; border-color:#2fbf7133; background:#101512; }
+.tag.pend { color:#5c6370; border-style:dashed; }
+.card.gone { opacity:.55; }
+.card.gone .photo { filter:grayscale(1) brightness(.8); }
+.tag.gone { color:#9ba1ab; }
+
+/* ---------- map ---------- */
+.map { position:relative; border-left:1px solid #1f2126; background:#0f1012; overflow:hidden; }
+.map-canvas { position:absolute; inset:0;
+  background:
+    radial-gradient(400px 300px at 66% 28%, #14161a 0%, transparent 70%),
+    radial-gradient(460px 360px at 24% 74%, #121417 0%, transparent 70%), #0f1012; }
+.streets { position:absolute; inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 56px, #16181c 56px 57px),
+    repeating-linear-gradient(90deg, transparent 0 68px, #16181c 68px 69px),
+    repeating-linear-gradient(30deg, transparent 0 140px, #1a1d22 140px 141px); }
+.park { position:absolute; width:120px; height:88px; left:58%; top:54%; background:#12171077; border:1px solid #1d241c; border-radius:10px; transform:rotate(-7deg); }
+.map-head { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; align-items:center; gap:10px; padding:10px 16px; font-size:12px; color:#5c6370; background:linear-gradient(180deg,#0f1012f2 65%,transparent); }
+.map-head b { color:#9ba1ab; font-weight:500; }
+.map-head .sync { margin-left:auto; color:#2fbf71; font-size:11.5px; }
+.band { position:absolute; left:14%; top:17%; width:320px; height:290px; border:1px dashed #2fbf7166; border-radius:50% 47% 53% 48%/48% 53% 46% 54%; }
+.band-lbl { position:absolute; left:17%; top:14%; z-index:4; font-size:11px; color:#2fbf71; background:#0f1012ee; border:1px solid #2fbf7144; border-radius:6px; padding:2px 8px; }
+.poi { position:absolute; z-index:4; display:flex; flex-direction:column; align-items:center; gap:3px; }
+.poi .pin { width:9px; height:9px; border-radius:50%; background:#e6e8eb; box-shadow:0 0 0 3px #e6e8eb22; }
+.poi .plbl { font-size:11px; color:#e6e8eb; background:#0f1012ee; border:1px solid #1f2126; border-radius:6px; padding:1px 7px; white-space:nowrap; }
+.pt { position:absolute; width:10px; height:10px; border-radius:50%; border:2px solid #0e0f11; z-index:3; }
+.pt.hover { box-shadow:0 0 0 3px #2fbf7144; }
+.suggest { position:absolute; bottom:16px; left:16px; right:16px; z-index:5; border:1px solid #1f2126; border-radius:8px; background:#131417f2; padding:10px 14px; font-size:12px; color:#9ba1ab; display:flex; align-items:center; gap:8px; }
+.suggest b { color:#2fbf71; font-weight:500; }
+.suggest .btn { margin-left:auto; border:1px solid #2fbf7155; color:#2fbf71; border-radius:6px; padding:3px 10px; font-size:11.5px; white-space:nowrap; }
+.legend { position:absolute; bottom:70px; right:16px; z-index:5; border:1px solid #1f2126; border-radius:8px; background:#0f1012ee; padding:9px 12px; font-size:10.5px; color:#5c6370; }
+.legend .ramp { display:flex; height:6px; width:120px; border-radius:3px; overflow:hidden; margin:6px 0 3px; }
+.legend .ramp i { flex:1; }
+.legend .lohd { display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand"><span class="mark"></span>Imoveis</div>
+    <nav class="topnav">
+      <a class="active" href="#">Imóveis</a><a href="#">Favoritos</a><a href="#">Buscas salvas</a><a href="#">Alertas</a><a href="#">Admin</a>
+    </nav>
+    <div class="top-right num">ter, 5 ago · 09:42</div>
+  </div>
+
+  <!-- Desde sua última visita -->
+  <div class="since">
+    <div class="icon">↺</div>
+    <div>
+      <div class="title">Desde sua última visita</div>
+      <div class="items">
+        <span class="it hot"><b class="num">7</b> novos imóveis nos seus filtros</span>
+        <span class="it"><b class="num">3</b> quedas de preço</span>
+        <span class="it"><b class="num">2</b> anúncios removidos</span>
+      </div>
+    </div>
+    <a href="#">Ver novidades →</a>
+  </div>
+
+  <!-- Health strip -->
+  <div class="health">
+    <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+    <span class="h"><span class="dot"></span>OLX <span class="v num">5h atrás</span></span>
+    <span class="h">Enriquecimento <span class="v">local — qwen2.5-vl</span></span>
+    <span class="h"><span class="dot"></span>Workers <span class="v">OK</span></span>
+    <span class="h cov">Cobertura IA <span class="track"><i></i></span><span class="v num">82%</span></span>
+  </div>
+
+  <!-- Filtros -->
+  <div class="filters">
+    <span class="pill on"><span class="k">Bairro</span><b>Savassi</b><span class="x">×</span></span>
+    <span class="pill on"><b>Lourdes</b><span class="x">×</span></span>
+    <span class="pill">+ Bairro</span>
+    <span class="pill on"><span class="k">Preço</span><b class="num">até R$ 3.500</b></span>
+    <span class="seg"><span class="on">Aluguel</span><span>Venda</span></span>
+    <span class="pill on"><span class="k">Percentil</span><b class="num">≤ P25</b></span>
+    <span class="pill on">bairro seguro</span><span class="pill">reformado</span><span class="pill">silencioso</span>
+    <span class="search">⌕ Busca semântica — "arejado, perto de padaria, aceita pets"</span>
+    <span class="count"><b class="num">28</b> imóveis · <b class="num">12</b> no mapa</span>
+  </div>
+
+  <div class="split">
+    <!-- ====== GRID ====== -->
+    <div class="list">
+      <div class="list-head">Resultados<span class="sort">Ordenar por <b>melhor negócio</b> ▾</span></div>
+      <div class="grid">
+
+        <!-- 0.87 -->
+        <div class="card">
+          <div class="photo">
+            <span class="fresh">visto hoje</span><span class="src">OLX · 2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 2.450<small> /mês</small></span>
+              <span class="gauge g87"><i>0.87</i></span></div>
+            <div class="row2"><span class="hood">Savassi</span><span class="det">· 2 quartos · 68 m²</span></div>
+            <div class="badges"><span class="tag pctl num">P25</span><span class="tag drop num">−8% desde julho</span></div>
+          </div>
+        </div>
+
+        <!-- 0.91 -->
+        <div class="card">
+          <div class="photo">
+            <span class="fresh">visto hoje</span><span class="src">QuintoAndar</span>
+            <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 2.150<small> /mês</small></span>
+              <span class="gauge g91"><i>0.91</i></span></div>
+            <div class="row2"><span class="hood">Serra</span><span class="det">· 3 quartos · 82 m²</span></div>
+            <div class="badges"><span class="tag pctl num">P12</span><span class="tag drop num">−5% desde junho</span></div>
+          </div>
+        </div>
+
+        <!-- 0.62 -->
+        <div class="card">
+          <div class="photo">
+            <span class="fresh">visto ontem</span><span class="src">QuintoAndar</span>
+            <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 3.100<small> /mês</small></span>
+              <span class="gauge g62"><i>0.62</i></span></div>
+            <div class="row2"><span class="hood">Lourdes</span><span class="det">· 3 quartos · 95 m²</span></div>
+            <div class="badges"><span class="tag pctl num">P41</span></div>
+          </div>
+        </div>
+
+        <!-- 0.45 — percentil suprimido: ausente -->
+        <div class="card">
+          <div class="photo">
+            <span class="fresh">há 3 dias</span><span class="src">OLX</span>
+            <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 2.780<small> /mês</small></span>
+              <span class="gauge g45"><i>0.45</i></span></div>
+            <div class="row2"><span class="hood">Funcionários</span><span class="det">· 2 quartos · 74 m²</span></div>
+            <div class="badges"></div>
+          </div>
+        </div>
+
+        <!-- pendente -->
+        <div class="card">
+          <div class="photo">
+            <span class="fresh">visto hoje</span><span class="src">OLX</span>
+            <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 1.890<small> /mês</small></span>
+              <span class="gauge g-none">—</span></div>
+            <div class="row2"><span class="hood">Buritis</span><span class="det">· 2 quartos · 60 m²</span></div>
+            <div class="badges"><span class="tag pend">análise de IA pendente</span></div>
+          </div>
+        </div>
+
+        <!-- gone -->
+        <div class="card gone">
+          <div class="photo">
+            <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          </div>
+          <div class="body">
+            <div class="row1"><span class="price num">R$ 2.900<small> /mês</small></span>
+              <span class="gauge g-none">—</span></div>
+            <div class="row2"><span class="hood">Savassi</span><span class="det">· 2 quartos · 70 m²</span></div>
+            <div class="badges"><span class="tag gone">provavelmente alugado · sem atualização há 14 dias</span></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ====== MAPA ====== -->
+    <div class="map">
+      <div class="map-canvas"></div>
+      <div class="streets"></div>
+      <div class="park"></div>
+      <div class="map-head"><b>Mapa</b> · BH, centro-sul <span class="sync">Filtrando pela área visível</span></div>
+
+      <div class="band"></div>
+      <div class="band-lbl">≤ 15 min · Igreja</div>
+
+      <div class="poi" style="left:31%; top:35%"><span class="pin"></span><span class="plbl">Igreja</span></div>
+      <div class="poi" style="left:61%; top:23%"><span class="pin"></span><span class="plbl">Casa dos pais</span></div>
+      <div class="poi" style="left:69%; top:67%"><span class="pin"></span><span class="plbl">Casa da namorada</span></div>
+
+      <span class="pt hover" style="left:38%; top:45%; background:#2fbf71"></span>
+      <span class="pt" style="left:26%; top:31%; background:#2fbf71"></span>
+      <span class="pt" style="left:48%; top:39%; background:#48815f"></span>
+      <span class="pt" style="left:55%; top:57%; background:#56705f"></span>
+      <span class="pt" style="left:22%; top:63%; background:#3a3e45"></span>
+      <span class="pt" style="left:43%; top:71%; background:#37a468"></span>
+      <span class="pt" style="left:64%; top:45%; background:#48815f"></span>
+
+      <div class="legend">
+        Score do negócio
+        <div class="ramp">
+          <i style="background:#5c6370"></i><i style="background:#56705f"></i><i style="background:#48815f"></i><i style="background:#37a468"></i><i style="background:#2fbf71"></i>
+        </div>
+        <div class="lohd"><span>0.0</span><span>1.0</span></div>
+      </div>
+
+      <div class="suggest">Sugestão: <b>faixa de 20 min a pé</b> ao redor de "Casa da namorada" incluiria mais 4 imóveis.<span class="btn">Ativar</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

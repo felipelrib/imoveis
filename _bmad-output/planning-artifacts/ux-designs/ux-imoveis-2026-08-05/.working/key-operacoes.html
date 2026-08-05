@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Tela-chave 3: Operações</title>
+<!--
+TELA-CHAVE 3 — OPERAÇÕES (bancada do operador)
+
+Seções do spine que governam esta tela:
+· DESIGN.md > Components (backfill-card: estado em palavra pt-BR, cota/ritmo/
+  ETA como TEXTO tabular, linha de aviso persistente em health-warn com glifo,
+  SEM barras; run-history-table: hairlines, sem zebra, desvio como texto com
+  sinal, motivo itálico âmbar em linha anômala, linha de calibração em cor de
+  pendente, sem sparklines), Colors (health-warn #d98d3f próprio — nunca o
+  ferrugem dos vereditos), Do's & Don'ts (ausência honesta; nada de barra).
+· EXPERIENCE.md > Operator Observability (tabela por coleta: duração, yield
+  incluídos/excluídos/atualizados, desvio vs. mediana PRÓPRIA e vs. baseline
+  FIXA; backfill: estados pt-BR "inativo/em execução/pausado/em espera
+  (limite da API)", ETA em escala de dias, aviso de colisão com validate —
+  o guarda real é o heartbeat shell-side; cobertura POR TIPO DE SINAL como
+  texto, o painel da frente mostra o mínimo; contagens de ingestão; dedupe
+  com as DIFERENÇAS entre os dois registros; gatilho manual; fila/GPU),
+  Voice ("coleta", nunca "run"; frases planas), Key Flows J3.
+
+Decisões locais anotadas (regra mais próxima, nada inventado):
+· Tipos de sinal grafados conforme FR-29 no spine: visual, sentimento,
+  avaliação estatística, embeddings (o pedido citou "verdict"; o spine fixa
+  "valuation" — spine vence).
+· Linha em calibração mostra desvios como "—" (ausência honesta, sem número
+  fabricado até a baseline existir).
+· Botão "Retomar" presente porém inativo (estado em execução) — par
+  pausar/retomar exigido pelo spine, só um aplicável por vez.
+-->
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0e1220; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color:#e9e9e2; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; padding:0 48px 56px; }
+
+.topbar { display:flex; align-items:center; gap:26px; padding:18px 2px 14px; border-bottom:1px solid #2b3350; }
+.brand { font-size:17px; font-weight:700; }
+.topnav { display:flex; gap:22px; font-size:13.5px; }
+.topnav a { color:#a3a5ad; text-decoration:none; padding-bottom:5px; }
+.topnav a.active { color:#e9e9e2; border-bottom:2px solid #4da3ff; }
+.top-right { margin-left:auto; color:#82859a; font-size:13px; }
+
+h1 { font-size:20px; font-weight:700; margin:24px 0 4px; }
+.sub { color:#82859a; font-size:13px; margin-bottom:20px; }
+
+.cols { display:grid; grid-template-columns:1fr 400px; gap:18px; align-items:start; }
+.card { background:#151a2b; border:1px solid #2b3350; border-radius:10px; padding:18px 20px;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; margin-bottom:18px; }
+.card h2 { font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:#82859a; margin-bottom:12px; }
+
+/* backfill */
+.bf-state { display:flex; align-items:baseline; gap:14px; }
+.bf-state b { font-size:19px; font-weight:600; color:#e9e9e2; }
+.bf-state span { color:#a3a5ad; font-size:14px; }
+.bf-lines { margin-top:10px; font-size:14px; color:#a3a5ad; }
+.bf-lines div { padding:3px 0; }
+.bf-lines b { color:#e9e9e2; font-weight:600; }
+.bf-actions { margin-top:14px; display:flex; gap:10px; }
+.btn { display:inline-block; border-radius:9px; padding:7px 15px; font-size:13px; font-weight:600; }
+.btn.solid { background:#4da3ff; color:#0e1220; }
+.btn.quiet { border:1px solid #2b3350; color:#82859a; }
+.bf-warn { margin-top:14px; padding-top:12px; border-top:1px solid #2b3350;
+  color:#d98d3f; font-size:13.5px; }
+.bf-warn .glyph { margin-right:7px; }
+
+/* tabela de coletas */
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { text-align:left; font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+  color:#82859a; padding:8px 10px 8px 0; border-bottom:1px solid #2b3350; }
+td { padding:9px 10px 9px 0; border-bottom:1px solid #2b3350; color:#a3a5ad; vertical-align:baseline; }
+tr:last-child td { border-bottom:0; }
+td.plat { color:#e9e9e2; font-weight:600; }
+td .ts { color:#82859a; font-weight:400; font-size:12px; display:block; }
+td.obs { font-style:italic; }
+tr.anom td.obs { color:#d98d3f; }
+tr.calib td { color:#82859a; }
+tr.calib td.obs { color:#82859a; font-style:italic; }
+
+/* listas simples */
+.lines { font-size:14px; color:#a3a5ad; }
+.lines div { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #2b3350; }
+.lines div:last-child { border-bottom:0; }
+.lines b { color:#e9e9e2; font-weight:600; }
+.footnote { margin-top:10px; font-size:12.5px; color:#82859a; font-style:italic; }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#74bd82; margin-right:8px; }
+.example { margin-top:10px; padding:10px 12px; background:#121626; border:1px solid #2b3350;
+  border-radius:9px; font-size:13px; color:#a3a5ad; }
+.example b { color:#e9e9e2; }
+.example .gap { color:#74bd82; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">Imoveis</div>
+    <nav class="topnav">
+      <a href="#">Imóveis</a>
+      <a href="#">Favoritos</a>
+      <a href="#">Buscas salvas</a>
+      <a href="#">Alertas</a>
+      <a href="#">Busca</a>
+      <a class="active" href="#">Operações</a>
+    </nav>
+    <div class="top-right num">quinta, 5 de agosto · 21:12</div>
+  </div>
+
+  <h1>Operações</h1>
+  <p class="sub">coletas, enriquecimento e manutenção — os números vêm do banco, a única fonte de progresso</p>
+
+  <div class="cols">
+    <div>
+
+      <!-- Backfill -->
+      <section class="card">
+        <h2>Backfill de enriquecimento</h2>
+        <div class="bf-state num"><b>em execução</b><span>dia 3 de ~6</span></div>
+        <div class="bf-lines num">
+          <div>cota de hoje: <b>61% da cota de hoje</b> usada</div>
+          <div>ritmo: <b>~4.600 imóveis/dia</b></div>
+          <div>ETA: <b>~3 dias</b></div>
+        </div>
+        <div class="bf-actions">
+          <span class="btn solid">Pausar</span>
+          <span class="btn quiet">Retomar</span>
+        </div>
+        <div class="bf-warn"><span class="glyph">⚠</span>não rode validate.sh durante o backfill — heartbeat ativo</div>
+      </section>
+
+      <!-- Histórico de coletas -->
+      <section class="card">
+        <h2>Histórico de coletas</h2>
+        <table class="num">
+          <thead>
+            <tr>
+              <th>coleta</th><th>duração</th><th>incluídos</th><th>excluídos</th><th>atualizados</th>
+              <th>vs. mediana própria</th><th>vs. baseline fixa</th><th>observação</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="plat">QuintoAndar<span class="ts">hoje · 18:04</span></td>
+              <td>14 min</td><td>37</td><td>12</td><td>363</td><td>+4%</td><td>+2%</td><td class="obs"></td>
+            </tr>
+            <tr class="anom">
+              <td class="plat">OLX<span class="ts">ontem · 19:31</span></td>
+              <td>3 min</td><td>4</td><td>1</td><td>91</td><td>−81%</td><td>−79%</td>
+              <td class="obs">coleta 5× mais rápida que a mediana</td>
+            </tr>
+            <tr>
+              <td class="plat">QuintoAndar<span class="ts">ontem · 12:02</span></td>
+              <td>15 min</td><td>29</td><td>9</td><td>371</td><td>−2%</td><td>+1%</td><td class="obs"></td>
+            </tr>
+            <tr>
+              <td class="plat">OLX<span class="ts">ter · 13:40</span></td>
+              <td>17 min</td><td>41</td><td>15</td><td>402</td><td>+3%</td><td>+5%</td><td class="obs"></td>
+            </tr>
+            <tr class="calib">
+              <td class="plat">OLX<span class="ts">seg · 08:15</span></td>
+              <td>16 min</td><td>38</td><td>11</td><td>390</td><td>—</td><td>—</td>
+              <td class="obs">calibrando baseline (3/10 coletas)</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Dedupe -->
+      <section class="card">
+        <h2>Dedupe entre plataformas</h2>
+        <div class="lines num">
+          <div><span>imóveis vistos em duas plataformas</span><b>38</b></div>
+        </div>
+        <div class="example num">
+          <b>Savassi, 2 quartos</b> — QuintoAndar R$ 2.650 · OLX R$ 2.450 —
+          <span class="gap">diferença de R$ 200</span> entre os registros
+        </div>
+      </section>
+
+    </div>
+
+    <div>
+
+      <!-- Cobertura por sinal -->
+      <section class="card">
+        <h2>Cobertura de IA por tipo de sinal</h2>
+        <div class="lines num">
+          <div><span>visual</span><b>82%</b></div>
+          <div><span>sentimento</span><b>91%</b></div>
+          <div><span>avaliação estatística</span><b>88%</b></div>
+          <div><span>embeddings</span><b>97%</b></div>
+        </div>
+        <p class="footnote num">o painel mostra o mínimo entre os sinais: 82%</p>
+      </section>
+
+      <!-- Ingestão -->
+      <section class="card">
+        <h2>Ingestão — últimos 7 dias</h2>
+        <div class="lines num">
+          <div><span>incluídos</span><b>214</b></div>
+          <div><span>excluídos</span><b>87</b></div>
+          <div><span>atualizados</span><b>1.466</b></div>
+        </div>
+      </section>
+
+      <!-- Gatilho manual -->
+      <section class="card">
+        <h2>Coleta manual</h2>
+        <div class="bf-actions" style="margin-top:2px">
+          <span class="btn solid">Coletar QuintoAndar</span>
+          <span class="btn solid">Coletar OLX</span>
+        </div>
+        <p class="footnote">a coleta entra na fila e aparece no histórico ao concluir</p>
+      </section>
+
+      <!-- Fila e GPU -->
+      <section class="card">
+        <h2>Fila e GPU</h2>
+        <div class="lines num">
+          <div><span>fila de tarefas</span><b>12</b></div>
+          <div><span><span class="dot"></span>workers</span><b>ok</b></div>
+          <div><span>GPU</span><b>em uso — qwen2.5-vl</b></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

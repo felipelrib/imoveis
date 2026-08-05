@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Tela-chave 4: Favoritos</title>
+<!--
+TELA-CHAVE 4 — FAVORITOS (imóveis favoritados + a verdade sobre a disponibilidade)
+
+Seções do spine que governam esta tela:
+· EXPERIENCE.md > IA (Favoritos = a superfície dos favoritos e da sua
+  disponibilidade, uma só, um nome), Component Patterns (Favoritos row:
+  colunas comparáveis — preço, veredito, percentil, R$/m², bairro — para ler
+  dois candidatos lado a lado sem o Comparar; carimbo de disponibilidade em
+  toda linha: "disponibilidade verificada há Xh" / "última verificação
+  falhou"; desfavoritar é sempre UM clique, com motivo OPCIONAL naquele
+  momento — nunca nota obrigatória; Favoritos history: visão padrão = só
+  favoritos vivos, o filtro "mostrar indisponíveis" revela os que ficaram
+  "provavelmente alugado"/"provavelmente vendido" — datados — e os
+  desfavoritados com motivo, motivo à vista; favorito que sai do ar vai para
+  o histórico, nunca some em silêncio), State Patterns (gone: "provavelmente
+  alugado — …", foto dessaturada; Recheck states: "última verificação
+  falhou" não renova o carimbo), Notifications (alerta de favorito que saiu
+  do ar — ligado por padrão; "voltou ao mercado" também alerta), Key Flows J4
+  (triagem dos favoritos: histórico datado, linhas comparáveis A-vs-B,
+  desfavoritar com motivo opcional "banheiro pior que as fotos").
+· DESIGN.md > Colors (ouro = favorito, e nada mais; ferrugem = gone;
+  health-warn âmbar = verificação falhou; acento só para interação),
+  Typography (serifa só preço + bairro; números tabulares em colunas),
+  Components (favourite-star, percentile-badge, verdict-label, gone card,
+  filter-chip).
+
+Decisões locais anotadas (regra mais próxima, nada inventado):
+· R$/m² em sans tabular — a serifa é reservada ao preço de exibição.
+· Estrela ouro preenchida = clique único de desfavoritar; o campo inline
+  "motivo (opcional)" aparece nesse momento, com ação no acento (interação)
+  e a opção explícita de pular — nada obrigatório.
+· Linha desfavoritada no histórico usa cinza mudo (não é gone/ferrugem:
+  quem saiu foi decisão dele, não do mercado); a data de remoção acompanha.
+· O filtro "mostrar indisponíveis" é um filter-chip ativo (borda + texto no
+  acento) — seleção é interação, não estado.
+· A linha "Preço de mercado" não carrega o selo de percentil — ausência
+  honesta (State Patterns: selo simplesmente ausente, nunca um valor falso).
+· SEM mapa, SEM sequenciamento de visitas, SEM chips de situação — o
+  conceito "roteiro de visitas" foi descartado (memlog, revisão Favoritos).
+-->
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0e1220; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color:#e9e9e2; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.serif { font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif; }
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; padding:0 48px 56px; }
+
+.topbar { display:flex; align-items:center; gap:26px; padding:18px 2px 14px; border-bottom:1px solid #2b3350; }
+.brand { font-size:17px; font-weight:700; }
+.topnav { display:flex; gap:22px; font-size:13.5px; }
+.topnav a { color:#a3a5ad; text-decoration:none; padding-bottom:5px; }
+.topnav a.active { color:#e9e9e2; border-bottom:2px solid #4da3ff; }
+.top-right { margin-left:auto; color:#82859a; font-size:13px; }
+
+h1 { font-size:20px; font-weight:700; margin:24px 0 4px; }
+h1 .star { color:#d9b35f; margin-right:8px; }
+.sub { color:#82859a; font-size:13px; margin-bottom:18px; }
+
+/* cabeçalho de colunas comparáveis */
+.cols-head { display:grid; grid-template-columns:30px 132px 1fr 180px 100px 250px 240px; gap:16px;
+  padding:0 18px 8px; font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:#82859a; }
+
+/* linha de favorito */
+.row { display:grid; grid-template-columns:30px 132px 1fr 180px 100px 250px 240px; gap:16px; align-items:start;
+  background:#151a2b; border:1px solid #2b3350; border-radius:10px; padding:16px 18px;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; margin-bottom:14px; }
+.rstar { font-size:19px; color:#d9b35f; cursor:pointer; line-height:1.2; }
+.rstar .hint { display:block; font-size:10.5px; color:#82859a; letter-spacing:0; }
+.thumb { width:132px; height:96px; background:#1e2438; border:1px solid #2b3350; border-radius:7px; }
+.verdict { font-size:11px; letter-spacing:.2em; text-transform:uppercase; display:inline-block;
+  padding-bottom:3px; margin-bottom:7px; }
+.v-exc { color:#74bd82; border-bottom:2px solid #74bd82; }
+.v-bom { color:#d3b662; border-bottom:2px solid #d3b662; }
+.v-mkt { color:#8b8e99; border-bottom:2px solid #8b8e99; }
+.gone-note { display:block; font-style:italic; color:#d05b4a; font-size:13.5px; margin-bottom:7px; }
+.disc-note { display:block; font-style:italic; color:#a3a5ad; font-size:13.5px; margin-bottom:7px; }
+.hood { font-style:italic; font-size:16px; color:#e9e9e2; }
+.meta { font-size:12.5px; color:#82859a; letter-spacing:.03em; margin-top:4px; }
+.meta .sep { margin:0 7px; opacity:.5; }
+.price { font-size:26px; font-weight:400; }
+.price small { font-size:13px; color:#a3a5ad; font-style:italic; }
+.pctl { display:inline-block; margin-top:7px; font-size:11.5px; font-weight:600; color:#74bd82;
+  background:#74bd821f; border:1px solid #74bd8259; border-radius:7px; padding:2px 9px; white-space:nowrap; }
+.m2 { font-size:15px; color:#a3a5ad; padding-top:6px; }
+.stamp { font-size:13px; padding-top:4px; }
+.stamp .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; }
+.stamp.okv { color:#a3a5ad; } .stamp.okv .dot { background:#74bd82; }
+.stamp.fail { color:#d98d3f; font-style:italic; } .stamp.fail .glyph { margin-right:7px; }
+.stamp.gone { color:#d05b4a; font-style:italic; }
+.stamp.off { color:#82859a; font-style:italic; }
+.stamp .sub2 { display:block; font-size:12px; color:#82859a; font-style:italic; margin-top:3px; }
+
+/* momento do desfavoritar: motivo opcional, inline */
+.unstar-box { border:1px solid #2b3350; border-radius:9px; background:#1e2438; padding:10px 12px; }
+.unstar-box .t { font-size:12.5px; color:#a3a5ad; margin-bottom:6px; }
+.unstar-box .field { border-bottom:1px solid #2b3350; color:#82859a; font-style:italic; font-size:13px;
+  padding:3px 2px 5px; }
+.unstar-box .acts { display:flex; gap:14px; margin-top:9px; font-size:12.5px; }
+.unstar-box .go { color:#0e1220; background:#4da3ff; border-radius:7px; padding:3px 12px; font-weight:600; }
+.unstar-box .skip { color:#4da3ff; padding:3px 0; }
+
+/* histórico de indisponíveis */
+.histbar { display:flex; align-items:center; gap:14px; margin:26px 0 12px; }
+.histbar .lbl { font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:#82859a; }
+.chip { display:inline-block; border:1px solid #2b3350; color:#82859a; border-radius:9px; padding:4px 12px; font-size:12.5px; }
+.chip.on { border-color:#4da3ff; color:#4da3ff; font-weight:600; }
+.chip.on .x { margin-left:8px; opacity:.8; }
+.histbar .count { font-size:12.5px; color:#82859a; }
+.row.hist { background:#121626; }
+.row.hist .thumb { filter:grayscale(.7) brightness(.75); }
+.row.hist > div:not(.keep) { opacity:.75; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">Imoveis</div>
+    <nav class="topnav">
+      <a href="#">Imóveis</a>
+      <a class="active" href="#">Favoritos</a>
+      <a href="#">Buscas salvas</a>
+      <a href="#">Alertas</a>
+      <a href="#">Busca</a>
+      <a href="#">Operações</a>
+    </nav>
+    <div class="top-right num">quinta, 6 de agosto · 21:10</div>
+  </div>
+
+  <h1><span class="star">★</span>Favoritos</h1>
+  <p class="sub num">3 imóveis favoritos — a disponibilidade é verificada automaticamente todos os dias</p>
+
+  <div class="cols-head num">
+    <span></span><span></span><span>imóvel</span><span>preço</span><span>R$/m²</span><span>disponibilidade</span><span></span>
+  </div>
+
+  <!-- Linha 1: viva, verificada há 3h -->
+  <div class="row">
+    <div class="rstar" title="remover dos favoritos — um clique">★</div>
+    <div class="thumb"></div>
+    <div>
+      <span class="verdict v-exc">Excelente negócio</span>
+      <div class="hood serif">Savassi</div>
+      <div class="meta num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+      <span class="pctl">entre os 25% mais baratos</span>
+    </div>
+    <div><span class="price serif num">R$ 2.450<small> /mês</small></span></div>
+    <div class="m2 num">R$ 36</div>
+    <div class="stamp okv num"><span class="dot"></span>disponibilidade verificada há 3h</div>
+    <div></div>
+  </div>
+
+  <!-- Linha 2: viva, última verificação falhou (âmbar) -->
+  <div class="row">
+    <div class="rstar" title="remover dos favoritos — um clique">★</div>
+    <div class="thumb"></div>
+    <div>
+      <span class="verdict v-bom">Bom preço</span>
+      <div class="hood serif">Lourdes</div>
+      <div class="meta num">3 quartos<span class="sep">·</span>95 m²<span class="sep">·</span>QuintoAndar</div>
+      <span class="pctl">entre os 25% mais baratos</span>
+    </div>
+    <div><span class="price serif num">R$ 3.100<small> /mês</small></span></div>
+    <div class="m2 num">R$ 33</div>
+    <div class="stamp fail num"><span class="glyph">⚠</span>última verificação falhou
+      <span class="sub2 num">tentativa de hoje, 06:00 — o carimbo anterior não muda</span>
+    </div>
+    <div></div>
+  </div>
+
+  <!-- Linha 3: viva, estrela recém-clicada — motivo opcional aparece inline -->
+  <div class="row">
+    <div class="rstar" title="remover dos favoritos — um clique">★</div>
+    <div class="thumb"></div>
+    <div>
+      <span class="verdict v-mkt">Preço de mercado</span>
+      <div class="hood serif">Funcionários</div>
+      <div class="meta num">2 quartos<span class="sep">·</span>72 m²<span class="sep">·</span>OLX</div>
+    </div>
+    <div><span class="price serif num">R$ 2.900<small> /mês</small></span></div>
+    <div class="m2 num">R$ 40</div>
+    <div class="stamp okv num"><span class="dot"></span>disponibilidade verificada há 5h</div>
+    <div class="unstar-box">
+      <div class="t">Remover dos favoritos?</div>
+      <div class="field">motivo (opcional)</div>
+      <div class="acts"><span class="go">remover</span><span class="skip">remover sem motivo</span></div>
+    </div>
+  </div>
+
+  <!-- Histórico: filtro "mostrar indisponíveis" LIGADO -->
+  <div class="histbar">
+    <span class="lbl">histórico</span>
+    <span class="chip on">mostrar indisponíveis<span class="x">×</span></span>
+    <span class="count num">2 favoritos indisponíveis — eles nunca somem em silêncio</span>
+  </div>
+
+  <!-- Histórico A: saiu do ar (gone) + alerta enviado -->
+  <div class="row hist">
+    <div></div>
+    <div class="thumb"></div>
+    <div>
+      <span class="gone-note">provavelmente alugado — há 2 dias</span>
+      <div class="hood serif">Serra</div>
+      <div class="meta num">3 quartos<span class="sep">·</span>82 m²<span class="sep">·</span>OLX</div>
+    </div>
+    <div><span class="price serif num">R$ 2.150<small> /mês</small></span></div>
+    <div class="m2 num">R$ 26</div>
+    <div class="stamp gone num keep">saiu do ar
+      <span class="sub2">alerta enviado por e-mail — avisamos se voltar ao mercado</span>
+    </div>
+    <div></div>
+  </div>
+
+  <!-- Histórico B: desfavoritado com motivo (motivo à vista) -->
+  <div class="row hist">
+    <div></div>
+    <div class="thumb"></div>
+    <div>
+      <span class="disc-note">descartado — banheiro pior que as fotos</span>
+      <div class="hood serif">Lourdes</div>
+      <div class="meta num">2 quartos<span class="sep">·</span>60 m²<span class="sep">·</span>QuintoAndar</div>
+    </div>
+    <div><span class="price serif num">R$ 2.700<small> /mês</small></span></div>
+    <div class="m2 num">R$ 45</div>
+    <div class="stamp off num keep">removido por você há 5 dias</div>
+    <div></div>
+  </div>
+
+</div>
+</body>
+</html>

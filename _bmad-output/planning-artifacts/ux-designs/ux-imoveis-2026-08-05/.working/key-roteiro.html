@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Tela-chave 4: Roteiro de visitas</title>
+<!--
+TELA-CHAVE 4 — ROTEIRO DE VISITAS (favoritos graduados em lista de visita)
+
+Seções do spine que governam esta tela:
+· EXPERIENCE.md > IA (Roteiro = a superfície dos favoritos, uma só, um nome),
+  Component Patterns (shortlist row: colunas comparáveis — preço, veredito,
+  percentil, R$/m² — para ler dois candidatos lado a lado sem o Comparar;
+  nota livre + enum de situação "a visitar / visitado / fazer proposta /
+  descartado", editáveis inline; toda linha carrega o carimbo de
+  disponibilidade: "disponibilidade verificada há Xh" / "última verificação
+  falhou"), State Patterns (gone na shortlist: "provavelmente alugado — sem
+  atualização há N dias", foto dessaturada), Notifications (alerta de item do
+  roteiro que saiu do ar — ligado por padrão para favoritos), Key Flows J4
+  (mapa com faixas de tempo sequencia as visitas em torno dos POIs; nota
+  "banheiro pior que as fotos" num descartado; um "fazer proposta").
+· DESIGN.md > Colors (ouro = favorito/shortlist; ferrugem = gone;
+  health-warn âmbar = verificação falhou), Typography (serifa só preço +
+  bairro; números tabulares em colunas), Components (favourite-star,
+  percentile-badge, verdict-label, gone card, map/POI/band).
+
+Decisões locais anotadas (regra mais próxima, nada inventado):
+· R$/m² em sans tabular — a serifa é reservada ao preço de exibição.
+· A linha gone mantém a situação escolhida antes ("fazer proposta") em
+  tratamento dessaturado + nota do alerta enviado (implicação do alerta
+  shortlist-gone, ligado por padrão para favoritos).
+· Chip de situação ativo usa o acento (seleção é interação, não veredito).
+· Dica de sequência do mapa em frase plana com minutos (nunca km).
+-->
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0e1220; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color:#e9e9e2; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.serif { font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif; }
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; padding:0 48px 56px; }
+
+.topbar { display:flex; align-items:center; gap:26px; padding:18px 2px 14px; border-bottom:1px solid #2b3350; }
+.brand { font-size:17px; font-weight:700; }
+.topnav { display:flex; gap:22px; font-size:13.5px; }
+.topnav a { color:#a3a5ad; text-decoration:none; padding-bottom:5px; }
+.topnav a.active { color:#e9e9e2; border-bottom:2px solid #4da3ff; }
+.top-right { margin-left:auto; color:#82859a; font-size:13px; }
+
+h1 { font-size:20px; font-weight:700; margin:24px 0 4px; }
+h1 .star { color:#d9b35f; margin-right:8px; }
+.sub { color:#82859a; font-size:13px; margin-bottom:18px; }
+
+/* cabeçalho de colunas comparáveis */
+.cols-head { display:grid; grid-template-columns:132px 1fr 190px 110px 250px 320px; gap:16px;
+  padding:0 18px 8px; font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:#82859a; }
+
+/* linha do roteiro */
+.row { display:grid; grid-template-columns:132px 1fr 190px 110px 250px 320px; gap:16px; align-items:start;
+  background:#151a2b; border:1px solid #2b3350; border-radius:10px; padding:16px 18px;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; margin-bottom:14px; }
+.thumb { width:132px; height:96px; background:#1e2438; border:1px solid #2b3350; border-radius:7px; }
+.verdict { font-size:11px; letter-spacing:.2em; text-transform:uppercase; display:inline-block;
+  padding-bottom:3px; margin-bottom:7px; }
+.v-exc { color:#74bd82; border-bottom:2px solid #74bd82; }
+.v-bom { color:#d3b662; border-bottom:2px solid #d3b662; }
+.gone-note { display:block; font-style:italic; color:#d05b4a; font-size:13.5px; margin-bottom:7px; }
+.hood { font-style:italic; font-size:16px; color:#e9e9e2; }
+.meta { font-size:12.5px; color:#82859a; letter-spacing:.03em; margin-top:4px; }
+.meta .sep { margin:0 7px; opacity:.5; }
+.price { font-size:26px; font-weight:400; }
+.price small { font-size:13px; color:#a3a5ad; font-style:italic; }
+.pctl { display:inline-block; margin-top:7px; font-size:11.5px; font-weight:600; color:#74bd82;
+  background:#74bd821f; border:1px solid #74bd8259; border-radius:7px; padding:2px 9px; white-space:nowrap; }
+.m2 { font-size:15px; color:#a3a5ad; padding-top:6px; }
+.stamp { font-size:13px; padding-top:4px; }
+.stamp .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; }
+.stamp.okv { color:#a3a5ad; } .stamp.okv .dot { background:#74bd82; }
+.stamp.fail { color:#d98d3f; font-style:italic; } .stamp.fail .glyph { margin-right:7px; }
+.stamp.gone { color:#d05b4a; font-style:italic; }
+.stamp .sub2 { display:block; font-size:12px; color:#82859a; font-style:italic; margin-top:3px; }
+.statusnote .chips { display:flex; gap:7px; flex-wrap:wrap; }
+.chip { border:1px solid #2b3350; color:#82859a; border-radius:9px; padding:4px 11px; font-size:12px; }
+.chip.on { border-color:#4da3ff; color:#4da3ff; font-weight:600; }
+.note { margin-top:10px; font-size:13px; color:#a3a5ad; border-bottom:1px solid #2b3350; padding:4px 2px; }
+.note.empty { color:#82859a; font-style:italic; }
+.row.gone-row .thumb { filter:grayscale(.7) brightness(.75); }
+.row.gone-row > div:not(.statusnote) { opacity:.75; }
+
+/* mapa de sequenciamento */
+.mapstrip { position:relative; border:1px solid #2b3350; border-radius:12px; overflow:hidden; height:240px;
+  background:#121626; box-shadow:0 8px 20px #00000055; margin-top:8px; }
+.streets { position:absolute; inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 52px, #1a1f32 52px 53px),
+    repeating-linear-gradient(90deg, transparent 0 66px, #1a1f32 66px 67px); }
+.band { position:absolute; left:6%; top:18%; width:240px; height:170px; border:2px dashed #4da3ff99;
+  border-radius:52% 46% 54% 47%/47% 54% 46% 53%; }
+.poi { position:absolute; z-index:4; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.poi .pin { width:14px; height:14px; border-radius:50% 50% 50% 4px; transform:rotate(-45deg);
+  background:#4da3ff; border:2px solid #0e1220; }
+.poi .plbl { font-size:12px; color:#e9e9e2; background:#0e1220d9; border:1px solid #2b3350;
+  border-radius:7px; padding:2px 9px; white-space:nowrap; }
+.stop { position:absolute; z-index:3; display:flex; align-items:center; gap:6px; }
+.stop .pt { width:12px; height:12px; border-radius:50%; border:2px solid #0e1220; }
+.stop.exc .pt { background:#74bd82; } .stop.bom .pt { background:#d3b662; }
+.stop.gone .pt { background:transparent; border:2px solid #d05b4a; opacity:.65; }
+.stop .n { font-size:11px; font-weight:600; color:#e9e9e2; background:#0e1220d9;
+  border:1px solid #2b3350; border-radius:7px; padding:1px 7px; }
+.seq { position:absolute; bottom:12px; left:14px; right:14px; z-index:5; background:#0e1220d9;
+  border:1px solid #2b3350; border-radius:9px; padding:9px 14px; font-size:13px; color:#a3a5ad; }
+.seq b { color:#e9e9e2; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">Imoveis</div>
+    <nav class="topnav">
+      <a href="#">Imóveis</a>
+      <a class="active" href="#">Roteiro de visitas</a>
+      <a href="#">Buscas salvas</a>
+      <a href="#">Alertas</a>
+      <a href="#">Busca</a>
+      <a href="#">Operações</a>
+    </nav>
+    <div class="top-right num">sábado, 8 de agosto · 08:40</div>
+  </div>
+
+  <h1><span class="star">★</span>Roteiro de visitas</h1>
+  <p class="sub num">3 imóveis favoritados — a disponibilidade é verificada automaticamente todos os dias</p>
+
+  <div class="cols-head num">
+    <span></span><span>imóvel</span><span>preço</span><span>R$/m²</span><span>disponibilidade</span><span>situação e nota</span>
+  </div>
+
+  <!-- Linha 1: verificada, a visitar -->
+  <div class="row">
+    <div class="thumb"></div>
+    <div>
+      <span class="verdict v-exc">Excelente negócio</span>
+      <div class="hood serif">Savassi</div>
+      <div class="meta num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+      <span class="pctl">entre os 25% mais baratos</span>
+    </div>
+    <div><span class="price serif num">R$ 2.450<small> /mês</small></span></div>
+    <div class="m2 num">R$ 36</div>
+    <div class="stamp okv num"><span class="dot"></span>disponibilidade verificada há 3h</div>
+    <div class="statusnote">
+      <div class="chips">
+        <span class="chip on">a visitar</span><span class="chip">visitado</span>
+        <span class="chip">fazer proposta</span><span class="chip">descartado</span>
+      </div>
+      <div class="note empty">adicionar nota…</div>
+    </div>
+  </div>
+
+  <!-- Linha 2: verificação falhou, descartado com nota -->
+  <div class="row">
+    <div class="thumb"></div>
+    <div>
+      <span class="verdict v-bom">Bom preço</span>
+      <div class="hood serif">Lourdes</div>
+      <div class="meta num">3 quartos<span class="sep">·</span>95 m²<span class="sep">·</span>QuintoAndar</div>
+      <span class="pctl">entre os 25% mais baratos</span>
+    </div>
+    <div><span class="price serif num">R$ 3.100<small> /mês</small></span></div>
+    <div class="m2 num">R$ 33</div>
+    <div class="stamp fail num"><span class="glyph">⚠</span>última verificação falhou
+      <span class="sub2 num">tentativa de hoje, 06:00 — o carimbo anterior não muda</span>
+    </div>
+    <div class="statusnote">
+      <div class="chips">
+        <span class="chip">a visitar</span><span class="chip">visitado</span>
+        <span class="chip">fazer proposta</span><span class="chip on">descartado</span>
+      </div>
+      <div class="note">banheiro pior que as fotos</div>
+    </div>
+  </div>
+
+  <!-- Linha 3: saiu do ar (gone) + alerta enviado -->
+  <div class="row gone-row">
+    <div class="thumb"></div>
+    <div>
+      <span class="gone-note">provavelmente alugado — sem atualização há 12 dias</span>
+      <div class="hood serif">Serra</div>
+      <div class="meta num">3 quartos<span class="sep">·</span>82 m²<span class="sep">·</span>OLX</div>
+    </div>
+    <div><span class="price serif num">R$ 2.150<small> /mês</small></span></div>
+    <div class="m2 num">R$ 26</div>
+    <div class="stamp gone num">saiu do ar
+      <span class="sub2">alerta enviado por e-mail ontem — avisamos se voltar ao mercado</span>
+    </div>
+    <div class="statusnote">
+      <div class="chips">
+        <span class="chip">a visitar</span><span class="chip">visitado</span>
+        <span class="chip on">fazer proposta</span><span class="chip">descartado</span>
+      </div>
+      <div class="note empty">adicionar nota…</div>
+    </div>
+  </div>
+
+  <!-- Mapa de sequenciamento -->
+  <div class="mapstrip">
+    <div class="streets"></div>
+    <div class="band"></div>
+
+    <div class="poi" style="left:14%; top:30%"><span class="pin"></span><span class="plbl">Igreja</span></div>
+    <div class="poi" style="left:52%; top:16%"><span class="pin"></span><span class="plbl">Casa dos pais</span></div>
+    <div class="poi" style="left:84%; top:52%"><span class="pin"></span><span class="plbl">Casa da namorada</span></div>
+
+    <div class="stop exc" style="left:24%; top:52%"><span class="pt"></span><span class="n num">visita 1</span></div>
+    <div class="stop bom" style="left:44%; top:38%"><span class="pt"></span><span class="n num">visita 2</span></div>
+    <div class="stop gone" style="left:66%; top:60%"><span class="pt"></span><span class="n num">saiu do ar</span></div>
+
+    <div class="seq num">
+      Sequência pelas faixas de tempo: <b>visita 1</b> → 12 min → <b>visita 2</b> —
+      a Casa dos pais fica a 8 min no caminho · o imóvel que saiu do ar não entra no trajeto
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

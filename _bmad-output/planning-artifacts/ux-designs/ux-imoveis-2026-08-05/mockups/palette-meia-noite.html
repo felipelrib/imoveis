@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Temas de cor 2: vermelhos, azuis e roxos (6 variações)</title>
+<!--
+CONTEXTO — RODADA 2
+Mesma estrutura da rodada 1 (base warm-craft tátil + cartão editorial, serifa
+de display no preço, veredito em palavras com sublinhado de 2px, cor nunca
+preenche área, SEM barras de progresso, percentil = "top 25% preço",
+dark-theme only). A pedido: registros vermelho, azul e roxo — dois por
+família (um contido, um mais ousado).
+
+REGRA CRÍTICA nas famílias vermelhas: o acento vermelho precisa ficar
+claramente distinto do vermelho semântico de alerta / "Acima do mercado".
+Solução adotada nas duas variações: o polo negativo (Acima do mercado /
+provavelmente alugado) muda de hue — vai para ferrugem/laranja-queimado —
+enquanto o acento fica no eixo rosé-granada (v1) ou carmim azulado (v2).
+A queda de preço permanece VERDE (sinal de compra, bom) em todas as seis.
+-->
+<style>
+/* ============================================================
+   BASE compartilhada — estrutura idêntica entre variações;
+   cada seção .variation só troca custom properties.
+   ============================================================ */
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0b0a09; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color:#e8e2d6; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.serif { font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif; }
+.num { font-variant-numeric:tabular-nums; }
+.frame { width:1440px; margin:0 auto; padding:40px 48px 72px; }
+.pagehead { margin-bottom:30px; }
+.pagehead h1 { font-size:24px; font-weight:700; letter-spacing:.01em; }
+.pagehead p { color:#9a917f; font-size:13.5px; margin-top:6px; max-width:960px; }
+.pagehead .rules { margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; }
+.pagehead .rules span { font-size:11.5px; color:#9a917f; border:1px solid #2e2a23; border-radius:8px; padding:3px 10px; }
+
+/* ---------- seção de variação ---------- */
+.variation { background:var(--bg); border:1px solid var(--border); border-radius:14px;
+  padding:26px 30px 30px; margin-bottom:34px; color:var(--txt1);
+  box-shadow:0 10px 26px #00000066; }
+.vhead { display:flex; align-items:baseline; gap:16px; padding-bottom:16px; margin-bottom:20px;
+  border-bottom:1px solid var(--border); }
+.vhead .n { font-size:12px; color:var(--txt3); letter-spacing:.14em; }
+.vhead h2 { font-size:21px; font-weight:400; }
+.vhead h2 em { color:var(--accent); }
+.vhead .reg { color:var(--txt2); font-size:13.5px; font-style:italic; margin-left:auto; text-align:right; max-width:560px; }
+
+.vbody { display:grid; grid-template-columns:1fr 430px; gap:34px; align-items:start; }
+
+/* ---------- fichas de token ---------- */
+.tokens h3, .demo h3 { font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--txt3); font-weight:600; margin-bottom:12px; }
+.tokgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px 14px; }
+.tok { display:flex; align-items:center; gap:9px; background:color-mix(in srgb,var(--card) 70%,var(--bg));
+  border:1px solid var(--border); border-radius:9px; padding:7px 10px; min-height:44px; }
+.tok .sw { width:22px; height:22px; border-radius:6px; flex:none;
+  border:1px solid color-mix(in srgb,var(--txt1) 18%,transparent); }
+.tok .sw.dashed { border:1.5px dashed; background:transparent !important; }
+.tok .tn { font-size:11.5px; color:var(--txt2); line-height:1.25; }
+.tok code { display:block; font-size:10.5px; color:var(--txt3); font-family:ui-monospace,Menlo,Consolas,monospace; }
+.tokspan { grid-column:1 / -1; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--txt3); margin-top:6px; }
+
+/* ---------- demo: card editorial sobre base tátil ---------- */
+.demo-card { background:linear-gradient(180deg, color-mix(in srgb,var(--elev) 55%,var(--card)), var(--card));
+  border:1px solid var(--border); border-radius:10px; overflow:hidden;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; }
+.photo { height:185px; position:relative;
+  background:
+    radial-gradient(300px 170px at 30% 22%, color-mix(in srgb,var(--accent) 14%,var(--elev)) 0%, transparent 62%),
+    linear-gradient(160deg, var(--elev) 0%, var(--card) 75%); }
+.photo::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(180deg, transparent 55%, color-mix(in srgb,var(--card) 92%,transparent) 100%); }
+.photo .srcs { position:absolute; top:12px; left:12px; z-index:2; font-size:10.5px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--txt1); background:var(--scrim); padding:4px 10px; border-radius:7px; }
+.photo .drop { position:absolute; bottom:11px; left:12px; z-index:2; font-style:italic; font-size:14px;
+  color:var(--drop); background:var(--scrim); padding:2px 10px; border-radius:7px; }
+.photo .fresh { position:absolute; bottom:11px; right:12px; z-index:2; font-size:11.5px;
+  color:var(--txt2); background:var(--scrim); padding:3px 9px; border-radius:7px; }
+.acts { position:absolute; top:10px; right:10px; z-index:2; display:flex; gap:7px; }
+.acts span { width:29px; height:29px; border-radius:8px; background:var(--scrim); color:var(--txt2);
+  display:flex; align-items:center; justify-content:center; font-size:14px; border:1px solid var(--border); }
+.acts .fav.on { color:var(--fav); border-color:color-mix(in srgb,var(--fav) 45%,transparent); }
+.cardbody { padding:14px 16px 16px; }
+.verdict { font-size:11px; letter-spacing:.2em; text-transform:uppercase; display:inline-block;
+  padding-bottom:3px; margin-bottom:9px; color:var(--v-exc); border-bottom:2px solid var(--v-exc); }
+.line1 { display:flex; align-items:baseline; gap:10px; }
+.price { font-size:26px; font-weight:400; color:var(--txt1); }
+.price small { font-size:13px; color:var(--txt2); font-style:italic; }
+.pctl { margin-left:auto; font-size:11.5px; font-weight:600; color:var(--drop);
+  background:color-mix(in srgb,var(--drop) 12%,transparent);
+  border:1px solid color-mix(in srgb,var(--drop) 35%,transparent); border-radius:7px; padding:2px 9px; }
+.hood { font-style:italic; font-size:16px; color:color-mix(in srgb,var(--txt1) 80%,var(--txt2)); margin-top:3px; }
+.det { font-size:12.5px; color:var(--txt3); margin-top:6px; letter-spacing:.03em; }
+.det .sep { margin:0 7px; opacity:.5; }
+
+/* ---------- demo: health strip (sem barras — texto apenas) ---------- */
+.health { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; font-size:12px; color:var(--txt3); }
+.h { display:flex; align-items:center; gap:8px; background:color-mix(in srgb,var(--card) 60%,var(--bg));
+  border:1px solid var(--border); border-radius:9px; padding:6px 12px; }
+.dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--ok);
+  box-shadow:0 0 5px color-mix(in srgb,var(--ok) 40%,transparent); }
+.dot.warn { background:var(--warn); box-shadow:0 0 5px color-mix(in srgb,var(--warn) 40%,transparent); }
+.h .v { color:var(--txt2); }
+.h .why { color:var(--warn); font-style:italic; }
+
+/* ============================================================
+   VARIAÇÃO 1 — "Vinhedo" (vermelho contido: carvão-bordô + granada-rosé)
+   bg #191113 · card #221619 · elevado #2c1d21 · borda #3a262b
+   texto #f0e4e2 / #b8a0a0 / #8f797c
+   acento/interativo #c96f7b (granada-rosé, dessaturado) · favorito #d9a15f (ouro
+   quente — a estrela continua parecendo estrela) · queda #85b077 (verde = bom)
+   COLISÃO RESOLVIDA: polo negativo muda de hue — "Acima do mercado"/alugado
+   ficam FERRUGEM #c97a3d; o acento segue no eixo rosé, nunca disputa com alerta.
+   vereditos: excelente #85b077 · bom #cfa35e · mercado #8f8382 · acima #c97a3d
+   pendente #8f797c (tracejado) · gone #c97a3d · health ok #85b077 / alerta #d9a15f
+   POI mapa #c96f7b · scrim #191113d9
+   ============================================================ */
+.v1 { --bg:#191113; --card:#221619; --elev:#2c1d21; --border:#3a262b;
+  --txt1:#f0e4e2; --txt2:#b8a0a0; --txt3:#8f797c;
+  --accent:#c96f7b; --fav:#d9a15f; --drop:#85b077;
+  --v-exc:#85b077; --v-bom:#cfa35e; --v-mer:#8f8382; --v-aci:#c97a3d;
+  --pend:#8f797c; --gone:#c97a3d; --ok:#85b077; --warn:#d9a15f; --poi:#c96f7b;
+  --scrim:#191113d9; }
+
+/* ============================================================
+   VARIAÇÃO 2 — "Carmim" (vermelho ousado: quase-preto quente + carmim)
+   bg #120d0e · card #1a1214 · elevado #241a1c · borda #342428
+   texto #f2e6e4 / #b5a2a2 / #8a7477
+   acento/interativo #e04a5a (carmim azulado, saturado) · favorito #d9a35f ·
+   queda #7fb069 (verde = sinal de compra)
+   COLISÃO RESOLVIDA: alerta/negativo cedem o vermelho ao acento — "Acima do
+   mercado"/alugado viram FERRUGEM #bf6b33 e o alerta do health é âmbar #d9a35f;
+   o carmim fica exclusivo do interativo (links, foco, POI).
+   vereditos: excelente #7fb069 · bom #cfa35e · mercado #8d8280 · acima #bf6b33
+   pendente #8a7477 · gone #bf6b33 · health ok #7fb069 / alerta #d9a35f
+   POI mapa #e04a5a · scrim #120d0ed9
+   ============================================================ */
+.v2 { --bg:#120d0e; --card:#1a1214; --elev:#241a1c; --border:#342428;
+  --txt1:#f2e6e4; --txt2:#b5a2a2; --txt3:#8a7477;
+  --accent:#e04a5a; --fav:#d9a35f; --drop:#7fb069;
+  --v-exc:#7fb069; --v-bom:#cfa35e; --v-mer:#8d8280; --v-aci:#bf6b33;
+  --pend:#8a7477; --gone:#bf6b33; --ok:#7fb069; --warn:#d9a35f; --poi:#e04a5a;
+  --scrim:#120d0ed9; }
+
+/* ============================================================
+   VARIAÇÃO 3 — "Nanquim" (azul contido: tinta-marinho + azul-aço,
+   calor preservado no texto marfim e na estrela dourada — não vira corporativo)
+   bg #12151a · card #191d24 · elevado #222731 · borda #303748
+   texto #ece7dd (marfim quente) / #a8a396 / #82807a
+   acento/interativo #7da5c4 (azul-aço) · favorito #d4a95e (ouro quente) ·
+   queda #85b077 (verde = bom)
+   vereditos: excelente #85b077 · bom #c9a86a · mercado #85868c · acima #c06a4a
+   (terracota — o negativo é quente, sem disputa com o acento frio)
+   pendente #82807a · gone #c06a4a · health ok #85b077 / alerta #d4a95e
+   POI mapa #7da5c4 · scrim #12151ad9
+   ============================================================ */
+.v3 { --bg:#12151a; --card:#191d24; --elev:#222731; --border:#303748;
+  --txt1:#ece7dd; --txt2:#a8a396; --txt3:#82807a;
+  --accent:#7da5c4; --fav:#d4a95e; --drop:#85b077;
+  --v-exc:#85b077; --v-bom:#c9a86a; --v-mer:#85868c; --v-aci:#c06a4a;
+  --pend:#82807a; --gone:#c06a4a; --ok:#85b077; --warn:#d4a95e; --poi:#7da5c4;
+  --scrim:#12151ad9; }
+
+/* ============================================================
+   VARIAÇÃO 4 — "Meia-noite" (azul ousado: azul-meia-noite + azul elétrico)
+   bg #0e1220 · card #151a2b · elevado #1e2438 · borda #2b3350
+   texto #e9e9e2 / #a3a5ad / #82859a
+   acento/interativo #4da3ff (azul elétrico) · favorito #d9b35f · queda #74bd82
+   vereditos: excelente #74bd82 · bom #d3b662 · mercado #8b8e99 · acima #d05b4a
+   pendente #82859a · gone #d05b4a · health ok #74bd82 / alerta #d9b35f
+   POI mapa #4da3ff · scrim #0e1220d9
+   ============================================================ */
+.v4 { --bg:#0e1220; --card:#151a2b; --elev:#1e2438; --border:#2b3350;
+  --txt1:#e9e9e2; --txt2:#a3a5ad; --txt3:#82859a;
+  --accent:#4da3ff; --fav:#d9b35f; --drop:#74bd82;
+  --v-exc:#74bd82; --v-bom:#d3b662; --v-mer:#8b8e99; --v-aci:#d05b4a;
+  --pend:#82859a; --gone:#d05b4a; --ok:#74bd82; --warn:#d9b35f; --poi:#4da3ff;
+  --scrim:#0e1220d9; }
+
+/* ============================================================
+   VARIAÇÃO 5 — "Jabuticaba" (roxo contido: berinjela/ameixa vínico, fosco —
+   deliberadamente longe do indigo-violeta neon "de startup de IA")
+   bg #171218 · card #201823 · elevado #2a202e · borda #382c3c
+   texto #eee5e8 / #b3a4ac / #8b7c85
+   acento/interativo #ad7f9a (malva-ameixa empoeirado) · favorito #d6a75f ·
+   queda #86ad78 (verde = bom)
+   vereditos: excelente #86ad78 · bom #cba066 · mercado #8e858a · acima #c26a4d
+   pendente #8b7c85 · gone #c26a4d · health ok #86ad78 / alerta #d6a75f
+   POI mapa #ad7f9a · scrim #171218d9
+   ============================================================ */
+.v5 { --bg:#171218; --card:#201823; --elev:#2a202e; --border:#382c3c;
+  --txt1:#eee5e8; --txt2:#b3a4ac; --txt3:#8b7c85;
+  --accent:#ad7f9a; --fav:#d6a75f; --drop:#86ad78;
+  --v-exc:#86ad78; --v-bom:#cba066; --v-mer:#8e858a; --v-aci:#c26a4d;
+  --pend:#8b7c85; --gone:#c26a4d; --ok:#86ad78; --warn:#d6a75f; --poi:#ad7f9a;
+  --scrim:#171218d9; }
+
+/* ============================================================
+   VARIAÇÃO 6 — "Orquídea" (roxo ousado: berinjela profunda + orquídea rica —
+   ainda fosco, sem gradiente nem brilho neon)
+   bg #150f1a · card #1e1626 · elevado #291e33 · borda #3a2c48
+   texto #efe7ec / #b3a3b3 / #8a7a90
+   acento/interativo #b87bd4 (orquídea/violeta, matte) · favorito #d9ab5f ·
+   queda #82b378 (verde = bom)
+   vereditos: excelente #82b378 · bom #cfa35e · mercado #8d8590 · acima #c9614a
+   pendente #8a7a90 · gone #c9614a · health ok #82b378 / alerta #d9ab5f
+   POI mapa #b87bd4 · scrim #150f1ad9
+   ============================================================ */
+.v6 { --bg:#150f1a; --card:#1e1626; --elev:#291e33; --border:#3a2c48;
+  --txt1:#efe7ec; --txt2:#b3a3b3; --txt3:#8a7a90;
+  --accent:#b87bd4; --fav:#d9ab5f; --drop:#82b378;
+  --v-exc:#82b378; --v-bom:#cfa35e; --v-mer:#8d8590; --v-aci:#c9614a;
+  --pend:#8a7a90; --gone:#c9614a; --ok:#82b378; --warn:#d9ab5f; --poi:#b87bd4;
+  --scrim:#150f1ad9; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="pagehead">
+    <h1>Temas de cor — rodada 2: vermelhos, azuis e roxos</h1>
+    <p>Seis registros escuros sobre a mesma estrutura da rodada 1: base tátil warm-craft
+       (cartão com sombra, raio 10px) e cartão editorial (foto em cima, preço em serifa,
+       veredito em palavras com sublinhado colorido). Dois registros por família — um contido,
+       um mais ousado. Nas famílias vermelhas, o polo negativo cede o vermelho ao acento e vai
+       para ferrugem; a queda de preço permanece verde (sinal de compra) nas seis.</p>
+    <div class="rules">
+      <span>dark-theme only</span>
+      <span>sem barras de progresso</span>
+      <span>sem "acende/morno/esfria"</span>
+      <span>cor sublinha, nunca preenche área</span>
+      <span>percentil: "top 25% preço"</span>
+      <span>acento ≠ vermelho de alerta</span>
+    </div>
+  </div>
+
+  <!-- ================= 1 · VINHEDO ================= -->
+  <section class="variation v1">
+    <div class="vhead">
+      <span class="n num">1</span>
+      <h2 class="serif">Vinhedo <em>· granada-rosé</em></h2>
+      <span class="reg">vermelho contido: carvão-bordô com granada-rosé dessaturado — colisão resolvida movendo "Acima do mercado" para ferrugem; o rosé nunca soa alarme</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#191113"></span><span class="tn">background<code>#191113</code></span></div>
+          <div class="tok"><span class="sw" style="background:#221619"></span><span class="tn">surface / card<code>#221619</code></span></div>
+          <div class="tok"><span class="sw" style="background:#2c1d21"></span><span class="tn">surface elevada<code>#2c1d21</code></span></div>
+          <div class="tok"><span class="sw" style="background:#3a262b"></span><span class="tn">borda / hairline<code>#3a262b</code></span></div>
+          <div class="tok"><span class="sw" style="background:#f0e4e2"></span><span class="tn">texto primário<code>#f0e4e2</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b8a0a0"></span><span class="tn">texto secundário<code>#b8a0a0</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8f797c"></span><span class="tn">texto mudo<code>#8f797c</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c96f7b"></span><span class="tn">acento / interativo<code>#c96f7b</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9a15f"></span><span class="tn">estrela favorito<code>#d9a15f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">queda de preço<code>#85b077</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">Excelente negócio<code>#85b077</code></span></div>
+          <div class="tok"><span class="sw" style="background:#cfa35e"></span><span class="tn">Bom preço<code>#cfa35e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8f8382"></span><span class="tn">Preço de mercado<code>#8f8382</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c97a3d"></span><span class="tn">Acima do mercado<code>#c97a3d</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#8f797c; color:#8f797c"></span><span class="tn">análise de IA pendente<code>#8f797c</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c97a3d"></span><span class="tn">provavelmente alugado<code>#c97a3d</code></span></div>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">health ok<code>#85b077</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9a15f"></span><span class="tn">health alerta<code>#d9a15f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c96f7b; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#c96f7b</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2 · CARMIM ================= -->
+  <section class="variation v2">
+    <div class="vhead">
+      <span class="n num">2</span>
+      <h2 class="serif">Carmim <em>· quase-preto</em></h2>
+      <span class="reg">vermelho ousado: carmim saturado exclusivo do interativo sobre quase-preto quente — alerta vira âmbar e "Acima do mercado" vira ferrugem, o carmim nunca significa "ruim"</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#120d0e"></span><span class="tn">background<code>#120d0e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#1a1214"></span><span class="tn">surface / card<code>#1a1214</code></span></div>
+          <div class="tok"><span class="sw" style="background:#241a1c"></span><span class="tn">surface elevada<code>#241a1c</code></span></div>
+          <div class="tok"><span class="sw" style="background:#342428"></span><span class="tn">borda / hairline<code>#342428</code></span></div>
+          <div class="tok"><span class="sw" style="background:#f2e6e4"></span><span class="tn">texto primário<code>#f2e6e4</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b5a2a2"></span><span class="tn">texto secundário<code>#b5a2a2</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8a7477"></span><span class="tn">texto mudo<code>#8a7477</code></span></div>
+          <div class="tok"><span class="sw" style="background:#e04a5a"></span><span class="tn">acento / interativo<code>#e04a5a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9a35f"></span><span class="tn">estrela favorito<code>#d9a35f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#7fb069"></span><span class="tn">queda de preço<code>#7fb069</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#7fb069"></span><span class="tn">Excelente negócio<code>#7fb069</code></span></div>
+          <div class="tok"><span class="sw" style="background:#cfa35e"></span><span class="tn">Bom preço<code>#cfa35e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8d8280"></span><span class="tn">Preço de mercado<code>#8d8280</code></span></div>
+          <div class="tok"><span class="sw" style="background:#bf6b33"></span><span class="tn">Acima do mercado<code>#bf6b33</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#8a7477; color:#8a7477"></span><span class="tn">análise de IA pendente<code>#8a7477</code></span></div>
+          <div class="tok"><span class="sw" style="background:#bf6b33"></span><span class="tn">provavelmente alugado<code>#bf6b33</code></span></div>
+          <div class="tok"><span class="sw" style="background:#7fb069"></span><span class="tn">health ok<code>#7fb069</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9a35f"></span><span class="tn">health alerta<code>#d9a35f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#e04a5a; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#e04a5a</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3 · NANQUIM ================= -->
+  <section class="variation v3">
+    <div class="vhead">
+      <span class="n num">3</span>
+      <h2 class="serif">Nanquim <em>· azul-aço</em></h2>
+      <span class="reg">azul contido: tinta-marinho com azul-aço — o calor fica no texto marfim e na estrela dourada, para não escorregar no corporativo-frio</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#12151a"></span><span class="tn">background<code>#12151a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#191d24"></span><span class="tn">surface / card<code>#191d24</code></span></div>
+          <div class="tok"><span class="sw" style="background:#222731"></span><span class="tn">surface elevada<code>#222731</code></span></div>
+          <div class="tok"><span class="sw" style="background:#303748"></span><span class="tn">borda / hairline<code>#303748</code></span></div>
+          <div class="tok"><span class="sw" style="background:#ece7dd"></span><span class="tn">texto primário<code>#ece7dd</code></span></div>
+          <div class="tok"><span class="sw" style="background:#a8a396"></span><span class="tn">texto secundário<code>#a8a396</code></span></div>
+          <div class="tok"><span class="sw" style="background:#82807a"></span><span class="tn">texto mudo<code>#82807a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#7da5c4"></span><span class="tn">acento / interativo<code>#7da5c4</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d4a95e"></span><span class="tn">estrela favorito<code>#d4a95e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">queda de preço<code>#85b077</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">Excelente negócio<code>#85b077</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c9a86a"></span><span class="tn">Bom preço<code>#c9a86a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#85868c"></span><span class="tn">Preço de mercado<code>#85868c</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c06a4a"></span><span class="tn">Acima do mercado<code>#c06a4a</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#82807a; color:#82807a"></span><span class="tn">análise de IA pendente<code>#82807a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c06a4a"></span><span class="tn">provavelmente alugado<code>#c06a4a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#85b077"></span><span class="tn">health ok<code>#85b077</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d4a95e"></span><span class="tn">health alerta<code>#d4a95e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#7da5c4; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#7da5c4</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 4 · MEIA-NOITE ================= -->
+  <section class="variation v4">
+    <div class="vhead">
+      <span class="n num">4</span>
+      <h2 class="serif">Meia-noite <em>· azul elétrico</em></h2>
+      <span class="reg">azul ousado: fundo azul-meia-noite com azurro elétrico no interativo — a estrela dourada e os vereditos quentes seguram o lado humano</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#0e1220"></span><span class="tn">background<code>#0e1220</code></span></div>
+          <div class="tok"><span class="sw" style="background:#151a2b"></span><span class="tn">surface / card<code>#151a2b</code></span></div>
+          <div class="tok"><span class="sw" style="background:#1e2438"></span><span class="tn">surface elevada<code>#1e2438</code></span></div>
+          <div class="tok"><span class="sw" style="background:#2b3350"></span><span class="tn">borda / hairline<code>#2b3350</code></span></div>
+          <div class="tok"><span class="sw" style="background:#e9e9e2"></span><span class="tn">texto primário<code>#e9e9e2</code></span></div>
+          <div class="tok"><span class="sw" style="background:#a3a5ad"></span><span class="tn">texto secundário<code>#a3a5ad</code></span></div>
+          <div class="tok"><span class="sw" style="background:#82859a"></span><span class="tn">texto mudo<code>#82859a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#4da3ff"></span><span class="tn">acento / interativo<code>#4da3ff</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9b35f"></span><span class="tn">estrela favorito<code>#d9b35f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#74bd82"></span><span class="tn">queda de preço<code>#74bd82</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#74bd82"></span><span class="tn">Excelente negócio<code>#74bd82</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d3b662"></span><span class="tn">Bom preço<code>#d3b662</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8b8e99"></span><span class="tn">Preço de mercado<code>#8b8e99</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d05b4a"></span><span class="tn">Acima do mercado<code>#d05b4a</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#82859a; color:#82859a"></span><span class="tn">análise de IA pendente<code>#82859a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d05b4a"></span><span class="tn">provavelmente alugado<code>#d05b4a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#74bd82"></span><span class="tn">health ok<code>#74bd82</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9b35f"></span><span class="tn">health alerta<code>#d9b35f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#4da3ff; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#4da3ff</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5 · JABUTICABA ================= -->
+  <section class="variation v5">
+    <div class="vhead">
+      <span class="n num">5</span>
+      <h2 class="serif">Jabuticaba <em>· ameixa</em></h2>
+      <span class="reg">roxo contido: berinjela vínica e malva empoeirado, tudo fosco — deliberadamente longe do violeta-neon "de startup de IA"</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#171218"></span><span class="tn">background<code>#171218</code></span></div>
+          <div class="tok"><span class="sw" style="background:#201823"></span><span class="tn">surface / card<code>#201823</code></span></div>
+          <div class="tok"><span class="sw" style="background:#2a202e"></span><span class="tn">surface elevada<code>#2a202e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#382c3c"></span><span class="tn">borda / hairline<code>#382c3c</code></span></div>
+          <div class="tok"><span class="sw" style="background:#eee5e8"></span><span class="tn">texto primário<code>#eee5e8</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b3a4ac"></span><span class="tn">texto secundário<code>#b3a4ac</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8b7c85"></span><span class="tn">texto mudo<code>#8b7c85</code></span></div>
+          <div class="tok"><span class="sw" style="background:#ad7f9a"></span><span class="tn">acento / interativo<code>#ad7f9a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d6a75f"></span><span class="tn">estrela favorito<code>#d6a75f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#86ad78"></span><span class="tn">queda de preço<code>#86ad78</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#86ad78"></span><span class="tn">Excelente negócio<code>#86ad78</code></span></div>
+          <div class="tok"><span class="sw" style="background:#cba066"></span><span class="tn">Bom preço<code>#cba066</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8e858a"></span><span class="tn">Preço de mercado<code>#8e858a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c26a4d"></span><span class="tn">Acima do mercado<code>#c26a4d</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#8b7c85; color:#8b7c85"></span><span class="tn">análise de IA pendente<code>#8b7c85</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c26a4d"></span><span class="tn">provavelmente alugado<code>#c26a4d</code></span></div>
+          <div class="tok"><span class="sw" style="background:#86ad78"></span><span class="tn">health ok<code>#86ad78</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d6a75f"></span><span class="tn">health alerta<code>#d6a75f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#ad7f9a; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#ad7f9a</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 6 · ORQUÍDEA ================= -->
+  <section class="variation v6">
+    <div class="vhead">
+      <span class="n num">6</span>
+      <h2 class="serif">Orquídea <em>· violeta</em></h2>
+      <span class="reg">roxo ousado: berinjela profunda com orquídea rica no interativo — ainda fosco, sem gradiente, sem brilho neon</span>
+    </div>
+    <div class="vbody">
+      <div class="tokens">
+        <h3>Tokens semânticos</h3>
+        <div class="tokgrid">
+          <div class="tok"><span class="sw" style="background:#150f1a"></span><span class="tn">background<code>#150f1a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#1e1626"></span><span class="tn">surface / card<code>#1e1626</code></span></div>
+          <div class="tok"><span class="sw" style="background:#291e33"></span><span class="tn">surface elevada<code>#291e33</code></span></div>
+          <div class="tok"><span class="sw" style="background:#3a2c48"></span><span class="tn">borda / hairline<code>#3a2c48</code></span></div>
+          <div class="tok"><span class="sw" style="background:#efe7ec"></span><span class="tn">texto primário<code>#efe7ec</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b3a3b3"></span><span class="tn">texto secundário<code>#b3a3b3</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8a7a90"></span><span class="tn">texto mudo<code>#8a7a90</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b87bd4"></span><span class="tn">acento / interativo<code>#b87bd4</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9ab5f"></span><span class="tn">estrela favorito<code>#d9ab5f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#82b378"></span><span class="tn">queda de preço<code>#82b378</code></span></div>
+          <span class="tokspan">Escala de veredito (sublinhado)</span>
+          <div class="tok"><span class="sw" style="background:#82b378"></span><span class="tn">Excelente negócio<code>#82b378</code></span></div>
+          <div class="tok"><span class="sw" style="background:#cfa35e"></span><span class="tn">Bom preço<code>#cfa35e</code></span></div>
+          <div class="tok"><span class="sw" style="background:#8d8590"></span><span class="tn">Preço de mercado<code>#8d8590</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c9614a"></span><span class="tn">Acima do mercado<code>#c9614a</code></span></div>
+          <span class="tokspan">Estados & mapa</span>
+          <div class="tok"><span class="sw dashed" style="border-color:#8a7a90; color:#8a7a90"></span><span class="tn">análise de IA pendente<code>#8a7a90</code></span></div>
+          <div class="tok"><span class="sw" style="background:#c9614a"></span><span class="tn">provavelmente alugado<code>#c9614a</code></span></div>
+          <div class="tok"><span class="sw" style="background:#82b378"></span><span class="tn">health ok<code>#82b378</code></span></div>
+          <div class="tok"><span class="sw" style="background:#d9ab5f"></span><span class="tn">health alerta<code>#d9ab5f</code></span></div>
+          <div class="tok"><span class="sw" style="background:#b87bd4; border-radius:50% 50% 50% 4px"></span><span class="tn">pino POI do mapa<code>#b87bd4</code></span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <h3>Card + health strip</h3>
+        <article class="demo-card">
+          <div class="photo">
+            <span class="srcs">2 fontes</span>
+            <div class="acts"><span class="fav on">★</span><span>×</span></div>
+            <span class="drop num">−8% desde julho</span>
+            <span class="fresh">visto hoje na OLX</span>
+          </div>
+          <div class="cardbody">
+            <span class="verdict">Excelente negócio</span>
+            <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl num">top 25% preço</span></div>
+            <div class="hood serif">Savassi</div>
+            <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+          </div>
+        </article>
+        <div class="health">
+          <span class="h"><span class="dot"></span>QuintoAndar <span class="v num">2h atrás</span></span>
+          <span class="h"><span class="dot warn"></span>OLX <span class="why num">5× mais rápido que a mediana</span></span>
+          <span class="h">Cobertura IA <span class="v num">82%</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

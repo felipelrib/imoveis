@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Direção 1: data-instrument</title>
+<!--
+RATIONALE (data-instrument):
+Um terminal de operação imobiliária: densidade Bloomberg, numerais monoespaçados tabulares,
+regras finas de 1px e zero decoração — a cor existe apenas onde carrega significado (score,
+queda de preço, estado). O usuário é um operador solo que verifica o mercado como quem
+verifica uma posição: tudo visível de uma vez, nada "respirando" à toa.
+-->
+<style>
+/* ============================================================
+   PALETA — data-instrument
+   Fundo:        #0b0e11 (base) · #10141a (painel) · #161b22 (célula elevada)
+   Regras:       #1f2630 (fina) · #2b3442 (ativa)
+   Texto:        #d6dde6 (primário) · #8b96a5 (secundário) · #55606e (mudo)
+   Sinal fixo:   queda de preço #37c0f5 (ciano — nunca compete com o score)
+                 alerta/atenção #f5a623 · removido/gone #55606e
+   ------------------------------------------------------------
+   SCORE-COLOUR SEMANTICS — buckets discretos, leitura de instrumento.
+   O score 0–1 mapeia em 4 buckets nomeados; a cor aparece como
+   régua vertical de 3px na borda esquerda do card + o próprio
+   numeral do score. Nunca colore o card inteiro (densidade > tinta).
+     0.80–1.00  FORTE     #16c784  (verde instrumento)
+     0.60–0.79  BOM       #f3ba2f  (âmbar)
+     0.35–0.59  NEUTRO    #e2733a  (laranja queimado)
+     0.00–0.34  FRACO     #ea3943  (vermelho)
+     sem score  PENDENTE  #55606e  (cinza mudo, régua tracejada)
+   ============================================================ */
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#07090c; }
+body {
+  font-family: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono", Consolas, Menlo, monospace;
+  color:#d6dde6; font-size:12px; line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+.frame { width:1440px; margin:0 auto; background:#0b0e11; min-height:100vh; border-left:1px solid #1f2630; border-right:1px solid #1f2630; }
+.mono-num { font-variant-numeric: tabular-nums; }
+.up { text-transform:uppercase; letter-spacing:.08em; }
+
+/* ---------- top bar ---------- */
+.topbar { display:flex; align-items:center; gap:24px; padding:10px 20px; border-bottom:1px solid #1f2630; }
+.brand { font-size:13px; font-weight:700; letter-spacing:.14em; color:#d6dde6; }
+.brand small { color:#55606e; font-weight:400; letter-spacing:.08em; }
+.topnav { display:flex; gap:18px; font-size:11px; }
+.topnav a { color:#8b96a5; text-decoration:none; letter-spacing:.06em; text-transform:uppercase; }
+.topnav a.active { color:#d6dde6; border-bottom:1px solid #37c0f5; padding-bottom:2px; }
+.clock { margin-left:auto; color:#55606e; font-size:11px; }
+
+/* ---------- since-last-visit ticker ---------- */
+.since { display:flex; align-items:stretch; border-bottom:1px solid #1f2630; background:#10141a; }
+.since .cell { padding:8px 20px; border-right:1px solid #1f2630; display:flex; align-items:baseline; gap:8px; }
+.since .lbl { color:#55606e; font-size:10px; text-transform:uppercase; letter-spacing:.1em; }
+.since .val { font-size:16px; font-weight:700; }
+.since .val.new  { color:#16c784; }
+.since .val.drop { color:#37c0f5; }
+.since .val.gone { color:#8b96a5; }
+.since .desc { color:#8b96a5; font-size:11px; }
+.since .go { margin-left:auto; align-self:center; padding:0 20px; }
+.since .go a { color:#37c0f5; text-decoration:none; font-size:11px; letter-spacing:.06em; }
+
+/* ---------- health strip ---------- */
+.health { display:flex; gap:0; border-bottom:1px solid #1f2630; font-size:11px; }
+.health .h { display:flex; align-items:center; gap:6px; padding:6px 16px; border-right:1px solid #1f2630; color:#8b96a5; }
+.health .k { color:#55606e; text-transform:uppercase; font-size:9px; letter-spacing:.12em; }
+.dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+.dot.ok { background:#16c784; box-shadow:0 0 4px #16c78455; }
+.dot.warn { background:#f5a623; }
+.pct-bar { width:72px; height:5px; background:#1f2630; display:inline-block; position:relative; }
+.pct-bar i { position:absolute; left:0; top:0; bottom:0; width:82%; background:#37c0f5; }
+
+/* ---------- filter rail ---------- */
+.filters { display:flex; align-items:center; gap:10px; padding:10px 20px; border-bottom:1px solid #1f2630; flex-wrap:wrap; }
+.f-group { display:flex; align-items:center; gap:6px; }
+.f-lbl { color:#55606e; font-size:9px; text-transform:uppercase; letter-spacing:.12em; }
+.chip { border:1px solid #2b3442; background:#10141a; color:#c3ccd7; padding:3px 9px; font-size:11px; }
+.chip.on { border-color:#37c0f5; color:#37c0f5; }
+.chip .x { color:#55606e; margin-left:5px; }
+.seg { display:flex; border:1px solid #2b3442; }
+.seg span { padding:3px 12px; font-size:11px; color:#8b96a5; }
+.seg span.on { background:#161b22; color:#d6dde6; border-right:1px solid #2b3442; }
+.search { flex:1; min-width:260px; display:flex; align-items:center; gap:8px; border:1px solid #2b3442; background:#0d1117; padding:4px 10px; color:#55606e; font-size:11px; }
+.search .q { color:#8b96a5; }
+.count { color:#55606e; font-size:11px; margin-left:auto; }
+.count b { color:#d6dde6; }
+
+/* ---------- split ---------- */
+.split { display:grid; grid-template-columns: 1fr 520px; }
+.list { border-right:1px solid #1f2630; }
+.list-head { display:flex; align-items:center; padding:6px 20px; border-bottom:1px solid #1f2630; color:#55606e; font-size:10px; text-transform:uppercase; letter-spacing:.12em; }
+.list-head .sort { margin-left:auto; color:#8b96a5; }
+.list-head .sort b { color:#37c0f5; }
+
+/* ---------- cards: dense rows-with-photo ---------- */
+.grid { display:grid; grid-template-columns:1fr 1fr; }
+.card { position:relative; display:grid; grid-template-columns:104px 1fr; gap:0 12px; padding:12px 16px 12px 16px; border-bottom:1px solid #1f2630; min-height:118px; }
+.card:nth-child(odd){ border-right:1px solid #1f2630; }
+.card::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; }
+.card.s-forte::before { background:#16c784; }
+.card.s-bom::before   { background:#f3ba2f; }
+.card.s-neutro::before{ background:#e2733a; }
+.card.s-fraco::before { background:#ea3943; }
+.card.s-pend::before  { background:repeating-linear-gradient(180deg,#55606e 0 4px,transparent 4px 8px); }
+.card.gone { opacity:.5; }
+.card.gone::before { background:#55606e; }
+.ph { width:104px; height:94px; background:
+      linear-gradient(135deg,#1a2129 0%,#232c37 55%,#1a2129 100%);
+      position:relative; border:1px solid #2b3442; }
+.ph::after { content:"FOTO"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#3a4553; font-size:9px; letter-spacing:.2em; }
+.c-top { display:flex; align-items:baseline; gap:10px; }
+.price { font-size:16px; font-weight:700; color:#f0f4f8; }
+.price small { font-size:10px; color:#8b96a5; font-weight:400; }
+.score-read { margin-left:auto; font-size:13px; font-weight:700; }
+.s-forte .score-read { color:#16c784; }
+.s-bom .score-read   { color:#f3ba2f; }
+.s-neutro .score-read{ color:#e2733a; }
+.s-pend .score-read  { color:#55606e; font-weight:400; font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.hood { color:#8b96a5; font-size:11px; margin-top:1px; }
+.hood b { color:#c3ccd7; font-weight:400; }
+.badges { display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+.b { font-size:10px; padding:1px 6px; border:1px solid #2b3442; color:#8b96a5; }
+.b.pctl { border-color:#16c78466; color:#16c784; }
+.b.drop { border-color:#37c0f566; color:#37c0f5; }
+.b.src  { color:#8b96a5; }
+.b.gone { border-color:#55606e; color:#8b96a5; }
+.meta { margin-top:7px; color:#55606e; font-size:10px; display:flex; gap:12px; }
+.acts { position:absolute; top:9px; right:10px; display:flex; gap:10px; color:#55606e; font-size:12px; }
+.acts .fav.on { color:#f3ba2f; }
+
+/* ---------- map ---------- */
+.map { position:relative; background:#0d1117; min-height:760px; overflow:hidden; }
+.map-canvas { position:absolute; inset:0;
+  background:
+    radial-gradient(420px 300px at 68% 30%, #131a22 0%, transparent 70%),
+    radial-gradient(500px 380px at 25% 75%, #10161d 0%, transparent 70%),
+    #0d1117;
+}
+/* ruas: malha fina */
+.streets { position:absolute; inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 46px, #16202b 46px 47px),
+    repeating-linear-gradient(90deg, transparent 0 58px, #16202b 58px 59px),
+    repeating-linear-gradient(32deg, transparent 0 130px, #1a2530 130px 131px);
+}
+.park { position:absolute; width:120px; height:86px; left:56%; top:52%;
+  background:#12241d; border:1px solid #1c3a2c; transform:rotate(-8deg); }
+.avenue { position:absolute; left:-5%; top:38%; width:115%; height:2px; background:#223140; transform:rotate(-7deg); }
+.map-head { position:absolute; top:0; left:0; right:0; display:flex; gap:10px; padding:8px 14px; border-bottom:1px solid #1f2630; background:#0d1117ee; z-index:5; font-size:10px; color:#55606e; text-transform:uppercase; letter-spacing:.1em; }
+.map-head b { color:#8b96a5; }
+.map-head .sync { margin-left:auto; color:#37c0f5; }
+/* faixa de tempo de deslocamento */
+.band { position:absolute; left:16%; top:18%; width:340px; height:300px; border:1px dashed #37c0f588; border-radius:50% 46% 52% 48%/48% 52% 46% 54%; }
+.band-lbl { position:absolute; left:19%; top:15.5%; background:#0d1117; border:1px solid #37c0f588; color:#37c0f5; font-size:10px; padding:2px 7px; z-index:4; }
+/* pins de POI */
+.poi { position:absolute; z-index:4; display:flex; flex-direction:column; align-items:center; gap:3px; }
+.poi .pin { width:11px; height:11px; background:#f5a623; transform:rotate(45deg); border:1px solid #0b0e11; }
+.poi .plbl { background:#0b0e11; border:1px solid #2b3442; color:#e8d5ae; font-size:10px; padding:1px 6px; white-space:nowrap; }
+/* pontos de imóveis */
+.pt { position:absolute; width:10px; height:10px; border-radius:50%; border:1px solid #0b0e11; z-index:3; }
+.pt.f { background:#16c784; } .pt.b { background:#f3ba2f; } .pt.n { background:#e2733a; } .pt.p { background:#55606e; }
+.pt.hover { outline:2px solid #37c0f5; outline-offset:2px; }
+.suggest { position:absolute; bottom:14px; left:14px; right:14px; border:1px solid #2b3442; background:#10141aee; padding:8px 12px; font-size:11px; color:#8b96a5; display:flex; gap:10px; align-items:center; z-index:5; }
+.suggest b { color:#37c0f5; }
+.legend { position:absolute; bottom:64px; right:14px; border:1px solid #1f2630; background:#0d1117ee; padding:8px 10px; font-size:9px; color:#55606e; z-index:5; text-transform:uppercase; letter-spacing:.08em; }
+.legend .row { display:flex; align-items:center; gap:6px; margin-top:4px; }
+.legend .sw { width:8px; height:8px; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">IMOVEIS<small> /bh</small></div>
+    <nav class="topnav">
+      <a class="active" href="#">Imóveis</a><a href="#">Favoritos</a><a href="#">Buscas salvas</a><a href="#">Alertas</a><a href="#">Admin</a>
+    </nav>
+    <div class="clock mono-num">ter 05 ago 2026 · 09:42 BRT</div>
+  </div>
+
+  <!-- Desde sua última visita -->
+  <div class="since">
+    <div class="cell"><span class="lbl">Desde sua última visita</span></div>
+    <div class="cell"><span class="val new mono-num">7</span><span class="desc">novos imóveis nos seus filtros</span></div>
+    <div class="cell"><span class="val drop mono-num">3</span><span class="desc">quedas de preço</span></div>
+    <div class="cell"><span class="val gone mono-num">2</span><span class="desc">anúncios removidos</span></div>
+    <div class="go"><a href="#">ver novidades →</a></div>
+  </div>
+
+  <!-- Operator health strip -->
+  <div class="health">
+    <div class="h"><span class="k">Scrapers</span><span class="dot ok"></span>QuintoAndar <span class="mono-num">2h atrás</span></div>
+    <div class="h"><span class="dot ok"></span>OLX <span class="mono-num">5h atrás</span></div>
+    <div class="h"><span class="k">Enriquecimento</span>local — qwen2.5-vl</div>
+    <div class="h"><span class="k">Workers</span><span class="dot ok"></span>OK</div>
+    <div class="h"><span class="k">Cobertura IA</span><span class="pct-bar"><i></i></span><span class="mono-num" style="color:#37c0f5">82%</span></div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="filters">
+    <div class="f-group"><span class="f-lbl">Bairro</span>
+      <span class="chip on">Savassi<span class="x">×</span></span>
+      <span class="chip on">Lourdes<span class="x">×</span></span>
+      <span class="chip">+ bairro</span>
+    </div>
+    <div class="f-group"><span class="f-lbl">Preço</span><span class="chip mono-num">até R$ 3.500</span></div>
+    <div class="f-group"><span class="f-lbl">Tipo</span>
+      <span class="seg"><span class="on">Aluguel</span><span>Venda</span></span>
+    </div>
+    <div class="f-group"><span class="f-lbl">Percentil</span><span class="chip on mono-num">≤ P25</span></div>
+    <div class="f-group"><span class="f-lbl">Sentimento</span>
+      <span class="chip on">bairro seguro</span><span class="chip">reformado</span><span class="chip">silencioso</span>
+    </div>
+    <div class="search">⌕ <span class="q">busca semântica — ex.: "arejado, perto de padaria, aceita pets"</span></div>
+    <div class="count"><b class="mono-num">28</b> imóveis · <b class="mono-num">12</b> no mapa</div>
+  </div>
+
+  <div class="split">
+    <!-- ====== LISTA ====== -->
+    <div class="list">
+      <div class="list-head">Resultados <span class="sort">ordenar: <b>melhor negócio ▾</b></span></div>
+      <div class="grid">
+
+        <!-- FORTE 0.87 -->
+        <div class="card s-forte">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 2.450<small>/mês</small></span><span class="score-read mono-num">0.87</span></div>
+            <div class="hood"><b>Savassi</b> · apto 2 quartos · 68 m²</div>
+            <div class="badges">
+              <span class="b pctl mono-num">P25</span>
+              <span class="b drop mono-num">−8% desde julho</span>
+              <span class="b src">2 fontes</span>
+            </div>
+            <div class="meta"><span>visto hoje na OLX</span><span class="mono-num">R$ 36/m²</span></div>
+          </div>
+          <div class="acts"><span class="fav on">★</span><span>×</span></div>
+        </div>
+
+        <!-- FORTE 0.91 -->
+        <div class="card s-forte">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 2.150<small>/mês</small></span><span class="score-read mono-num">0.91</span></div>
+            <div class="hood"><b>Serra</b> · apto 3 quartos · 82 m²</div>
+            <div class="badges">
+              <span class="b pctl mono-num">P12</span>
+              <span class="b drop mono-num">−5% desde junho</span>
+            </div>
+            <div class="meta"><span>visto hoje na QuintoAndar</span><span class="mono-num">R$ 26/m²</span></div>
+          </div>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+
+        <!-- BOM 0.62 -->
+        <div class="card s-bom">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 3.100<small>/mês</small></span><span class="score-read mono-num">0.62</span></div>
+            <div class="hood"><b>Lourdes</b> · apto 3 quartos · 95 m²</div>
+            <div class="badges"><span class="b pctl mono-num">P41</span></div>
+            <div class="meta"><span>visto ontem na QuintoAndar</span><span class="mono-num">R$ 33/m²</span></div>
+          </div>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+
+        <!-- NEUTRO 0.45 — percentil suprimido (ausente, não simulado) -->
+        <div class="card s-neutro">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 2.780<small>/mês</small></span><span class="score-read mono-num">0.45</span></div>
+            <div class="hood"><b>Funcionários</b> · apto 2 quartos · 74 m²</div>
+            <div class="badges"><span class="b src">1 fonte</span></div>
+            <div class="meta"><span>visto há 3 dias na OLX</span><span class="mono-num">R$ 38/m²</span></div>
+          </div>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+
+        <!-- PENDENTE — sem score -->
+        <div class="card s-pend">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 1.890<small>/mês</small></span><span class="score-read">análise de IA pendente</span></div>
+            <div class="hood"><b>Buritis</b> · apto 2 quartos · 60 m²</div>
+            <div class="badges"><span class="b">na fila de enriquecimento</span></div>
+            <div class="meta"><span>visto hoje na OLX</span><span class="mono-num">R$ 32/m²</span></div>
+          </div>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+
+        <!-- GONE — provavelmente alugado -->
+        <div class="card gone s-pend">
+          <div class="ph"></div>
+          <div>
+            <div class="c-top"><span class="price mono-num">R$ 2.900<small>/mês</small></span></div>
+            <div class="hood"><b>Savassi</b> · apto 2 quartos · 70 m²</div>
+            <div class="badges"><span class="b gone">provavelmente alugado</span></div>
+            <div class="meta"><span>sem atualização há 14 dias</span></div>
+          </div>
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ====== MAPA ====== -->
+    <div class="map">
+      <div class="map-canvas"></div>
+      <div class="streets"></div>
+      <div class="avenue"></div>
+      <div class="park"></div>
+      <div class="map-head"><b>Mapa</b> · BH — região centro-sul <span class="sync">filtrando pela área visível</span></div>
+
+      <div class="band"></div>
+      <div class="band-lbl">faixa ≤ 15 min · Igreja</div>
+
+      <div class="poi" style="left:33%; top:34%"><span class="pin"></span><span class="plbl">Igreja</span></div>
+      <div class="poi" style="left:62%; top:22%"><span class="pin"></span><span class="plbl">Casa dos pais</span></div>
+      <div class="poi" style="left:70%; top:66%"><span class="pin"></span><span class="plbl">Casa da namorada</span></div>
+
+      <span class="pt f hover" style="left:38%; top:44%"></span>
+      <span class="pt f" style="left:27%; top:30%"></span>
+      <span class="pt b" style="left:48%; top:38%"></span>
+      <span class="pt n" style="left:55%; top:56%"></span>
+      <span class="pt p" style="left:22%; top:62%"></span>
+      <span class="pt f" style="left:43%; top:70%"></span>
+      <span class="pt b" style="left:64%; top:44%"></span>
+
+      <div class="legend">
+        Score
+        <div class="row"><span class="sw" style="background:#16c784"></span>0.80–1.00 forte</div>
+        <div class="row"><span class="sw" style="background:#f3ba2f"></span>0.60–0.79 bom</div>
+        <div class="row"><span class="sw" style="background:#e2733a"></span>0.35–0.59 neutro</div>
+        <div class="row"><span class="sw" style="background:#ea3943"></span>0.00–0.34 fraco</div>
+        <div class="row"><span class="sw" style="background:#55606e"></span>pendente</div>
+      </div>
+
+      <div class="suggest">Sugestão: <b>ativar faixa de 20 min a pé</b> ao redor de "Casa da namorada" — 4 imóveis entrariam nos resultados.</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

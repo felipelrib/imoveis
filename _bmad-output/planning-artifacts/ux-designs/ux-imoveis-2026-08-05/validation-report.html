@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UX Design Validation: imoveis</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>imoveis — UX Design Validation Report</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/DESIGN.md + EXPERIENCE.md</div>
+      </div>
+    </header>
+
+    <div class="synthesis">
+      <p>A well-crafted pair with an unusually disciplined honesty spine (absence states, banned patterns, verdict-in-words) and a clean, fully-resolving token layer. The gaps cluster in three places: two source requirements (FR-15 semantic search, FR-30's <em>filter</em> half) are neither designed nor listed as deliberate non-designs; the Admin/modal component vocabulary that the in-flight v0.13 UI stories (s1.6, s2.2) will consume has behavioral coverage but almost no visual spec; and the visual artifacts in <code>.working/</code> are not linked from either spine (no promotion, no spines-win-on-conflict clause). Fixable in one editing pass — nothing structural is wrong.</p>
+      <p>The adversarial review materially shifts that picture: it lands <strong>two criticals in availability-truth semantics</strong> — the flagship <code>Verificar disponibilidade</code> interaction has no failure/unknown outcome and can render a failed recheck as fresh confidence, and a shortlisted property found gone by auto-verify alerts no one — plus a false-gone cascade under scraper outage and two designed journey beats (J1 step 4, J2 step 3) that contradict the spine's own modal-scrim and async-enrichment rules as written. The pt-BR reviewer independently confirms the flagship percentile badge <code>top 25% preço</code> breaks the spine's own cheap-direction hard rule. Availability truth, the alert economy, and the recheck interaction need a genuine design pass — more than the single editing pass the rubric alone estimated — before s1.6/s2.2 consume this pair.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Flow coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Token completeness</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Component coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-thin)">thin</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">State coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Visual reference coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-thin)">thin</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Bloat &amp; overspecification</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Inheritance discipline</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+    </div>
+
+    <!-- 1. Flow coverage -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Flow coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Every UJ/requirement surface in source-extract §1–§3 checked against Key Flows. J1–J4 all have a named protagonist (Felipe, in modes), numbered steps, and a bolded climax. UJ-1 maps to J1 with the <code>2 fontes</code> climax preserved and sharpened into a negotiation lever; UJ-3 + UJ-4 map to J3; J4 is new, well-motivated UX-driven scope. "Comparar has no journey by design" is properly written down twice. The rubric's missing-failure-path finding (J1's recheck-comes-back-gone anti-climax, J2's gone-at-click-through) merged into the adversarial review's critical recheck-outcome finding — see the Adversarial UX section.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">FR-15 semantic search is nowhere — not designed, not deferred <span class="reviewer-source">(rubric + adversarial)</span></h3>
+              <span class="finding-location">EXPERIENCE.md IA table / Deliberate non-designs</span>
+            </header>
+            <div class="finding-note">FR-15 semantic search (<code>GET /properties?q=</code>, a named surface in source-extract §2) appears nowhere in EXPERIENCE.md — not in the IA table, not in any flow, not in the <em>Deliberate non-designs</em> footer. The memlog records the decision ("nice-to-have, pt-BR") but the spine doesn't carry it, so a consumer doing a readiness check reads it as an unexplained omission. The adversarial review independently flagged the same silent cut (every other cut is listed in non-designs).</div>
+            <div class="finding-fix"><strong>Fix:</strong> one line in <em>Deliberate non-designs</em> ("semantic search: existing surface kept as-is, pt-BR queries, no redesign this pass") or an IA row / search affordance slot in the top nav.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">UJ-2's price-drop → price-history-chart confirmation beat is folded away</h3>
+              <span class="finding-location">EXPERIENCE.md J2 / Notifications</span>
+            </header>
+            <div class="finding-note">J2 covers the alert-interrupt shape but with a new-match, and no flow ends on the chart. The Notifications section carries the threshold rule, so only the chart-confirmation beat is lost.</div>
+            <div class="finding-fix"><strong>Fix:</strong> one sentence in J2 or Notifications noting the drop-alert variant lands on the modal's price-history chart.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Flows renamed J1–J4 with no mapping to source UJ-1..4 / FR ids</h3>
+              <span class="finding-location">EXPERIENCE.md Key Flows</span>
+            </header>
+            <div class="finding-note">Other sections cite FRs well; the flows themselves don't carry their source journey ids.</div>
+            <div class="finding-fix"><strong>Fix:</strong> a parenthetical per flow, e.g. "J1 (absorbs UJ-1)".</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 2. Token completeness -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Token completeness</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Every frontmatter token and every <code>{path.to.token}</code> reference in both files extracted. All 20 color tokens carry hexes (scrim is 8-digit, fine). All <code>{colors.*}</code>, <code>{typography.*}</code>, <code>{rounded.*}</code>, <code>{spacing.*}</code> references in DESIGN.md resolve to frontmatter; all four EXPERIENCE.md token references resolve to DESIGN.md by name. No dangling references anywhere — mechanically clean.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No contrast targets stated; Accessibility Floor's WCAG AA claim is unbacked</h3>
+              <span class="finding-location">DESIGN.md Colors / EXPERIENCE.md Accessibility Floor</span>
+            </header>
+            <div class="finding-note">EXPERIENCE.md claims "WCAG AA text contrast … (<code>DESIGN.md</code> token pairs chosen for it)" — a claim the referenced file never backs. The risky pairs are exactly the load-bearing ones: <code>text-muted</code> #82859a and <code>verdict-market</code> #8b8e99 at 11–12.5px on <code>surface-card</code>, and <code>text-secondary</code> on <code>{colors.scrim}</code> over arbitrary photos.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add a short contrast table (pair → ratio → AA verdict) to DESIGN.md Colors; state a minimum for on-photo scrim text.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Token layer contradicts the gold hard rule: <code>favourite-star</code> = <code>health-warn</code> = #d9b35f <span class="reviewer-source">(rubric + adversarial)</span></h3>
+              <span class="finding-location">DESIGN.md colors frontmatter vs Do's/Don'ts table</span>
+            </header>
+            <div class="finding-note">The frontmatter blesses the sharing ("gold = star = warn — shared meaning, shared ink") while the Do's table rules "Gold star = favourite, and nothing else / health warn is its own amber role" — implementation will pick one at random. The adversarial review adds the perceptual dimension: <code>verdict-good</code> (#d3b662) is nearly the same gold, so a <code>Bom preço</code> underline, a starred photo, and an amber warn dot are three meanings in one indistinguishable hue.</div>
+            <div class="finding-fix"><strong>Fix:</strong> split health-warn to a distinct amber (shift hue ~15° toward orange) and fix the frontmatter comment; accept star/verdict-good sharing warmth since both are positive — or rewrite the Do/Don't row to claim non-overlapping <em>contexts</em> (strip dot vs card star), not distinct inks.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Several component values are prose, not resolvable values</h3>
+              <span class="finding-location">DESIGN.md Components (percentile-badge, health-chip, since-panel)</span>
+            </header>
+            <div class="finding-note"><code>percentile-badge.background: 'price-drop at ~12% over card'</code>, <code>border: '1px solid price-drop at ~35%'</code>, <code>health-chip.background: 'surface-card blended toward background'</code>, <code>since-panel.background: '{colors.surface-elevated} toward {colors.surface-card}'</code>. A human resolves them; a token resolver doesn't.</div>
+            <div class="finding-fix"><strong>Fix:</strong> mint alpha-variant tokens (e.g. <code>price-drop-tint-12</code>) or state the computed hex inline.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">"warm accent" in since-panel body names no token</h3>
+              <span class="finding-location">DESIGN.md since-panel</span>
+            </header>
+            <div class="finding-note">The only <code>accent</code> token is cool azure. Ambiguous which ink is meant (probably <code>favourite-star</code> gold).</div>
+            <div class="finding-fix"><strong>Fix:</strong> name the token.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 3. Component coverage — thin, open -->
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>Component coverage</h2>
+          <span class="verdict-pill verdict-thin">thin</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>The Painel/grid vocabulary is genuinely strong — property card, verdict label, percentile badge, price-drop badge, sources badge, freshness stamp, star, filter chip, health chip, pending tag, map point, POI pin, since-panel all have real visual rules, and covered behavioral rows carry real contracts (viewport persistence, per-type price memory, optimistic star). The misses are systematic, not scattered: DESIGN.md.Components covers only the front door, while EXPERIENCE.md sends consumers to Admin and modal internals with no visual spec at all. The rubric's bundled behavioral-gap finding (dismiss recovery, recheck behavior, since-panel reset) merged into the adversarial review's higher-severity entries — see the Adversarial UX section (dismiss recovery: high; since-panel reset: high; recheck behavior: folded into the critical).</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">FR-30's percentile <em>filter control</em> appears nowhere — story s2.2 will have to invent it</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns filter-bar / Deliberate non-designs</span>
+            </header>
+            <div class="finding-note">FR-30 is "percentile on card/modal, <strong>filterable</strong>" (source-extract §2/§3; open question #6 explicitly flagged "the filter control's form"). The spine designs badge + modal sentence and the cheap-direction copy rule, but the filter control is neither in the filter-bar row nor deferred.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add it to the Component Patterns filter-bar row (form + how it composes with the 2-line ceiling) or explicitly defer it in <em>Deliberate non-designs</em>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">The price-history chart — the modal's centerpiece — has no spec in either spine</h3>
+              <span class="finding-location">DESIGN.md Components / EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">J1 step 3's centerpiece and UJ-2's confirmation beat: no visual rules (line/axis/ink on the dark ground, drop-marker treatment, the system-wide dataviz posture given "no progress bars") and no behavioral row (range, per-platform series?, hover).</div>
+            <div class="finding-fix"><strong>Fix:</strong> one DESIGN.md.Components entry + one Component Patterns row.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Admin components consumed by in-flight story s1.6 have zero visual spec</h3>
+              <span class="finding-location">DESIGN.md Components vs EXPERIENCE.md Operator Observability</span>
+            </header>
+            <div class="finding-note">The backfill card (state, budget, throughput, day-scale ETA, start/pause/resume, collision warning line) and the run-history table have good behavioral coverage in Operator Observability but zero DESIGN.md visual spec ("admin tables" appears only in Typography prose). The very next UI story ships against this contract.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add <code>backfill-card</code> and <code>run-history-table</code> (and the toast, also unspecced) to DESIGN.md.Components, even briefly.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">POI management is undesigned and unflagged</h3>
+              <span class="finding-location">EXPERIENCE.md J1/J4, Map spec</span>
+            </header>
+            <div class="finding-note">POI anchors are central to J1/J4 and the map spec, but how Igreja/Casa dos pais get created/edited, and where, is undesigned and unflagged.</div>
+            <div class="finding-fix"><strong>Fix:</strong> defer explicitly or add a line (e.g. "POI CRUD lives in Admin, minimal form").</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Saved-search row and Alertas panel (s2.4 consumers) have behavior but no visual entry <span class="reviewer-source">(rubric + adversarial)</span></h3>
+              <span class="finding-location">DESIGN.md Components / EXPERIENCE.md IA Alertas row</span>
+            </header>
+            <div class="finding-note">Toggle, bell badge, alert list row unspecced. The adversarial review goes further on the Alertas panel interior: row anatomy, read/unread, clearing, retention all unstated, and J2's "clicks straight into the modal" implies deep-linking behavior nobody specified.</div>
+            <div class="finding-fix"><strong>Fix:</strong> small Components entries or an explicit "inherits chip/panel rules" note; minimal Alertas row spec: type icon, property line, timestamp, click → modal, auto-read on click.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 4. State coverage -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>State coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>All seven IA surfaces walked against the State Patterns table. The honesty states — pending enrichment, suppressed percentile, absent ETA, gone, staleness, degraded platform, anomaly-with-reason, backfill-visible — are the best part of the whole pair and directly close source-extract open question #9. What's missing is the boring generic layer both reference examples carry.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No cold-load state for the Painel</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">Blocking spinners over the grid are banned (correctly), but nothing says what loading <em>is</em> — skeleton cards? empty grid? Both reference examples specify cold load first.</div>
+            <div class="finding-fix"><strong>Fix:</strong> one State Patterns row (e.g. skeleton cards matching the grid layout, no spinner).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No empty states across surfaces</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">Grid with zero filter matches, empty Favoritos/shortlist, empty Buscas salvas, empty Alertas, first-ever-visit since-panel. A pt-BR empty sentence per surface is cheap and on-voice.</div>
+            <div class="finding-fix"><strong>Fix:</strong> one row covering the empty family with per-surface copy.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No grid-fetch-failure state</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">"Errors never block the grid" governs <em>action</em> errors; if the properties request itself fails on cold load there is nothing to not-block.</div>
+            <div class="finding-fix"><strong>Fix:</strong> one row (toast + retained last-good data, or explicit failure copy).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Map tile failure untreated</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">Maps require network; offline tiles are a stated non-goal, but tile failure has no treatment. (The rubric's companion gap — recheck-in-progress on the modal — merged into the critical recheck finding in the Adversarial UX section.)</div>
+            <div class="finding-fix"><strong>Fix:</strong> fold into the failure rows above.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 5. Visual reference coverage — thin, open -->
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>Visual reference coverage</h2>
+          <span class="verdict-pill verdict-thin">thin</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Inventory: <code>.working/</code> holds <code>source-extract.md</code>, four <code>direction-*.html</code> explorations, and <code>color-themes-1/2.html</code> (the picked Meia-noite palette lives in <code>color-themes-2.html</code> per memlog). <code>imports/</code> is empty; <code>mockups/</code> and <code>wireframes/</code> do not exist — <strong>promotion has not happened</strong>. Neither spine links a single visual artifact, and neither states the spines-win-on-conflict rule.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No inline visual references anywhere in either spine</h3>
+              <span class="finding-location">DESIGN.md Brand &amp; Style / EXPERIENCE.md IA</span>
+            </header>
+            <div class="finding-note">The picked-direction mock (Meia-noite variation in <code>color-themes-2.html</code>) is the provenance for all 19 hexes and the card anatomy, but a consumer of DESIGN.md cannot find it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> promote the winning variation out of <code>.working/</code> (e.g. <code>mockups/</code>), then link it from DESIGN.md Brand &amp; Style and EXPERIENCE.md IA.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Spines-win-on-conflict is stated nowhere</h3>
+              <span class="finding-location">DESIGN.md / EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">Both experience examples model the "→ Composition reference: … Spine wins on conflict." line. Once mocks are linked, a consumer needs the precedence rule exactly once.</div>
+            <div class="finding-fix"><strong>Fix:</strong> append "Spine wins on conflict." to the first composition-reference link.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Rejected direction explorations indistinguishable from the winner</h3>
+              <span class="finding-location">.working/direction-*.html</span>
+            </header>
+            <div class="finding-note">A future session could source-extract from a rejected direction.</div>
+            <div class="finding-fix"><strong>Fix:</strong> promotion of the winner (above) resolves this implicitly.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 6. Bloat -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Bloat &amp; overspecification</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>DESIGN.md prose is editorial by license and stays disciplined — every paragraph carries a rule, no source restatement padding. EXPERIENCE.md is table-first where it should be; Foundation compresses AD-8/AD-11/AD-12 into contract anchors rather than restating the architecture.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Mild editorial voice leaks into EXPERIENCE.md prose</h3>
+              <span class="finding-location">EXPERIENCE.md prose</span>
+            </header>
+            <div class="finding-note">"Honest absence is the system's spine", "The workshop bench, split in two" — harmless at this dose, but the rubric places that voice in DESIGN.md.</div>
+            <div class="finding-fix"><strong>Fix:</strong> optional; trim if the pair gets another pass.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 7. Inheritance discipline -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Inheritance discipline</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Glossary terms mirrored correctly and used with source meaning. FR/AD/NFR/BIN citations are dense and accurate (BIN-77 price_type, AD-13 backfill visibility, FR-27 invisible degradation). The NFR-7 pt-BR override is handled exactly right — flagged <code>[NOTE FOR PRD]</code> with the engineering rule kept intact — as are the five other scope flags and the <code>[ASSUMPTION]</code> markers on pending-veto patterns. Verdict wordings and pt-BR strings are identical across both spines.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Watchlist vs Favourites never mapped</h3>
+              <span class="finding-location">EXPERIENCE.md Foundation / Notifications</span>
+            </header>
+            <div class="finding-note">The sources' glossary treats Watchlist (price-drop alert set, FR-16, UJ-2) and Favourite (starred shortlist) as distinct terms. EXPERIENCE.md builds Favoritos thoroughly but uses "watchlist" only once without ever mapping the two — is starring a Property what puts it on the watchlist, or are they separate sets? Downstream story-dev for FR-16 has to guess the relation.</div>
+            <div class="finding-fix"><strong>Fix:</strong> one Foundation or Notifications sentence fixing the mapping (e.g. "starred = watched; there is no separate watchlist").</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">"Score-coloured grid" survives in the IA table while colour-filled score areas are banned</h3>
+              <span class="finding-location">EXPERIENCE.md IA table</span>
+            </header>
+            <div class="finding-note">Consistent once you read both files, but a consumer of the IA table alone could infer painted cards.</div>
+            <div class="finding-fix"><strong>Fix:</strong> "verdict-coloured" or a parenthetical.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">FR-29 per-signal-type coverage detail under-carried <span class="reviewer-source">(rubric + adversarial)</span></h3>
+              <span class="finding-location">EXPERIENCE.md Admin bullets / Health strip</span>
+            </header>
+            <div class="finding-note">The Admin IA row names "coverage detail" but the Operator Observability Admin bullet list — the deep spec — omits it while listing everything else. The adversarial review adds the front-door angle: <code>Cobertura IA 82%</code> is an undefined aggregate — if it's a mean, 100% embeddings + 60% visual reads as "mostly done" while the signal Felipe cares about lags.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add per-signal-type coverage to the Admin bullets; front-door % = minimum across signal types, labeled on hover, per-type detail in Admin.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- 8. Shape fit -->
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>DESIGN.md: all eight body sections present in canonical spec order; frontmatter keys match the spec table; cross-reference syntax used correctly throughout. EXPERIENCE.md: all eight required defaults present. The two invented sections earn their place — Operator Observability because the operator is half the product's user modes, Notifications &amp; Recall because alerts span four surfaces and two systems. Responsive &amp; Platform correctly omitted with the desktop-only decision stated in Foundation. The <em>Deliberate non-designs</em> footer is a genuinely good invention — it is what keeps most omissions honest.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">EXPERIENCE.md frontmatter lacks the <code>sources:</code> list</h3>
+              <span class="finding-location">EXPERIENCE.md frontmatter</span>
+            </header>
+            <div class="finding-note">Both experience examples carry PRD/epics/architecture paths. Provenance currently lives only in <code>.working/source-extract.md</code>.</div>
+            <div class="finding-fix"><strong>Fix:</strong> add the three source paths to frontmatter.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- Extra reviewer: Adversarial UX -->
+    <section class="reviewer-section">
+      <details>
+        <summary>
+          <h2>Adversarial UX review</h2>
+          <span class="reviewer-source">review-adversarial-ux.md</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Lens: where does this design mislead Felipe about reality, waste an evening, or cost him a deal. Verdict, in the reviewer's words: "The spine's honesty doctrine (dashed pending, absent percentile, no fabricated ETA) is real and mostly consistent — but it stops exactly where Felipe's stated worst frustration lives: <strong>availability truth</strong>. The flagship counter-feature (<code>Verificar disponibilidade</code> + auto-verify) has no failure semantics, no gone-alert, no verification-freshness display, and a gone heuristic that collapses under scraper outage — so the design can still hand him a confident-looking shortlist of dead listings on a Saturday. Second systemic weakness: two designed journeys (J1 step 4, J2 step 3) contradict the spine's own layout and async-enrichment rules as written." What genuinely holds up: the honest-absence state table, the map viewport-persistence contract, the percentile <em>modal sentence</em>, the per-listing-type price-filter memory, and the anomaly-with-reason-string pattern.</p>
+            <p><em>Merged elsewhere (deduped):</em> <code>top 25% preço</code> (high — see pt-BR review), gold-hex contradiction (Token completeness), <code>Cobertura IA</code> aggregate (Inheritance discipline), semantic search omission (Flow coverage), Alertas panel interior (Component coverage).</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title"><code>Verificar disponibilidade</code> has no defined outcome for a failed — or gone — recheck <span class="reviewer-source">(adversarial + rubric)</span></h3>
+              <span class="finding-location">EXPERIENCE.md J1 step 5; Component Patterns</span>
+            </header>
+            <div class="finding-note">When the recheck hits Cloudflare/403/timeout (the project's own convention says these are <code>unknown</code>, and OLX blocks are routine), the spine defines only the happy path ("comes back fresh"). If <code>unknown</code> renders as no visual change, the card keeps its fresh freshness stamp and Felipe reads "I checked, it's available" — the exact trust failure the button exists to kill, now with <em>added</em> false confidence because he actively verified. The rubric independently flagged the missing flow failure paths (J1's own anti-climax — recheck comes back <em>gone</em> — undesigned; J2's listing-already-gone at click-through untreated) and the missing recheck in-progress/result behavior; merged here at the adversarial severity.</div>
+            <div class="finding-fix"><strong>Fix:</strong> recheck is three-state (<code>disponível / indisponível / não foi possível verificar</code>) with its own timestamp (<code>verificado às 21:14</code> vs <code>verificação falhou</code>); <code>unknown</code> must be visually distinct from <code>available</code> and must not refresh the freshness stamp. Add <code>Failure:</code> lines to J1 and J2 — the gone-listing State Pattern gives most of the treatment already.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Auto-verify finds a shortlisted Property gone and nobody is told</h3>
+              <span class="finding-location">EXPERIENCE.md Notifications &amp; Recall; J1 step 6 vs J4 step 1</span>
+            </header>
+            <div class="finding-note">Notifications lists exactly two alert types (new-match, price-drop). When Thursday's daily recheck finds a starred/roteiro item <code>provavelmente alugado</code>, no channel fires; Felipe discovers it Saturday morning — or worse, at the door. The highest-value alert in the entire product (a shortlist item dying) is missing from the alert economy.</div>
+            <div class="finding-fix"><strong>Fix:</strong> shortlist-item-gone is a third first-class alert (push + email), on by default for starred items.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Scraper outage mass-manufactures false <code>provavelmente alugado</code></h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns "Gone listing", "Staleness"</span>
+            </header>
+            <div class="finding-note">Gone = <code>sem atualização há 14 dias</code>, but "no update" is indistinguishable from "scraper broken/circuit-open for 14 days" — a two-week OLX block flips <em>every</em> OLX listing to rust gone-state, poisoning the grid and the shortlist with false deaths. Related: FR-11 skip-unchanged means "seen but unchanged" — if that doesn't bump the last-seen timestamp, perfectly available unchanged listings rot toward gone.</div>
+            <div class="finding-fix"><strong>Fix:</strong> gone heuristic counts only <em>scrape runs that succeeded and did not include the listing</em>; skip-unchanged must bump last-seen; when a platform is degraded, its cards show <code>plataforma sem coleta há N dias</code>, not gone.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Shortlist shows no per-item verification recency or failure state</h3>
+              <span class="finding-location">EXPERIENCE.md J4 step 1; Favoritos surface row</span>
+            </header>
+            <div class="finding-note">J4 step 1 asserts "all availability-verified by the automatic rechecks" — but if Friday night's recheck batch failed (blocked, worker down), the shortlist looks identical to a fully verified one. The one screen where staleness costs a physical trip has no staleness display.</div>
+            <div class="finding-fix"><strong>Fix:</strong> every shortlist row carries <code>disponibilidade verificada há Xh</code> / <code>última verificação falhou</code> — same honesty stamp the cards get.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Desktop push is the least reliable channel in a localhost deployment, and J2 leans on it</h3>
+              <span class="finding-location">EXPERIENCE.md Notifications channels; J2 step 1</span>
+            </header>
+            <div class="finding-note">Web push needs the browser running (and a service worker on a localhost origin); when the app tab isn't open — the exact moment an interrupt matters — push silently never arrives. Felipe interprets silence as "no matches" and a fast-moving Savassi 2-quartos goes to someone else.</div>
+            <div class="finding-fix"><strong>Fix:</strong> email is the guaranteed interrupt channel; push is opportunistic bonus. State this ordering in the spine, or use an OS-level notifier daemon instead of browser push.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">J2 contradicts the spine's own async-enrichment reality</h3>
+              <span class="finding-location">EXPERIENCE.md J2 vs State Patterns "Enrichment pending"</span>
+            </header>
+            <div class="finding-note">New-match alerts fire on ingest; enrichment is async by architecture, so the moment the push arrives is precisely when the modal is most likely to show <code>análise de IA pendente</code> — no verdict, no percentile. J2 step 3 ("Verdict, percentile sentence, photos; good enough to keep") is the happy path of a race the design has already declared it loses.</div>
+            <div class="finding-fix"><strong>Fix:</strong> either gate new-match alerts on enrichment-complete (delay minutes, gain a decidable modal) or design the J2 beat around a pending modal (photos + price + percentile-less triage, with "verdict chega em breve").</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">A scraper that stops <em>running</em> never turns amber</h3>
+              <span class="finding-location">EXPERIENCE.md Health strip; State Patterns "Health ok"</span>
+            </header>
+            <div class="finding-note">Anomaly = per-run deviation from own baseline — but a run that never happens (dead Celery beat, both scrapers down from one shared cause) produces no run to deviate. The spine's only signal is the recency string on a still-green dot, with no defined threshold at which recency alone flips the chip. Beat death is a known incident class in this project; under this design the strip stays green while the whole pipeline is dark and every listing quietly ages toward false-gone.</div>
+            <div class="finding-fix"><strong>Fix:</strong> expected-cadence contract per scraper — chip goes amber on <code>sem run há Nh (esperado: a cada 6h)</code>, independent of run-level anomaly detection.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Two-way bbox sync eats the card he's reading</h3>
+              <span class="finding-location">EXPERIENCE.md IA "synced split view"; Map component</span>
+            </header>
+            <div class="finding-note">J1: a drop card catches him → he pans the map toward the Igreja → bbox re-filters the grid → the drop card vanishes from under his cursor. Mandatory two-way sync with no "buscar nesta área" toggle turns every map exploration into a grid reshuffle mid-thought.</div>
+            <div class="finding-fix"><strong>Fix:</strong> map→list sync is explicit (a "filtrar pela área do mapa" toggle or button, Zillow-style); list→map hover sync stays automatic.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">The map bbox is an invisible active filter</h3>
+              <span class="finding-location">EXPERIENCE.md Filter bar; Map</span>
+            </header>
+            <div class="finding-note">Filter bar "shows only active filters" — but a bbox narrowed by an earlier pan is nowhere represented as a chip. Later he widens price, sees mysteriously few results, and has no removable <code>área do mapa ×</code> chip explaining why.</div>
+            <div class="finding-fix"><strong>Fix:</strong> an active bbox renders as a filter chip like any other, removable with <code>×</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Dismiss is "recoverable" with no recovery surface <span class="reviewer-source">(adversarial + rubric)</span></h3>
+              <span class="finding-location">EXPERIENCE.md Property card; IA table</span>
+            </header>
+            <div class="finding-note">Mis-click the dismiss (it sits next to the star, top-right on-photo) and the Property vanishes optimistically. The IA has no Dismissed list, no undo toast is specified, no filter named for it — "recoverable" is asserted, mechanism absent. A fat-fingered dismiss of tonight's best card is an unrecoverable loss as designed. The rubric flagged the same gap ("recoverable <em>where</em> is undefined", medium); merged at the adversarial severity.</div>
+            <div class="finding-fix"><strong>Fix:</strong> immediate <code>desfazer</code> toast on dismiss + a <code>descartados</code> filter/view; and separate star/dismiss hit targets.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">"Since last visit" has no session semantics — the reset rule is undefined <span class="reviewer-source">(adversarial + rubric)</span></h3>
+              <span class="finding-location">EXPERIENCE.md since-panel; J1</span>
+            </header>
+            <div class="finding-note">What resets the panel? If "on app open," a 30-second lunch glance zeroes the counters and the evening check — the product's core ritual — opens to <code>0 novos</code>. If it never auto-resets, counts inflate meaninglessly. The panel's entire value rides on an undefined reset rule. The rubric flagged the same gap (what counts as a "visit"? when do counts zero? — medium); merged at the adversarial severity.</div>
+            <div class="finding-fix"><strong>Fix:</strong> explicit mark-as-caught-up action (or reset only after N minutes of active engagement), and the panel states its window: <code>desde ter, 21h</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title"><code>2 fontes</code> freshness is per-Property, masking a dead source</h3>
+              <span class="finding-location">DESIGN.md freshness-stamp; EXPERIENCE.md J1 step 5</span>
+            </header>
+            <div class="finding-note">Stamp shows one platform (<code>visto hoje na OLX</code>) while the QuintoAndar listing — the R$200-higher one powering the J1 negotiation lever — may not have been seen in 10 days. He walks into a negotiation citing a cross-platform gap where one side is gone.</div>
+            <div class="finding-fix"><strong>Fix:</strong> modal's per-platform comparison shows per-listing last-seen; the <code>2 fontes</code> badge downgrades (or annotates) when one source is stale.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Stale verdict beside fresh price after a drop</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns (first-enrichment pending only)</span>
+            </header>
+            <div class="finding-note">A price change re-enqueues enrichment (async, AD-4), so for hours the card shows the <em>old</em> verdict next to a green drop badge computed from the <em>new</em> price — two signals from different realities on one card, and nothing marks the verdict as outdated.</div>
+            <div class="finding-fix"><strong>Fix:</strong> on material price change, verdict reverts to the dashed pending treatment until re-scored.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Green drop badge = "buy signal" even on an <code>Acima do mercado</code> card</h3>
+              <span class="finding-location">DESIGN.md price-drop-badge; Colors</span>
+            </header>
+            <div class="finding-note">DESIGN.md hard-codes "Green = buy signal. Good news." But −8% on a listing still rust-underlined as above-market is not a buy signal — it's an overpriced listing correcting. The grid scan pattern (hunt green) surfaces exactly these cards.</div>
+            <div class="finding-fix"><strong>Fix:</strong> keep the drop badge factual (<code>−8% desde julho</code>) but strip "buy signal" framing from the spec; a drop on a rust-verdict card may render in neutral ink, or the verdict must visually dominate the badge.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Per-search new-match alerts have no batching decision</h3>
+              <span class="finding-location">EXPERIENCE.md Notifications &amp; Recall</span>
+            </header>
+            <div class="finding-note">The week he ignores the app: 40+ matches over an absent week = 40+ single emails, overlapping with the weekly digest covering the same properties — double delivery teaches him to filter the sender to spam, killing J2 forever.</div>
+            <div class="finding-fix"><strong>Fix:</strong> daily batch window per search for email; digest excludes already-alerted items or the spine says which system owns which property.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Drop-alert scope vs since-panel scope mismatch</h3>
+              <span class="finding-location">EXPERIENCE.md since-panel; Notifications</span>
+            </header>
+            <div class="finding-note">Price-drop alerts are watchlist/threshold-gated; the since-panel counts "3 quedas de preço" — over what population? If global, the count is noise he can't act on; if scoped, unstarred saved-search matches drop silently between sessions and the panel is his only catch — with no drill-in.</div>
+            <div class="finding-fix"><strong>Fix:</strong> since-panel counts are scoped to saved searches + favourites, and the spine says so.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Per-watchlist drop-threshold UX is deferred, but a <em>default</em> still ships</h3>
+              <span class="finding-location">EXPERIENCE.md non-designs; source-extract Q10</span>
+            </header>
+            <div class="finding-note">Undecided config UX means week one runs on an invisible global default: too low → alert spam → he disables drops; too high → a R$150 drop on a R$3.000 target never fires. The deferral is acknowledged; the silent-default consequence is not.</div>
+            <div class="finding-fix"><strong>Fix:</strong> even before the config UX exists, the alert email states the threshold that fired it ("queda de R$240 — seu mínimo: R$100") so the default is visible and correctable.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Cold-start: no baseline, no amber</h3>
+              <span class="finding-location">EXPERIENCE.md Health anomaly</span>
+            </header>
+            <div class="finding-note">A new scraper, or one whose baseline resets after a format change/cassette refresh, cannot deviate from a median it doesn't have — its worst early runs (the ones most likely to be broken) show green.</div>
+            <div class="finding-fix"><strong>Fix:</strong> below N historical runs, chip shows a distinct <code>calibrando baseline (3/10 runs)</code> state, not ok-green.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Gradual drift rots the baseline</h3>
+              <span class="finding-location">EXPERIENCE.md Health anomaly; Admin run-history</span>
+            </header>
+            <div class="finding-note">A rolling own-median tracks slow decay: OLX yield sliding 5%/week keeps every run inside its (also sliding) band; six weeks later yield has halved with an all-green history — and reduced update frequency again feeds the false-gone machine.</div>
+            <div class="finding-fix"><strong>Fix:</strong> run-history table compares against a <em>pinned</em> long-window baseline as well as the rolling median; drift beyond X% over Y weeks is itself a reason string.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Backfill collision warning lives in the wrong medium</h3>
+              <span class="finding-location">EXPERIENCE.md Operator Observability, backfill card</span>
+            </header>
+            <div class="finding-note">The persistent warning line is on the Admin backfill card — but the collision happens when Felipe types <code>validate.sh</code> in a terminal, where Admin isn't on screen. The health-strip backfill visibility (AD-13) helps only if he glances at the browser first.</div>
+            <div class="finding-fix"><strong>Fix:</strong> keep the card line, but note the real guard is the shell-side heartbeat check; the front-door backfill chip (not just Admin) should carry the warning glyph so any glance at the dashboard says "não rode validate agora".</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">J1 step 4 breaks the spine's own modal rule</h3>
+              <span class="finding-location">EXPERIENCE.md J1 step 4 vs Elevation &amp; Depth</span>
+            </header>
+            <div class="finding-note">The modal sits on a full-page scrim overlay; step 4 says "Map beside it: travel-time band shows the flat is within 15 min of the Igreja." With the scrim up, there is no map beside it — unless the modal embeds its own mini-map, which no component defines. The journey's location beat is unimplementable as specified.</div>
+            <div class="finding-fix"><strong>Fix:</strong> either the modal contains a location panel (mini-map with POI bands) or the modal is a side panel that leaves the map rail visible.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Since-panel counts have no drill-in</h3>
+              <span class="finding-location">EXPERIENCE.md since-panel; J1 steps 1–2</span>
+            </header>
+            <div class="finding-note">"3 quedas de preço" with a single link out means he manually hunts three cards in a full grid — the panel announces news it can't take him to, every single evening.</div>
+            <div class="finding-fix"><strong>Fix:</strong> each count is a link that applies a corresponding transient filter (<code>novos desde a última visita</code>, <code>quedas</code>, <code>removidos</code>).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Comparing two finalists is modal ping-pong by design</h3>
+              <span class="finding-location">EXPERIENCE.md IA Comparar row; Interaction Primitives</span>
+            </header>
+            <div class="finding-note">The one-level modal rule + "no journey lands in Comparar" means the actual evening endgame — A vs B — is close-modal, reopen, close, reopen, holding numbers in his head. Deprioritizing Comparar is a recorded decision, but no lightweight alternative exists either.</div>
+            <div class="finding-fix"><strong>Fix:</strong> the shortlist view shows key numbers (price, verdict, percentile, R$/m²) in comparable rows so two starred candidates are comparable without Comparar.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Gone listings can resurrect and no state exists for it</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns "Gone listing"</span>
+            </header>
+            <div class="finding-note">BH relisting is routine: a <code>provavelmente alugado</code> Property reappears in a scrape (often at a new price, sometimes as a "new" listing that dedupe folds back in). Does it un-gone? Does its price history bridge the gap? Does it fire a new-match alert as if new? Undefined — and a relisting of a previously-shortlisted flat is exactly a deal signal he'd want.</div>
+            <div class="finding-fix"><strong>Fix:</strong> define a <code>voltou ao mercado</code> transition — clears gone state, annotates the price-history chart, and qualifies as alert-worthy for previously starred items.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Drop-badge baseline is undefined</h3>
+              <span class="finding-location">EXPERIENCE.md Property card; DESIGN.md price-drop-badge</span>
+            </header>
+            <div class="finding-note"><code>−8% desde julho</code> — since first-seen? peak? last change? A relisted flat that returned at an inflated price then "dropped" to its old price shows a green badge on a net-flat listing. Combined with the resurrection gap, relist-and-discount games read as deals.</div>
+            <div class="finding-fix"><strong>Fix:</strong> badge measures from a defined anchor (max of trailing 90 days) and the modal chart makes the anchor visible.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Shortlist notes are load-bearing and undesigned</h3>
+              <span class="finding-location">EXPERIENCE.md J4 step 4; Favoritos surface</span>
+            </header>
+            <div class="finding-note">J4's climax ("banheiro pior que as fotos", <code>fazer proposta</code>) requires note entry/edit and a post-visit verdict state machine — no component pattern, no states (visited? proposta feita? recusado?) exist anywhere. The tool "absorbing the day's judgment" is a journey promise with no primitive behind it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> define the shortlist row primitive: free-text note + a small post-visit status enum, both editable inline.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">On-demand recheck has no cooldown, and it burns the shared scraping identity</h3>
+              <span class="finding-location">EXPERIENCE.md J1 step 5</span>
+            </header>
+            <div class="finding-note">Every <code>Verificar disponibilidade</code> click is a live hit on OLX/QuintoAndar from the same IP the nightly scrapers use; an anxious evening of rechecking the shortlist can trigger the Cloudflare blocking that then degrades the whole pipeline (feeding the false-gone cascade). A UX button with an operator-level blast radius, unmentioned.</div>
+            <div class="finding-fix"><strong>Fix:</strong> per-listing cooldown (<code>verificado há 20 min</code>) + a modest global recheck budget surfaced in the button state.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Gone dots on the map are ambiguous with above-market</h3>
+              <span class="finding-location">DESIGN.md map-point; EXPERIENCE.md map legend</span>
+            </header>
+            <div class="finding-note">When the gone filter is on, a rust map point could be "overpriced" or "dead" — the legend lists four verdicts + pending, with no gone entry.</div>
+            <div class="finding-fix"><strong>Fix:</strong> gone map points render hollow/desaturated, and the legend gains a gone entry when the filter is active.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Closing the modal loses grid scroll position</h3>
+              <span class="finding-location">EXPERIENCE.md Map viewport contract</span>
+            </header>
+            <div class="finding-note">Not stated as preserved; the viewport-persistence contract covers only the map. Mid-grid triage restarting from the top every modal close is death by paper cuts on a 40-card evening.</div>
+            <div class="finding-fix"><strong>Fix:</strong> extend the persistence contract: modal open/close never moves grid scroll.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <!-- Extra reviewer: pt-BR microcopy -->
+    <section class="reviewer-section">
+      <details>
+        <summary>
+          <h2>pt-BR microcopy review</h2>
+          <span class="reviewer-source">review-ptbr-microcopy.md</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>~40 user-facing strings reviewed against the voice baseline (neutro e claro, frases profissionais simples, nunca "chatty"). The copy is largely natural, well-cased Brazilian product Portuguese with correct <code>há</code>/currency/date typography, and the verdict scale reads like real BR real-estate language. Two findings are serious: the flagship percentile badge <code>top 25% preço</code> violates the spine's own cheap-direction rule and is not grammatical Portuguese; and <code>provavelmente alugado</code> is factually wrong on sale listings. Everything else is polish-level. Terminology is consistent across both spines: always <em>bairro</em>, always <em>imóvel/imóveis</em>, <em>anúncio</em> reserved for the platform listing — a correct and well-held distinction.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title"><code>top 25% preço</code> violates the spine's own cheap-direction hard rule — and is not grammatical Portuguese <span class="reviewer-source">(pt-BR + adversarial)</span></h3>
+              <span class="finding-location">DESIGN.md percentile-badge, Do's table; EXPERIENCE.md Voice and Tone, J1 step 2</span>
+            </header>
+            <div class="finding-note">The rule: "wording that could be read as 'top = most expensive' is forbidden." In pt-BR, "top" carries a premium/best-in-class connotation ("top de linha"), so "top 25% preço" plausibly reads as <em>the priciest quarter</em> — the exact inversion the rule forbids. It is also a telegraphic anglicized fragment, which the voice doc bans. Both reviewers flagged it independently; the adversarial review notes the only place the rule is broken is the copy it was written to protect. Bare <code>25% mais baratos</code> is not a safe fix either: next to the <code>−8% desde julho</code> drop badge it reads as a 25% <em>discount</em>.</div>
+            <div class="finding-fix"><strong>Fix:</strong> badge: <code>entre os 25% mais baratos</code>; modal sentence stays <code>entre os 25% mais baratos do bairro</code> — one consistent phrasing family (generic form: <code>entre os N% mais baratos</code>).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title"><code>provavelmente alugado</code> is factually wrong on sale listings</h3>
+              <span class="finding-location">DESIGN.md Colors § Gone, Gone card; EXPERIENCE.md Voice table, State Patterns § Gone listing</span>
+            </header>
+            <div class="finding-note">A gone <em>venda</em> listing was not "alugado" — it was sold (or delisted). The system explicitly handles both listing types (Aluguel/Venda segmented control, per-type price filters, dual-type Properties via <code>primaryListing</code>), so this string must vary by the listing type of the gone listing.</div>
+            <div class="finding-fix"><strong>Fix:</strong> per listing type: <code>provavelmente alugado — …</code> (aluguel) / <code>provavelmente vendido — …</code> (venda); dual-type follows the primary listing.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title"><code>OLX: run 5× mais rápido que a mediana</code> — "run" is developer jargon leaking into a pt-BR surface</h3>
+              <span class="finding-location">EXPERIENCE.md Voice table, State Patterns § Health anomaly, J3 step 1</span>
+            </header>
+            <div class="finding-note">Good native words exist and the voice doc bans anglicized fragments where clear pt-BR carries. Knock-on gender agreement: "coleta" is feminine, so the adjective must flip.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>OLX: coleta 5× mais rápida que a mediana</code> ("varredura" also works; pick one and use it for "run" everywhere, including Admin run-history labels).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title"><code>2 anúncios removidos</code> is ambiguous with the user's own dismiss action</h3>
+              <span class="finding-location">EXPERIENCE.md J1 step 1 (since-panel)</span>
+            </header>
+            <div class="finding-note">"Removidos" — did the market drop them or did I? These are listings that left the source portals.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>2 anúncios saíram do ar</code> (natural BR for delisted ads; alternatively <code>2 anúncios encerrados</code>).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Backfill states <code>idle / running / paused / backing-off</code> are English on an otherwise localized operator surface</h3>
+              <span class="finding-location">EXPERIENCE.md Operator Observability § Backfill card</span>
+            </header>
+            <div class="finding-note">If these render literally they break the pt-BR-only default. "Backing-off" has no good literal translation — say what it means.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>inativo / em execução / pausado / em espera (limite da API)</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title"><code>QuintoAndar · 2h atrás</code> — translated-feeling form, inconsistent with <code>há</code> elsewhere</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns § Health ok, Health strip</span>
+            </header>
+            <div class="finding-note">Everywhere else uses <code>há</code> (<code>visto há 3 dias</code>, <code>sem atualização há 14 dias</code>).</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>QuintoAndar · há 2h</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title"><code>Cobertura IA 82%</code> — missing preposition, telegraphic</h3>
+              <span class="finding-location">EXPERIENCE.md Operator Observability § Health strip</span>
+            </header>
+            <div class="finding-note">The voice doc bans cockpit-terse and two extra characters fix it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>Cobertura de IA: 82%</code> (chip may drop the colon: <code>Cobertura de IA 82%</code>).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title"><code>Favoritos / roteiro de visitas</code> — mixed casing inside one nav label</h3>
+              <span class="finding-location">EXPERIENCE.md IA table, J4 step 1</span>
+            </header>
+            <div class="finding-note">Capitalized + lowercase halves in one label.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>Favoritos / Roteiro de visitas</code> — or simply <code>Roteiro de visitas</code>, since favourites graduate into it and one name is calmer nav.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title"><code>Admin / Operações</code> — "Admin" is an anglicism and redundant</h3>
+              <span class="finding-location">EXPERIENCE.md IA table</span>
+            </header>
+            <div class="finding-note">"Operações" already names the surface precisely. Acceptable for a solo operator tool, but there's a cleaner label.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>Operações</code> alone.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Percentile modal sentence drops the listing-type half of the cohort on dual-type Properties</h3>
+              <span class="finding-location">EXPERIENCE.md percentile hard rules, cohort bullet</span>
+            </header>
+            <div class="finding-note"><code>entre os 25% mais baratos do bairro</code> encodes the bairro cohort but not bairro × tipo, which the spine itself requires ("cohort language mirrors the source"). On a dual rent/sale Property the reader can't tell which cohort the 25% refers to.</div>
+            <div class="finding-fix"><strong>Fix:</strong> per type: <code>entre os 25% mais baratos dos aluguéis do bairro</code> / <code>…das vendas do bairro</code> (single-type listings can keep the short form).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Verdict scale axis break: three price-axis verdicts, one deal-axis (<code>Excelente negócio</code>) — optional</h3>
+              <span class="finding-location">DESIGN.md Colors § Verdict scale; EXPERIENCE.md verdict component</span>
+            </header>
+            <div class="finding-note">Register and naturalness are fine — every phrase is real BR real-estate language — and the axis break is defensible as an editorial peak.</div>
+            <div class="finding-fix"><strong>Fix:</strong> if strict parallelism is wanted: <code>Preço excelente</code> for the top verdict. Keep as-is if the emphasis is intentional.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li><strong>Cross-refs:</strong> zero broken <code>{path.to.token}</code> references in either file; all four EXPERIENCE→DESIGN token references resolve by name. No references to <code>mockups/</code>/<code>wireframes/</code> exist yet (nothing broken, but nothing linked either — see Visual reference coverage).</li>
+        <li><strong>Frontmatter:</strong> DESIGN.md carries extra keys (<code>status</code>, <code>created</code>, <code>updated</code>) beyond the spec table — harmless metadata. <code>rounded</code> has no <code>full</code> key, consistent with the no-pills rule. EXPERIENCE.md is missing <code>sources:</code> (Shape fit).</li>
+        <li><strong>Token/name inconsistencies:</strong> <code>since-panel</code> (component key) vs "Since-last-visit panel" (both bodies) — resolvable but worth aligning; "warm accent" names no token; <code>favourite-star</code>/<code>health-warn</code> hex sharing contradicts the Do's and Don'ts row (Token completeness).</li>
+        <li><strong>Untokenized layout constants:</strong> ~1440px content width, ~460px map rail, ~50–60% photo height, <code>grayscale 0.7 / brightness 0.75</code> gone treatment live only in prose. Acceptable, but the rail width and frame width are load-bearing enough to deserve <code>spacing</code>/component tokens on another pass.</li>
+        <li><strong>Deliberate hex sharing</strong> (green = drop = excellent = ok; rust = above = gone) is documented in the frontmatter comment and consistently narrated in Colors — good practice, no action.</li>
+        <li><strong>Severity totals after cross-reviewer dedupe:</strong> 2 critical · 15 high · 28 medium · 19 low (64 findings).</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: _bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/review-rubric.md</span>
+        <span>Reviewers: review-adversarial-ux.md · review-ptbr-microcopy.md</span>
+        <span>Generated: 2026-08-05T05:23:16-03:00</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

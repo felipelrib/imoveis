@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Imoveis — Tela-chave 1: Painel (porta de entrada)</title>
+<!--
+TELA-CHAVE 1 — PAINEL (forma final Meia-noite, warm-craft × editorial)
+
+Seções do spine que governam esta tela:
+· DESIGN.md > Colors (tokens Meia-noite, health-warn #d98d3f próprio), Typography
+  (serifa só em preço + bairro), Layout & Spacing (split 1fr/460px, margem 48px,
+  teto de 2 linhas no filtro), Elevation (sombra real + degrau tonal; único
+  gradiente permitido = scrim da foto), Shapes (10/9/7/12px, sem pílulas),
+  Components (property-card, verdict-label, percentile-badge, health-chip,
+  since-panel, filter-chip, pending-tag, map, gone card).
+· EXPERIENCE.md > IA (porta única; split grid×mapa; bbox explícito via toggle
+  "filtrar pela área do mapa" → chip removível), Component Patterns (filter bar
+  só com filtros ATIVOS, chips colapsados "Savassi +2", botão "Filtros (N)";
+  since-panel com escopo declarado + janela + drill-in), State Patterns
+  (pendente tracejado, gone dessaturado, "voltou ao mercado", cadência perdida
+  âmbar com motivo, backfill sempre visível com glifo), Voz (pt-BR pleno, sem
+  "P25"/"top", "coleta" nunca "run"), Operator Observability (strip de saúde).
+
+Decisões locais anotadas (regra mais próxima, nada inventado):
+· Chip de preço grafado "até R$ 3.000" — forma pt-BR dos pais estruturais; o
+  spine proíbe notação de estatístico e a voz pede frase plana ("≤" fica fora
+  da superfície).
+· "voltou ao mercado" renderizado como cápsula itálica verde sobre a foto —
+  mesmo idioma do drop-badge (fato de preço/estado, nunca recomendação).
+· Legenda do mapa inclui "saiu do ar" porque um card gone está visível na
+  grade (filtro de removidos ativo via drill-in do since-panel) — regra:
+  a legenda ganha a entrada gone quando o filtro gone está ativo.
+· Fotos = placeholder tonal CHAPADO (#1e2438) + fade de scrim inferior (o
+  único gradiente permitido). Linhas de rua do mapa = hairlines de parada
+  dura, sem transição de cor.
+-->
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { background:#0e1220; }
+body {
+  font-family:"Seravek","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color:#e9e9e2; font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.serif { font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif; }
+.num { font-variant-numeric:tabular-nums; }
+a { color:#4da3ff; text-decoration:none; }
+.frame { width:1440px; margin:0 auto; padding:0 48px 56px; }
+
+/* ---------- top nav ---------- */
+.topbar { display:flex; align-items:center; gap:26px; padding:18px 2px 14px; border-bottom:1px solid #2b3350; }
+.brand { font-size:17px; font-weight:700; letter-spacing:.01em; }
+.topnav { display:flex; gap:22px; font-size:13.5px; }
+.topnav a { color:#a3a5ad; padding-bottom:5px; }
+.topnav a.active { color:#e9e9e2; border-bottom:2px solid #4da3ff; }
+.top-right { margin-left:auto; color:#82859a; font-size:13px; }
+
+/* ---------- since-panel ---------- */
+.since { display:flex; align-items:center; gap:34px; margin:20px 0 0; padding:16px 22px;
+  background:#1a1f32; border:1px solid #2b3350; border-radius:12px;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; }
+.since .head h2 { font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:#d3b662; }
+.since .head p { font-size:12.5px; color:#82859a; letter-spacing:.03em; margin-top:2px; }
+.since .items { display:flex; gap:30px; }
+.since .items a { font-size:14.5px; color:#a3a5ad; }
+.since .items a b { color:#4da3ff; font-weight:700; font-size:17px; margin-right:6px; }
+.since .items a u { text-decoration:underline; text-decoration-color:#4da3ff55; text-underline-offset:3px; color:inherit; }
+.since .win { margin-left:auto; font-size:12.5px; color:#82859a; letter-spacing:.03em; font-style:italic; }
+
+/* ---------- health strip ---------- */
+.health { display:flex; gap:10px; margin:12px 0 0; flex-wrap:wrap; font-size:12.5px; color:#82859a; }
+.h { display:flex; align-items:center; gap:8px; background:#121626; border:1px solid #2b3350; border-radius:9px; padding:6px 12px; }
+.dot { width:8px; height:8px; border-radius:50%; flex:none; background:#74bd82; }
+.dot.warn { background:#d98d3f; }
+.h .v { color:#a3a5ad; }
+.h .why { color:#d98d3f; font-style:italic; }
+.h .glyph { color:#d98d3f; font-size:13px; }
+
+/* ---------- filter bar ---------- */
+.filters { display:flex; align-items:center; gap:10px; margin:16px 0 20px; flex-wrap:wrap; }
+.chip { border:1px solid #2b3350; background:#151a2b; color:#a3a5ad; border-radius:9px; padding:6px 13px; font-size:13px; }
+.chip.on { border-color:#4da3ff; color:#4da3ff; }
+.chip .x { color:#82859a; margin-left:7px; }
+.seg { display:inline-flex; border:1px solid #2b3350; border-radius:9px; overflow:hidden; }
+.seg span { padding:6px 15px; font-size:13px; color:#a3a5ad; background:#151a2b; }
+.seg span.on { background:#4da3ff; color:#0e1220; font-weight:600; }
+.fbtn { border:1px solid #2b3350; background:#151a2b; color:#4da3ff; border-radius:9px; padding:6px 14px; font-size:13px; font-weight:600; }
+.count { margin-left:auto; color:#82859a; font-size:12.5px; letter-spacing:.03em; }
+.count b { color:#a3a5ad; }
+
+/* ---------- split ---------- */
+.split { display:grid; grid-template-columns:1fr 460px; gap:26px; }
+
+/* ---------- cards ---------- */
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-content:start; }
+.card { background:#151a2b; border:1px solid #2b3350; border-radius:10px; overflow:hidden;
+  box-shadow:0 8px 20px #00000055, inset 0 1px 0 #ffffff08; }
+.photo { height:185px; position:relative; background:#1e2438; }
+.photo::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(180deg, transparent 55%, #151a2b 100%); }
+.photo > * { z-index:2; }
+.photo .srcs { position:absolute; top:12px; left:12px; font-size:10.5px; font-weight:600; letter-spacing:.16em;
+  text-transform:uppercase; color:#e9e9e2; background:#0e1220d9; padding:4px 10px; border-radius:7px; }
+.photo .drop { position:absolute; bottom:11px; left:12px; font-style:italic; font-size:14px;
+  color:#74bd82; background:#0e1220d9; padding:2px 10px; border-radius:7px; }
+.photo .fresh { position:absolute; bottom:11px; right:12px; font-size:11.5px;
+  color:#a3a5ad; background:#0e1220d9; padding:3px 9px; border-radius:7px; }
+.acts { position:absolute; top:10px; right:10px; display:flex; gap:10px; }
+.acts span { width:29px; height:29px; border-radius:7px; background:#0e1220d9; color:#a3a5ad;
+  display:flex; align-items:center; justify-content:center; font-size:14px; border:1px solid #2b3350; }
+.acts .fav.on { color:#d9b35f; border-color:#d9b35f66; }
+.cardbody { padding:14px 16px 16px; }
+.verdict { font-size:11px; letter-spacing:.2em; text-transform:uppercase; display:inline-block;
+  padding-bottom:3px; margin-bottom:9px; }
+.v-exc { color:#74bd82; border-bottom:2px solid #74bd82; }
+.v-bom { color:#d3b662; border-bottom:2px solid #d3b662; }
+.v-mer { color:#8b8e99; border-bottom:2px solid #8b8e99; }
+.pend-tag { display:inline-block; font-style:italic; font-size:13px; color:#82859a;
+  border:1px dashed #82859a; border-radius:7px; padding:2px 10px; margin-bottom:9px; }
+.line1 { display:flex; align-items:baseline; gap:10px; }
+.price { font-size:26px; font-weight:400; color:#e9e9e2; }
+.price small { font-size:13px; color:#a3a5ad; font-style:italic; }
+.pctl { margin-left:auto; font-size:11.5px; font-weight:600; color:#74bd82;
+  background:#74bd821f; border:1px solid #74bd8259; border-radius:7px; padding:2px 9px; white-space:nowrap; }
+.hood { font-style:italic; font-size:16px; color:#e9e9e2; margin-top:3px; }
+.det { font-size:12.5px; color:#82859a; margin-top:6px; letter-spacing:.03em; }
+.det .sep { margin:0 7px; opacity:.5; }
+.card.gone .photo { filter:grayscale(.7) brightness(.75); }
+.card.gone .cardbody { opacity:.65; }
+.gone-note { display:block; font-style:italic; color:#d05b4a; font-size:13.5px; margin-bottom:9px; }
+
+/* ---------- mapa ---------- */
+.map { position:relative; border:1px solid #2b3350; border-radius:12px; overflow:hidden; min-height:940px;
+  background:#121626; box-shadow:0 8px 20px #00000055; }
+.streets { position:absolute; inset:0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 58px, #1a1f32 58px 59px),
+    repeating-linear-gradient(90deg, transparent 0 70px, #1a1f32 70px 71px),
+    repeating-linear-gradient(30deg, transparent 0 148px, #1e2438 148px 149px); }
+.park { position:absolute; width:120px; height:88px; left:57%; top:56%; background:#74bd821f;
+  border:1px solid #74bd8259; border-radius:12px; transform:rotate(-6deg); }
+.map-head { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; align-items:center; gap:10px;
+  padding:12px 14px; font-size:13px; color:#82859a; background:#0e1220d9; border-bottom:1px solid #2b3350; }
+.map-head b { color:#e9e9e2; font-weight:600; }
+.map-toggle { margin-left:auto; display:flex; align-items:center; gap:7px; border:1px solid #4da3ff;
+  color:#4da3ff; border-radius:9px; padding:4px 11px; font-size:12px; font-weight:600; }
+.band { position:absolute; left:11%; top:16%; width:305px; height:280px; border:2px dashed #4da3ff99;
+  border-radius:52% 46% 54% 47%/47% 54% 46% 53%; }
+.band-lbl { position:absolute; left:14%; top:13.5%; z-index:4; font-size:12px; font-weight:600;
+  color:#0e1220; background:#4da3ff; border-radius:7px; padding:3px 10px; }
+.poi { position:absolute; z-index:4; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.poi .pin { width:14px; height:14px; border-radius:50% 50% 50% 4px; transform:rotate(-45deg);
+  background:#4da3ff; border:2px solid #0e1220; }
+.poi .plbl { font-size:12px; color:#e9e9e2; background:#0e1220d9; border:1px solid #2b3350;
+  border-radius:7px; padding:2px 9px; white-space:nowrap; }
+.pt { position:absolute; width:12px; height:12px; border-radius:50%; border:2px solid #0e1220; z-index:3; }
+.pt.exc { background:#74bd82; } .pt.bom { background:#d3b662; } .pt.mer { background:#8b8e99; }
+.pt.pen { background:#82859a; opacity:.55; }
+.pt.gone { background:transparent; border:2px solid #d05b4a; opacity:.65; }
+.pt.hover { box-shadow:0 0 0 3px #4da3ff55; }
+.legend { position:absolute; bottom:14px; right:14px; z-index:5; background:#0e1220d9;
+  border:1px solid #2b3350; border-radius:9px; padding:10px 13px; font-size:11px; color:#82859a; }
+.legend .row { display:flex; align-items:center; gap:8px; margin-top:5px; }
+.legend .sw { width:10px; height:10px; border-radius:50%; border:1px solid #0e1220; }
+.legend .sw.hollow { background:transparent; border:2px solid #d05b4a; opacity:.65; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">Imoveis</div>
+    <nav class="topnav">
+      <a class="active" href="#">Imóveis</a>
+      <a href="#">Favoritos</a>
+      <a href="#">Buscas salvas</a>
+      <a href="#">Alertas</a>
+      <a href="#">Busca</a>
+      <a href="#">Operações</a>
+    </nav>
+    <div class="top-right num">quinta, 5 de agosto · 21:07</div>
+  </div>
+
+  <!-- Desde sua última visita -->
+  <section class="since">
+    <div class="head">
+      <h2>Desde sua última visita</h2>
+      <p>novidades nas suas buscas salvas e favoritos</p>
+    </div>
+    <div class="items num">
+      <a href="#"><b>7</b><u>novos imóveis nos seus filtros</u></a>
+      <a href="#"><b>3</b><u>quedas de preço</u></a>
+      <a href="#"><b>2</b><u>anúncios saíram do ar</u></a>
+    </div>
+    <span class="win num">desde ter, há 2 dias</span>
+  </section>
+
+  <!-- Strip de saúde do operador -->
+  <div class="health num">
+    <span class="h"><span class="dot"></span>QuintoAndar <span class="v">há 2h</span></span>
+    <span class="h"><span class="dot warn"></span>OLX <span class="why">sem coleta há 26h (esperado: a cada 6h)</span></span>
+    <span class="h">Enriquecimento <span class="v">local — qwen2.5-vl</span></span>
+    <span class="h"><span class="dot"></span>Workers <span class="v">ok</span></span>
+    <span class="h">Cobertura de IA <span class="v">82%</span></span>
+    <span class="h"><span class="glyph">⚠</span>Backfill <span class="v">em execução · dia 3 de ~6</span></span>
+  </div>
+
+  <!-- Barra de filtros: só os ativos, teto de 2 linhas -->
+  <div class="filters">
+    <span class="chip on">área do mapa<span class="x">×</span></span>
+    <span class="chip on">Savassi +2<span class="x">×</span></span>
+    <span class="chip on">seguro<span class="x">×</span></span>
+    <span class="chip on num">até R$ 3.000<span class="x">×</span></span>
+    <span class="seg"><span class="on">Aluguel</span><span>Venda</span></span>
+    <span class="fbtn">Filtros (4)</span>
+    <span class="count num"><b>28</b> imóveis · <b>12</b> na área do mapa</span>
+  </div>
+
+  <div class="split">
+    <!-- ====== GRADE ====== -->
+    <div class="grid">
+
+      <!-- Excelente negócio · 2 fontes · queda -->
+      <article class="card">
+        <div class="photo">
+          <span class="srcs">2 fontes</span>
+          <div class="acts"><span class="fav on">★</span><span>×</span></div>
+          <span class="drop num">−8% desde julho</span>
+          <span class="fresh">visto hoje na OLX</span>
+        </div>
+        <div class="cardbody">
+          <span class="verdict v-exc">Excelente negócio</span>
+          <div class="line1"><span class="price serif num">R$ 2.450<small> /mês</small></span><span class="pctl">entre os 25% mais baratos</span></div>
+          <div class="hood serif">Savassi</div>
+          <div class="det num">2 quartos<span class="sep">·</span>68 m²<span class="sep">·</span>QuintoAndar + OLX</div>
+        </div>
+      </article>
+
+      <!-- Voltou ao mercado (fresco) -->
+      <article class="card">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          <span class="drop">voltou ao mercado</span>
+          <span class="fresh">visto hoje na OLX</span>
+        </div>
+        <div class="cardbody">
+          <span class="verdict v-bom">Bom preço</span>
+          <div class="line1"><span class="price serif num">R$ 2.150<small> /mês</small></span></div>
+          <div class="hood serif">Serra</div>
+          <div class="det num">3 quartos<span class="sep">·</span>82 m²<span class="sep">·</span>OLX</div>
+        </div>
+      </article>
+
+      <!-- Bom preço · badge ausente (percentil suprimido, ausência honesta) -->
+      <article class="card">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          <span class="fresh">visto ontem na QuintoAndar</span>
+        </div>
+        <div class="cardbody">
+          <span class="verdict v-bom">Bom preço</span>
+          <div class="line1"><span class="price serif num">R$ 3.100<small> /mês</small></span></div>
+          <div class="hood serif">Lourdes</div>
+          <div class="det num">3 quartos<span class="sep">·</span>95 m²<span class="sep">·</span>QuintoAndar</div>
+        </div>
+      </article>
+
+      <!-- Preço de mercado -->
+      <article class="card">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          <span class="fresh">visto há 3 dias na OLX</span>
+        </div>
+        <div class="cardbody">
+          <span class="verdict v-mer">Preço de mercado</span>
+          <div class="line1"><span class="price serif num">R$ 2.780<small> /mês</small></span></div>
+          <div class="hood serif">Funcionários</div>
+          <div class="det num">2 quartos<span class="sep">·</span>74 m²<span class="sep">·</span>OLX</div>
+        </div>
+      </article>
+
+      <!-- Pendente (tracejado, sem veredito) -->
+      <article class="card">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+          <span class="fresh">visto hoje na OLX</span>
+        </div>
+        <div class="cardbody">
+          <span class="pend-tag">análise de IA pendente</span>
+          <div class="line1"><span class="price serif num">R$ 1.890<small> /mês</small></span></div>
+          <div class="hood serif">Buritis</div>
+          <div class="det num">2 quartos<span class="sep">·</span>60 m²<span class="sep">·</span>OLX</div>
+        </div>
+      </article>
+
+      <!-- Saiu do ar (gone, dessaturado, sem veredito) -->
+      <article class="card gone">
+        <div class="photo">
+          <div class="acts"><span class="fav">☆</span><span>×</span></div>
+        </div>
+        <div class="cardbody">
+          <span class="gone-note">provavelmente alugado — sem atualização há 16 dias</span>
+          <div class="line1"><span class="price serif num">R$ 2.900<small> /mês</small></span></div>
+          <div class="hood serif">Savassi</div>
+          <div class="det num">2 quartos<span class="sep">·</span>70 m²<span class="sep">·</span>QuintoAndar</div>
+        </div>
+      </article>
+
+    </div>
+
+    <!-- ====== MAPA ====== -->
+    <aside class="map">
+      <div class="streets"></div>
+      <div class="park"></div>
+      <div class="map-head"><b>BH · centro-sul</b>
+        <span class="map-toggle">✓ filtrar pela área do mapa</span>
+      </div>
+
+      <div class="band"></div>
+      <div class="band-lbl">até 15 min da Igreja</div>
+
+      <div class="poi" style="left:29%; top:34%"><span class="pin"></span><span class="plbl">Igreja</span></div>
+      <div class="poi" style="left:60%; top:22%"><span class="pin"></span><span class="plbl">Casa dos pais</span></div>
+      <div class="poi" style="left:67%; top:66%"><span class="pin"></span><span class="plbl">Casa da namorada</span></div>
+
+      <span class="pt exc hover" style="left:38%; top:44%"></span>
+      <span class="pt exc" style="left:25%; top:29%"></span>
+      <span class="pt bom" style="left:48%; top:38%"></span>
+      <span class="pt bom" style="left:55%; top:56%"></span>
+      <span class="pt mer" style="left:62%; top:47%"></span>
+      <span class="pt pen" style="left:21%; top:60%"></span>
+      <span class="pt exc" style="left:43%; top:72%"></span>
+      <span class="pt gone" style="left:33%; top:52%"></span>
+
+      <div class="legend">
+        <div class="row"><span class="sw" style="background:#74bd82"></span>Excelente negócio</div>
+        <div class="row"><span class="sw" style="background:#d3b662"></span>Bom preço</div>
+        <div class="row"><span class="sw" style="background:#8b8e99"></span>Preço de mercado</div>
+        <div class="row"><span class="sw" style="background:#d05b4a"></span>Acima do mercado</div>
+        <div class="row"><span class="sw" style="background:#82859a; opacity:.55"></span>análise pendente</div>
+        <div class="row"><span class="sw hollow"></span>saiu do ar</div>
+      </div>
+    </aside>
+  </div>
+
+</div>
+</body>
+</html>
