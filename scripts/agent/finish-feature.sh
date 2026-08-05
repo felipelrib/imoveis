@@ -128,11 +128,15 @@ fi
 # v0.13-fu1; legacy bin-147-… → BIN-147).
 derive_story_key() {
   local desc="${BRANCH#*/}"
+  # setup-branch.sh sanitizes branch names (dots → dashes), so accept BOTH
+  # v0.13-s1.1 / v0.13-fu1 and their sanitized v0-13-s1-1 / v0-13-fu1 forms,
+  # always emitting the canonical dotted key.
+  local key
   case "$desc" in
-    v[0-9]*.[0-9]*-s[0-9]*.[0-9]*)
-      printf '%s' "$desc" | grep -oE '^v[0-9]+\.[0-9]+-s[0-9]+\.[0-9]+' ;;
-    v[0-9]*.[0-9]*-fu[0-9]*)
-      printf '%s' "$desc" | grep -oE '^v[0-9]+\.[0-9]+-fu[0-9]+' ;;
+    v[0-9]*)
+      key="$(printf '%s' "$desc" | grep -oE '^v[0-9]+[.-][0-9]+-(s[0-9]+[.-][0-9]+|fu[0-9]+)')" || return 1
+      printf '%s' "$key" | sed -E 's/^v([0-9]+)[.-]([0-9]+)/v\1.\2/; s/-s([0-9]+)[.-]([0-9]+)$/-s\1.\2/'
+      ;;
     [Bb][Ii][Nn]-[0-9]*)
       printf '%s' "$desc" | grep -oiE '^bin-[0-9]+' | tr 'a-z' 'A-Z' ;;
     *) return 1 ;;

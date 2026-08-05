@@ -122,4 +122,4 @@ development_status:
   epic-8-retrospective: optional
 
   # v0.13 pre-story harness track (PRD §6.2 gate — process, not FR)
-  v0.13-fu1-harness-surgery: review
+  v0.13-fu1-harness-surgery: done
