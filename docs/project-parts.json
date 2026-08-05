@@ -1,0 +1,40 @@
+{
+  "repository_type": "monorepo",
+  "generated": "2026-08-05",
+  "generator": "bmad-document-project (quick scan)",
+  "parts": [
+    {
+      "part_id": "api",
+      "display_name": "Backend API & Pipeline",
+      "project_type_id": "backend",
+      "root_path": "src/",
+      "language": "Python 3.11",
+      "framework": "FastAPI + Celery",
+      "architecture_pattern": "layered ports-and-adapters",
+      "docs": [
+        "architecture-api.md",
+        "api-contracts-api.md",
+        "data-models-api.md"
+      ]
+    },
+    {
+      "part_id": "frontend",
+      "display_name": "Deal Dashboard SPA",
+      "project_type_id": "web",
+      "root_path": "frontend/",
+      "language": "TypeScript",
+      "framework": "React 19 + Vite 8",
+      "architecture_pattern": "component-based SPA",
+      "docs": [
+        "architecture-frontend.md",
+        "component-inventory-frontend.md"
+      ]
+    }
+  ],
+  "integration_points": [
+    { "from": "frontend", "to": "api", "type": "REST/JSON", "details": "API-key gated; public_id property routes" },
+    { "from": "api", "to": "workers", "type": "Celery via Redis", "details": "task_routes split scraper vs AI queues" },
+    { "from": "worker_scraper", "to": "platforms", "type": "HTTP + FlareSolverr", "details": "QuintoAndar, OLX, ZapImoveis; circuit breaker + checkpoints" },
+    { "from": "worker_ai", "to": "ollama", "type": "HTTP", "details": "GPU-semaphored local models" }
+  ]
+}

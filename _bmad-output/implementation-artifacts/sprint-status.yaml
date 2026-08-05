@@ -1,6 +1,12 @@
 # generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-07-27T21:10:00-03:00
+# last_updated: 2026-08-05T12:00:00-03:00
 # project: Imoveis — Deal Tracker
+#
+# NOTE (2026-08-05, correct-course): ALL epics below are delivered. Epic 7
+# (v0.7 dual listing-type scoring, BIN-83/BIN-84 area) was delivered via
+# Linear only and never tracked in this file — recorded below for the gap.
+# This file awaits regeneration by bmad-sprint-planning once the next wave's
+# PRD/architecture/epics exist (see sprint-change-proposal-2026-08-05.md).
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: {project-root}/_bmad-output/implementation-artifacts
@@ -45,7 +51,7 @@
 # - Epic 8 order: 8.1 ∥ 8.2 → 8.3 → 8.4 → 8.5/8.6 (after 8.1) → 8.7 last.
 
 generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-07-27T21:10:00-03:00
+last_updated: 2026-08-05T12:00:00-03:00
 project: Imoveis — Deal Tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -94,6 +100,10 @@ development_status:
   6-9-blend-neighbourhood-profiles-into-scoring-ui: done
   6-10-selective-ai-enrichment-re-run-controls: done
   epic-6-retrospective: optional
+
+  # Epic 7 = v0.7 dual listing-type scoring (BIN-83/BIN-84) — delivered via
+  # Linear/feature-pipeline only; added retroactively 2026-08-05 for the record.
+  epic-7: done
 
   # Epic 8 = BIN-63 (BIN-97..103) — Product i18n (pt-BR first)
   epic-8: done

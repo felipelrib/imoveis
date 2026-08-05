@@ -18,6 +18,11 @@ notes: >
   BIN-34 stack seed refreshed on this branch before extraction (React 19 / Vite 8 /
   PostGIS+pgvector). FR-1..17 are shipped baseline; v0.5 delivery focus is FR-18..22
   with FR-23 opportunistic. Linear Future seeds BIN-19..23 map to FR-18..22.
+delivery-status: >
+  DELIVERED 2026-07-27 — Epics 1-5 (BIN-19..23) all Done in Linear; FR-23 also shipped
+  later (ZapImóveis, BIN-127). This document is a historical record, not an active plan.
+  Per sprint-change-proposal-2026-08-05, the next wave's epics will be generated fresh
+  after the PRD and architecture updates. Do not extend this file.
 ---
 
 # Imoveis — Deal Tracker - Epic Breakdown

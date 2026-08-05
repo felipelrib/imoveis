@@ -1,0 +1,50 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": { "started": "2026-08-05T12:00:00Z", "last_updated": "2026-08-05T12:30:00Z", "completed": "2026-08-05T12:30:00Z" },
+  "mode": "full_rescan",
+  "scan_level": "quick",
+  "project_root": "/home/felipe/workfolder/imoveis",
+  "project_knowledge": "docs",
+  "project_classification": "monorepo, 2 parts (api: backend Python/FastAPI; frontend: web React/Vite)",
+  "project_types": [
+    { "part_id": "api", "project_type_id": "backend", "display_name": "Backend API & Pipeline" },
+    { "part_id": "frontend", "project_type_id": "web", "display_name": "Deal Dashboard SPA" }
+  ],
+  "completed_steps": [
+    { "step": "step_1", "status": "completed", "timestamp": "2026-08-05T12:05:00Z", "summary": "Classified as monorepo with 2 parts (api=backend, frontend=web) via directory/manifest patterns" },
+    { "step": "step_2", "status": "completed", "timestamp": "2026-08-05T12:07:00Z", "summary": "Found existing docs: index.md, setup.md, architecture.md, api.md, harness-troubleshooting.md, 169 feature docs, 4 ADRs, MkDocs site" },
+    { "step": "step_3", "status": "completed", "timestamp": "2026-08-05T12:10:00Z", "summary": "Tech stack: FastAPI+Celery+PostGIS17+pgvector on Python 3.11; React 19+Vite 8 TypeScript SPA" },
+    { "step": "step_4", "status": "completed", "timestamp": "2026-08-05T12:15:00Z", "summary": "Quick pattern scan: 40+ API routes across 9 routers, 14 DB tables, 24 alembic migrations, 16 Celery tasks, 11 frontend components, 5 hooks" },
+    { "step": "step_5", "status": "completed", "timestamp": "2026-08-05T12:18:00Z", "summary": "source-tree-analysis.md written (annotated tree, entry points, critical folders)" },
+    { "step": "step_6", "status": "completed", "timestamp": "2026-08-05T12:20:00Z", "summary": "Dev setup (scripts/agent gates) and compose/CI deployment info extracted" },
+    { "step": "step_7", "status": "completed", "timestamp": "2026-08-05T12:22:00Z", "summary": "integration-architecture.md written (4 primary integration points)" },
+    { "step": "step_8", "status": "completed", "timestamp": "2026-08-05T12:25:00Z", "summary": "architecture-api.md and architecture-frontend.md written" },
+    { "step": "step_9", "status": "completed", "timestamp": "2026-08-05T12:27:00Z", "summary": "Supporting docs written: project-overview, api-contracts-api, data-models-api, component-inventory-frontend, development-guide, deployment-guide, project-parts.json" },
+    { "step": "step_10", "status": "completed", "timestamp": "2026-08-05T12:28:00Z", "summary": "Documentation index merged into existing MkDocs docs/index.md (homepage content preserved); no (To be generated) markers needed — all docs written" },
+    { "step": "step_11", "status": "completed", "timestamp": "2026-08-05T12:29:00Z", "summary": "Validation: all 11 outputs exist on disk, index links valid, zero incomplete markers" },
+    { "step": "step_12", "status": "completed", "timestamp": "2026-08-05T12:30:00Z", "summary": "Workflow complete" }
+  ],
+  "current_step": "completed",
+  "findings": {
+    "technology_stack": "FastAPI/Celery/PostGIS/pgvector/Ollama backend; React19/Vite8/TS frontend",
+    "api_summary": "40+ endpoints across 9 routers",
+    "data_summary": "14 tables, 24 migrations",
+    "components_summary": "11 components, 5 hooks, 3 pages"
+  },
+  "outputs_generated": [
+    "project-scan-report.json",
+    "project-overview.md",
+    "source-tree-analysis.md",
+    "architecture-api.md",
+    "architecture-frontend.md",
+    "api-contracts-api.md",
+    "data-models-api.md",
+    "component-inventory-frontend.md",
+    "development-guide.md",
+    "deployment-guide.md",
+    "integration-architecture.md",
+    "project-parts.json",
+    "index.md (merged Project Documentation Index section)"
+  ],
+  "resume_instructions": "Workflow complete; nothing to resume"
+}
