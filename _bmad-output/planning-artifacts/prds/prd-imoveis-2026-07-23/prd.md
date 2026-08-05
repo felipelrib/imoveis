@@ -1,9 +1,12 @@
 ---
 title: Imoveis — Deal Tracker
-status: final
+status: superseded
 created: 2026-07-23
-updated: 2026-07-23
+updated: 2026-08-05
+superseded_by: prds/prd-imoveis-2026-08-05/prd.md
 ---
+
+> **Superseded 2026-08-05.** All planned scope here (v0.5 / FR-18–FR-23) shipped; see the successor PRD for the current baseline (v0.1–v0.12) and v0.13 plan. FR-1–FR-17 definitions remain of record in this document.
 
 # PRD: Imoveis — Deal Tracker
 
