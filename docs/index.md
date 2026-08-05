@@ -8,7 +8,7 @@ A local-first real-estate deal-finding tool that scrapes multiple rental/sale pl
 |-----------|-----------|---------|
 | API | FastAPI | REST endpoints, admin controls |
 | Task Queue | Celery + Redis | Async scraping, AI enrichment |
-| Database | PostgreSQL 15 + PostGIS | Geospatial property storage |
+| Database | PostgreSQL 17 + PostGIS | Geospatial property storage |
 | AI | Ollama / LM Studio | Local VLM + text models |
 | Frontend | React 18 + Vite | Score-coloured property grid |
 | Config | Pydantic + YAML | Single source of truth |

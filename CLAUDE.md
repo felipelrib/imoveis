@@ -18,7 +18,7 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 |-------------|--------------------------|-----------------------------------|
 | API         | FastAPI                  | REST endpoints, admin controls    |
 | Task Queue  | Celery + Redis           | Async scraping, AI enrichment     |
-| Database    | PostgreSQL 15 + PostGIS + pgvector | Geospatial + embedding storage |
+| Database    | PostgreSQL 17 + PostGIS + pgvector | Geospatial + embedding storage |
 | AI          | Ollama / LM Studio       | Local VLM + text models           |
 | Frontend    | React 19 + Vite 8        | Score-coloured property grid      |
 | Config      | Pydantic + YAML          | Single source of truth            |
