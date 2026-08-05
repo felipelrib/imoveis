@@ -5,403 +5,365 @@ stepsCompleted:
   - step-03-create-stories
   - step-04-final-validation
 status: complete
-completed: 2026-07-23
+completed: 2026-08-05
+linearSync: >
+  PARTIAL 2026-08-05 — milestone "v0.13 — Hybrid enrichment productized & deal intelligence"
+  (539c2b79-7b9a-4523-ac28-3b527b3ad5d1) + parents BIN-273 (Epic 1) / BIN-274 (Epic 2) +
+  child BIN-275 (Story 1.1) created; remaining 7 children (1.2–1.6, 2.1–2.4 minus 1.1)
+  blocked by the Linear free-plan issue limit. Resume: create children from the stories
+  below under their parent, then wire blockedBy 1.2←1.1, 1.3←1.1, 1.4←1.1, 1.5←1.3,
+  1.6←1.4+1.5, 2.2←2.1, 2.4←2.3.
 inputDocuments:
-  - _bmad-output/planning-artifacts/prds/prd-imoveis-2026-07-23/prd.md
-  - _bmad-output/planning-artifacts/prds/prd-imoveis-2026-07-23/addendum.md
-  - _bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/ARCHITECTURE-SPINE.md
-  - _bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/COMPANION-architecture-delta.md
-  - docs/architecture.md
+  - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
+  - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
+  - '_bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/ARCHITECTURE-SPINE.md'
+  - '_bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/COMPANION-architecture-delta.md'
+  - '_bmad-output/planning-artifacts/sprint-change-proposal-2026-08-05.md'
 excludedDocuments:
-  - UX design contract (none present; brownfield pass without bmad-ux)
-notes: >
-  BIN-34 stack seed refreshed on this branch before extraction (React 19 / Vite 8 /
-  PostGIS+pgvector). FR-1..17 are shipped baseline; v0.5 delivery focus is FR-18..22
-  with FR-23 opportunistic. Linear Future seeds BIN-19..23 map to FR-18..22.
-delivery-status: >
-  DELIVERED 2026-07-27 — Epics 1-5 (BIN-19..23) all Done in Linear; FR-23 also shipped
-  later (ZapImóveis, BIN-127). This document is a historical record, not an active plan.
-  Per sprint-change-proposal-2026-08-05, the next wave's epics will be generated fresh
-  after the PRD and architecture updates. Do not extend this file.
+  - 'UX design contract (none present; brownfield pass without bmad-ux)'
+  - 'epics-delivered-2026-07-27.md (historical Epics 1–5 record — fresh set, not an extension)'
+supersedes: 'epics-delivered-2026-07-27.md (Epics 1–5, BIN-19…23, delivered)'
+planningTarget: 'v0.13'
+created: 2026-08-05
 ---
 
-# Imoveis — Deal Tracker - Epic Breakdown
+# imoveis - Epic Breakdown (v0.13)
 
 ## Overview
 
-This document provides the complete epic and story breakdown for Imoveis — Deal Tracker, decomposing the requirements from the PRD, UX Design if it exists, and Architecture requirements into implementable stories.
+This document provides the complete epic and story breakdown for **imoveis v0.13**, decomposing the requirements from the PRD (2026-08-05), its addendum, and the Architecture Spine (updated 2026-08-05) into implementable stories. The prior epic set (Epics 1–5, delivered 2026-07-27 as BIN-19…23) is archived at `epics-delivered-2026-07-27.md`; this is a fresh set, not an extension.
+
+**Scope of this set:** v0.13 Theme A (FR-27, FR-28, FR-29 — cloud/local AI-enrichment split productization) and the Theme B cut decided at epics time (FR-30 + FR-32; FR-31 deferred). Baseline FR-1–FR-26 is shipped (v0.1–v0.12) and receives no new stories.
 
 ## Requirements Inventory
 
 ### Functional Requirements
 
-FR-1: Operator can enable/disable platforms via config and run scrapes that normalize into Listings (pluggable scrapers with circuit breakers).
-FR-2: System runs scrapes on a configured Celery beat schedule without requiring manual POST /scrape (manual scrape remains available).
-FR-3: Interrupted scrapes resume from checkpoints without re-fetching completed pages.
-FR-4: System merges listings within configured geo/area/text thresholds into one Property while keeping per-platform Listing rows.
-FR-5: System records price intervals when a Listing price changes and exposes history via API/UI.
-FR-6: User can see rent/sale prices per platform on cards/modal.
-FR-7: Operator can select Ollama/LM Studio and model names via YAML.
-FR-8: System attaches visual condition and sentiment-style signals from local models.
-FR-9: Each enriched Property presents an English deal verdict on the card/modal. [Correct-course 2026-07-24 BIN-64; was PT-BR.]
-FR-10: System computes neighbourhood-relative scores and a combined score for colouring.
-FR-11: Re-scrapes of unchanged Listings do not re-enqueue expensive AI tasks.
-FR-12: User can filter the property grid by neighbourhood, price, score, listing type, etc., with non-blocking errors/toasts.
-FR-13: User can browse Properties on a map and filter by viewport bbox.
-FR-14: User can star Properties and persist named filter sets (single-tenant today).
-FR-15: User can query Properties with natural language via embeddings (`q=`). [Shipped BIN-18; hygiene reconcile BIN-38 Done.]
-FR-16: User can watch a Property and receive notifications when price drops past threshold.
-FR-17: Operator can inspect health, queues, GPU scale, schedules, and enrichment throughput.
-FR-18: User can select 2–4 Properties and compare attributes, scores, price/m², and price history in one view. [v0.5; Linear seed BIN-19]
-FR-19: User/operator can supply API credentials via env/UI gate instead of hardcoded frontend secrets; nullable `owner` columns become meaningful. [v0.5; Linear seed BIN-20]
-FR-20: Operator can enable a rotating proxy pool from YAML for scale/anti-block. [v0.5; Linear seed BIN-21]
-FR-21: User can export a filtered result set (CSV/JSON) and optionally receive a scheduled “top new deals” digest. [v0.5; Linear seed BIN-22]
-FR-22: System assigns Properties to neighbourhoods by spatial containment when geometry is populated, improving score cohorts. [v0.5; Linear seed BIN-23]
-FR-23: Product may add ZapImóveis (or others) as first-class scrapers. [Backlog intent; not committed for v0.5 unless capacity remains.]
+**Shipped baseline (v0.1–v0.12 — no new stories; definition of record: superseded PRDs + `docs/features/`):**
+
+- FR-1–FR-3: pluggable scraper platform, scheduled scraping, checkpoint/resume.
+- FR-4–FR-6: cross-platform dedupe, price history, per-platform price comparison.
+- FR-7–FR-11: local AI enrichment (visual condition, sentiment, statistical valuation, deal verdict), skip-unchanged.
+- FR-12–FR-15: discovery UX (score-coloured grid, filters, favourites/saved searches, semantic search).
+- FR-16–FR-17: watchlist price-drop alerts, admin/ops telemetry.
+- FR-18–FR-23: comparison UI, auth/API-key gate, proxy rotation, export + digest, neighbourhood polygons, ZapImóveis platform.
+- FR-24–FR-26: neighbourhood quality profiles, dual listing-type scoring, listing-description enrichment.
+
+**v0.13 planned (this epic set):**
+
+FR-27: First-class multi-backend enrichment routing. Operator selects enrichment backends per task class (e.g. text signals → cloud-eligible, visual → local) via `AppConfig`, with documented semantics, validation at startup, and contract coverage. Local Ollama/LM Studio remains the default and the permanent fallback — cloud never becomes required (NFR-1). Testable consequences: (a) invalid backend/task-class combinations fail fast at config load with a clear error, not mid-pipeline; (b) with cloud unavailable (no key, quota exhausted, network down), enrichment degrades to the local path without operator intervention.
+
+FR-28: Quota-governed cloud backfill as a product surface. The resumable backfill runner graduates from `scripts/dev` to an operator-facing operation: start/pause/resume, progress and pacing state visible, safe-by-construction quota use. The single Redis pacer (`backfill:gemma`) remains the only budget owner; no second consumer of the quota is ever added. Testable consequences: (a) a backfill interrupted at any point (crash, quota exhaustion, operator stop) resumes without re-enriching completed rows; (b) daily request count never exceeds the configured budget; provider `ResourceExhausted` triggers back-off, not failure.
+
+FR-29: Enrichment coverage telemetry. Operator can see, per signal type, what fraction of Properties is enriched, backfill throughput, and a projected completion date for an active backfill. Testable consequence: coverage figures derive from the DB (not runner logs) and survive runner restarts.
+
+FR-30: Price-per-m² percentile views. User sees where a Property's price/m² falls within its neighbourhood cohort (percentile on card/modal, filterable). Cohorts come from shipped neighbourhood polygons (FR-22) + dual-type scoring (FR-25); no new geo work.
+
+FR-32: Saved-search new-match alerts. A saved search can notify when a **new** Property matching it appears — extending alerts beyond watched-property price drops. Reuses the shipped notifier registry (FR-21) and saved searches (FR-14); no new channel work for v1.
+
+**Theme B cut (decided at epics time, 2026-08-05):** FR-30 + FR-32 are in; **FR-31 (total-cost-of-occupancy normalization) is deferred** — it carries the worst data-availability risk (partial platform fee coverage, PRD §9 Q2), and the v0.13 success metric requires ≥1 Theme B FR; the chosen pair ships two with bounded risk. FR-31 stays on the debt ledger for a later wave.
+
+**FR-28 surface decision (PRD §9 Q1, decided at epics time):** admin-panel exposure **is** the v0.13 target, built as slices — hardened runner control core (lease, pause/resume semantics) first, then auth-gated admin API + panel visibility/control, with FR-29 telemetry landing independently. A CLI-only cut remains the fallback slice if the wave must shrink.
 
 ### NonFunctional Requirements
 
-NFR-1: Local-first — core enrichment and storage run on operator hardware; no required cloud AI.
-NFR-2: Config discipline — runtime settings only via AppConfig / configs/app_config.yaml (+ env); no scattered os.getenv in feature code.
-NFR-3: Security — no hardcoded production secrets; forbid imoveis_secret / dev-secret-key in repo; admin routes require API key when configured.
-NFR-4: Resilience — circuit breakers and checkpoints keep scrapes operable under partial platform failure.
-NFR-5: Testability — merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security) via scripts/agent gates.
-NFR-6: Observability — pipeline telemetry and system health endpoints support unattended operation.
-NFR-7: i18n — user-facing product language (UI + AI) defaults to English; pt-BR supported (catalogs + ui.locale preference). Planning docs stay English. Further locales via docs/i18n/add-a-locale.md (BIN-63 / BIN-103). Canonical DB/API wire remains English. Correct-course 2026-07-24 (BIN-64); multi-locale ship 2026-07-28.
-NFR-8: Single-operator privacy posture — BH/MG geographic focus until multi-city is explicitly productized.
+NFR-1: Local-first with bounded cloud assist — core enrichment and storage run on operator hardware; no *required* cloud AI. Sanctioned exception: the quota-bounded, operator-triggered, batch-only cloud-assist path (Gemini/Gemma free tier) may accelerate backfill, never gate core function; the local path is never removed.
+
+NFR-2: Config discipline — runtime settings via `AppConfig` / `configs/app_config.yaml` (+ env), never scattered `os.getenv` in feature code.
+
+NFR-3: Security — no hardcoded production secrets; `imoveis_secret` / `dev-secret-key` forbidden in repo; admin routes require API key when configured; cloud API keys via env only.
+
+NFR-4: Resilience — circuit breakers and checkpoints keep scrapes operable under partial platform failure; quota exhaustion degrades to local enrichment, not outage.
+
+NFR-5: Testability — merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security); gates preserved unchanged across the SoR pivot.
+
+NFR-6: Observability — pipeline telemetry and system health support unattended operation; extended in v0.13 to enrichment coverage and backfill pacing (FR-29).
+
+NFR-7: i18n — English default; pt-BR supported via catalogs + preference (`ui.locale` / Redis); canonical DB/API wire values remain English; new user-facing strings must land in both catalogs.
+
+NFR-8: Geography & tenancy posture — BH/MG primary geography, opportunistic SP/Campinas data; single-tenant personalization (nullable `owner`) until multi-city / multi-profile is explicitly productized.
 
 ### Additional Requirements
 
-- Brownfield retrofit: no greenfield starter template; ratify existing hexagonal + pipeline layout (AD paradigm).
-- AD-1: `core` must not import `adapters`/`api` (ideal); existing core→ORM/alert leaks are explicit debt — burn down via dedicated stories, do not add more.
-- AD-2: Runtime settings only via AppConfig (aligns NFR-2).
-- AD-3: Property = canonical home; Listing = platform offer; identity/merge mutation lives in dedupe path — not ad-hoc in API handlers.
-- AD-4: AI enrichment only via Celery `ai` queue; API never calls models inline.
-- AD-5: New platforms only via BaseScraper + @register + AppConfig; resilience is part of scraper contract (FR-20 proxy plugs here).
-- AD-6 + AD-11: Auth/session only at API edge; one principal owns personalization + digest subscriber (FR-19 × FR-21).
-- AD-7: Supported topology = Docker Compose + host-local AI (Ollama and/or LM Studio); no required cloud SaaS AI.
-- AD-8: React talks only to FastAPI (no direct Redis/DB/Ollama from browser).
-- AD-9: Alerts/digests fan-out via Celery + one notifier preference registry (FR-16, FR-21).
-- AD-10: Single ordered pipeline write authority for enrichment (closes FR-22 × AI dual-writer risk).
-- AD-12: One API-owned versioned property projection for grid / compare / export / digest (FR-18 × FR-21).
-- Stack seed (refreshed): Python 3.11, FastAPI/Celery unpinned-with-venv pins, React 19.2.8, Vite 8.1.5, Postgres via Dockerfile.postgres (PostGIS 15-3.3 + pgvector v0.8.0).
-- Implementation gates remain Imoveis scripts (validate.sh, finish-feature, babysit) — BMad does not replace them.
-- Parallel-worktree Compose port isolation stays harness/ADR 0004 (not product epic).
-- Open product questions (do not invent answers in stories): FR-18–22 priority order; FR-21 email vs in-app; FR-19 API-key-only vs local profiles; FR-22 polygon data source; FR-23 in v0.5 or not.
-- Pre-epic Linear map: FR-18↔BIN-19, FR-19↔BIN-20, FR-20↔BIN-21, FR-21↔BIN-22, FR-22↔BIN-23 (promote/rewrite/supersede; do not invent parallel backlog).
-- Ticket altitude (companion): cite applicable ADs, code location, forbidden patterns, special validate gates; skip class diagrams and git-rebase instructions.
+**From the Architecture Spine (binding on story design):**
+
+- **AD-13 (cloud assist, bounded):** cloud path is optional, operator-triggered, batch-backfill-only. Incremental (live Celery) enrichment always routes to local backends; FR-27's per-task-class routing decides cloud-*eligibility for backfill* only. Every cloud request is metered by the single Redis pacer (`BackfillConfig.redis_prefix`, default `backfill:gemma`). Config that would produce an unmetered cloud call (e.g. legacy scalar `ai.backend: gemini|gemma` on a live path) must fail FR-27's startup validation, not run silently. Backend routing has **one** AppConfig-owned source of truth (the FR-27 task-class map supersedes the scalar key) with one startup validator. At most one runner instance holds the backfill lease (CLI and admin surface share it); budget consumption is atomic under that lease. An active backfill is operator-visible; quota exhaustion / provider errors back off or degrade to local — never outages.
+- **Canonical vocabulary:** one enum of enrichment task classes / signal types shared by FR-27 routing, FR-28 backfill scope, and FR-29 coverage — no per-feature vocabularies.
+- **FR-29 data source:** coverage/ETA derives from the **DB**; runner Redis checkpoints are internal pacing state, never a second progress metric.
+- **Derived cohort stats (FR-30):** computed in the metrics/enrichment pipeline stage (AD-10), on a single price basis defined there, cohort-keyed **neighbourhood × listing type**, with a config-owned min-cohort size (AD-2); consumed read-only via the AD-12 canonical projection — no read-time re-derivation in views. Percentiles on cohorts below min size are suppressed, not shown (counter-metric: signal noise).
+- **FR-32 delivery path:** notifications go through Celery + the single notifier preference registry (AD-9); subscription identity uses the single principal model (AD-11); saved-search matching must not create a second writer of Property/Listing fields (AD-3).
+- **Admin surface (FR-28):** auth-gated at the API edge and audited (`admin_audit`, AD-6); frontend talks only to the FastAPI surface (AD-8).
+- **Backfill runner status (AD-4/AD-10):** sanctioned second *driver* through the single enrichment pipeline authority — never a second writer; does no GPU work; if it ever gains a local-backend mode, that mode goes through the `ai` queue + semaphore.
+- **Brownfield:** no starter template; all work lands in the existing `src/` hexagonal layout. `core` must not import `adapters`/`api` (AD-1) — do not add new leaks while touching `core/backfill_runner.py`.
+
+**Operational/process requirements:**
+
+- **Quota sizing basis (FR-28/29):** free-tier Gemma ≈ 30 RPM / 14,400 RPD best-case (`ResourceExhausted` can fire early); ~3 requests/property ⇒ ≈4,600 properties/day ⇒ whole-DB backfill is inherently multi-day (~6 days planning basis). Never plan single-day whole-DB cloud runs.
+- **Backfill vs validation collision:** `validate.sh`/`finish-feature.sh` recreate the primary Postgres container; FR-28's surface must make an active backfill visible precisely so this collision stops being tribal knowledge.
+- **Harness-track gate (process, not an FR):** SoR-pivot waves 3–4 (per-epic verification feeding the bmad-loop deferred-work ledger; CLAUDE.md rewrite + gate wiring via `bmad-customize`) complete **before** v0.13 story execution starts.
+- **Validation gates:** API schema changes update/run `src/tests/contract/`; DB schema changes run `alembic check`; AI prompt/client changes run `validate-ai.sh`; all merges through `validate.sh` + CI.
 
 ### UX Design Requirements
 
-None — no UX design contract (`ux-designs/`) included for this brownfield pass. UI stories for FR-18 (and related) will follow existing frontend patterns plus PRD assumptions until a later `bmad-ux` run if needed.
+No UX design contract exists for this wave (no `ux-designs/` folder or legacy UX documents in planning artifacts). UI work in FR-28 (admin backfill card), FR-29 (coverage telemetry display), FR-30 (percentile on card/modal + filter), and FR-32 (saved-search alert toggle) follows the shipped admin-panel and property-grid patterns plus NFR-7 i18n conventions.
 
 ### FR Coverage Map
 
-FR-1..FR-17: Baseline — shipped MVP (v0.1–v0.4 + BIN-18); no new delivery epic
-FR-18: Epic 1 — Compare properties side-by-side
-FR-19: Epic 2 — Own favourites, searches & watchlist (minimal auth)
-FR-20: Epic 3 — Scale scrapes with proxy rotation
-FR-21: Epic 4 — Export shortlists & weekly deal digest
-FR-22: Epic 5 — Neighbourhoods by map polygons
-FR-23: Deferred / Future — additional platforms (not a v0.5 delivery epic)
+FR-1–FR-26: Shipped baseline (v0.1–v0.12) — no epic in this set; definition of record in `docs/features/`.
+FR-27: Epic 1 — first-class multi-backend enrichment routing (task-class map, startup validation, local fallback).
+FR-28: Epic 1 — quota-governed cloud backfill as an operator surface (hardened runner control + admin API/panel).
+FR-29: Epic 1 — enrichment coverage telemetry (DB-derived coverage, throughput, ETA).
+FR-30: Epic 2 — price-per-m² percentile views (pipeline-computed cohort stats → projection → UI).
+FR-31: **Deferred (not covered in v0.13)** — worst data-availability risk; stays on the debt ledger.
+FR-32: Epic 2 — saved-search new-match alerts (matcher on the pipeline, notifier registry delivery, UI toggle).
 
 ## Epic List
 
-### Epic 1: Compare properties side-by-side
-User selects 2–4 Properties and compares attributes, scores, price/m², and price history in one view.
-**FRs covered:** FR-18
+### Epic 1: Hybrid Enrichment, Productized (Theme A)
 
-### Epic 2: Own favourites, searches & watchlist (minimal auth)
-Operator/user supplies API credentials via env/UI gate; favourites, saved searches, and watchlist become owned by a principal (no hardcoded frontend secret).
-**FRs covered:** FR-19
+Felipe (operator) runs the cloud/local AI-enrichment split as a sanctioned, observable product capability instead of operator folklore: per-task-class backend routing validated at startup, a quota-governed cloud backfill he can start/pause/resume from the admin surface and leave unattended for its multi-day run, and DB-derived coverage telemetry showing % enriched, throughput, and a credible ETA. Cloud stays optional — with no key or exhausted quota, everything degrades to local Ollama without intervention. Realizes UJ-3, UJ-4.
 
-### Epic 3: Scale scrapes with proxy rotation
-Operator enables a rotating proxy pool from YAML so scrapers stay resilient under block pressure.
-**FRs covered:** FR-20
+**FRs covered:** FR-27, FR-28, FR-29
+**NFRs in play:** NFR-1, NFR-2, NFR-3, NFR-4, NFR-6
+**Governed by:** AD-13, AD-2, AD-4, AD-6, AD-8, AD-10, AD-12 (coverage projection); canonical task-class enum convention
 
-### Epic 4: Export shortlists & weekly deal digest
-User exports a filtered result set (CSV/JSON) and can optionally get a scheduled “top new deals” digest.
-**FRs covered:** FR-21
+### Epic 2: Deal-Intelligence Deepening (Theme B cut)
 
-### Epic 5: Neighbourhoods by map polygons
-Properties land in neighbourhoods via spatial containment when geometry is populated, improving score cohorts.
-**FRs covered:** FR-22
+Ana and Bruno (users) get sharper deal signals than one combined score: every property card/modal shows where its price/m² falls within its neighbourhood × listing-type cohort (filterable, suppressed on too-small cohorts), and saved searches notify when a **new** matching property appears — so a good deal surfaces without rebuilding filters every evening. Realizes UJ-1, UJ-2.
 
-## Linear Sync (BIN-35)
+**FRs covered:** FR-30, FR-32
+**NFRs in play:** NFR-6, NFR-7, NFR-8
+**Governed by:** AD-10 (cohort stats in pipeline stage), AD-12 (read-only projection), AD-3, AD-8, AD-9 (one notifier registry), AD-11 (principal model)
 
-Promoted Future seeds → v0.5 epics; stories created as children.
+**Epic dependencies:** None between the two — Epic 2 touches the metrics/alerts/UI surfaces, Epic 1 the AI-routing/backfill/telemetry surfaces; they share no core files and can run in parallel after the harness-track gate. Within Epic 1, the canonical task-class enum story is the foundation for everything else.
 
-| Epic | Linear | Stories |
-| --- | --- | --- |
-| Epic 1 Compare | [BIN-19](https://linear.app/felipelrib/issue/BIN-19) | BIN-41, BIN-42, BIN-43 |
-| Epic 2 Auth / ownership | [BIN-20](https://linear.app/felipelrib/issue/BIN-20) | BIN-44, BIN-46, BIN-45 |
-| Epic 3 Proxy rotation | [BIN-21](https://linear.app/felipelrib/issue/BIN-21) | BIN-47, BIN-48, BIN-49 |
-| Epic 4 Export / digest | [BIN-22](https://linear.app/felipelrib/issue/BIN-22) | BIN-50, BIN-51, BIN-52 |
-| Epic 5 Neighbourhood polygons | [BIN-23](https://linear.app/felipelrib/issue/BIN-23) | BIN-53, BIN-54, BIN-55 |
+## Epic 1: Hybrid Enrichment, Productized (Theme A)
 
-FR-23 remains deferred (no delivery epic).
-## Epic 1: Compare properties side-by-side
+Felipe (operator) runs the cloud/local AI-enrichment split as a sanctioned, observable product capability: per-task-class backend routing validated at startup (FR-27), a quota-governed cloud backfill controllable from CLI and admin surface under one lease (FR-28), and DB-derived coverage telemetry with a credible ETA (FR-29). Cloud stays optional and batch-only; local Ollama/LM Studio is the permanent default and fallback (NFR-1, AD-13).
 
-User selects 2–4 Properties and compares attributes, scores, price/m², and price history in one view.
+### Story 1.1: Canonical enrichment task classes + per-task-class routing config
 
-**FRs covered:** FR-18
-**Architecture:** AD-8, AD-3, AD-12
-**Linear seed:** BIN-19
-
-### Story 1.1: Canonical property projection for decisioning
-
-As a house-hunter,
-I want the API to expose one stable property projection (primary listing, price/m², scores, neighbourhood, enrichment fields),
-So that compare (and later export/digest) do not invent competing shapes.
+As the operator,
+I want one canonical vocabulary of enrichment task classes with a per-task-class backend routing map in `AppConfig`, validated at startup,
+So that routing, backfill scope, and coverage telemetry all speak the same language and misconfiguration fails fast instead of mid-pipeline.
 
 **Acceptance Criteria:**
 
-**Given** existing `PropertyModel` / `PropertyDetailModel` in `api`
-**When** a client requests property detail and/or a batch-by-ids endpoint for 2–4 ids
-**Then** responses include primary-listing price, price/m², scores, neighbourhood id/label, and enrichment fields needed for compare
-**And** primary-listing selection rules live once in `api` (AD-12), not re-flattened in React
-**And** contract/unit tests cover the projection; no scattered `os.getenv` (AD-2)
+**Given** the codebase has no shared enrichment vocabulary
+**When** this story lands
+**Then** a single enum of enrichment task classes / signal types exists in `src/core/` (framework-free, no adapter imports — AD-1) and is the only vocabulary used by routing, backfill scope, and coverage (consistency convention)
+**And** `AppConfig` gains a task-class → backend routing map (superseding the scalar `ai.backend` key as the single source of truth — AD-13, AD-2) with documented semantics in `configs/app_config.yaml`
 
-### Story 1.2: Multi-select properties for comparison
+**Given** a config with an invalid backend/task-class combination (unknown backend, unknown task class, or a cloud backend routed to a live/incremental path)
+**When** the application loads config
+**Then** startup fails with a clear, actionable error naming the offending key — not a mid-pipeline failure (FR-27)
+**And** the legacy scalar `ai.backend: gemini|gemma` (which would produce an unmetered cloud call on a live path) is rejected by the same validator (AD-13)
 
-As a house-hunter,
-I want to select 2–4 properties from the grid,
-So that I can open a comparison without juggling tabs.
+**Given** the default shipped config
+**When** config loads
+**Then** all task classes route to the local backend and validation passes (NFR-1 — local default; existing deployments keep working)
+**And** unit tests cover valid/invalid/legacy-scalar branches (TDD — `src/core/` + `src/infra/config.py` surface), clearing `get_config()`'s `lru_cache` per testing rules
 
-**Acceptance Criteria:**
+### Story 1.2: Live pipeline routes by task class with local fallback
 
-**Given** the Properties page with listed cards
-**When** I select between 2 and 4 properties
-**Then** a clear compare affordance is enabled
-**And** selecting a 5th is blocked or replaced with a non-blocking toast
-**And** clearing selection returns to normal browse
-**And** selection state talks only to the FastAPI client (AD-8)
-
-### Story 1.3: Side-by-side compare view
-
-As a house-hunter,
-I want a side-by-side view of selected properties (attributes, scores, price/m², price history),
-So that I can shortlist faster.
+As the operator,
+I want live enrichment to resolve its backend per task class through the new routing map, degrading to local automatically when cloud is unavailable,
+So that incremental enrichment never depends on cloud availability or quota (NFR-1, NFR-4).
 
 **Acceptance Criteria:**
 
-**Given** 2–4 selected property ids
-**When** I open Compare
-**Then** I see columns for each property with attributes, scores, price/m², and price history
-**And** data comes from the Story 1.1 projection / batch API only
-**And** missing enrichment fields degrade gracefully (empty/placeholder, not a hard crash)
-**And** I can exit compare and return to the grid with selection clearable
+**Given** the routing map from Story 1.1
+**When** the live Celery `ai`-queue pipeline (`src/adapters/ai/enrich_pipeline.py` / `client.py`) enriches a property
+**Then** each task class's backend is resolved from the map, and live/incremental work only ever executes on local backends (cloud-eligibility applies to backfill scope only — AD-13, AD-4)
+**And** no model call happens inline from an API request thread (AD-4)
 
-## Epic 2: Own favourites, searches & watchlist (minimal auth)
+**Given** a task class marked cloud-eligible while cloud is unavailable (no `GEMINI_API_KEY`, quota exhausted, or network down)
+**When** enrichment for that class runs via the backfill driver
+**Then** it degrades to the local path (or backs off, for budget exhaustion) without operator intervention and without marking the property failed (FR-27 consequence b, NFR-4)
 
-Operator/user supplies API credentials via env/UI gate; favourites, saved searches, and watchlist become owned by a principal (no hardcoded frontend secret).
+**Given** the AI prompt/client surface changed
+**When** the story completes
+**Then** `bash scripts/agent/validate-ai.sh` passes, and contract tests still hold (AI scores remain floats in [0.0, 1.0])
+**And** routing resolution has unit coverage for local-default, cloud-eligible, and degraded branches
 
-**FRs covered:** FR-19
-**Architecture:** AD-6, AD-2, AD-11
-**Linear seed:** BIN-20
-**Product note:** First cut is API-key / credential gate + single principal (not multi-profile SSO).
+### Story 1.3: Backfill runner control core — lease, pause/resume, safe interruption
 
-### Story 2.1: AppConfig-backed API credential at the edge
-
-As an operator,
-I want API auth to read credentials from AppConfig (not scattered env reads in feature modules),
-So that one principal model is enforceable at the API edge.
+As the operator,
+I want the resumable backfill runner hardened with a single-instance lease and explicit start/pause/resume/stop semantics,
+So that CLI and (later) admin surface can share control safely and an interrupted multi-day run always resumes without re-enriching or double-spending quota (FR-28).
 
 **Acceptance Criteria:**
 
-**Given** API_KEY / auth settings configured via AppConfig (+ env wiring)
-**When** a protected route is called without a valid credential
-**Then** the request is rejected at the API edge
-**And** auth verification does not use ad-hoc `os.environ.get` outside the AppConfig channel (AD-2)
-**And** a stable principal identity is available to downstream handlers (single-tenant OK for first cut)
-**And** tests cover missing/invalid/valid credentials; no `dev-secret-key` / `imoveis_secret` in repo (NFR-3)
+**Given** the existing runner (`src/core/backfill_runner.py`: `DailyBudget`, `Checkpoint`, `Heartbeat`) and CLI (`scripts/dev/backfill_gemma.py`)
+**When** this story lands
+**Then** at most one runner instance can hold the backfill lease at a time (Redis-backed, under `BackfillConfig.redis_prefix`, default `backfill:gemma`); a second start attempt is refused with a clear message (AD-13)
+**And** budget consumption is atomic under that lease — the daily request count can never exceed `backfill.daily_request_budget` (FR-28 consequence b)
 
-### Story 2.2: Frontend credential gate
+**Given** a running backfill interrupted at any point (crash, quota exhaustion, operator pause/stop)
+**When** the runner restarts or resumes
+**Then** it continues from the checkpoint without re-enriching completed rows (FR-28 consequence a)
+**And** provider `ResourceExhausted` triggers back-off-and-wait (sleep until budget reset), never failure or data loss (NFR-4)
 
-As a user/operator,
-I want to supply API credentials through an env-driven UI gate (or paste-once session),
-So that the SPA never ships hardcoded secrets.
+**Given** the runner's scope selection
+**When** rows are chosen for backfill
+**Then** scope is expressed in Story 1.1 task classes, and all writes go through the single enrichment pipeline authority (AD-10 — second driver, never second writer; no GPU work, no new `core` → `adapters` import leaks — AD-1)
+**And** pause/resume/lease semantics have unit tests with a mocked Redis/session (state-machine branches covered; TDD on `src/core/`)
 
-**Acceptance Criteria:**
+### Story 1.4: Enrichment coverage telemetry (DB-derived)
 
-**Given** the React app with no hardcoded API key in source
-**When** I open a flow that needs auth
-**Then** I can provide a credential stored only in client session storage (not committed)
-**And** API calls attach the credential via `api.js` only (AD-8)
-**And** invalid credentials surface a non-blocking error/toast
-**And** pre-commit / security checks still forbid `dev-secret-key` / `imoveis_secret`
-
-### Story 2.3: Owner-scoped favourites, saved searches & watchlist
-
-As a user,
-I want favourites, saved searches, and watchlist rows to belong to my principal,
-So that nullable `owner` columns become meaningful and digests can subscribe later (AD-11).
+As the operator,
+I want per-signal-type enrichment coverage, backfill throughput, and a projected completion date served from the DB,
+So that I can judge backfill progress and remaining work mid-run without reading runner logs (FR-29, NFR-6).
 
 **Acceptance Criteria:**
 
-**Given** an authenticated principal from Story 2.1
-**When** I create/list/delete favourites, saved searches, or watchlist entries
-**Then** rows are written/read scoped to that principal’s `owner`
-**And** unauthenticated access cannot mutate another principal’s data
-**And** migrations alter watchlist (and any missing tables) only as needed for `owner`
-**And** existing single-tenant data is migrated or attributed safely (documented in the PR)
+**Given** properties in the DB with and without enrichment signals
+**When** I call the coverage endpoint (auth-gated `system`/`admin` surface — AD-6)
+**Then** I get, per Story 1.1 signal type, the fraction of Properties enriched, derived from DB queries — not runner logs or Redis checkpoints (FR-29; runner Redis state is never a second progress metric)
+**And** figures survive runner restarts and are correct with the runner not running at all
 
-## Epic 3: Scale scrapes with proxy rotation
+**Given** an active backfill
+**When** I request coverage
+**Then** the response includes backfill throughput (properties/day) and a projected completion date consistent with the quota sizing basis (~4,600 properties/day best-case; reuses `estimate_eta_days`)
+**And** with no active backfill, throughput/ETA fields are absent or null — never fabricated
 
-Operator enables a rotating proxy pool from YAML so scrapers stay resilient under block pressure.
+**Given** this adds an API schema surface
+**When** the story completes
+**Then** `src/api/schemas.py` + `src/tests/contract/` cover the new response model (fractions as floats in [0.0, 1.0])
+**And** the endpoint has one happy-path and one degraded-path (empty DB) test; no second telemetry bus is introduced (consistency convention)
 
-**FRs covered:** FR-20
-**Architecture:** AD-5, AD-2
-**Linear seed:** BIN-21
+### Story 1.5: Admin backfill control API — start/pause/resume/status under the shared lease
 
-### Story 3.1: AppConfig proxy settings
-
-As an operator,
-I want the YAML `proxy` block loaded into AppConfig,
-So that proxy enablement is config-driven (AD-2), not hardcoded in scrapers.
-
-**Acceptance Criteria:**
-
-**Given** `proxy:` in `app_config.yaml`
-**When** AppConfig loads
-**Then** `enabled`, `url`, `rotation_strategy` (`round_robin` | `random`), and `pool` are available on the config object
-**And** unit tests cover disabled / single-url / pool modes
-**And** no real proxy credentials are committed in config samples
-
-### Story 3.2: Rotating proxy in the scraper HTTP layer
-
-As an operator,
-I want scrapers to obtain HTTP clients through a shared proxy-aware helper,
-So that rotation is part of the scraper contract (AD-5), not per-platform one-offs.
+As the operator,
+I want auth-gated admin endpoints to start, pause, resume, and inspect the cloud backfill,
+So that backfill control is a product surface, not tribal CLI knowledge — and an active run is visible before I start anything that would collide with it (FR-28).
 
 **Acceptance Criteria:**
 
-**Given** proxy enabled with a non-empty pool (or single `url`)
-**When** QuintoAndar/OLX (and BaseScraper path) create HTTP sessions
-**Then** requests use the selected proxy per `rotation_strategy`
-**And** when `enabled: false`, behavior matches today’s direct connection
-**And** platform-level `extra.proxy` either defers to the global pool or is a documented override — one behaviour, tested
-**And** unit tests cover round_robin cycling and random selection without live network
-**And** scraper changes pass `validate-scrapers.sh` (refresh cassettes if HTTP wiring drifts)
+**Given** the hardened runner core from Story 1.3
+**When** I call the admin backfill endpoints (`src/api/admin.py`, behind `verify_admin_access` — AD-6)
+**Then** I can start/pause/resume a backfill and fetch its status (state, progress, today's budget consumed/remaining, pacing), sharing the **same** lease and pacer as the CLI — no second control path or quota consumer (AD-13)
+**And** starting while a lease is held (by CLI or a prior admin start) returns a conflict response naming the active run, not a second runner
 
-### Story 3.3: Operator enablement & observability
+**Given** the operational collision risk (validate/finish cycles recreate the primary Postgres container)
+**When** a backfill is active
+**Then** its status is visible via the status endpoint (and surfaced in Story 1.6's UI) so the collision stops being tribal knowledge
+**And** admin actions are recorded in the `admin_audit` trail (AD-6)
 
-As an operator,
-I want to turn proxy rotation on via YAML and see safe operational signals,
-So that I can scale scrapes without guessing whether proxies are active.
+**Given** this adds admin API schema
+**When** the story completes
+**Then** contract tests cover the new endpoints; unit tests mock the runner/lease (thin-glue tier: one happy path + one conflict/error path per endpoint)
+**And** rate-limited-route unit tests bypass slowapi Redis per testing rules
 
-**Acceptance Criteria:**
+### Story 1.6: Admin panel — backfill card + coverage display
 
-**Given** a configured pool and `proxy.enabled: true`
-**When** a scrape run starts
-**Then** logs/metrics indicate proxy mode is on without printing full credentials
-**And** docs describe how to enable the pool
-**And** disabling proxy returns to direct mode on next scrape without code changes
-
-## Epic 4: Export shortlists & weekly deal digest
-
-User exports a filtered result set (CSV/JSON) and can optionally get a scheduled “top new deals” digest.
-
-**FRs covered:** FR-21
-**Architecture:** AD-8, AD-9, AD-11, AD-12
-**Linear seed:** BIN-22
-**Product note:** Distinct from existing price-drop `send_daily_digest`. Digest channel is config-driven (email optional).
-
-### Story 4.1: Export filtered properties (API)
-
-As a house-hunter,
-I want to export the current filtered property set as CSV or JSON,
-So that I can share or archive a shortlist outside the app.
+As the operator,
+I want the admin panel to show the backfill's state and controls plus enrichment coverage per signal type,
+So that I can kick off, monitor, and pause the multi-day run and watch % enriched climb without touching a terminal (FR-28, FR-29; UJ-4 climax).
 
 **Acceptance Criteria:**
 
-**Given** a filter query equivalent to the Properties list
-**When** I call an export endpoint with `format=csv|json`
-**Then** the file/payload uses the AD-12 property projection (same primary listing, price/m², scores, neighbourhood fields as compare)
-**And** export is API-owned (AD-8); no direct DB from the browser
-**And** auth follows Epic 2 edge rules when enabled
-**And** contract/unit tests cover both formats and empty result sets
+**Given** the APIs from Stories 1.4 and 1.5
+**When** I open the admin panel (`frontend/`, talking only to the FastAPI surface — AD-8)
+**Then** I see a backfill card with current state (idle/running/paused/backing-off), progress, today's budget use, throughput, and ETA, plus start/pause/resume controls wired to the admin API
+**And** I see per-signal-type coverage (% enriched) rendered from the FR-29 endpoint
 
-### Story 4.2: Export from the Properties UI
+**Given** an active backfill
+**When** the panel is open
+**Then** the active run is unmistakably visible (the operational-collision warning surface), and control errors (e.g. lease conflict) render as non-blocking toasts (consistency convention)
 
-As a house-hunter,
-I want an Export action on the Properties page for my current filters,
-So that I do not need to craft API calls by hand.
+**Given** product i18n
+**When** the story completes
+**Then** all new strings land in both `en` and `pt-BR` catalogs (NFR-7)
+**And** a Playwright e2e covers the card's happy path (status render + a control action against a mocked/stubbed API)
 
-**Acceptance Criteria:**
+## Epic 2: Deal-Intelligence Deepening (Theme B cut)
 
-**Given** the Properties page with active filters
-**When** I choose Export CSV or JSON
-**Then** the browser downloads/receives the Story 4.1 payload for those filters
-**And** errors toast non-blockingly
-**And** all I/O goes through `api.js` (AD-8)
+Ana and Bruno (users) get sharper deal signals than one combined score: price/m² percentile within the neighbourhood × listing-type cohort on every card/modal with filtering (FR-30), and saved searches that notify when a new matching Property appears (FR-32). Both consume shipped foundations (polygons, dual-type scoring, saved searches, notifier registry) — no new geo or channel work.
 
-### Story 4.3: Scheduled top-deals digest
+### Story 2.1: Cohort price/m² percentiles computed in the pipeline
 
-As a user,
-I want an optional scheduled digest of top new deals,
-So that I catch good listings without opening the app daily.
+As a user evaluating a listing,
+I want each Property's price/m² percentile computed within its neighbourhood × listing-type cohort,
+So that "cheap for Savassi rentals" is a stored, trustworthy signal rather than a guess (FR-30).
 
 **Acceptance Criteria:**
 
-**Given** a principal subscribed to digests (AD-11; uses Epic 2 owner when available)
-**When** the digest Celery beat task runs on schedule
-**Then** “top new deals” are selected by a documented rule (e.g. new/high-score since last run) using AD-12 fields
-**And** delivery goes through the notifier preference registry (AD-9), not a one-off UI send
-**And** channel is config-driven (log/redis/email/in-app as implemented); email is optional, not assumed
-**And** unsubscribing / `enabled: false` stops further digests
-**And** unit tests cover selection + empty digest without live SMTP
+**Given** properties with area, price, neighbourhood assignment (FR-22), and listing type (FR-25)
+**When** the metrics/enrichment pipeline stage runs (AD-10 — computed in the pipeline, no read-time re-derivation)
+**Then** each Property's percentile is computed on a single price basis defined in that stage, cohort-keyed **neighbourhood × listing type**, and persisted via the single enrichment write authority
+**And** dual rent/sale Properties get a percentile per listing type (FR-25 semantics)
 
-## Epic 5: Neighbourhoods by map polygons
+**Given** a cohort smaller than the config-owned min-cohort size (`AppConfig` — AD-2, no hardcoded threshold)
+**When** percentiles are computed
+**Then** the percentile for that Property is suppressed (null), never computed on a meaningless cohort (counter-metric: signal noise)
+**And** properties with missing area or unassigned neighbourhood are skipped with a null percentile, not defaulted
 
-Properties land in neighbourhoods via spatial containment when geometry is populated, improving score cohorts.
+**Given** this changes brownfield enrichment/projection SQL and schema
+**When** the story completes
+**Then** a characterization test locks the existing projection behavior before the change, the Alembic migration passes `alembic check`, and the API image is rebuilt before backend validation (testing rules)
+**And** percentile math has TDD unit coverage in `src/core/`/metrics (boundaries: cohort exactly at min size, single-listing cohorts, ties)
 
-**FRs covered:** FR-22
-**Architecture:** AD-3, AD-10
-**Linear seed:** BIN-23
-**Product note:** Polygon source left open; stories use a GeoJSON import path.
+### Story 2.2: Percentile on card/modal + percentile filter
 
-### Story 5.1: Load neighbourhood polygons
-
-As an operator,
-I want to populate `neighborhoods.geometry` from a GeoJSON (or equivalent) seed,
-So that spatial assignment has real polygons to use.
+As a user scanning the grid,
+I want the price/m² percentile visible on property cards and the detail modal, and filterable,
+So that I can shortlist statistically cheap properties in one pass (FR-30; UJ-1).
 
 **Acceptance Criteria:**
 
-**Given** a documented BH GeoJSON (or fixture) and import/seed command or migration path
-**When** I run the load
-**Then** neighbourhood rows have valid SRID 4326 polygons
-**And** import is idempotent (re-run safe)
-**And** docs note the open data vs manual source choice without locking a vendor in code
-**And** unit/integration tests use a tiny fixture polygon set (avoid huge dumps in git)
+**Given** stored percentiles from Story 2.1
+**When** the property grid/modal renders
+**Then** the percentile comes from the canonical AD-12 projection (one API-owned DTO — no parallel flattener) and displays on card and modal for the primary listing (respecting `utils/primaryListing.ts` for dual-type Properties)
+**And** suppressed (null) percentiles render as absent — no fake "50th percentile" placeholder
 
-### Story 5.2: Assign properties by spatial containment
+**Given** the filter bar
+**When** I set a percentile filter (e.g. "≤ 25th percentile in cohort")
+**Then** the API filters server-side on the stored value and the grid updates; the filter round-trips through the existing filters state hooks
+**And** filtering respects `price_type`/listing-type semantics (BIN-77 lesson — no cross-type leakage)
 
-As an operator,
-I want Properties with a point location assigned to a neighbourhood via containment,
-So that `neighborhood_id` reflects geography instead of brittle string fallback alone.
+**Given** contract and i18n obligations
+**When** the story completes
+**Then** `src/api/schemas.py` + contract tests cover the projection/filter change (percentile as float, nullable), new strings land in `en` + `pt-BR` catalogs (NFR-7)
+**And** a Playwright e2e covers percentile display + filter happy path
 
-**Acceptance Criteria:**
+### Story 2.3: Saved-search new-match detection on the pipeline
 
-**Given** populated neighbourhood geometries and Properties with `location`
-**When** the enrichment/pipeline assignment stage runs (AD-10 — single ordered writer)
-**Then** `neighborhood_id` is set from PostGIS containment (`ST_Contains` / equivalent)
-**And** properties outside all polygons remain unassigned or keep a documented fallback
-**And** assignment is not done ad-hoc from API handlers (AD-3)
-**And** tests cover inside / boundary / outside cases
-
-### Story 5.3: Scoring cohorts prefer spatial neighbourhoods
-
-As a house-hunter,
-I want statistical scores to use spatially assigned neighbourhoods when available,
-So that deal colouring reflects better cohorts.
+As a user with saved searches,
+I want the pipeline to detect when a newly created Property matches one of my notification-enabled saved searches,
+So that new deals reach me without re-running my filters every evening (FR-32; UJ-2).
 
 **Acceptance Criteria:**
 
-**Given** properties with spatial `neighborhood_id`
-**When** neighbourhood stats / combined scores recompute
-**Then** cohorts prefer the linked neighbourhood over `props_json` string fallback
-**And** properties still on string-only fallback keep working (no regression)
-**And** unit/integration tests show cohort membership changes for a fixture inside a polygon
-**And** no dual writer invents a second scoring path outside the pipeline (AD-10)
+**Given** a saved search (`src/api/saved_searches.py` / existing model) with new-match notifications enabled
+**When** the scrape → normalize → dedupe → persist path creates a **new** Property matching the search's criteria
+**Then** a notification is emitted through Celery + the single notifier preference registry (AD-9 — no new channel work, no second notifier path), owned by the single principal model (AD-11, nullable owner)
+**And** matching runs read-only against Property/Listing fields — no writes outside the dedupe/persist authority (AD-3)
+
+**Given** noise control
+**When** matches are evaluated
+**Then** only genuinely new Properties fire (a re-scraped or price-updated existing Property does not), each search × property pair notifies at most once (dedupe on delivery), and a disabled search never fires
+**And** a platform circuit-break or scrape failure produces no spurious "new match" noise
+
+**Given** schema and glue obligations
+**When** the story completes
+**Then** the subscription flag/migration passes `alembic check`; matcher logic has TDD unit coverage in `src/core/`-tier code (match/no-match/threshold/disabled branches) with no new `core` → `adapters` leaks (AD-1)
+**And** the Celery task wrapper gets one happy-path and one error-path test (thin-glue tier)
+
+### Story 2.4: Saved-search alert management UI
+
+As a user managing saved searches,
+I want to toggle new-match notifications per saved search and see which are alerting,
+So that I control alert volume per search instead of all-or-nothing (FR-32).
+
+**Acceptance Criteria:**
+
+**Given** the subscription capability from Story 2.3
+**When** I view my saved searches in the frontend
+**Then** each shows a notify-on-new-match toggle whose state round-trips through the saved-searches API (AD-8 — API only, no direct infra access)
+**And** toggling is immediate, surfaced errors are non-blocking toasts, and the alert state is visible at a glance in the list
+
+**Given** contract and i18n obligations
+**When** the story completes
+**Then** the saved-searches API schema change is covered by contract tests, new strings land in `en` + `pt-BR` catalogs (NFR-7)
+**And** a Playwright e2e covers toggle-on → state persists after reload
