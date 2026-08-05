@@ -16,7 +16,7 @@ import logging
 import random
 import re
 from abc import ABC, abstractmethod
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Tuple
 
@@ -25,6 +25,7 @@ import anyio
 from pydantic import BaseModel, field_validator
 
 from core.ai_locale import normalize_sentiment_category, normalize_stat_category, normalize_visual_category
+from core.enrichment import EnrichmentTaskClass, is_cloud_backend
 
 logger = logging.getLogger(__name__)
 
@@ -1001,15 +1002,195 @@ def _gemini_client_for(model: str, **kwargs) -> "GeminiClient":
     return cls(model=model, **kwargs)
 
 
-def create_ai_client() -> LocalAIClient:
+def cloud_available(cfg) -> bool:
+    """True when a cloud API key is configured (backfill cloud eligibility).
+
+    A whitespace-only key is treated as absent — it cannot authenticate, so a
+    backfill would otherwise resolve cloud and fail at call time.
+    """
+    return bool((cfg.ai.gemini_api_key or "").strip())
+
+
+def resolve_enrichment_backend(
+    task_class: EnrichmentTaskClass, cfg, *, for_backfill: bool = False
+) -> str:
+    """Resolve one task class to a concrete backend from ``enrichment_routing``.
+
+    The routing map is the source of truth: a *local* routing value is honored
+    directly. A *cloud* routing value (``gemini``/``gemma``) is honored only in
+    ``for_backfill`` mode when a key is present; otherwise it degrades to the
+    operator's validated-local scalar (``cfg.ai.backend``, non-cloud per story
+    1.1). Degradation is a warning, never a failure (NFR-4) — the live path
+    thus never executes cloud (AD-13/AD-4).
+    """
+    routed = cfg.ai.enrichment_routing[task_class.value]
+    if is_cloud_backend(routed):
+        if for_backfill and cloud_available(cfg):
+            return routed  # cloud honored only for backfill + key present
+        local = cfg.ai.backend
+        # Live-path degrade of a cloud routing entry is the designed steady
+        # state (cloud is backfill-only) and would flood the log at WARNING
+        # once per task class per property — keep it at DEBUG. A backfill that
+        # wanted cloud but has no key is an operator misconfiguration worth a
+        # WARNING.
+        log = logger.warning if for_backfill else logger.debug
+        log(
+            "enrichment_backend_degraded: task_class=%s routed=%s chosen=%s for_backfill=%s",
+            task_class.value,
+            routed,
+            local,
+            for_backfill,
+        )
+        return local  # degrade to validated-local scalar
+    return routed
+
+
+def _build_local_client(backend: str, cfg) -> LocalAIClient:
+    """Build a local (Ollama / LM Studio) client for ``backend``.
+
+    Only local backends reach here — cloud selection is handled separately by
+    ``create_ai_client()``'s scalar branch. Extracted from the former inline
+    construction in ``create_ai_client`` so the routing paths reuse it.
+
+    A cloud backend is rejected outright: silently coercing ``gemini``/``gemma``
+    to Ollama would mask a mis-route (e.g. a future backfill mode feeding a
+    cloud value here). An unknown *non-cloud* string keeps the historical
+    default-to-Ollama behavior.
+    """
+    if is_cloud_backend(backend):
+        raise ValueError(
+            f"_build_local_client refuses cloud backend {backend!r}; "
+            "cloud is built via create_ai_client()'s scalar branch"
+        )
+    if backend == "lmstudio":
+        return LMStudioClient(
+            base_url=cfg.ai.lmstudio_url,
+            timeout=cfg.ai.timeout,
+            visual_model=cfg.ai.visual_model,
+            text_model=cfg.ai.text_model,
+            embedding_model=cfg.ai.embedding_model,
+            num_ctx=cfg.ai.num_ctx,
+            max_tokens=cfg.ai.max_tokens,
+        )
+    # Default to Ollama
+    return OllamaClient(
+        base_url=cfg.ai.ollama_url,
+        timeout=cfg.ai.timeout,
+        visual_model=cfg.ai.visual_model,
+        text_model=cfg.ai.text_model,
+        embedding_model=cfg.ai.embedding_model,
+        num_ctx=cfg.ai.num_ctx,
+        max_tokens=cfg.ai.max_tokens,
+    )
+
+
+class RoutingAIClient(LocalAIClient):
+    """Dispatch each enrichment method to its task class's local client.
+
+    Builds one underlying local client per *distinct* resolved backend (so the
+    default all-``ollama`` config builds exactly one client and behaves like a
+    single ``OllamaClient``), and routes ``analyze_visuals`` / ``analyze_text``
+    / ``summarize_deal`` / ``embed`` to the client resolved for VISUAL /
+    SENTIMENT / DEAL_VERDICT / EMBEDDING respectively. Live path only: each
+    resolved backend is local (cloud routing entries degrade to the scalar).
+    """
+
+    def __init__(self, cfg, task_classes):
+        super().__init__("", cfg.ai.timeout)
+        self._by_task: dict[EnrichmentTaskClass, LocalAIClient] = {}
+        self._clients: dict[str, LocalAIClient] = {}
+        for tc in task_classes:
+            backend = resolve_enrichment_backend(tc, cfg)  # live → always local
+            client = self._clients.get(backend)
+            if client is None:
+                client = _build_local_client(backend, cfg)
+                self._clients[backend] = client
+            self._by_task[tc] = client
+
+    def _client_for(self, task_class: EnrichmentTaskClass) -> LocalAIClient:
+        client = self._by_task.get(task_class)
+        if client is None:
+            provisioned = [tc.value for tc in self._by_task]
+            raise ValueError(
+                f"RoutingAIClient not provisioned for task class "
+                f"'{task_class.value}' (provisioned: {provisioned})"
+            )
+        return client
+
+    async def analyze_visuals(self, local_paths, prompt):
+        return await self._client_for(EnrichmentTaskClass.VISUAL).analyze_visuals(
+            local_paths, prompt
+        )
+
+    async def analyze_text(self, description, prompt):
+        return await self._client_for(EnrichmentTaskClass.SENTIMENT).analyze_text(
+            description, prompt
+        )
+
+    async def summarize_deal(self, **kwargs):
+        return await self._client_for(
+            EnrichmentTaskClass.DEAL_VERDICT
+        ).summarize_deal(**kwargs)
+
+    async def embed(self, text):
+        return await self._client_for(EnrichmentTaskClass.EMBEDDING).embed(text)
+
+    @asynccontextmanager
+    async def session_context(self):
+        """Open every underlying client's session for the block; yields ``self``.
+
+        Unlike a single-backend client (whose ``session_context`` yields the
+        raw aiohttp session), the dispatcher yields itself — there is no single
+        session. Callers use it without ``as`` (``async with client.session_context():``).
+        """
+        async with AsyncExitStack() as stack:
+            for client in self._clients.values():
+                await stack.enter_async_context(client.session_context())
+            yield self
+
+    async def __aenter__(self):
+        # Mirror session_context() for the ``async with client:`` idiom so a
+        # caller using that form does not leave the underlying clients'
+        # sessions unopened/unclosed (the base class would only manage this
+        # wrapper's own — empty-URL — session).
+        self._stack = AsyncExitStack()
+        for client in self._clients.values():
+            await self._stack.enter_async_context(client.session_context())
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        stack = getattr(self, "_stack", None)
+        if stack is not None:
+            self._stack = None
+            await stack.aclose()
+
+    async def close(self) -> None:
+        # Best-effort: one client's close() must not strand the others' sessions.
+        for client in self._clients.values():
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.warning("routing_client_close_failed", exc_info=True)
+
+
+def create_ai_client(
+    task_class: EnrichmentTaskClass | None = None,
+) -> LocalAIClient:
     """Factory to create an AI client based on configuration.
 
-    Reads ``cfg.ai.backend`` to select the provider and passes the
-    corresponding base URL and model names to the client constructor.
+    With ``task_class=None`` (default) selects from the scalar ``cfg.ai.backend``
+    — including the defensive cloud branch — preserving legacy behavior. With a
+    ``task_class`` given, resolves a **local** backend from ``enrichment_routing``
+    (cloud entries degrade to the local scalar) and never returns a cloud client.
     """
     from infra.config import get_config
 
     cfg = get_config()
+
+    if task_class is not None:
+        backend = resolve_enrichment_backend(task_class, cfg)
+        return _build_local_client(backend, cfg)
+
     backend = cfg.ai.backend
 
     if backend in ("gemini", "gemma"):
@@ -1023,24 +1204,24 @@ def create_ai_client() -> LocalAIClient:
             base_url=cfg.ai.gemini_url,
             timeout=cfg.ai.timeout,
         )
-    elif backend == "lmstudio":
-        return LMStudioClient(
-            base_url=cfg.ai.lmstudio_url,
-            timeout=cfg.ai.timeout,
-            visual_model=cfg.ai.visual_model,
-            text_model=cfg.ai.text_model,
-            embedding_model=cfg.ai.embedding_model,
-            num_ctx=cfg.ai.num_ctx,
-            max_tokens=cfg.ai.max_tokens,
+    return _build_local_client(backend, cfg)
+
+
+def create_enrichment_client(cfg=None, task_classes=None) -> RoutingAIClient:
+    """Build a per-task-class dispatching client for the live enrichment path.
+
+    Resolves each task class's backend from ``enrichment_routing`` (cloud
+    entries degrade to the local scalar) and returns a ``RoutingAIClient`` that
+    dispatches each method to its task class's local client. Defaults to the
+    visual + sentiment + deal-verdict trio used by the ``all`` stage.
+    """
+    from infra.config import get_config
+
+    cfg = cfg or get_config()
+    if not task_classes:  # None or empty → the default live trio
+        task_classes = (
+            EnrichmentTaskClass.VISUAL,
+            EnrichmentTaskClass.SENTIMENT,
+            EnrichmentTaskClass.DEAL_VERDICT,
         )
-    else:
-        # Default to Ollama
-        return OllamaClient(
-            base_url=cfg.ai.ollama_url,
-            timeout=cfg.ai.timeout,
-            visual_model=cfg.ai.visual_model,
-            text_model=cfg.ai.text_model,
-            embedding_model=cfg.ai.embedding_model,
-            num_ctx=cfg.ai.num_ctx,
-            max_tokens=cfg.ai.max_tokens,
-        )
+    return RoutingAIClient(cfg, task_classes)

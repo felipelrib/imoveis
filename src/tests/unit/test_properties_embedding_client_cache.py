@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from api.properties import _get_embedding_client, _reset_embedding_clients
+from core.enrichment import EnrichmentTaskClass
 
 
 @pytest.mark.unit
@@ -25,6 +26,17 @@ class TestEmbeddingClientCache:
             client = _get_embedding_client()
             assert client is mock_create.return_value
             mock_create.assert_called_once()
+
+    def test_query_side_routes_through_embedding_task_class(self):
+        # v0.13-s1.2: the query embedding must resolve via the EMBEDDING task
+        # class so it matches the write side (tasks.embed_property); a bare
+        # scalar here would diverge from the stored vectors' backend.
+        with patch("adapters.ai.client.create_ai_client") as mock_create:
+            mock_create.return_value = object()
+            _get_embedding_client()
+            mock_create.assert_called_once_with(
+                task_class=EnrichmentTaskClass.EMBEDDING
+            )
 
     def test_same_thread_reuses_cached_client(self):
         with patch("adapters.ai.client.create_ai_client") as mock_create:
@@ -47,7 +59,7 @@ class TestEmbeddingClientCache:
         import threading
 
         with patch("adapters.ai.client.create_ai_client") as mock_create:
-            mock_create.side_effect = lambda: object()
+            mock_create.side_effect = lambda *a, **k: object()
             main_client = _get_embedding_client()
             other_thread_client = {}
 

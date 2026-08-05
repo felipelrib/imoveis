@@ -208,13 +208,20 @@ _embedding_clients_lock = threading.Lock()
 
 
 def _get_embedding_client() -> Any:
-    """Return this worker thread's cached AI client, creating it on first use."""
+    """Return this worker thread's cached AI client, creating it on first use.
+
+    Routes through the EMBEDDING task class so the query-side embedding backend
+    matches the write side (``tasks.embed_property``, v0.13-s1.2). Using the
+    bare scalar here would let ``enrichment_routing.embedding`` diverge from the
+    stored vectors' backend and silently corrupt semantic-search similarity.
+    """
     from adapters.ai.client import create_ai_client
+    from core.enrichment import EnrichmentTaskClass
 
     thread_id = threading.get_ident()
     client = _embedding_clients.get(thread_id)
     if client is None:
-        client = create_ai_client()
+        client = create_ai_client(task_class=EnrichmentTaskClass.EMBEDDING)
         with _embedding_clients_lock:
             _embedding_clients[thread_id] = client
     return client

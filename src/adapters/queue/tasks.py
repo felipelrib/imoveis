@@ -23,7 +23,7 @@ from pydantic import ValidationError
 import adapters.scrapers.olx  # noqa: F401
 import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 import adapters.scrapers.zapimoveis  # noqa: F401 — triggers registry
-from adapters.ai.client import create_ai_client
+from adapters.ai.client import create_ai_client, create_enrichment_client
 from adapters.ai.enrich_pipeline import analyze_visual_and_sentiment
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
@@ -35,6 +35,7 @@ from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.listing_description import candidate_listing_url
 from adapters.scrapers.registry import ScraperRegistry
 from core.dedupe import match_or_create_property
+from core.enrichment import EnrichmentTaskClass
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
 from core.geo_allowlist import passes_geo_allowlist
@@ -815,10 +816,27 @@ def ai_enrich(
         logger.warning("ai_enrich_gpu_busy", property_id=property_id)
         raise self.retry(countdown=30, exc=Exception("GPU semaphore timeout"))
 
+    # Which task classes the requested stages actually exercise — drives the
+    # per-task-class routing of the live enrichment client (v0.13-s1.2).
+    stage_task_classes = {
+        STAGES_ALL: (
+            EnrichmentTaskClass.VISUAL,
+            EnrichmentTaskClass.SENTIMENT,
+            EnrichmentTaskClass.DEAL_VERDICT,
+        ),
+        STAGES_VISUAL_SENTIMENT: (
+            EnrichmentTaskClass.VISUAL,
+            EnrichmentTaskClass.SENTIMENT,
+        ),
+        STAGES_VERDICT_ONLY: (EnrichmentTaskClass.DEAL_VERDICT,),
+    }
+
     start_time = time.time()
     try:
         image_store = ImageStore()
-        client = create_ai_client()
+        client = create_enrichment_client(
+            cfg, task_classes=stage_task_classes[stages]
+        )
 
         async def _run_verdict_only():
             async with client.session_context():
@@ -966,7 +984,7 @@ def embed_property(self, property_id: str):
                 logger.info("embed_property_empty_text", property_id=property_id)
                 return {"status": "skipped_empty"}
 
-            client = create_ai_client()
+            client = create_ai_client(task_class=EnrichmentTaskClass.EMBEDDING)
 
             async def _run():
                 async with client:

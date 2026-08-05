@@ -85,7 +85,7 @@ development_status:
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
   epic-1: in-progress
   1-1-canonical-enrichment-task-classes-routing-config: done
-  1-2-live-pipeline-routes-by-task-class-local-fallback: backlog
+  1-2-live-pipeline-routes-by-task-class-local-fallback: done
   1-3-backfill-runner-control-core: backlog
   1-4-enrichment-coverage-telemetry: backlog
   1-5-admin-backfill-control-api: backlog

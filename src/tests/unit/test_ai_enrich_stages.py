@@ -55,7 +55,7 @@ def test_ai_enrich_verdict_only_skips_vlm_and_downloads():
         patch.object(tasks_mod, "get_config") as mock_cfg,
         patch.object(tasks_mod, "GPUSemaphore", return_value=sem),
         patch.object(tasks_mod, "ImageStore", return_value=image_store),
-        patch.object(tasks_mod, "create_ai_client", return_value=client),
+        patch.object(tasks_mod, "create_enrichment_client", return_value=client),
         patch.object(tasks_mod, "SessionLocal", return_value=session),
         patch.object(tasks_mod, "analyze_visual_and_sentiment", new_callable=AsyncMock) as mock_vs,
     ):
@@ -126,7 +126,7 @@ def test_ai_enrich_visual_sentiment_skips_verdict():
         patch.object(tasks_mod, "get_config") as mock_cfg,
         patch.object(tasks_mod, "GPUSemaphore", return_value=sem),
         patch.object(tasks_mod, "ImageStore", return_value=image_store),
-        patch.object(tasks_mod, "create_ai_client", return_value=client),
+        patch.object(tasks_mod, "create_enrichment_client", return_value=client),
         patch.object(tasks_mod, "SessionLocal", return_value=session),
         patch.object(
             tasks_mod,
@@ -205,7 +205,7 @@ def test_ai_enrich_sequential_gpu_acquire_release_one_to_one():
         patch.object(tasks_mod, "get_config") as mock_cfg,
         patch.object(tasks_mod, "GPUSemaphore", return_value=sem),
         patch.object(tasks_mod, "ImageStore", return_value=image_store),
-        patch.object(tasks_mod, "create_ai_client", return_value=client),
+        patch.object(tasks_mod, "create_enrichment_client", return_value=client),
         patch.object(tasks_mod, "SessionLocal", return_value=session),
         patch.object(
             tasks_mod,
