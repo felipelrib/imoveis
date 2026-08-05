@@ -1,20 +1,22 @@
-# generated: 2026-07-23T07:53:00-03:00
-# last_updated: 2026-08-05T12:00:00-03:00
-# project: Imoveis — Deal Tracker
-#
-# NOTE (2026-08-05, correct-course): ALL epics below are delivered. Epic 7
-# (v0.7 dual listing-type scoring, BIN-83/BIN-84 area) was delivered via
-# Linear only and never tracked in this file — recorded below for the gap.
-# This file awaits regeneration by bmad-sprint-planning once the next wave's
-# PRD/architecture/epics exist (see sprint-change-proposal-2026-08-05.md).
-#
-# NOTE (2026-08-05, ADR 0005): Linear DROPPED entirely. This file is now the
-# SOLE execution-status tracker (epics.md = plan of record). v0.13 epics exist
-# in epics.md (2 epics, 10 stories, keys v0.13-s1.1 … v0.13-s2.4) awaiting
-# bmad-sprint-planning regeneration. BIN-* ids below are historical.
+# generated: 2026-08-05T06:51:14-03:00 (bmad-sprint-planning regeneration; v0.13 wave)
+# last_updated: 2026-08-05T06:51:14-03:00
+# project: imoveis
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: {project-root}/_bmad-output/implementation-artifacts
+#
+# NOTE (2026-08-05, ADR 0005): Linear DROPPED entirely. This file is the SOLE
+# execution-status tracker; epics.md = plan of record. Epics 1-8 below are the
+# delivered pre-v0.13 history (epics-delivered-2026-07-27.md + Epic 7/8 record;
+# BIN-* ids are historical Linear names only). The v0.13 wave (2 epics,
+# 11 stories, keys v0.13-s1.1 … v0.13-s2.5) is tracked in the v0.13 section.
+#
+# v0.13 SEQUENCING GATES (from epics.md frontmatter `tracking:` — enforce order):
+#   s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3, s1.6←s1.4+s1.5,
+#   s2.2←s2.1, s2.3←s2.1, s2.4←s2.3, s2.5←s2.2.
+#   Wave 1: s1.1 ∥ s2.1 → Wave 2: s1.2 ∥ s1.3 ∥ s1.4 ∥ s2.2 ∥ s2.3 →
+#   Wave 3: s1.5 ∥ s2.4 ∥ s2.5 → Wave 4: s1.6.
+#   Epic 1 and Epic 2 chains are independent and can run in parallel.
 
 # STATUS DEFINITIONS:
 # ==================
@@ -46,23 +48,22 @@
 # WORKFLOW NOTES:
 # ===============
 # - Epic transitions to 'in-progress' automatically when first story is created
-# - Stories can be worked in parallel if team capacity allows
+# - Stories can be worked in parallel if team capacity allows (respect the gates above)
 # - Developer typically creates next story after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
-# - Linear SoR for ticket status: Epic 1=BIN-19 (BIN-41..43), Epic 2=BIN-20 (BIN-44,46,45),
-#   Epic 3=BIN-21 (BIN-47..49), Epic 4=BIN-22 (BIN-50..52), Epic 5=BIN-23 (BIN-53..55),
-#   Epic 6=BIN-85 (BIN-86..95), Epic 8=BIN-63 (BIN-97..103)
-# - Epic 8 order: 8.1 ∥ 8.2 → 8.3 → 8.4 → 8.5/8.6 (after 8.1) → 8.7 last.
+# - Story done ONLY after finish-feature.sh has merged to main and pushed (CLAUDE.md)
+# - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short description)
 
-generated: 2026-07-23T07:53:00-03:00
-last_updated: 2026-08-05T12:00:00-03:00
-project: Imoveis — Deal Tracker
+generated: 2026-08-05T06:51:14-03:00
+last_updated: 2026-08-05T06:51:14-03:00
+project: imoveis
 project_key: NOKEY
 tracking_system: file-system
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
+  # ---- Delivered history (pre-v0.13; epics-delivered-2026-07-27.md + Epic 7/8) ----
   epic-1: done
   1-1-canonical-property-projection-for-decisioning: done
   1-2-multi-select-properties-for-comparison: done
@@ -121,9 +122,29 @@ development_status:
   8-7-multi-locale-extensibility-checklist-nfr7: done
   epic-8-retrospective: optional
 
-  # v0.13 pre-story harness track (PRD §6.2 gate — process, not FR)
+  # ---- v0.13 pre-story harness track (PRD §6.2 gate — process, not FR) ----
   v0.13-fu1-harness-surgery: done
   # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
   # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
   # token-bucket sized from measured per-property token cost (~7k).
   v0.13-fu2-backfill-tpm-limiter: done
+
+  # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh; planningTarget v0.13) ----
+  # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
+  v0.13-epic-1: backlog
+  v0.13-s1.1-canonical-enrichment-task-classes-routing-config: backlog
+  v0.13-s1.2-live-pipeline-routes-by-task-class-local-fallback: backlog
+  v0.13-s1.3-backfill-runner-control-core: backlog
+  v0.13-s1.4-enrichment-coverage-telemetry: backlog
+  v0.13-s1.5-admin-backfill-control-api: backlog
+  v0.13-s1.6-operacoes-backfill-card-coverage-visibility: backlog
+  v0.13-epic-1-retrospective: optional
+
+  # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
+  v0.13-epic-2: backlog
+  v0.13-s2.1-cohort-price-m2-percentiles-pipeline: backlog
+  v0.13-s2.2-percentile-badge-and-filter: backlog
+  v0.13-s2.3-saved-search-new-match-detection: backlog
+  v0.13-s2.4-saved-search-alert-management-ui: backlog
+  v0.13-s2.5-detail-side-panel-migration: backlog
+  v0.13-epic-2-retrospective: optional
