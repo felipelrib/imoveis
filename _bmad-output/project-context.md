@@ -3,9 +3,9 @@ project_name: 'imoveis'
 user_name: 'Felipe'
 date: '2026-08-05'
 sections_completed:
-  ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']
+  ['technology_stack', 'language_rules', 'framework_rules', 'architecture_topology_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']
 status: 'complete'
-rule_count: 48
+rule_count: 52
 optimized_for_llm: true
 ---
 
@@ -19,7 +19,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 - **Backend:** Python 3.11, FastAPI + uvicorn, SQLAlchemy ≥2.0.51 + GeoAlchemy2 + pgvector, Celery 5.6 (Redis broker), Alembic (24 migrations), python-jose (JWT), slowapi
 - **Database:** PostgreSQL 17 + PostGIS 3.5 + pgvector (in-repo Docker image); DBs `realestate` / `realestate_test`
-- **AI:** local Ollama / LM Studio (host-side, GPU), ONNX runtime; 1024-dim embeddings
+- **AI:** multi-backend (`ai.backend: ollama | lmstudio | gemini | gemma` in `configs/app_config.yaml`) — local Ollama / LM Studio (host-side, GPU) + cloud Gemma via the Gemini API's OpenAI-compatible endpoint; ONNX runtime; 1024-dim embeddings
 - **Scraping:** aiohttp + httpx + BeautifulSoup4, FlareSolverr v3.3.21, rapidfuzz + jellyfish
 - **Frontend:** React 19.2, Vite 8, TypeScript (strict, flat eslint + typescript-eslint), react-router-dom 7, maplibre-gl 6 (named imports only), recharts 3, lucide-react 1.27, Playwright e2e
 - **Pinning:** backend via pip-compile (`requirements.in` → `requirements.txt`); frontend `package-lock.json`. Major dep bumps (eslint 10, maplibre 6, PostGIS 17) need code changes, not just version edits.
@@ -42,6 +42,13 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Celery:** explicit `task_routes` split scraper vs AI queues — beat tasks must be routed or they silently die. Scheduler state lives in Redis (`redis_scheduler.py`). GPU work goes through `gpu_semaphore`; keep host `OLLAMA_NUM_PARALLEL` equal to `gpu.semaphore_limit` or VRAM spills into system RAM.
 - **Scrapers:** implement the `base.py` contract + registry; checkpoints in `platform_checkpoints`; Cloudflare 403/proxy failures are availability `unknown`, **never** parse failures or product regressions. OLX uses Flight/`__NEXT_DATA__` parsing with listing-type stamping.
 - **React:** state lives in hooks (`usePropertiesFiltersState`, etc.); components stay presentational. i18n is pt-BR/en with locale-aware money/date formatters; AI tags/verdicts are localized server-side. Prefer primary listing for dual rent/sale properties (`utils/primaryListing.ts`).
+
+### Architecture & Topology Rules (2026-08 technical research)
+
+- **Local stack is the system of record** — GPU, residential scraping IP, and unmetered storage live here; cloud may only ever hold a slim, disposable, regenerable read-model projection. Never lift-and-shift the scraper, the full DB, or Celery+Redis to cloud free tiers (see `_bmad-output/planning-artifacts/research/technical-imoveis-local-vs-cloud-hybrid-stack-research-2026-08-05.md`).
+- **Scrapers must egress from the residential IP** — datacenter/cloud ASNs are wholesale-flagged by 2026 anti-bot systems; never move scraping off-box.
+- **Ollama is a permanent enrichment fallback backend** — never make enrichment cloud-quota-only; do not delete or bypass the local AI path.
+- **Redis is multi-surface, not just Celery's broker** — it also backs slowapi rate limiting, the `ui:locale` runtime override, and `backfill:gemma` pacing state. Swapping or removing Redis is a multi-surface refactor, never a simple broker change.
 
 ### Testing Rules
 
@@ -76,7 +83,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Bare `docker compose up` (without `--env-file .env.local`) drifts ports and breaks `API_KEY` auth (403s).
 - Worktree checkouts (`.claude/worktrees/`) have no `.venv`/`.env.local` — run `setup-worktree.sh` before validating there.
 - Mass-scrape returning `0 processed`, beat tasks not firing, `max_price` filtering: check `docs/harness-troubleshooting.md` before "fixing" — these have known incident-derived causes (BIN-77, BIN-79, task_routes, …).
-- Gemini API key is **free tier** (2.5 Flash ≈ 20 RPD; Gemma gets 14.4k RPD) — don't plan single-day cloud backfills; Ollama-local is the bulk path.
+- Gemini API key is **free tier**: Gemma ≈ 30 RPM / **14,400 RPD** / 16K TPM (best-case — `ResourceExhausted` can fire early); Gemini Flash free RPD is an order of magnitude smaller (2.5 Flash ≈ 20 RPD). At 3 requests/property that's ~4,600 properties/day — don't plan single-day whole-DB cloud backfills. Exactly **one pacer** (Redis `backfill:gemma`, BIN-248 runner) owns the daily budget — never add a second consumer of the quota.
 - BMad dev-side skills (`bmad-dev-story`, `bmad-quick-dev`, `bmad-dev-auto`) must NOT replace the feature-pipeline gates (`validate.sh` / `finish-feature.sh` / squash-merge).
 
 ---
