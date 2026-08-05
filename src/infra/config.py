@@ -20,8 +20,15 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from src.core.enrichment import (
+    EnrichmentBackend,
+    EnrichmentTaskClass,
+    is_cloud_backend,
+    is_valid_backend,
+    is_valid_task_class,
+)
 from src.core.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
@@ -163,6 +170,16 @@ class AIConfig(BaseModel, frozen=True):
     """
 
     backend: str = "ollama"  # ollama | lmstudio | gemini | gemma
+    # Per-task-class backend routing for BACKFILL eligibility. This is the
+    # routing source of truth that live routing (story 1.2), backfill scope
+    # (story 1.3) and coverage (story 1.4) will consume; the live path itself is
+    # always local. Must cover every EnrichmentTaskClass (validated below);
+    # defaults every task class to Ollama (all-local).
+    enrichment_routing: dict[str, str] = Field(
+        default_factory=lambda: {
+            tc.value: EnrichmentBackend.OLLAMA.value for tc in EnrichmentTaskClass
+        }
+    )
     ollama_url: str = "http://localhost:11434"
     lmstudio_url: str = "http://localhost:1234"
     # Gemini/Gemma (OpenAI-compatible endpoint) — used by the A/B harness and,
@@ -190,6 +207,55 @@ class AIConfig(BaseModel, frozen=True):
     # Ollama's visual-error rate in the BIN-242 A/B, while shrinking payloads
     # (TPM headroom). 0 disables downscaling.
     image_max_dimension: int = 768
+
+    @model_validator(mode="after")
+    def _validate_backends(self) -> "AIConfig":
+        """Enforce the live-path / backfill split on backend selection.
+
+        The scalar ``backend`` is the live-path selector and must be a known,
+        local backend. ``enrichment_routing`` is the backfill source of truth —
+        cloud backends are allowed there, but its keys must be valid task
+        classes and its values valid backends.
+        """
+        valid_backends = ", ".join(b.value for b in EnrichmentBackend)
+        valid_task_classes = ", ".join(tc.value for tc in EnrichmentTaskClass)
+        if not is_valid_backend(self.backend):
+            raise ValueError(
+                f"ai.backend: unknown backend '{self.backend}' "
+                f"(expected one of {valid_backends})"
+            )
+        if is_cloud_backend(self.backend):
+            raise ValueError(
+                f"ai.backend: '{self.backend}' is a cloud backend on the live "
+                "path; cloud is backfill-only — route it via "
+                "ai.enrichment_routing"
+            )
+        for task_class, backend in self.enrichment_routing.items():
+            if not is_valid_task_class(task_class):
+                raise ValueError(
+                    f"ai.enrichment_routing: unknown task class '{task_class}' "
+                    f"(expected one of {valid_task_classes})"
+                )
+            if not is_valid_backend(backend):
+                raise ValueError(
+                    f"ai.enrichment_routing.{task_class}: unknown backend "
+                    f"'{backend}' (expected one of {valid_backends})"
+                )
+        # The routing map is the source of truth downstream stories index by
+        # task class, so it must be total — a partial map would surface as a
+        # KeyError mid-pipeline instead of a clear config error.
+        missing = [
+            tc.value
+            for tc in EnrichmentTaskClass
+            if tc.value not in self.enrichment_routing
+        ]
+        if missing:
+            raise ValueError(
+                "ai.enrichment_routing: missing task classes "
+                f"{missing} — every enrichment task class must be routed "
+                "(add them, or omit the block to use the all-local defaults)"
+            )
+        return self
 
 
 class PlatformConfig(BaseModel, frozen=True):

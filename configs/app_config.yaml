@@ -264,6 +264,17 @@ scoring:
 # ---------------------------------------------------------------------------
 ai:
   backend: ollama             # ollama | lmstudio | gemini | gemma
+  # Per-task-class BACKFILL backend routing — the source of truth for which
+  # backend each enrichment task class is eligible to run on during backfill.
+  # The live/incremental path is always LOCAL (never reads this map). Cloud
+  # values (gemini/gemma) are allowed HERE (backfill-eligibility) but FORBIDDEN
+  # on ai.backend above, which is the live-path selector and must stay local.
+  enrichment_routing:
+    visual: ollama            # visual condition assessment (VLM)
+    sentiment: ollama         # neighbourhood sentiment
+    deal_verdict: ollama      # deal verdict summary
+    valuation: ollama         # statistical valuation
+    embedding: ollama         # bge-m3 property embeddings
   ollama_url: http://localhost:11434
   lmstudio_url: http://localhost:1234
   # Gemini/Gemma (OpenAI-compatible endpoint). GEMINI_API_KEY comes from env

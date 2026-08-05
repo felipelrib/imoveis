@@ -8,8 +8,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from src.core.enrichment import EnrichmentBackend, EnrichmentTaskClass
 from src.core.exceptions import ConfigError
 from src.infra.config import AppConfig, get_config, load_config
+
+
+def _yaml_with_ai(ai_extra: str) -> str:
+    """Return MINIMAL_YAML with extra keys inserted under its ``ai:`` mapping.
+
+    ``ai_extra`` must be 2-space-indented YAML (siblings of ``providers:``).
+    """
+    return MINIMAL_YAML.replace("ai:\n", "ai:\n" + ai_extra, 1)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -505,6 +514,90 @@ def test_ai_stack_from_default_app_config_yaml():
     # BIN-248: Gemma backfill model + image downscaling defaults.
     assert cfg.ai.gemma_model == "gemma-4-31b-it"
     assert cfg.ai.image_max_dimension == 768
+
+
+@pytest.mark.unit
+def test_enrichment_routing_default_all_local():
+    """Shipped config routes every task class to a LOCAL backend (all-local)."""
+    cfg = get_config()
+    routing = cfg.ai.enrichment_routing
+    assert set(routing) == {tc.value for tc in EnrichmentTaskClass}
+    local_values = {b.value for b in (EnrichmentBackend.OLLAMA, EnrichmentBackend.LMSTUDIO)}
+    for task_class in EnrichmentTaskClass:
+        assert routing[task_class.value] in local_values
+
+
+@pytest.mark.unit
+def test_enrichment_routing_unknown_backend_raises(tmp_path: Path):
+    """A routing value that is not a known backend fails validation."""
+    yaml_content = _yaml_with_ai("""\
+  enrichment_routing:
+    visual: frobnicate
+""")
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_enrichment_routing_unknown_task_class_raises(tmp_path: Path):
+    """A routing key that is not a known task class fails validation."""
+    yaml_content = _yaml_with_ai("""\
+  enrichment_routing:
+    frobnicate: ollama
+""")
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_enrichment_routing_cloud_value_allowed(tmp_path: Path):
+    """Cloud backends ARE allowed as routing values (backfill-eligible)."""
+    yaml_content = _yaml_with_ai("""\
+  enrichment_routing:
+    visual: ollama
+    sentiment: gemma
+    deal_verdict: ollama
+    valuation: ollama
+    embedding: ollama
+""")
+    cfg = load_config(_write_yaml(tmp_path, yaml_content))
+    assert cfg.ai.enrichment_routing["sentiment"] == "gemma"
+
+
+@pytest.mark.unit
+def test_enrichment_routing_partial_map_raises(tmp_path: Path):
+    """A routing map that omits task classes fails validation (must be total)."""
+    yaml_content = _yaml_with_ai("""\
+  enrichment_routing:
+    visual: ollama
+""")
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_backend_cloud_scalar_raises(tmp_path: Path):
+    """Legacy cloud scalar ai.backend (gemini/gemma) is rejected on the live path."""
+    for cloud in ("gemini", "gemma"):
+        yaml_content = _yaml_with_ai(f"  backend: {cloud}\n")
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
+            load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_backend_unknown_scalar_raises(tmp_path: Path):
+    """An unknown ai.backend value fails validation."""
+    yaml_content = _yaml_with_ai("  backend: frob\n")
+    with pytest.raises(ConfigError, match="Configuration validation failed"):
+        load_config(_write_yaml(tmp_path, yaml_content))
+
+
+@pytest.mark.unit
+def test_backend_local_scalar_loads(tmp_path: Path):
+    """A local ai.backend value (lmstudio) loads clean."""
+    yaml_content = _yaml_with_ai("  backend: lmstudio\n")
+    cfg = load_config(_write_yaml(tmp_path, yaml_content))
+    assert cfg.ai.backend == "lmstudio"
 
 
 @pytest.mark.unit
