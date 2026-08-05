@@ -14,7 +14,7 @@ supersedes: prds/prd-imoveis-2026-07-23/prd.md
 
 This PRD is for Felipe (builder/PM), downstream BMad architecture/epics workflows, and bmad-loop execution. It supersedes the 2026-07-23 PRD, whose entire planning scope (v0.5 / FR-18–FR-23) has since shipped, along with six further waves. The **baseline is Linear milestones v0.1–v0.12 (all 100% Done, backlog empty)**; the planning target is **v0.13**. Shipped implementation details are not re-litigated here — they live in `docs/features/` and `docs/architecture.md`. Assumptions inferred without explicit product confirmation are marked `[ASSUMPTION]`.
 
-**Planning regime (settled 2026-08-05):** BMad is the source of truth for planning *and* the dev loop (bmad-loop), superseding the Linear-SoR/feature-pipeline regime. Wave-4 harness surgery (CLAUDE.md rewrite, gate wiring via `bmad-customize`) runs as a pre-epic harness track; `scripts/agent/` validation gates are preserved, not replaced. ~~Linear remains the tracking mirror.~~ *[Amended later on 2026-08-05, post-epics: Linear dropped entirely (free-plan issue limit hit mid-sync) — BMad artifacts (epics.md + sprint-status.yaml) are the sole tracker; see ADR 0005.]*
+**Planning regime (settled 2026-08-05):** BMad is the source of truth for planning *and* the dev loop (bmad-loop), superseding the Linear-SoR/feature-pipeline regime. ~~Linear remains the tracking mirror.~~ *[Amended later on 2026-08-05, post-epics: Linear dropped entirely (free-plan issue limit hit mid-sync) — BMad artifacts (epics.md + sprint-status.yaml) are the sole tracker; see ADR 0005.]* Wave-4 harness surgery **landed** the same day as `v0.13-fu1` (main `8f5d885` + `f2da788`): validation is primary-safe (ephemeral test stack; a live backfill and a validation cycle no longer collide), merging is the PR-less local gate (`finish-feature.sh` = validate → squash-merge → push), and the harness is BMad-only. `scripts/agent/` gates were preserved, not replaced; GitHub Actions is reduced to docs deploy + a nightly scraper drift canary (see NFR-5).
 
 ## 1. Vision
 
@@ -26,7 +26,9 @@ The product matters because house-hunting across QuintoAndar, OLX, ZapImóveis, 
 
 **AI posture:** local models (Ollama / LM Studio) are the default and permanent enrichment path; a **quota-bounded cloud assist** (Gemini/Gemma free tier) exists for batch backfill and is being productized in v0.13 (see §4.3, NFR-1).
 
-**Product language:** English default (UI + AI) with `pt-BR` supported; further locales via the add-a-locale checklist. **Deployment posture:** single-operator, privacy-preserving, runs on the user's machine (Docker + host Ollama).
+**Product language:** the UI experience targets **pt-BR** (default per the 2026-08-05 UX contract — this supersedes the earlier "English default" posture; see NFR-7). The engineering rule is intact: every string lands in both `en` and `pt-BR` catalogs, canonical DB/API wire values remain English, and further locales stay additive via the add-a-locale checklist. **Deployment posture:** single-operator, privacy-preserving, runs on the user's machine (Docker + host Ollama); target surface is a **desktop browser** — no mobile/multi-surface requirement (UX contract, 2026-08-05).
+
+**UX contract:** the frontend's design authority is `_bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/` (`DESIGN.md` + `EXPERIENCE.md`, finalized 2026-08-05, merged `a9058a7`): Meia-noite palette, editorial worded verdicts, one-dashboard IA with health strip + "desde a última visita" panel, grid × map split view, detail side panel, **Favoritos** surface (starred = watched — no separate watchlist concept). v0.13 UI stories consume it; the UX pass also surfaced new product scope, folded in as FR-33–FR-38 (§4.5).
 
 ## 2. Target User
 
@@ -89,8 +91,10 @@ The product matters because house-hunting across QuintoAndar, OLX, ZapImóveis, 
 - **Cloud assist** — The optional, quota-bounded Gemini/Gemma batch-enrichment path; never required for core enrichment.
 - **Backfill runner** — Resumable driver (`core/backfill_runner.py`) that enriches historical rows through the same pipeline authority, paced by the quota pacer.
 - **Quota pacer** — The single Redis-backed budget owner (`backfill:gemma`) for cloud-assist requests; by invariant there is exactly one consumer.
-- **Watchlist** — Per-property subscription that triggers on price drops past a threshold.
-- **Favourite / Saved search** — User-starred shortlist / named filter preset (single-tenant).
+- **Watchlist** — Per-property subscription that triggers on price drops past a threshold. *[Amended by the UX contract, 2026-08-05: **starred = watched** — there is no separate watchlist surface; starring a Property is what subscribes it. FR-16 semantics unchanged underneath.]*
+- **Favourite / Saved search** — User-starred shortlist (**Favoritos** surface: availability tracking, filterable history of gone favourites, optional-reason discard) / named filter preset (single-tenant).
+- **Recheck** — On-demand or automatic single-listing availability verification against the source platform (FR-33); a blocked/failed probe is `unknown`, never `gone`.
+- **Gone / voltou ao mercado** — A Listing no longer present in successful scrapes is marked gone; a reappearance clears the state and annotates price history (FR-34).
 - **Enrichment** — Async AI/metrics pipeline that attaches scores, verdicts, embeddings, etc.
 - **Semantic search** — Free-text query over property embeddings (`GET /properties?q=`).
 
@@ -145,16 +149,38 @@ Operator can see, per signal type, what fraction of Properties is enriched, back
 
 ### 4.4 v0.13 Theme B — Deal-intelligence deepening (planned)
 
-**Description:** With description enrichment (FR-26) landing signals on every listing and backfill (Theme A) extending them to the whole corpus, the dashboard can answer sharper questions than a single combined score. Realizes UJ-1, UJ-2. Exact cut within this theme is decided at epics time.
+**Description:** With description enrichment (FR-26) landing signals on every listing and backfill (Theme A) extending them to the whole corpus, the dashboard can answer sharper questions than a single combined score. Realizes UJ-1, UJ-2. **Cut decided at epics time (2026-08-05): FR-30 + FR-32 are in; FR-31 is deferred** — worst data-availability risk (partial platform fee coverage); it stays on the debt ledger for a later wave.
 
 #### FR-30: Price-per-m² percentile views
 User sees where a Property's price/m² falls within its neighbourhood cohort (percentile on card/modal, filterable). Realizes UJ-1. `[ASSUMPTION: neighbourhood polygons (FR-22) + dual-type scoring (FR-25) give adequate cohorts; no new geo work needed.]`
 
-#### FR-31: Total-cost-of-occupancy normalization
-Condo fee + IPTU are normalized across platforms into a comparable monthly total alongside rent/price — promoting long-carried debt into a product capability. Realizes UJ-1. `[ASSUMPTION: platform coverage of fee data is partial; the FR includes surfacing "unknown" honestly rather than imputing.]`
+#### FR-31: Total-cost-of-occupancy normalization — **deferred at epics (2026-08-05)**
+Condo fee + IPTU are normalized across platforms into a comparable monthly total alongside rent/price — promoting long-carried debt into a product capability. Realizes UJ-1. `[ASSUMPTION: platform coverage of fee data is partial; the FR includes surfacing "unknown" honestly rather than imputing.]` Not in the v0.13 epic set; stays on the debt ledger.
 
 #### FR-32: Saved-search new-match alerts
-Alerts extend beyond watched-property price drops: a saved search can notify when a **new** Property matching it appears. Realizes UJ-2. `[ASSUMPTION: reuses the shipped notifier registry (FR-21) and saved searches (FR-14); no new channel work required for v1.]`
+Alerts extend beyond watched-property price drops: a saved search can notify when a **new** Property matching it appears. Realizes UJ-2. `[ASSUMPTION: reuses the shipped notifier registry (FR-21) and saved searches (FR-14); no new channel work required for v1.]` *UX refinements (2026-08-05 contract): new-match alerts fire only once verdict/percentile enrichment exists; drop-alert threshold is per saved search; channel posture is email (guaranteed) + in-app + desktop push (opportunistic) — no Telegram.*
+
+### 4.5 UX-contract-driven scope — FR-33–FR-38 (discovered post-epics, **unscheduled**)
+
+**Description:** The 2026-08-05 UX pass (DESIGN.md + EXPERIENCE.md) surfaced product scope beyond the v0.13 epic set — mostly backend capabilities the designed experience depends on. FRs are minted here so the scope has stable IDs and doesn't live only in UX flags; **none is committed to v0.13**. Scheduling is decided at v0.13 close (or a correct-course pass), alongside the multi-city question (§9).
+
+#### FR-33: Listing availability verification (recheck)
+On-demand per-listing recheck (`Verificar disponibilidade` in the detail panel / Favoritos) plus **automatic priority rechecks** (e.g. daily) for starred items, addressing the stale-availability frustration (property looks live in-system but is gone at the source). Safety rails are part of the FR: per-listing cooldown, a modest global recheck budget (rechecks burn the shared scraping identity), and honest tri-state results — a Cloudflare/403/timeout probe is `não foi possível verificar` (unknown), never marks gone, and never refreshes the freshness stamp.
+
+#### FR-34: Gone/resurrection lifecycle + favourite-gone alerts
+A gone Property reappearing in a coleta clears the gone state and bridges + annotates the price-history chart (`voltou ao mercado`). Favourite-gone becomes a first-class alert (on by default for starred items), and a resurrection of a previously starred Property is likewise alert-worthy. Gone heuristics are gated on **successful** runs; skip-unchanged still bumps last-seen.
+
+#### FR-35: Personal POI travel-time layer
+Named personal anchors (Igreja, Casa dos pais, …) on the map with **travel-time bands** (minutes, never km); proximity to these anchors is central to the shortlist decision. Card↔pin hover sync and explicit map-area filtering are UI-contract concerns; the FR is the POI/travel-time data capability behind them.
+
+#### FR-36: Sentiment-dimension filters (extensible vocabulary)
+Filterable sentiment/quality tags on Properties (`seguro`, `reformado`, `silencioso` as **seed suggestions, not a closed set**) built on FR-24/FR-26 signals; the filter system must handle a growing tag vocabulary.
+
+#### FR-37: Scraper run-history behavioral analytics
+Per-coleta duration and yield (processed/included/excluded/updated) compared against that scraper's **rolling baseline and a pinned long-window baseline** (so gradual drift can't rot the comparison); deviation turns the health-strip chip amber with a reason string, and "finished too early" is a first-class signal. In-app only — no external notification for anomalies.
+
+#### FR-38: Recent-filter recall
+Recently used neighbourhoods, property types, and price ranges resurface as reuse suggestions inside the filter pickers.
 
 ## 5. Non-Goals (Explicit)
 
@@ -174,14 +200,18 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 
 ### 6.2 In scope for v0.13 planning / delivery
 
-- **Theme A:** FR-27, FR-28, FR-29 — cloud/local split productization.
-- **Theme B:** a prioritized cut of FR-30–FR-32 (exact subset set at epics after readiness).
-- **Harness track (process, not FR):** SoR pivot waves 3–4 — per-epic verification feeding the bmad-loop deferred-work ledger; CLAUDE.md rewrite inverting the feature-pipeline mandate; `scripts/agent/` gates wired into bmad-loop via `bmad-customize`. Gate: completes **before** v0.13 story execution starts.
+- **Theme A:** FR-27, FR-28, FR-29 — cloud/local split productization. FR-28 surface decided at epics: admin-panel exposure is the target, built as slices (hardened runner control core → auth-gated admin API + panel); CLI-only remains the fallback slice.
+- **Theme B:** FR-30 + FR-32 (cut decided at epics 2026-08-05; FR-31 deferred to the debt ledger).
+- **UI stories consume the UX contract** (`ux-designs/ux-imoveis-2026-08-05/`) — admin backfill card, coverage telemetry, percentile presentation, saved-search alert toggles follow DESIGN.md/EXPERIENCE.md, not ad-hoc patterns.
+- **Harness track (process, not FR): DONE** — landed 2026-08-05 as `v0.13-fu1` (main `8f5d885` + `f2da788`) before story execution, as gated: primary-safe validation (ephemeral test stack), PR-less local merge gate, BMad-only harness, doc surfaces rewritten.
 - Architecture pass binds the cloud-assist path (AD-13 or AD-7 amendment) per sprint-change-proposal §4.2.
 
 ### 6.3 Out of scope for v0.13 (deferred)
 
+- **FR-31** total-cost-of-occupancy normalization (deferred at epics — data-availability risk).
+- **FR-33–FR-38** UX-contract-driven scope (§4.5) — unscheduled; decide at v0.13 close.
 - Multi-city productization (v0.14 candidate — revisit at v0.13 close).
+- Export UI and auth/API-key management UI — **consciously undesigned** in the UX contract (export stays API/digest-only; auth stays the current key gate); Compare stays minimal/deprioritized.
 - Hot-reload of `app_config.yaml`.
 - Dead listing URL pruning (tracked debt).
 - New scrape platforms beyond the shipped three.
@@ -195,7 +225,7 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 | Enrichment coverage (new) | % of Properties with description signals; backfill days-to-complete within free quota | Quota overruns / provider bans; second quota consumer appearing |
 | Cloud independence (new) | Core pipeline fully functional with cloud assist disabled | Silent cloud dependency creeping into incremental enrichment |
 | Deal-intelligence adoption | Percentile/TCO signals visible on shortlisted properties; saved-search alerts firing | Signal noise (percentiles on cohorts too small to mean anything) |
-| v0.13 outcome | Theme A shipped whole; ≥1 Theme B FR shipped with feature doc | Scope churn without readiness check |
+| v0.13 outcome | Theme A shipped whole; Theme B cut (FR-30 + FR-32) shipped with feature docs | Scope churn without readiness check |
 
 `[ASSUMPTION: numeric SLOs still not instrumented as first-class KPIs; FR-29 is the first step toward that for enrichment.]`
 
@@ -205,25 +235,32 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 - **NFR-2 Config discipline:** Runtime settings via `AppConfig` / `configs/app_config.yaml` (+ env), not scattered `os.getenv` in feature code.
 - **NFR-3 Security:** No hardcoded production secrets; forbid `imoveis_secret` / `dev-secret-key` in repo; admin routes require API key when configured; cloud API keys via env only.
 - **NFR-4 Resilience:** Circuit breakers and checkpoints keep scrapes operable under partial platform failure; quota exhaustion degrades to local enrichment, not outage.
-- **NFR-5 Testability:** Merge requires green CI (lint, unit, integration, contract, scrapers live gate, e2e, security) — gates preserved unchanged across the SoR pivot.
-- **NFR-6 Observability:** Pipeline telemetry and system health support unattended operation, extended in v0.13 to enrichment coverage and backfill pacing (FR-29).
-- **NFR-7 i18n:** English default; `pt-BR` supported via catalogs + preference (`ui.locale` / Redis). Canonical DB/API wire values remain English. Further locales additive via `docs/i18n/add-a-locale.md`.
+- **NFR-5 Testability:** Merge requires a green **local gate** — `scripts/agent/validate.sh all` (lint, unit, integration, contract, scrapers live gate, e2e, security) run by `finish-feature.sh`, which is the only path to `main` (validate → squash-merge → push). Validation runs against the ephemeral test stack and never touches the primary compose project — safe during a live backfill. GitHub Actions is docs deploy + nightly scraper drift canary only. *(Rewritten post-v0.13-fu1; gate contents preserved unchanged across the SoR pivot — CI was the vehicle, not the gate.)*
+- **NFR-6 Observability:** Pipeline telemetry and system health support unattended operation, extended in v0.13 to enrichment coverage and backfill pacing (FR-29). Coverage is a first-class SLO on the front-door health strip (scrapers · backend/model · workers · coverage; coverage % = minimum across signal types), with detail in Admin (UX contract, resolves old Q4).
+- **NFR-7 i18n:** **pt-BR is the UI default** (UX contract 2026-08-05, superseding the earlier "English default"); the engineering rule is unchanged — every string ships in both `en` and `pt-BR` catalogs, locale switchable via preference (`ui.locale` / Redis). Canonical DB/API wire values remain English. Further locales additive via `docs/i18n/add-a-locale.md`.
 - **NFR-8 Geography & tenancy posture:** BH/MG primary geography with opportunistic SP/Campinas data; single-tenant personalization (nullable `owner`) until multi-city / multi-profile is explicitly productized.
 
 ## 9. Open Questions
 
 **Answered by shipping since 2026-07-23** (kept for the record): v0.5 priority order → delivered in full; digest necessity → shipped notifier registry + export; auth depth → API-key gate shipped; BH polygon source → GeoJSON path shipped; ZapImóveis timing → shipped (BIN-127).
 
-**Open for v0.13:**
+**Answered since finalization (2026-08-05, kept for the record):**
 
-1. FR-28 surface: full admin-panel backfill control, or hardened CLI + FR-29 telemetry as the v0.13 slice? `[NOTE FOR PM: decide at epics; affects scope size materially.]`
-2. Theme B cut: which of FR-30/31/32 make the wave? (FR-31 has the worst data-availability risk; FR-32 the smallest surface.)
+1. FR-28 surface → **answered at epics:** admin-panel exposure is the target, built as slices (runner control core → admin API + panel); CLI-only is the fallback slice.
+2. Theme B cut → **answered at epics:** FR-30 + FR-32 in; FR-31 deferred (worst data-availability risk).
+4. Coverage as SLO → **answered by the UX contract:** yes — enrichment coverage % joins the front-door health strip; detail in Admin (NFR-6).
+
+**Open:**
+
 3. Multi-city (v0.14 candidate): revisit at v0.13 close — promote to product intent or keep opportunistic?
-4. Should enrichment coverage targets (FR-29) become the first numeric SLOs on the dashboard?
+5. FR-33–FR-38 scheduling (UX-contract scope, §4.5): which land in a v0.13 follow-up wave vs v0.14? `[NOTE FOR PM: decide at v0.13 close together with Q3; FR-33/FR-34 fight the stale-availability frustration the UX pass ranked as the top real-world pain.]`
 
 ## 10. References
 
 - `README.md`, `docs/index.md`, `docs/architecture.md`, `docs/features/*` (58 feature docs)
+- `_bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/` — UX contract (DESIGN.md + EXPERIENCE.md, merged `a9058a7`); source of the FR-33–FR-38 flags and the NFR-7 pt-BR default
+- `_bmad-output/planning-artifacts/epics.md` — v0.13 epic set (stories v0.13-s1.1…s2.4; Theme B cut + FR-28 surface decisions of record)
+- ADR 0005 (BMad artifacts as sole tracker); `v0.13-fu1` harness surgery (main `8f5d885` + `f2da788`)
 - `_bmad-output/planning-artifacts/sprint-change-proposal-2026-08-05.md` (drift analysis + §4.1 edit basis)
 - `_bmad-output/planning-artifacts/research/technical-imoveis-local-vs-cloud-hybrid-stack-research-2026-08-05.md` (topology invariants)
 - `_bmad-output/project-context.md` (agent rules incl. Gemma quota, Redis surfaces)

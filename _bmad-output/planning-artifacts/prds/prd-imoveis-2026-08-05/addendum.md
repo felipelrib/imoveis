@@ -10,14 +10,14 @@ Technical and planning depth that belongs downstream (architecture, epics) or su
 - Redis is multi-surface: Celery broker, slowapi rate limiting, `ui:locale` override, `backfill:gemma` pacer. Any Redis change is a multi-surface refactor.
 - Scraper plugin registry; queues `scrapers` vs `ai` (GPU semaphore; host `OLLAMA_NUM_PARALLEL` = `gpu.semaphore_limit`).
 - Dedup defaults: 50 m geo, ±2 m² area, Jaro–Winkler ≥ 0.65 (config-driven).
-- Implementation gates: `scripts/agent/validate.sh` / CI stay merge-blocking across the SoR pivot; bmad-loop wraps them via `bmad-customize`, never replaces them.
+- Implementation gates *(updated post-v0.13-fu1)*: `scripts/agent/validate.sh` is THE merge gate, run locally by `finish-feature.sh` (validate → squash-merge → push — the only path to `main`); CI is reduced to docs deploy + nightly scraper drift canary. bmad-loop wraps the gates via `bmad-customize`, never replaces them.
 
 ## Cloud-assist sizing data (for FR-28/FR-29 planning)
 
 - Gemini API key is **free tier**. Gemma: ~30 RPM / **14,400 RPD** / 16K TPM best-case; `ResourceExhausted` can fire early. Gemini Flash free RPD is an order of magnitude smaller (~20 RPD for 2.5 Flash) — Gemma is the backfill workhorse.
 - At ~3 requests/property ⇒ ≈4,600 properties/day ⇒ whole-DB backfill is inherently **multi-day (~6 days observed planning basis)**. Single-day whole-DB requires paid tier or local-only — out of scope (§5).
 - Exactly one pacer (`backfill:gemma`) owns the daily budget. "Never add a second quota consumer" is a product invariant (FR-28), not just an ops note.
-- Operational conflict: `validate.sh` / `finish-feature.sh` recreate the primary Postgres container — a running multi-day backfill and a validation cycle must never overlap. FR-28's product surface should make an active backfill *visible* precisely so this collision stops being tribal knowledge.
+- ~~Operational conflict: `validate.sh` / `finish-feature.sh` recreate the primary Postgres container — a running multi-day backfill and a validation cycle must never overlap.~~ **Resolved by v0.13-fu1:** validation runs on the ephemeral test stack and never touches the primary project; the remaining guarded operation is `migrate-primary.sh`, which refuses while the backfill heartbeat (`backfill:gemma:active`) is alive. FR-28's visibility rationale stands on its own: an active backfill should be *visible* as a product surface, not tribal knowledge.
 
 ## Alternatives considered (product + process)
 
@@ -29,16 +29,20 @@ Technical and planning depth that belongs downstream (architecture, epics) or su
 | Planning/dev regime | **BMad-SoR + bmad-loop** (settled 2026-08-05) | Linear-SoR + feature-pipeline (superseded; Linear stays as tracking mirror); staying hybrid indefinitely |
 | Parallel agents | Worktree when primary busy (ADR 0004) | Always-on nested `.worktrees/` |
 
-## SoR pivot — remaining execution (harness track, pre-epic gate)
+## SoR pivot — harness track (COMPLETE, 2026-08-05)
 
-Waves 1–2 done (project-context + hybrid-stack research; correct-course + this PRD). Remaining before v0.13 story execution:
+All four waves done. Waves 1–2: project-context + hybrid-stack research; correct-course + this PRD. Wave 3: per-epic verification feeding the bmad-loop deferred-work ledger. **Wave 4 landed as `v0.13-fu1`** (main `8f5d885` + `f2da788`): CLAUDE.md rewritten (BMad-only harness, legacy skills removed), `scripts/agent/*` gates wired via `bmad-customize`, validation made primary-safe (ephemeral test stack), merge gate made PR-less local (`finish-feature.sh`). The pre-epic gate held: surgery completed before v0.13 story execution.
 
-- **Wave 3:** per-epic verification (testarch-trace + adversarial/edge-case reviews) feeding the bmad-loop deferred-work ledger.
-- **Wave 4:** harness surgery — rewrite CLAUDE.md (invert the "never BMad dev skills / always feature-pipeline" mandate), remove non-BMad `.claude/skills/` duplicates, wire `scripts/agent/*` gates into bmad-loop via `bmad-customize`. Also correct stale memory notes that describe the pivot as undecided.
+## UX contract (2026-08-05) — depth pointers
+
+- Design authority: `ux-designs/ux-imoveis-2026-08-05/` — DESIGN.md (Meia-noite token palette, editorial verdict components, contrast table) + EXPERIENCE.md (IA, state patterns, J1–J4 journeys, pt-BR microcopy). PRD holds capability-level FRs only; interaction detail stays there.
+- Product-model decisions settled in the UX run and folded into PRD §1/§3/§4.5: starred = watched (no separate watchlist surface); Favoritos = availability tracking + filterable gone-history + optional-reason discard (visit-day framing dropped); detail = side panel, map rail stays visible; map→grid filtering explicit via `filtrar pela área do mapa` chip; since-panel resets on real engagement only; drop-alert threshold per saved search; channels = email (guaranteed) + in-app + desktop push, no Telegram.
+- Consciously undesigned (deliberate, not gaps): export UI (stays API/digest-only), auth/API-key management UI (stays key gate), Compare (minimal/deprioritized).
+- FR-33–FR-38 originate from EXPERIENCE.md `[NOTE FOR PRD]` flags; recheck cooldown/budget numbers and run-history baseline mechanics are design-level detail in EXPERIENCE.md, to be hardened at architecture/epics time when scheduled.
 
 ## Debt carried into planning (not v0.13 commitments unless listed in §6.2)
 
-- Condo/IPTU normalization → **promoted to FR-31** (Theme B candidate).
+- Condo/IPTU normalization → **promoted to FR-31** (Theme B candidate) → *deferred at epics 2026-08-05; back on the ledger.*
 - Dead listing URL pruning — still debt.
 - Config hot-reload absent — still debt.
 - Map tiles require internet — accepted.
@@ -55,4 +59,4 @@ Waves 1–2 done (project-context + hybrid-stack research; correct-course + this
 | FR-18–FR-23 | Shipped (v0.5 BIN-19–23; Zap = BIN-127) |
 | FR-24 / FR-25 / FR-26 | Shipped (v0.6 BIN-85 area / v0.7 BIN-96 area / v0.12 BIN-241–249 area) |
 | FR-27–FR-29 (Theme A) | v0.13 epic(s) — create milestone `v0.13` + parent epic at epics sync |
-| FR-30–FR-32 (Theme B) | v0.13 epic — cut decided at epics after readiness |
+| FR-30–FR-32 (Theme B) | Cut decided at epics: FR-30 + FR-32 in (Epic 2, v0.13-s2.1…s2.4); FR-31 deferred |
