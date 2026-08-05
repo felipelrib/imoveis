@@ -6,6 +6,8 @@
 
 ## Decision
 
+> **Amended by [ADR 0005](0005-drop-linear-bmad-artifacts-sole-tracker.md) (2026-08-05):** Linear was dropped entirely; BMad artifacts (`epics.md` + `sprint-status.yaml`) are now the sole tracker. Linear references below are historical.
+
 Imoveis uses **BMad Method** for product planning and solutioning (PRD, architecture spine, epics/stories, implementation readiness, sprint planning). **Implementation and merge gates stay on ADR 0002**: single Cursor agent, Linear as execution tracker, committed `scripts/agent/` validate / finish-feature / babysit.
 
 | Concern | Owner |

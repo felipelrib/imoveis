@@ -46,7 +46,9 @@ Waves 1–2 done (project-context + hybrid-stack research; correct-course + this
 - Schedule changes may need Celery beat restart — still debt.
 - AD-1 core→ORM dedupe leak burn-down status — verify during architecture pass (flagged in correct-course §4.2).
 
-## Linear mapping (pre-epic)
+## Linear mapping (pre-epic) — historical
+
+*[Amended 2026-08-05, post-epics: Linear dropped entirely (ADR 0005). The table below is the shipped-history mapping only; v0.13 rows are tracked as epics.md story keys (v0.13-s1.1…s2.4), not Linear issues.]*
 
 | FR | Status / seed |
 |----|---------------|

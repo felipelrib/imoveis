@@ -7,6 +7,11 @@
 # Linear only and never tracked in this file — recorded below for the gap.
 # This file awaits regeneration by bmad-sprint-planning once the next wave's
 # PRD/architecture/epics exist (see sprint-change-proposal-2026-08-05.md).
+#
+# NOTE (2026-08-05, ADR 0005): Linear DROPPED entirely. This file is now the
+# SOLE execution-status tracker (epics.md = plan of record). v0.13 epics exist
+# in epics.md (2 epics, 10 stories, keys v0.13-s1.1 … v0.13-s2.4) awaiting
+# bmad-sprint-planning regeneration. BIN-* ids below are historical.
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: {project-root}/_bmad-output/implementation-artifacts

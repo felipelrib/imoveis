@@ -14,7 +14,7 @@ A local-first real-estate deal-finding tool that scrapes multiple rental/sale pl
 | Config | Pydantic + YAML | Single source of truth |
 | Migrations | Alembic | Schema versioning |
 | CI/CD | GitHub Actions | Tests, lint, build |
-| Issue Tracking | Linear | Feature queue, project management |
+| Issue Tracking | BMad artifacts (`_bmad-output/`) | epics.md = plan of record; sprint-status.yaml = execution status (ADR 0005) |
 
 ## Core Problems Solved
 

@@ -1,6 +1,6 @@
 # <feature-name> — <one-line description>
 
-> Feature branch: `feat/<slug>` · Linear: `BIN-XX` · Status: implemented
+> Feature branch: `feat/<slug>` · Story: `vX.Y-sX.X` · Status: implemented
 
 ## Problem
 
@@ -35,4 +35,4 @@ Any new packages added to `requirements.txt` or `package.json`? Or "None".
 ## Notes / Follow-ups
 
 - Any known limitations, tech debt, or follow-up work.
-- Links to related Linear issues.
+- Links to related stories (epics.md keys) or deferred-work ledger entries.

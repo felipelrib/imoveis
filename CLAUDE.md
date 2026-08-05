@@ -24,7 +24,7 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 | Config      | Pydantic + YAML          | Single source of truth            |
 | Migrations  | Alembic                  | Schema versioning                 |
 | CI/CD       | GitHub Actions           | Tests, lint, build, security      |
-| Tracking    | Linear (team **Bino**)   | Feature queue, project board      |
+| Tracking    | BMad artifacts (`_bmad-output/`) | epics.md = plan of record; sprint-status.yaml = execution status (ADR 0005) |
 
 Full docs: `docs/setup.md` (install/run), `docs/architecture.md` (data flow/components), `docs/api.md` (endpoints), `docs/features/` (per-feature notes), `docs/adr/` (architecture decisions).
 
@@ -32,7 +32,7 @@ Full docs: `docs/setup.md` (install/run), `docs/architecture.md` (data flow/comp
 
 **BMad Method** owns product planning/solutioning (PRD, architecture spine, epics, readiness, sprint-status). Artifacts: `_bmad-output/`. BMad skills: `.agents/skills/bmad-*` (framework-native, not Cursor- or Claude-specific — invoke by name, e.g. `bmad-help`, `bmad-prd`). Bridge: [`.claude/skills/imoveis-planning-bridge/SKILL.md`](.claude/skills/imoveis-planning-bridge/SKILL.md) + `docs/adr/0003-bmad-planning-bridge.md`. Run each major BMad workflow in a **fresh chat/session**.
 
-**Linear + this pipeline** own execution. Sprint file: `_bmad-output/implementation-artifacts/sprint-status.yaml`. After `bmad-create-story` (optional), implement via feature-pipeline gates — never skip `validate.sh` / `finish-feature.sh`.
+**The sprint file + this pipeline** own execution (Linear dropped 2026-08-05 — ADR 0005; the workspace is a read-only archive of `BIN-*` history). Plan of record: `_bmad-output/planning-artifacts/epics.md`. Status: `_bmad-output/implementation-artifacts/sprint-status.yaml`. After `bmad-create-story` (optional), implement via feature-pipeline gates — never skip `validate.sh` / `finish-feature.sh`.
 
 **Ticket → ship is ALWAYS `feature-pipeline` — never a BMad dev-side skill.** BMad installs generic implementation loops (`bmad-dev-story`, `bmad-dev-auto`, `bmad-quick-dev`) whose trigger phrases ("implement the next story", "dev this story", "build/fix/tweak…") shadow this pipeline. Do **not** let them run for Imoveis ticket delivery: they bypass `validate.sh` / `finish-feature.sh` / the squash-merge gate and the contract/scraper/AI + docker-rebuild rules, and `bmad-dev-story` explicitly overrides the STOP-at-3-unexpected-files and Plan-Mode discipline this repo requires. BMad dev/review skills are opt-in *assists inside* the pipeline (a task checklist, an adversarial review pass) — they can never replace or short-circuit it.
 
@@ -90,8 +90,8 @@ pip install -r requirements.txt
    - Always runs `scripts/agent/docker-cleanup.sh` (stopped containers + dangling/unused feat|wt images + build cache). Keeps primary `imoveis-*` + base images; never volumes.
 4. **Babysit** if CI/merge stalls — follow [`.claude/skills/babysit-pr/SKILL.md`](.claude/skills/babysit-pr/SKILL.md) through **merge + cleanup**.
 5. **Docker temps (required)** — if wrap-up did not go through `finish-feature.sh --pr` / `teardown.sh`, run `bash scripts/agent/docker-cleanup.sh` yourself before closing the session. Must free leftover `feat-*` / `fix-*` / `imoveis-wt-*` images; never delete the fixed local `imoveis-*` stack or named volumes.
-6. **Update Linear** to Done via the Linear MCP server **after the PR is merged**. (Requires a Linear MCP connector configured for Claude — add it via `claude mcp add` or the Cowork connector picker if not already connected.) Then run [epic-completion](.claude/skills/epic-completion/SKILL.md) §A→§B→§C on a **fresh** sibling list (do not trust a kickoff "not last" note — parallel agents race that). Mark the parent Done only when close-ready.
-7. **Report**: branch, **merged** PR URL, features delivered, epic close verdict (remaining siblings / close-ready / Epic marked Done / N/A), follow-ups.
+6. **Update sprint-status.yaml** — set the story key to `done` **after the PR is merged** (never downgrade; prefer committing it on the feature branch before merge when possible). Then run [epic-completion](.claude/skills/epic-completion/SKILL.md) §A→§B→§C on a **fresh** re-read of sprint-status.yaml + epics.md (do not trust a kickoff "not last" note — parallel agents race that). Set `epic-N: done` only when close-ready.
+7. **Report**: branch, **merged** PR URL, features delivered, epic close verdict (remaining sibling story keys / close-ready / epic-N done / N/A), follow-ups.
 
 ## Validation & finishing
 
@@ -117,54 +117,37 @@ Config tests must clear `get_config()`'s `lru_cache` via `autouse` fixture when 
 
 **API response schemas:** keep Pydantic `response_model` types aligned with domain producers (AI scores are floats in `[0.0, 1.0]`, not ints). Contract tests must **not** treat every 500 as "DB down" when the properties schema is queryable — that hid BIN-56 `ResponseValidationError`. Prefer failing when the table exists; skip only when schema/infra is missing. Unit tests that hit rate-limited routes must bypass slowapi Redis (unit CI has none).
 
-## Linear integration
+## Tracking (BMad artifacts — Linear dropped, ADR 0005)
 
-Team **Bino**. Use the Linear MCP server's tools (project-level MCP config, or a connector if running under Cowork).
-
-| Entity | ID |
-|--------|---|
-| Project (Imoveis — Deal Tracker) | `2b293958-ee46-48f1-98aa-6d54abba468d` |
-| State: In Progress | `7de50ed1-0de6-4f06-89f6-6816991f106f` |
-| State: Done | `fa058318-6dde-441e-91cb-5939c33e4fb1` |
+**No external tracker.** Plan of record: `_bmad-output/planning-artifacts/epics.md`. Execution status: `_bmad-output/implementation-artifacts/sprint-status.yaml`. Story keys are `v<milestone>-s<epic>.<story>` (e.g. `v0.13-s1.1`); follow-ups without a story mint `v<milestone>-fu<N>` keys in sprint-status.yaml. Do **not** update Linear — the workspace is a read-only archive of pre-v0.13 `BIN-*` history (v0.13 leftovers there were canceled 2026-08-05).
 
 ### Milestone ordering
 
-Milestones are **versioned only** (`v0.1`, `v0.2`, …). Prefer **one large multi-story epic per numbered milestone**; thin single-ticket waves also get their own `v0.N`.
+Milestones are **versioned only** (`v0.1`, `v0.2`, …), recorded in the PRD + epics.md (`planningTarget`). Prefer **one large multi-story epic per numbered milestone**; thin single-story waves also get their own `v0.N`.
 
-#### Milestone description standard (match v0.1–v0.4)
+When defining a milestone (PRD/epics frontmatter or prose), use **only**: a short prose paragraph of what the work contains, `**Theme:**` one line, `**Exit criteria:**` concrete testable outcomes. No status banners, cross-milestone links, or process essays.
 
-When creating or editing a Linear project milestone, use **only**:
+1. Work the earliest milestone whose epics.md stories are not all `done` in sprint-status.yaml.
+2. Within it, follow the sequencing gates in epics.md frontmatter (`tracking:` note) / the epic's parallel-work-plan; otherwise lowest story number first.
+3. Advance only when ALL current-milestone stories are `done` (explicitly deferred/parked stories noted in epics.md per epic exit criteria).
 
-1. A short prose paragraph stating **what work this milestone contains** (no status banners, no "active/next/deferred", no links to other milestones, no process/policy essays).
-2. `**Theme:**` one line.
-3. `**Exit criteria:**` concrete, testable outcomes for *this* milestone's work.
+### Epic refine / multi-story planning (NON-NEGOTIABLE)
 
-Do **not** put epic/ticket relationship graphs, "1:1 with BIN-…", "after v0.N", or harness policy in the milestone body — those live on issues / this file.
+Whenever you **refine an epic** and/or **add multiple stories** to epics.md, the wrap-up reply to the user **must** include a **Parallel work plan** — not only a flat story table:
 
-1. List milestones for the project; ignore any `DEPRECATED` leftover.
-2. Work earliest uncompleted versioned milestone (lowest `sortOrder` among `v0.*` with open issues).
-3. Within it, highest-priority unfinished issue (lower number = higher priority).
-4. Advance only when ALL current milestone issues are Done (optional Low tickets may be explicitly parked/canceled per epic exit criteria).
+1. **Waves** — group stories into sequential waves; within each wave, name every story key that can run **in parallel**.
+2. **Gates** — what must be `done` before the next wave starts.
+3. **Start here** — the concrete first parallel set, with story keys.
+4. **Do not parallelize** — stories that look independent but must stay serial (shared files, same migration, foundation-before-consumer).
 
-### Epic refine / multi-ticket planning (NON-NEGOTIABLE)
+Record the sequencing gates in epics.md (frontmatter `tracking:` note or an epic-level note) so future sessions don't re-derive them. Skipping this section after multi-story epic work is a harness miss.
 
-Whenever you **refine an epic** and/or **create multiple Linear child tickets**, the wrap-up reply to the user **must** include a **Parallel work plan** — not only a flat ticket list.
+### Epic completion
 
-Required shape:
+Every versioned milestone is delivered as one or more epics.md epics whose stories are tracked as sprint-status.yaml keys. On every pipeline run that finishes a story **belonging to an epic**:
 
-1. **Waves** — group stories into sequential waves (Wave 1, Wave 2, …). Within each wave, name every ticket that can run **in parallel**.
-2. **Gates** — for each wave, state what must be Done before the next wave starts (audit findings, foundation PR, schema, etc.).
-3. **Start here** — call out the concrete first parallel set (usually Wave 1) with Linear IDs/links.
-4. **Do not parallelize** — briefly note stories that look independent but must stay serial (shared files, same migration, preference API before UI catalog, etc.).
-
-Wire Linear `blockedBy` to match the plan when practical. Skipping this section after multi-ticket epic work is a harness miss.
-
-### Epic completion (parent issues)
-
-Every versioned milestone (`v0.N`) is delivered as one or more Linear parent epics with numbered children — check the current milestone's epic via `list_milestones`/`list_issues` rather than assuming a fixed ID range (past ranges: v0.5 was BIN-19..23, v0.6 was BIN-85/BIN-86..95, v0.9 was BIN-104 — all Done; do not treat any of these as current). On every feature-pipeline ticket **with a parent**:
-
-1. **After story Done (mandatory):** re-detect last-ticket on a fresh sibling list ([epic-completion](.claude/skills/epic-completion/SKILL.md) §A). If `remaining == 0`, run checklist §B then close gate §C. Mark the **parent** Done in Linear and `epic-N: done` in `sprint-status.yaml` only when close-ready.
-2. **Do not** rely on a start-of-feature "am I last?" check — concurrent agents often all see siblings still open at kickoff and would skip the close gate. Never leave a fully delivered epic stuck in Backlog; never mark Done while leftovers remain.
+1. **After story `done` (mandatory):** re-read sprint-status.yaml + epics.md **fresh** ([epic-completion](.claude/skills/epic-completion/SKILL.md) §A). If no unfinished sibling story keys remain, run checklist §B then close gate §C. Set `epic-N: done` only when close-ready.
+2. **Do not** rely on a start-of-feature "am I last?" check — parallel agents race that signal. Never leave a fully delivered epic un-closed; never mark `done` while leftovers remain (non-story follow-ups in feature docs, open `action_items`, deferred ACs).
 
 ## Commit & safety
 
@@ -186,7 +169,7 @@ Every versioned milestone (`v0.N`) is delivered as one or more Linear parent epi
 
 - All settings from `AppConfig` (YAML + env). Never `os.getenv()` outside `config.py`.
 - Never hardcode ports/URLs — env or config.
-- New feature = `docs/features/BIN-<id>-<slug>.md` (Linear-ID-prefixed) + README link when user-facing.
+- New feature = `docs/features/<story-key>-<slug>.md` (e.g. `v0.13-s1.1-…`) + README link when user-facing.
 - **Bug fixes require a regression spec** (Playwright and/or pytest) that fails without the fix; do not ship `fix:` as code-only.
 - Single-user for now — design tables with nullable `owner`.
 
@@ -209,10 +192,10 @@ Risk-tiered — not blanket 100% coverage or universal TDD:
 
 ## Feature documentation (NON-NEGOTIABLE)
 
-Every completed feature: `docs/features/BIN-<id>-<feature-slug>.md` using `docs/features/_template.md` verbatim (all sections mandatory). **The filename prefix is the Linear issue ID** (`BIN-<id>`) — unique by construction, so parallel PRs never collide (this replaced the old `max(NN)+1` sequential numbering, which raced; see the BIN-146…BIN-147 v0.10 batch). Keep the `Linear: \`BIN-<id>\`` header field in sync with the filename.
+Every completed feature: `docs/features/<story-key>-<feature-slug>.md` using `docs/features/_template.md` verbatim (all sections mandatory). **The filename prefix is the BMad story key** (`v0.13-s1.1`, from epics.md / sprint-status.yaml) — unique by construction, so parallel PRs never collide (the same property the Linear-ID scheme had, which itself replaced racing `max(NN)+1` numbering). Keep the `Story: \`<story-key>\`` header field in sync with the filename. Include the key in the branch name (`feat/v0.13-s1.1-…`) so `gen-docs.sh` derives it.
 
-- One doc per ticket. A follow-up/regression with no ticket of its own needs a **placeholder Linear issue** (create it, then name the doc after it) — do not reuse another ticket's ID or fall back to a number.
-- Legacy numeric-prefixed docs (`docs/features/<NN>-*.md`) were migrated to `BIN-<id>-*` in bulk; if you touch one that somehow still has a numeric prefix, rename it to its Linear ID at the same time.
+- One doc per story. A follow-up/regression with no story of its own mints a **`v0.N-fu<N>` key in sprint-status.yaml** (one line, status + short description) and names the doc after it — do not reuse another story's key or fall back to a bare number.
+- Legacy `BIN-<id>-*` and numeric-prefixed docs are history — keep their names; do not rename them to story keys.
 
 Bugs found during review go only in **Notes / Follow-ups** as `**BUG (Severity)**: description — fix hint.`
 

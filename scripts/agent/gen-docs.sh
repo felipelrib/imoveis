@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# gen-docs.sh <feature-slug> "<Human Readable Title>" [BIN-id]
+# gen-docs.sh <feature-slug> "<Human Readable Title>" [story-key]
 #
-# Scaffolds docs/features/BIN-<id>-<slug>.md (if absent) — named after the
-# Linear issue ID (unique, so parallel PRs never collide) — and adds it to the
-# mkdocs.yml Features nav. The agent fills in the prose, then commits.
+# Scaffolds docs/features/<story-key>-<slug>.md (if absent) — named after the
+# BMad story key from epics.md / sprint-status.yaml (e.g. v0.13-s1.1; unique by
+# construction, so parallel PRs never collide) — and adds it to the mkdocs.yml
+# Features nav. The agent fills in the prose, then commits.
 #
-# The BIN id may be passed as the 3rd arg; otherwise it is derived from the
-# current branch name (e.g. `bin-147-...` or `feat/bin-147-...` -> BIN-147).
-# If it cannot be derived, a BIN-XXX placeholder is used and the agent is
-# warned to rename the doc to the real Linear ID before committing.
+# The story key may be passed as the 3rd arg; otherwise it is derived from the
+# current branch name (e.g. `feat/v0.13-s1.1-...` -> v0.13-s1.1). Legacy
+# `bin-147-...` branches still resolve to BIN-147 (pre-v0.13 docs keep their
+# Linear-era names). If nothing can be derived, a vX.Y-sX.X placeholder is used
+# and the agent is warned to rename the doc to the real story key before
+# committing.
 #
 # Prints the doc path on the last line.
 # ---------------------------------------------------------------------------
@@ -18,35 +21,38 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-[ $# -ge 1 ] || die "usage: gen-docs.sh <feature-slug> \"<Title>\" [BIN-id]"
+[ $# -ge 1 ] || die "usage: gen-docs.sh <feature-slug> \"<Title>\" [story-key]"
 SLUG="$(sanitize_proj "$1")"
 TITLE="${2:-$SLUG}"
-BIN_ARG="${3:-}"
+KEY_ARG="${3:-}"
 cd "$REPO_ROOT"
 
 mkdir -p docs/features
 
-# Resolve the Linear issue ID for the filename prefix.
+# Resolve the story key (or legacy Linear ID) for the filename prefix.
 BRANCH="$(current_branch)"
-if [ -n "$BIN_ARG" ]; then
-  BIN_ID="$(printf '%s' "$BIN_ARG" | grep -oiE 'BIN-[0-9]+' | head -1 || true)"
+if [ -n "$KEY_ARG" ]; then
+  STORY_KEY="$(printf '%s' "$KEY_ARG" | grep -oiE '(v[0-9]+\.[0-9]+-(s|fu)[0-9]+(\.[0-9]+)?|BIN-[0-9]+)' | head -1 || true)"
 else
-  # derive from branch: bin-147-... / feat/bin-147-... -> BIN-147
-  BIN_ID="$(printf '%s' "$BRANCH" | grep -oiE 'bin-[0-9]+' | head -1 | tr 'a-z' 'A-Z' || true)"
+  # derive from branch: feat/v0.13-s1.1-... -> v0.13-s1.1 (legacy: bin-147 -> BIN-147)
+  STORY_KEY="$(printf '%s' "$BRANCH" | grep -oiE 'v[0-9]+\.[0-9]+-(s|fu)[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  if [ -z "$STORY_KEY" ]; then
+    STORY_KEY="$(printf '%s' "$BRANCH" | grep -oiE 'bin-[0-9]+' | head -1 | tr 'a-z' 'A-Z' || true)"
+  fi
 fi
-if [ -z "$BIN_ID" ]; then
-  BIN_ID="BIN-XXX"
-  warn "could not resolve Linear ID (arg or branch) — using placeholder $BIN_ID; RENAME the doc to the real BIN-<id> before committing"
+if [ -z "$STORY_KEY" ]; then
+  STORY_KEY="vX.Y-sX.X"
+  warn "could not resolve story key (arg or branch) — using placeholder $STORY_KEY; RENAME the doc to the real key from epics.md/sprint-status.yaml before committing"
 fi
 
-DOC="docs/features/${BIN_ID}-${SLUG}.md"
+DOC="docs/features/${STORY_KEY}-${SLUG}.md"
 
 if [ ! -f "$DOC" ]; then
   DIFFSTAT="$(git diff --stat "$(git merge-base HEAD main 2>/dev/null || echo HEAD)"...HEAD 2>/dev/null | tail -n 20 || true)"
   cat > "$DOC" <<EOF
 # $TITLE — <one-line description>
 
-> Feature branch: \`$BRANCH\` · Linear: \`$BIN_ID\` · Status: implemented
+> Feature branch: \`$BRANCH\` · Story: \`$STORY_KEY\` · Status: implemented
 
 ## Problem
 _What user/business problem does this solve? (fill in)_
@@ -79,9 +85,9 @@ fi
 # --- Add to mkdocs.yml Features nav if present --------------------------------
 MKDOCS="mkdocs.yml"
 if [ -f "$MKDOCS" ]; then
-  REL="features/${BIN_ID}-${SLUG}.md"
+  REL="features/${STORY_KEY}-${SLUG}.md"
   if ! grep -q "$REL" "$MKDOCS"; then
-    LAST_FEATURE=$(grep -nE "features/(BIN-[0-9]+|[0-9])" "$MKDOCS" | tail -1 || true)
+    LAST_FEATURE=$(grep -nE "features/(v[0-9]+\.[0-9]+-|BIN-[0-9]+|[0-9])" "$MKDOCS" | tail -1 || true)
     if [ -n "$LAST_FEATURE" ]; then
       LINE_NUM=$(echo "$LAST_FEATURE" | cut -d: -f1)
       sed -i "${LINE_NUM}a\\      - $TITLE: $REL" "$MKDOCS"

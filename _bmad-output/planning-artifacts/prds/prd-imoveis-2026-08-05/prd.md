@@ -14,7 +14,7 @@ supersedes: prds/prd-imoveis-2026-07-23/prd.md
 
 This PRD is for Felipe (builder/PM), downstream BMad architecture/epics workflows, and bmad-loop execution. It supersedes the 2026-07-23 PRD, whose entire planning scope (v0.5 / FR-18–FR-23) has since shipped, along with six further waves. The **baseline is Linear milestones v0.1–v0.12 (all 100% Done, backlog empty)**; the planning target is **v0.13**. Shipped implementation details are not re-litigated here — they live in `docs/features/` and `docs/architecture.md`. Assumptions inferred without explicit product confirmation are marked `[ASSUMPTION]`.
 
-**Planning regime (settled 2026-08-05):** BMad is the source of truth for planning *and* the dev loop (bmad-loop), superseding the Linear-SoR/feature-pipeline regime. Wave-4 harness surgery (CLAUDE.md rewrite, gate wiring via `bmad-customize`) runs as a pre-epic harness track; `scripts/agent/` validation gates are preserved, not replaced. Linear remains the tracking mirror.
+**Planning regime (settled 2026-08-05):** BMad is the source of truth for planning *and* the dev loop (bmad-loop), superseding the Linear-SoR/feature-pipeline regime. Wave-4 harness surgery (CLAUDE.md rewrite, gate wiring via `bmad-customize`) runs as a pre-epic harness track; `scripts/agent/` validation gates are preserved, not replaced. ~~Linear remains the tracking mirror.~~ *[Amended later on 2026-08-05, post-epics: Linear dropped entirely (free-plan issue limit hit mid-sync) — BMad artifacts (epics.md + sprint-status.yaml) are the sole tracker; see ADR 0005.]*
 
 ## 1. Vision
 
@@ -229,4 +229,4 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 - `_bmad-output/project-context.md` (agent rules incl. Gemma quota, Redis surfaces)
 - ADR 0002 (agent workflow), ADR 0003 (BMad planning bridge), ADR 0004 (parallel workspaces)
 - Superseded: `prds/prd-imoveis-2026-07-23/` (FR-1–FR-17 definitions remain of record there)
-- Linear: project Imoveis — Deal Tracker; milestones v0.1–v0.12 all Done; v0.13 milestone to be created at epics sync
+- Linear: historical archive only (milestones v0.1–v0.12 all Done; dropped 2026-08-05 per ADR 0005 — v0.13 tracked in epics.md + sprint-status.yaml)

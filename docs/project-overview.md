@@ -28,7 +28,7 @@ Imoveis is a local-first real-estate deal-finding tool. It scrapes rental and sa
 | Auth | python-jose (JWT), slowapi rate limiting | Admin endpoints gated |
 | CI/CD | GitHub Actions (`ci.yml`, `nightly.yml`, `docs.yml`), SonarCloud | |
 | Docs | MkDocs Material (`docs/`) | 169 feature docs in `docs/features/` |
-| Tracking | Linear (team Bino) | BMad Method planning in `_bmad-output/` |
+| Tracking | BMad artifacts (`_bmad-output/`) | epics.md + sprint-status.yaml; Linear dropped 2026-08-05 (ADR 0005) |
 
 ## Architecture classification
 

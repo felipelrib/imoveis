@@ -64,7 +64,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 - Conventional commits (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`).
 - CI lint = pre-commit on ALL files (stricter than local `validate.sh`, which only flake8's `src/` — F401 is not ignored in CI).
-- Feature docs: `docs/features/BIN-<id>-<slug>.md` from `_template.md`, all sections mandatory; filename prefix is the Linear ID; keep the `Linear:` header in sync. Review-found bugs go in Notes/Follow-ups as `**BUG (Severity)**: … — fix hint.`
+- Feature docs: `docs/features/<story-key>-<slug>.md` (e.g. `v0.13-s1.1-…`) from `_template.md`, all sections mandatory; filename prefix is the story key from epics.md/sprint-status.yaml; keep the `Story:` header in sync (legacy `BIN-*` docs keep their names). Review-found bugs go in Notes/Follow-ups as `**BUG (Severity)**: … — fix hint.`
 - Forbidden strings in committed files: `imoveis_secret`, `dev-secret-key`. Secrets default to `""` or env vars.
 - Tables designed with nullable `owner` (single-user for now).
 
@@ -73,7 +73,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - First action every session: `git rev-parse --abbrev-ref HEAD`. On `main`: `bash scripts/agent/setup-branch.sh "<slug>"` before any edit. Never a `claude/`-prefixed branch name.
 - Finish = `bash scripts/agent/finish-feature.sh --pr` (squash-merge after CI green; run with a long timeout — it takes minutes). Merge-ready ≠ finished. Never manual `git push` / `gh pr create`.
 - Domain gates after touching: scrapers → `validate-scrapers.sh --require-live`; AI prompts/clients → `validate-ai.sh` (WSL: `OLLAMA_HOST` via default route); API schema → contract tests; DB schema → `alembic check`.
-- Linear (team Bino) is the tracker: In Progress at start, Done only **after** merge; epic close only on a fresh sibling re-check.
+- Tracking is **BMad artifacts only** (ADR 0005, 2026-08-05 — Linear dropped): `epics.md` = plan of record, `sprint-status.yaml` = execution status (`in-progress` at start, `done` only **after** merge, never downgrade); story keys `v0.N-sE.S` replace `BIN-<id>` in feature-doc names and branches; epic close only on a fresh re-check of all sibling story keys + non-ticketed leftovers.
 - Scope: stop and ask if touching >3 unexpected files; no out-of-scope refactoring.
 
 ### Critical Don't-Miss Rules

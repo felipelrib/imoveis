@@ -6,13 +6,13 @@ stepsCompleted:
   - step-04-final-validation
 status: complete
 completed: 2026-08-05
-linearSync: >
-  PARTIAL 2026-08-05 — milestone "v0.13 — Hybrid enrichment productized & deal intelligence"
-  (539c2b79-7b9a-4523-ac28-3b527b3ad5d1) + parents BIN-273 (Epic 1) / BIN-274 (Epic 2) +
-  child BIN-275 (Story 1.1) created; remaining 7 children (1.2–1.6, 2.1–2.4 minus 1.1)
-  blocked by the Linear free-plan issue limit. Resume: create children from the stories
-  below under their parent, then wire blockedBy 1.2←1.1, 1.3←1.1, 1.4←1.1, 1.5←1.3,
-  1.6←1.4+1.5, 2.2←2.1, 2.4←2.3.
+tracking: >
+  BMad artifacts are the SOLE tracker (ADR 0005, 2026-08-05 — Linear dropped entirely;
+  the partial v0.13 sync BIN-273/274/275 + milestone was canceled/abandoned in Linear).
+  This document is the plan of record; execution status lives in
+  _bmad-output/implementation-artifacts/sprint-status.yaml. Story keys: v0.13-s1.1 …
+  v0.13-s1.6 (Epic 1), v0.13-s2.1 … v0.13-s2.4 (Epic 2). Sequencing gates:
+  s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3, s1.6←s1.4+s1.5, s2.2←s2.1, s2.4←s2.3.
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
