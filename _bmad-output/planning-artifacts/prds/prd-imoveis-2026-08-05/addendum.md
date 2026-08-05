@@ -25,7 +25,8 @@ Technical and planning depth that belongs downstream (architecture, epics) or su
 |-------|---------------|---------------------|
 | Hosting | Local-first single operator | Multi-tenant cloud SaaS |
 | AI topology | Local default + quota-bounded free-tier cloud assist (2026-08-05) | Cloud-only LLM; paid-tier planning basis; lift-and-shift of stack to cloud free tiers (research: scrapers must keep residential egress; cloud holds at most a slim regenerable read-model) |
-| v0.13 headline | Cloud/local split productization + deal-intelligence (2026-08-05) | Multi-city productization — deferred to v0.14 candidate (largest UX/data surface; coverage already flows opportunistically) |
+| v0.13 headline | Cloud/local split productization + deal-intelligence (2026-08-05) | Multi-city productization — deferred (largest UX/data surface; coverage already flows opportunistically; now v0.15+ candidate after v0.14 took the UX-contract scope) |
+| v0.14 headline | UX-contract scope FR-33–FR-38 (Felipe, 2026-08-05) | Multi-city promotion; pulling FR-33/34 forward into a v0.13 follow-up wave |
 | Planning/dev regime | **BMad-SoR + bmad-loop** (settled 2026-08-05) | Linear-SoR + feature-pipeline (superseded; Linear stays as tracking mirror); staying hybrid indefinitely |
 | Parallel agents | Worktree when primary busy (ADR 0004) | Always-on nested `.worktrees/` |
 
@@ -38,7 +39,7 @@ All four waves done. Waves 1–2: project-context + hybrid-stack research; corre
 - Design authority: `ux-designs/ux-imoveis-2026-08-05/` — DESIGN.md (Meia-noite token palette, editorial verdict components, contrast table) + EXPERIENCE.md (IA, state patterns, J1–J4 journeys, pt-BR microcopy). PRD holds capability-level FRs only; interaction detail stays there.
 - Product-model decisions settled in the UX run and folded into PRD §1/§3/§4.5: starred = watched (no separate watchlist surface); Favoritos = availability tracking + filterable gone-history + optional-reason discard (visit-day framing dropped); detail = side panel, map rail stays visible; map→grid filtering explicit via `filtrar pela área do mapa` chip; since-panel resets on real engagement only; drop-alert threshold per saved search; channels = email (guaranteed) + in-app + desktop push, no Telegram.
 - Consciously undesigned (deliberate, not gaps): export UI (stays API/digest-only), auth/API-key management UI (stays key gate), Compare (minimal/deprioritized).
-- FR-33–FR-38 originate from EXPERIENCE.md `[NOTE FOR PRD]` flags; recheck cooldown/budget numbers and run-history baseline mechanics are design-level detail in EXPERIENCE.md, to be hardened at architecture/epics time when scheduled.
+- FR-33–FR-38 originate from EXPERIENCE.md `[NOTE FOR PRD]` flags; recheck cooldown/budget numbers and run-history baseline mechanics are design-level detail in EXPERIENCE.md, to be hardened at the v0.14 architecture/epics pass.
 
 ## Debt carried into planning (not v0.13 commitments unless listed in §6.2)
 

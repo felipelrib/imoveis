@@ -22,7 +22,7 @@ Imoveis is a **local-first** deal tracker for Brazilian real-estate listings. It
 
 The product matters because house-hunting across QuintoAndar, OLX, ZapImóveis, and peers is fragmented: the same flat appears under different IDs, price drops are easy to miss, and raw listing copy/photos do not answer "is this actually a deal for this neighbourhood?" Imoveis turns that noise into a single score-coloured view with alerts.
 
-**Geographic focus:** Belo Horizonte / MG is the primary product geography. SP/Campinas scrape coverage shipped (BIN-113) and is **opportunistic** — data flows, but multi-city is not yet product intent (candidate v0.14 theme; see §9).
+**Geographic focus:** Belo Horizonte / MG is the primary product geography. SP/Campinas scrape coverage shipped (BIN-113) and is **opportunistic** — data flows, but multi-city is not yet product intent (v0.15+ candidate; see §9).
 
 **AI posture:** local models (Ollama / LM Studio) are the default and permanent enrichment path; a **quota-bounded cloud assist** (Gemini/Gemma free tier) exists for batch backfill and is being productized in v0.13 (see §4.3, NFR-1).
 
@@ -160,9 +160,13 @@ Condo fee + IPTU are normalized across platforms into a comparable monthly total
 #### FR-32: Saved-search new-match alerts
 Alerts extend beyond watched-property price drops: a saved search can notify when a **new** Property matching it appears. Realizes UJ-2. `[ASSUMPTION: reuses the shipped notifier registry (FR-21) and saved searches (FR-14); no new channel work required for v1.]` *UX refinements (2026-08-05 contract): new-match alerts fire only once verdict/percentile enrichment exists; drop-alert threshold is per saved search; channel posture is email (guaranteed) + in-app + desktop push (opportunistic) — no Telegram.*
 
-### 4.5 UX-contract-driven scope — FR-33–FR-38 (discovered post-epics, **unscheduled**)
+### 4.5 v0.14 — UX-contract-driven scope: FR-33–FR-38 (planned)
 
-**Description:** The 2026-08-05 UX pass (DESIGN.md + EXPERIENCE.md) surfaced product scope beyond the v0.13 epic set — mostly backend capabilities the designed experience depends on. FRs are minted here so the scope has stable IDs and doesn't live only in UX flags; **none is committed to v0.13**. Scheduling is decided at v0.13 close (or a correct-course pass), alongside the multi-city question (§9).
+**Description:** The 2026-08-05 UX pass (DESIGN.md + EXPERIENCE.md) surfaced product scope beyond the v0.13 epic set — mostly backend capabilities the designed experience depends on. **Scheduled as the v0.14 wave (decided 2026-08-05)**; none is committed to v0.13, and epic/story breakdown happens at the v0.14 epics pass after v0.13 closes.
+
+**Theme:** make the designed experience real end-to-end — availability truth (recheck, gone/resurrection, favourite-gone alerts), personal-decision surfaces (POI travel-time, sentiment filters, filter recall), and operator trust (run-history analytics).
+
+**Exit criteria:** a starred Property's availability is verifiable on demand and watched automatically; a gone→returned Property is visible as such with annotated price history; POI travel-time bands render on the map; sentiment tags filter the grid; scraper anomalies surface with reason strings against both baselines.
 
 #### FR-33: Listing availability verification (recheck)
 On-demand per-listing recheck (`Verificar disponibilidade` in the detail panel / Favoritos) plus **automatic priority rechecks** (e.g. daily) for starred items, addressing the stale-availability frustration (property looks live in-system but is gone at the source). Safety rails are part of the FR: per-listing cooldown, a modest global recheck budget (rechecks burn the shared scraping identity), and honest tri-state results — a Cloudflare/403/timeout probe is `não foi possível verificar` (unknown), never marks gone, and never refreshes the freshness stamp.
@@ -187,7 +191,7 @@ Recently used neighbourhoods, property types, and price ranges resurface as reus
 - Cloud-hosted multi-tenant SaaS with billing.
 - Making cloud AI **required** for any core path — the cloud assist is optional, quota-bounded, and batch-only; local enrichment is never removed (research invariant, 2026-08-05).
 - Lift-and-shift of scraper, DB, or Celery/Redis to cloud free tiers — cloud may only ever hold a slim, regenerable read-model projection; scrapers must egress from the residential IP.
-- Multi-city productization UX in v0.13 (coverage stays opportunistic; candidate v0.14 theme).
+- Multi-city productization UX in v0.13/v0.14 (coverage stays opportunistic; v0.15+ candidate).
 - Full brokerage CRM (leads, commissions, contracts).
 - Guaranteed offline maps / offline OSM tileserver.
 - Paid cloud AI tiers as a planning basis — v0.13 sizes against the free tier.
@@ -209,8 +213,8 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 ### 6.3 Out of scope for v0.13 (deferred)
 
 - **FR-31** total-cost-of-occupancy normalization (deferred at epics — data-availability risk).
-- **FR-33–FR-38** UX-contract-driven scope (§4.5) — unscheduled; decide at v0.13 close.
-- Multi-city productization (v0.14 candidate — revisit at v0.13 close).
+- **FR-33–FR-38** UX-contract-driven scope (§4.5) — **scheduled as the v0.14 wave**; not started before v0.13 closes.
+- Multi-city productization (now a **v0.15+ candidate** — v0.14 carries FR-33–FR-38; revisit at v0.13 close).
 - Export UI and auth/API-key management UI — **consciously undesigned** in the UX contract (export stays API/digest-only; auth stays the current key gate); Compare stays minimal/deprioritized.
 - Hot-reload of `app_config.yaml`.
 - Dead listing URL pruning (tracked debt).
@@ -249,11 +253,11 @@ FR-1 through FR-26 as implemented and documented in `docs/features/` (58 BIN-pre
 1. FR-28 surface → **answered at epics:** admin-panel exposure is the target, built as slices (runner control core → admin API + panel); CLI-only is the fallback slice.
 2. Theme B cut → **answered at epics:** FR-30 + FR-32 in; FR-31 deferred (worst data-availability risk).
 4. Coverage as SLO → **answered by the UX contract:** yes — enrichment coverage % joins the front-door health strip; detail in Admin (NFR-6).
+5. FR-33–FR-38 scheduling → **answered (Felipe, 2026-08-05): the v0.14 wave** (§4.5). Milestone definition + epic breakdown when v0.14 planning opens.
 
 **Open:**
 
-3. Multi-city (v0.14 candidate): revisit at v0.13 close — promote to product intent or keep opportunistic?
-5. FR-33–FR-38 scheduling (UX-contract scope, §4.5): which land in a v0.13 follow-up wave vs v0.14? `[NOTE FOR PM: decide at v0.13 close together with Q3; FR-33/FR-34 fight the stale-availability frustration the UX pass ranked as the top real-world pain.]`
+3. Multi-city: revisit at v0.13 close — promote to product intent or keep opportunistic? With v0.14 now carrying FR-33–FR-38, promotion would target **v0.15+**.
 
 ## 10. References
 
