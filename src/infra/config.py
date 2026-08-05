@@ -144,6 +144,11 @@ class BackfillConfig(BaseModel, frozen=True):
     # ~3 sequential Gemma calls, so wall-clock latency (not RPD) is the backfill
     # bottleneck; parallelism lifts throughput toward the RPM/TPM ceilings.
     concurrency: int = 1
+    # Attempts a single property gets before the ledger retires it (v0.13-fu3).
+    # ``run_backfill`` does not checkpoint a failed row and ``mode=missing``
+    # re-queues a row that enriched to a falsy score, so without a ceiling
+    # ``--continuous`` re-attempts the same bad rows every cycle forever.
+    max_attempts: int = 3
     batch_size: int = 50
     # Redis key namespace for the daily budget counter, checkpoint, and heartbeat.
     redis_prefix: str = "backfill:gemma"

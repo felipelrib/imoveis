@@ -42,11 +42,17 @@ class _FakeRedis:
     def hgetall(self, k):
         return {}
 
-    def hset(self, k, mapping=None):
+    def hget(self, k, f):
+        return None
+
+    def hset(self, k, field=None, value=None, mapping=None):
         pass
 
-    def hincrby(self, k, f, n):
+    def hincrby(self, k, f, n=1):
         return n
+
+    def hdel(self, k, *fs):
+        pass
 
 
 def _load_module():
@@ -65,6 +71,7 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None):
     cfg.backfill.concurrency = 1
     cfg.backfill.tokens_per_property = 7000
     cfg.backfill.tpm_safety_margin = 0.9
+    cfg.backfill.max_attempts = 3
     cfg.ai.gemini_api_key = api_key
     rows = [
         (
@@ -106,6 +113,15 @@ def _br(mod, **kw):
     return BackfillResult(**kw)
 
 
+def _census(**kw):
+    """Queue census stub. Completion is measured on ``candidates`` (v0.13-fu3)."""
+    from core.backfill_runner import QueueCensus
+
+    base = dict(total_properties=5, enriched=5, candidates=0)
+    base.update(kw)
+    return QueueCensus(**base)
+
+
 def test_continuous_waits_between_cycles_then_completes(monkeypatch):
     mod = _load_module()
     _wire(mod, monkeypatch, api_key="k")
@@ -122,13 +138,17 @@ def test_continuous_waits_between_cycles_then_completes(monkeypatch):
             ]
         ),
     )
-    monkeypatch.setattr(mod, "_counts", MagicMock(side_effect=[(5, 0), (5, 5)]))
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5), _census()]),
+    )
     sleep_spy = MagicMock()
     monkeypatch.setattr(mod.time, "sleep", sleep_spy)
 
     rc = mod.main(["--continuous"])
 
-    assert rc == 0
+    assert rc == mod.EXIT_COMPLETE
     assert mod._run.call_count == 2
     sleep_spy.assert_called_once()  # slept once between the two cycles
     assert sleep_spy.call_args[0][0] > 0
@@ -141,13 +161,16 @@ def test_continuous_stops_when_no_progress(monkeypatch):
     monkeypatch.setattr(
         mod, "_run", MagicMock(return_value=_br(mod, processed=0, budget_exhausted=False))
     )
-    monkeypatch.setattr(mod, "_counts", MagicMock(return_value=(5, 2)))
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=2, candidates=3))
+    )
     sleep_spy = MagicMock()
     monkeypatch.setattr(mod.time, "sleep", sleep_spy)
 
     rc = mod.main(["--continuous"])
 
-    assert rc == 0
+    # A stall exits non-zero now: "0 remaining but no progress" read as success.
+    assert rc == mod.EXIT_STALLED
     sleep_spy.assert_not_called()
 
 

@@ -128,6 +128,12 @@ development_status:
   # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
   # token-bucket sized from measured per-property token cost (~7k).
   v0.13-fu2-backfill-tpm-limiter: done
+  # Follow-up: the backfill could not detect its own completion — `remaining` was
+  # total-minus-enriched, which 494 inactive un-enriched rows kept permanently
+  # positive, so the completion branch was dead and finished runs exited 0 via
+  # the "no progress" valve. Census-based completion + exit codes/banner, photo
+  # gate applied, and an attempt ledger that retires rows that never clear.
+  v0.13-fu3-backfill-completion-detection: done
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh; planningTarget v0.13) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

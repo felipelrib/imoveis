@@ -317,6 +317,11 @@ backfill:
   rpm_limit: 30                # free-tier Gemma ~30 RPM; bounds the launch rate
   requests_per_property: 3     # visual + sentiment + verdict
   concurrency: 1               # parallel properties (BIN-269); 1 = sequential
+  # Attempts one property gets before it is quarantined out of the work queue
+  # (v0.13-fu3). Rows that error every cycle — or enrich to a falsy ai_score and
+  # so stay `mode=missing` candidates — otherwise burn RPD/TPM forever.
+  # Release them with `--reset-quarantine`.
+  max_attempts: 3
   batch_size: 50
   redis_prefix: "backfill:gemma"
 

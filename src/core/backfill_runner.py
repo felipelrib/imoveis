@@ -23,10 +23,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional, Tuple
 
-from core.enrichment_rerun import mode_is_missing_ai
+from core.enrichment_rerun import evaluate_candidate, mode_is_missing_ai
 
 # Keep the daily counter around long enough to inspect yesterday's usage.
 _BUDGET_TTL_SECONDS = 2 * 24 * 3600
+# The attempt ledger has to outlive a multi-day pass; refreshed on every write.
+_LEDGER_TTL_SECONDS = 30 * 24 * 3600
 
 EnrichFn = Callable[[Any], Awaitable[None]]
 SleepFn = Callable[[float], Awaitable[None]]
@@ -182,6 +184,216 @@ class Heartbeat:
         self._redis.delete(self._key)
 
 
+@dataclass(frozen=True)
+class QueueCensus:
+    """Honest accounting of the backfill work queue (v0.13-fu3).
+
+    Completion used to be measured as ``total properties - enriched``, but the
+    runner only ever fetches **active** rows (``active_only=True``). Inactive
+    un-enriched listings — 494 of them on 2026-08-05 — kept that difference
+    permanently positive, so the ``remaining == 0`` branch could never fire and a
+    finished backfill exited through the "no progress this cycle" safety valve
+    instead.
+
+    ``candidates`` is what ``fetch_candidate_rows`` would actually return;
+    ``remaining`` further drops the rows the pipeline can never score. The
+    denominator to quote a human is :attr:`enrichable`, not ``total_properties``.
+    """
+
+    total_properties: int
+    enriched: int
+    candidates: int
+    blocked_no_photos: int = 0
+    quarantined: int = 0
+
+    @property
+    def blocked_total(self) -> int:
+        """Candidate rows fetched but permanently unworkable."""
+        return self.blocked_no_photos + self.quarantined
+
+    @property
+    def remaining(self) -> int:
+        """Rows the runner can still meaningfully attempt."""
+        return max(0, self.candidates - self.blocked_total)
+
+    @property
+    def enrichable(self) -> int:
+        """The truthful denominator: already scored + still workable."""
+        return self.enriched + self.remaining
+
+    @property
+    def non_enrichable(self) -> int:
+        """Rows outside the queue for good — inactive, photo-blocked, quarantined."""
+        return max(0, self.total_properties - self.enrichable)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.remaining == 0
+
+    @property
+    def progress_pct(self) -> float:
+        """Percent of the *enrichable* set that is scored (100 when there is none)."""
+        if self.enrichable <= 0:
+            return 100.0
+        return 100.0 * self.enriched / self.enrichable
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_properties": self.total_properties,
+            "enriched": self.enriched,
+            "candidates": self.candidates,
+            "blocked_no_photos": self.blocked_no_photos,
+            "quarantined": self.quarantined,
+            "remaining": self.remaining,
+            "enrichable": self.enrichable,
+            "non_enrichable": self.non_enrichable,
+            "progress_pct": round(self.progress_pct, 2),
+        }
+
+
+def _decode(value: Any) -> Any:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+class AttemptLedger:
+    """Persistent per-property attempt counter that retires rows that never clear.
+
+    ``run_backfill`` deliberately does not checkpoint a row it failed on, so
+    ``--continuous`` re-fetches it next cycle and spends RPD/TPM on it again —
+    forever, if the failure is deterministic. A row can also *succeed* and still
+    come back: ``mode=missing`` treats a falsy ``ai_score`` as un-enriched, so an
+    enrichment that lands on 0.0 re-queues itself.
+
+    Counting **attempts** rather than only errors retires both shapes. A row that
+    enriches normally leaves the candidate set and never reaches the ceiling.
+    """
+
+    def __init__(
+        self,
+        redis: Any,
+        *,
+        prefix: str,
+        max_attempts: int = 3,
+        ttl_seconds: int = _LEDGER_TTL_SECONDS,
+    ) -> None:
+        self._redis = redis
+        self._attempts_key = f"{prefix}:attempts"
+        self._errors_key = f"{prefix}:last_error"
+        self._max_attempts = max(1, int(max_attempts))
+        self._ttl = ttl_seconds
+
+    @property
+    def max_attempts(self) -> int:
+        return self._max_attempts
+
+    def _touch(self, key: str) -> None:
+        self._redis.expire(key, self._ttl)
+
+    def attempts(self, property_id: str) -> int:
+        raw = _decode(self._redis.hget(self._attempts_key, str(property_id)))
+        try:
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def record_attempt(self, property_id: str) -> int:
+        """Increment and return this row's attempt count."""
+        count = int(self._redis.hincrby(self._attempts_key, str(property_id), 1))
+        self._touch(self._attempts_key)
+        return count
+
+    def record_error(self, property_id: str, reason: str) -> None:
+        """Remember why a row failed, for the quarantine report."""
+        self._redis.hset(self._errors_key, str(property_id), str(reason)[:300])
+        self._touch(self._errors_key)
+
+    def is_quarantined(self, property_id: str) -> bool:
+        return self.attempts(property_id) >= self._max_attempts
+
+    def _all_attempts(self) -> dict[str, int]:
+        raw = self._redis.hgetall(self._attempts_key) or {}
+        out: dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[_decode(k)] = int(_decode(v) or 0)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def quarantined_ids(self) -> list[str]:
+        return sorted(
+            pid for pid, n in self._all_attempts().items() if n >= self._max_attempts
+        )
+
+    def quarantined_count(self) -> int:
+        return len(self.quarantined_ids())
+
+    def reason_for(self, property_id: str) -> str:
+        reason = _decode(self._redis.hget(self._errors_key, str(property_id)))
+        if reason:
+            return str(reason)
+        return (
+            f"no error recorded — still a candidate after "
+            f"{self.attempts(property_id)} attempts"
+        )
+
+    def quarantine_report(self) -> dict[str, str]:
+        return {pid: self.reason_for(pid) for pid in self.quarantined_ids()}
+
+    def clear(self, property_id: str) -> None:
+        """Release one row back into the queue (operator retry)."""
+        self._redis.hdel(self._attempts_key, str(property_id))
+        self._redis.hdel(self._errors_key, str(property_id))
+
+    def reset_all(self) -> None:
+        self._redis.delete(self._attempts_key)
+        self._redis.delete(self._errors_key)
+
+
+@dataclass
+class CandidatePartition:
+    """Candidate rows split into workable work and permanently excluded ids."""
+
+    workable: list[Tuple[Any, Any]] = field(default_factory=list)
+    blocked_no_photos: list[str] = field(default_factory=list)
+    quarantined: list[str] = field(default_factory=list)
+
+    @property
+    def blocked_total(self) -> int:
+        return len(self.blocked_no_photos) + len(self.quarantined)
+
+
+def partition_candidates(
+    rows: Iterable[Tuple[Any, Any]],
+    *,
+    gate_kwargs: dict[str, Any],
+    ledger: Optional[AttemptLedger] = None,
+    stages: str = "all",
+) -> CandidatePartition:
+    """Split fetched candidates into workable rows and permanently excluded ones.
+
+    ``fetch_candidate_rows`` applies only the property-level SQL filters; the
+    photo gate lives in ``evaluate_candidate`` and the backfill never called it,
+    so a gallery-less row would be "enriched" from zero images. Rows the ledger
+    has retired are dropped here too, before they can cost any budget.
+
+    A row is counted in exactly one bucket, so the counts sum back to the input.
+    """
+    part = CandidatePartition()
+    quarantined = set(ledger.quarantined_ids()) if ledger is not None else set()
+    for prop, metrics in rows:
+        pid = str(getattr(prop, "id", ""))
+        action, _ = evaluate_candidate(prop, metrics, stages, gate_kwargs)
+        if action != "queue":
+            part.blocked_no_photos.append(pid)
+            continue
+        if pid in quarantined:
+            part.quarantined.append(pid)
+            continue
+        part.workable.append((prop, metrics))
+    return part
+
+
 @dataclass
 class BackfillResult:
     """Outcome of one backfill invocation."""
@@ -189,6 +401,8 @@ class BackfillResult:
     processed: int = 0
     would_process: int = 0
     skipped_already_enriched: int = 0
+    # Rows the attempt ledger has retired — re-attempting them only burns budget.
+    skipped_quarantined: int = 0
     errors: int = 0
     requests_consumed: int = 0
     budget_exhausted: bool = False
@@ -204,6 +418,7 @@ class BackfillResult:
             "processed": self.processed,
             "would_process": self.would_process,
             "skipped_already_enriched": self.skipped_already_enriched,
+            "skipped_quarantined": self.skipped_quarantined,
             "errors": self.errors,
             "requests_consumed": self.requests_consumed,
             "budget_exhausted": self.budget_exhausted,
@@ -310,12 +525,17 @@ def _run_dry(
     requests_per_property: int,
     limit: Optional[int],
     force: bool,
+    ledger: Optional[AttemptLedger] = None,
 ) -> BackfillResult:
     """Count how many rows would be processed within budget — no side effects."""
     result = BackfillResult()
+    quarantined = set(ledger.quarantined_ids()) if ledger is not None else set()
     for prop, metrics in rows:
         if not force and not mode_is_missing_ai(metrics):
             result.skipped_already_enriched += 1
+            continue
+        if str(getattr(prop, "id", "")) in quarantined:
+            result.skipped_quarantined += 1
             continue
         if limit is not None and result.would_process >= limit:
             break
@@ -340,6 +560,7 @@ async def run_backfill(
     concurrency: int = 1,
     launch_interval: float = 0.0,
     token_budget: Optional[TokenBudget] = None,
+    ledger: Optional[AttemptLedger] = None,
     sleep_fn: SleepFn = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
     on_progress: Optional[Callable[[BackfillResult], None]] = None,
@@ -361,6 +582,11 @@ async def run_backfill(
     ``limit`` caps the number of properties *attempted* this run (skipped rows do
     not count). ``dry_run`` reports how many rows *would* be processed within the
     remaining budget without calling the API or consuming budget.
+
+    An optional ``ledger`` makes repeat failures terminal: every launched row
+    records an attempt, errors record their reason, and a row that has been
+    attempted ``max_attempts`` times without leaving the candidate set is skipped
+    for free from then on instead of burning budget every cycle.
     """
     if dry_run:
         return _run_dry(
@@ -369,6 +595,7 @@ async def run_backfill(
             requests_per_property=requests_per_property,
             limit=limit,
             force=force,
+            ledger=ledger,
         )
 
     result = BackfillResult()
@@ -383,6 +610,8 @@ async def run_backfill(
         except Exception as exc:  # noqa: BLE001 - one bad row must not abort
             result.errors += 1
             result.error_ids.append(str(getattr(prop, "id", "?")))
+            if ledger is not None:
+                ledger.record_error(str(getattr(prop, "id", "?")), str(exc))
             _log_row_error(prop, exc)
         else:
             result.processed += 1
@@ -398,6 +627,11 @@ async def run_backfill(
         # unless the operator forces a re-run.
         if not force and not mode_is_missing_ai(metrics):
             result.skipped_already_enriched += 1
+            continue
+        # Rows retired by the ledger cost nothing: no budget, no tokens, no call.
+        pid = str(getattr(prop, "id", ""))
+        if ledger is not None and ledger.is_quarantined(pid):
+            result.skipped_quarantined += 1
             continue
         if limit is not None and attempted >= limit:
             break
@@ -423,6 +657,11 @@ async def run_backfill(
             break
 
         await sem.acquire()  # bound in-flight properties to ``concurrency``
+        if ledger is not None:
+            # Count the attempt, not just failures: a row that enriches to a
+            # falsy ai_score stays a ``mode=missing`` candidate and would
+            # otherwise be re-fetched every cycle forever.
+            ledger.record_attempt(pid)
         attempted += 1
         result.requests_consumed += requests_per_property
         last_launch = clock()

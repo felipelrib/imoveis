@@ -69,6 +69,7 @@ nav:
       - Frontend Credential Gate: features/BIN-46-frontend-credential-gate.md
       - Symlink Cursor Harness: features/BIN-185-symlink-cursor-harness.md
       - Harness Surgery (primary-safe validation, local merge gate): features/v0.13-fu1-harness-surgery.md
+      - Backfill completion detection and non-enrichable accounting: features/v0.13-fu3-backfill-completion-detection.md
   - ADR:
       - Dual-Model Development (superseded): adr/0001-dual-model-development.md
       - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md
