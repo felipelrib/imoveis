@@ -16,9 +16,14 @@ tracking: >
   BMad artifacts are the SOLE tracker (ADR 0005, 2026-08-05 — Linear dropped entirely;
   the partial v0.13 sync BIN-273/274/275 + milestone was canceled/abandoned in Linear).
   This document is the plan of record; execution status lives in
-  _bmad-output/implementation-artifacts/sprint-status.yaml. Story keys: v0.13-s1.1 …
+  _bmad-output/implementation-artifacts/sprint-status.yaml. Story ids: v0.13-s1.1 …
   v0.13-s1.6 (Epic 1), v0.13-s2.1 … v0.13-s2.5 (Epic 2; s2.5 minted at the 2026-08-05
-  UX-contract refresh). Sequencing gates: s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3,
+  UX-contract refresh) — used for branch names (feat/v0.13-sN.M-…) and feature docs.
+  sprint-status.yaml uses BMad-STANDARD keys (epic-N, N-M-slug — what bmad-loop
+  parses; decided 2026-08-05, do NOT regenerate v0.13-prefixed yaml keys); yaml
+  story N-M ↔ story id v0.13-sN.M. Delivered pre-v0.13 epics are archived in
+  sprint-status-archive-pre-v0.13.yaml, never resurrected into the live tracker.
+  Sequencing gates: s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3,
   s1.6←s1.4+s1.5, s2.2←s2.1, s2.3←s2.1, s2.4←s2.3, s2.5←s2.2.
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'

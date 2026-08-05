@@ -1,21 +1,26 @@
 # generated: 2026-08-05T06:51:14-03:00 (bmad-sprint-planning regeneration; v0.13 wave)
-# last_updated: 2026-08-05T06:51:14-03:00
+# last_updated: 2026-08-05T07:20:00-03:00 (re-keyed to BMad-standard keys for bmad-loop)
 # project: imoveis
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: {project-root}/_bmad-output/implementation-artifacts
 #
 # NOTE (2026-08-05, ADR 0005): Linear DROPPED entirely. This file is the SOLE
-# execution-status tracker; epics.md = plan of record. Epics 1-8 below are the
-# delivered pre-v0.13 history (epics-delivered-2026-07-27.md + Epic 7/8 record;
-# BIN-* ids are historical Linear names only). The v0.13 wave (2 epics,
-# 11 stories, keys v0.13-s1.1 … v0.13-s2.5) is tracked in the v0.13 section.
+# execution-status tracker; epics.md = plan of record (planningTarget v0.13).
+# Delivered pre-v0.13 history (epics 1-8) is archived verbatim in
+# sprint-status-archive-pre-v0.13.yaml — this file tracks ONLY the current
+# wave, with BMad-standard keys (epic-N, N-M-slug) that bmad-loop parses.
 #
-# v0.13 SEQUENCING GATES (from epics.md frontmatter `tracking:` — enforce order):
-#   s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3, s1.6←s1.4+s1.5,
-#   s2.2←s2.1, s2.3←s2.1, s2.4←s2.3, s2.5←s2.2.
-#   Wave 1: s1.1 ∥ s2.1 → Wave 2: s1.2 ∥ s1.3 ∥ s1.4 ∥ s2.2 ∥ s2.3 →
-#   Wave 3: s1.5 ∥ s2.4 ∥ s2.5 → Wave 4: s1.6.
+# KEY MAPPING: yaml story N-M ↔ project story id v0.13-sN.M (branch names
+# feat/v0.13-sN.M-…, feature docs docs/features/v0.13-sN.M-*.md — the
+# finish-feature.sh doc gate derives the id from the branch). Follow-ups
+# without a story keep their v0.13-fu<N> keys below (opaque to bmad-loop).
+#
+# SEQUENCING GATES (from epics.md frontmatter `tracking:` — enforce order):
+#   1.2←1.1, 1.3←1.1, 1.4←1.1, 1.5←1.3, 1.6←1.4+1.5,
+#   2.2←2.1, 2.3←2.1, 2.4←2.3, 2.5←2.2.
+#   Wave 1: 1.1 ∥ 2.1 → Wave 2: 1.2 ∥ 1.3 ∥ 1.4 ∥ 2.2 ∥ 2.3 →
+#   Wave 3: 1.5 ∥ 2.4 ∥ 2.5 → Wave 4: 1.6.
 #   Epic 1 and Epic 2 chains are independent and can run in parallel.
 
 # STATUS DEFINITIONS:
@@ -56,72 +61,13 @@
 # - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short description)
 
 generated: 2026-08-05T06:51:14-03:00
-last_updated: 2026-08-05T06:51:14-03:00
+last_updated: 2026-08-05T07:20:00-03:00
 project: imoveis
 project_key: NOKEY
 tracking_system: file-system
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
-  # ---- Delivered history (pre-v0.13; epics-delivered-2026-07-27.md + Epic 7/8) ----
-  epic-1: done
-  1-1-canonical-property-projection-for-decisioning: done
-  1-2-multi-select-properties-for-comparison: done
-  1-3-side-by-side-compare-view: done
-  epic-1-retrospective: optional
-
-  epic-2: done
-  2-1-appconfig-backed-api-credential-at-the-edge: done
-  2-2-frontend-credential-gate: done
-  2-3-owner-scoped-favourites-saved-searches-watchlist: done
-  epic-2-retrospective: optional
-
-  epic-3: done
-  3-1-appconfig-proxy-settings: done
-  3-2-rotating-proxy-in-the-scraper-http-layer: done
-  3-3-operator-enablement-observability: done
-  epic-3-retrospective: optional
-
-  epic-4: done
-  4-1-export-filtered-properties-api: done
-  4-2-export-from-the-properties-ui: done
-  4-3-scheduled-top-deals-digest: done
-  epic-4-retrospective: optional
-
-  epic-5: done
-  5-1-load-neighbourhood-polygons: done
-  5-2-assign-properties-by-spatial-containment: done
-  5-3-scoring-cohorts-prefer-spatial-neighbourhoods: done
-  epic-5-retrospective: optional
-
-  epic-6: done
-  6-1-neighbourhood-quality-profile-schema-api: done
-  6-2-curated-yaml-neighbourhood-quality-mvp: done
-  6-3-osm-amenity-density-for-neighbourhoods: done
-  6-4-transit-proximity-gtfs-osm-stops: done
-  6-5-access-travel-time-to-downtown-hubs: done
-  6-6-flood-environmental-risk-overlays: done
-  6-7-crime-safety-open-data-optional: done
-  6-8-aggregate-listing-sentiment-flags-by-neighbourhood: done
-  6-9-blend-neighbourhood-profiles-into-scoring-ui: done
-  6-10-selective-ai-enrichment-re-run-controls: done
-  epic-6-retrospective: optional
-
-  # Epic 7 = v0.7 dual listing-type scoring (BIN-83/BIN-84) — delivered via
-  # Linear/feature-pipeline only; added retroactively 2026-08-05 for the record.
-  epic-7: done
-
-  # Epic 8 = BIN-63 (BIN-97..103) — Product i18n (pt-BR first)
-  epic-8: done
-  8-1-audit-pt-listing-corpus-vs-ai-stats-embeddings: done
-  8-2-locale-foundation-catalog-persisted-preference: done
-  8-3-full-ui-string-catalog-en-pt-br: done
-  8-4-locale-aware-filters-pt-labels-en-wire: done
-  8-5-localize-ai-tags-verdicts-score-copy: done
-  8-6-embeddings-semantic-search-locale-behaviour: done
-  8-7-multi-locale-extensibility-checklist-nfr7: done
-  epic-8-retrospective: optional
-
   # ---- v0.13 pre-story harness track (PRD §6.2 gate — process, not FR) ----
   v0.13-fu1-harness-surgery: done
   # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
@@ -135,22 +81,22 @@ development_status:
   # gate applied, and an attempt ledger that retires rows that never clear.
   v0.13-fu3-backfill-completion-detection: done
 
-  # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh; planningTarget v0.13) ----
+  # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
-  v0.13-epic-1: backlog
-  v0.13-s1.1-canonical-enrichment-task-classes-routing-config: backlog
-  v0.13-s1.2-live-pipeline-routes-by-task-class-local-fallback: backlog
-  v0.13-s1.3-backfill-runner-control-core: backlog
-  v0.13-s1.4-enrichment-coverage-telemetry: backlog
-  v0.13-s1.5-admin-backfill-control-api: backlog
-  v0.13-s1.6-operacoes-backfill-card-coverage-visibility: backlog
-  v0.13-epic-1-retrospective: optional
+  epic-1: backlog
+  1-1-canonical-enrichment-task-classes-routing-config: backlog
+  1-2-live-pipeline-routes-by-task-class-local-fallback: backlog
+  1-3-backfill-runner-control-core: backlog
+  1-4-enrichment-coverage-telemetry: backlog
+  1-5-admin-backfill-control-api: backlog
+  1-6-operacoes-backfill-card-coverage-visibility: backlog
+  epic-1-retrospective: optional
 
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
-  v0.13-epic-2: backlog
-  v0.13-s2.1-cohort-price-m2-percentiles-pipeline: backlog
-  v0.13-s2.2-percentile-badge-and-filter: backlog
-  v0.13-s2.3-saved-search-new-match-detection: backlog
-  v0.13-s2.4-saved-search-alert-management-ui: backlog
-  v0.13-s2.5-detail-side-panel-migration: backlog
-  v0.13-epic-2-retrospective: optional
+  epic-2: backlog
+  2-1-cohort-price-m2-percentiles-pipeline: backlog
+  2-2-percentile-badge-and-filter: backlog
+  2-3-saved-search-new-match-detection: backlog
+  2-4-saved-search-alert-management-ui: backlog
+  2-5-detail-side-panel-migration: backlog
+  epic-2-retrospective: optional
