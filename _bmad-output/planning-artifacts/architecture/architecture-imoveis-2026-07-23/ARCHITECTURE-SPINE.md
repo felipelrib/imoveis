@@ -4,13 +4,15 @@ type: architecture-spine
 purpose: build-substrate
 altitude: initiative
 paradigm: 'hexagonal boundaries + ingestion/enrichment pipeline'
-scope: 'Whole-system brownfield ratify for MVP (FR-1..17) and v0.5 themes (FR-18..22)'
+scope: 'Whole-system brownfield ratify — shipped baseline v0.1–v0.12 (FR-1..26) + v0.13 themes (FR-27..32)'
 status: final
 created: '2026-07-23'
-updated: '2026-07-23'
-binds: ['FR-1', 'FR-2', 'FR-3', 'FR-4', 'FR-5', 'FR-6', 'FR-7', 'FR-8', 'FR-9', 'FR-10', 'FR-11', 'FR-12', 'FR-13', 'FR-14', 'FR-15', 'FR-16', 'FR-17', 'FR-18', 'FR-19', 'FR-20', 'FR-21', 'FR-22']
+updated: '2026-08-05'
+binds: ['FR-1', 'FR-2', 'FR-3', 'FR-4', 'FR-5', 'FR-6', 'FR-7', 'FR-8', 'FR-9', 'FR-10', 'FR-11', 'FR-12', 'FR-13', 'FR-14', 'FR-15', 'FR-16', 'FR-17', 'FR-18', 'FR-19', 'FR-20', 'FR-21', 'FR-22', 'FR-23', 'FR-24', 'FR-25', 'FR-26', 'FR-27', 'FR-28', 'FR-29', 'FR-30', 'FR-31', 'FR-32']
 sources:
-  - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-07-23/prd.md'
+  - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
+  - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
+  - '_bmad-output/planning-artifacts/sprint-change-proposal-2026-08-05.md'
   - 'docs/architecture.md'
 companions:
   - 'COMPANION-architecture-delta.md'
@@ -84,7 +86,7 @@ flowchart LR
 
 - **Binds:** FR-7..11, FR-15; `adapters/ai`, `adapters/queue`
 - **Prevents:** Inline model calls from API request threads; competing GPU concurrency schemes
-- **Rule:** Model-backed enrichment runs only via the Celery **`ai`** queue. The API never calls models inline. GPU-bound concurrency is owned by the ai-worker policy + GPU semaphore (single-GPU / low-concurrency story).
+- **Rule:** The API never calls models inline. **GPU-bound (local-backend) enrichment** runs only via the Celery **`ai`** queue, with concurrency owned by the ai-worker policy + GPU semaphore (single-GPU / low-concurrency story). **Cloud-bound enrichment** runs only under the AD-13 pacer. The **resumable backfill runner** (`src/core/backfill_runner.py` + `scripts/dev/backfill_gemma.py` CLI) is the **sanctioned second driver**: it bypasses queue and semaphore *by construction* — it does no GPU work, driving the shared `run_enrichment` orchestration against the remote client under the AD-13 budget, so it cannot contend with `ai`-queue workers. If it ever gains a local-backend mode, that mode goes through the `ai` queue + semaphore like any other GPU work.
 
 ### AD-5 — Scraper plugin entry [ADOPTED]
 
@@ -102,7 +104,7 @@ flowchart LR
 
 - **Binds:** deployment envelope; FR-7, NFR local-first
 - **Prevents:** Mid-feature “deploy to cloud SaaS” forks; secret sprawl
-- **Rule:** Supported shape is **Docker Compose** (Postgres/PostGIS, Redis, API, Celery scrapers + ai + beat) with **host-local AI backends** (Ollama and/or LM Studio via `LocalAIClient` / AppConfig — not required cloud SaaS AI). Secrets via env → AppConfig only; no hardcoded secrets in repo.
+- **Rule:** Supported shape is **Docker Compose** (Postgres/PostGIS, Redis, API, Celery scrapers + ai + beat, `ollama_init` model-pull, and **`flaresolverr`** as the opt-in Cloudflare-bypass sidecar — compose profile `bypass` + `scraping.cloudflare_bypass.enabled` in AppConfig) with **host-local AI backends** (Ollama and/or LM Studio via `LocalAIClient` / AppConfig — not required cloud SaaS AI). The only cloud AI exception is the AD-13 assist path. Secrets via env → AppConfig only; no hardcoded secrets in repo. *(Amended 2026-08-05: flaresolverr + ollama_init ratified into topology.)*
 
 ### AD-8 — Frontend I/O boundary [ADOPTED]
 
@@ -120,7 +122,7 @@ flowchart LR
 
 - **Binds:** FR-7..11, FR-15, FR-22; Enrichment / score / neighbourhood cohort fields
 - **Prevents:** Dual writers racing the same Enrichment row (geo job vs AI upsert)
-- **Rule:** Enrichment mutation (scores, verdict, embeddings, neighbourhood assignment used for cohorts) has a **single ordered pipeline authority**: geo/neighbourhood assignment is a named stage that must not race AI upserts; column ownership and skip-unchanged keys stay with that pipeline, not with ad-hoc API or feature jobs.
+- **Rule:** Enrichment mutation (scores, verdict, embeddings, neighbourhood assignment used for cohorts) has a **single ordered pipeline authority**: geo/neighbourhood assignment is a named stage that must not race AI upserts; column ownership and skip-unchanged keys stay with that pipeline, not with ad-hoc API or feature jobs. The **backfill runner** (see AD-4) is a sanctioned *driver* that feeds historical rows **through this same authority** — a second driver, never a second writer.
 
 ### AD-11 — Principal / owner identity [ADOPTED]
 
@@ -133,6 +135,12 @@ flowchart LR
 - **Binds:** FR-6, FR-12, FR-18, FR-21; grid, compare, export, digest item rows
 - **Prevents:** Compare and export inventing incompatible flatteners for the same Property
 - **Rule:** One API-owned versioned read DTO (or shared serializer) defines primary-listing selection, price/m², enrichment fields, and neighbourhood id/label for decisioning views. FR-18 consumes it; FR-21 serializes it; no parallel ad-hoc flatteners.
+
+### AD-13 — Cloud AI assist, bounded [ADOPTED]
+
+- **Binds:** FR-26..29; `adapters/ai` backend routing, `core/backfill_runner.py`, Redis pacer namespace
+- **Prevents:** Cloud enrichment creeping into required or incremental core paths; a second consumer racing the free-tier quota; two sources of backend-routing truth; concurrent runners double-spending the budget
+- **Rule:** The Gemini/Gemma free-tier path is **optional, operator-triggered, and batch-backfill-only**: incremental (live Celery) enrichment always routes to local backends, and FR-27's per-task-class routing decides which task classes are cloud-**eligible for backfill** — never cloud-dependent for live work; the local path (Ollama / LM Studio) is never removed (NFR-1). **Every** cloud request is metered by the single Redis-backed pacer (namespace owned by `BackfillConfig.redis_prefix`, default `backfill:gemma`); configuration that would produce an unmetered cloud call (e.g. the legacy scalar `ai.backend: gemini|gemma` on a live path) must **fail FR-27's startup validation**, not run silently. Backend routing has **one** AppConfig-owned source of truth (the FR-27 task-class map, superseding the scalar key) with one startup validator — no feature-local cloud clients. At most **one** runner instance holds the backfill lease at a time (CLI and admin surface share it; budget consumption is atomic under that lease). An active backfill is operator-visible (FR-28/FR-29), and primary-DB maintenance (validate/finish cycles recreate the Postgres container) must never overlap a running backfill. Quota exhaustion / provider errors back off or degrade to the local path; they are never outages.
 
 ```mermaid
 flowchart TB
@@ -156,6 +164,7 @@ flowchart TB
 | Data & formats | Property/Listing as AD-3; projections as AD-12; API errors non-blocking for UI toasts; AI/UI locale English default + pt-BR (NFR-7; BIN-64 / BIN-63) |
 | Geography | Product focus BH/MG until multi-city is explicitly productized; config may allow more, UX stays BH-first |
 | State & cross-cutting | Mutations per AD-3/10; config AD-2; auth AD-6/11; logging via `infra.logging`; FR-17 telemetry via `api` system/admin + existing metrics adapters — no second telemetry bus |
+| Enrichment & derived stats (v0.13) | One canonical enum of enrichment task classes / signal types shared by FR-27 routing, FR-28 backfill scope, and FR-29 coverage — no per-feature vocabularies. Operator-facing coverage/ETA derives from the **DB** (FR-29); runner Redis checkpoints are internal pacing state, never a second progress metric. Derived cohort stats (FR-30 percentiles, FR-31 TCO comparisons) are computed in the metrics/enrichment pipeline stage (AD-10) on a single price basis defined there, cohort-keyed **neighbourhood × listing type** with a config-owned min-cohort size (AD-2), and consumed read-only via the AD-12 projection — no read-time re-derivation in views |
 | Tests / merge | Green agent gates (`validate.sh`, scraper live gate when scrapers change) before merge — process companion to design co-existence |
 
 ## Stack
@@ -163,17 +172,21 @@ flowchart TB
 | Name | Version |
 | --- | --- |
 | Python (Docker runtime) | 3.11 (`Dockerfile.api`); local `.venv` may differ — image is source of truth for deploy |
-| FastAPI | 0.139.0 in current venv; **unpinned** in `requirements.txt` (rebuilds may float) |
-| SQLAlchemy | >=2.0.51 (venv 2.0.51) |
-| Pydantic | >=2.13.4 (venv 2.13.4) |
-| Celery | 5.6.3 in venv; **unpinned** in requirements |
-| Redis (client / server) | client 6.4.0 (unpinned) / server `redis:7-alpine` |
-| PostgreSQL + PostGIS + pgvector | Compose builds `Dockerfile.postgres` from `postgis/postgis:15-3.3-alpine` + pgvector `v0.8.0`; Python `pgvector` in `requirements.txt` |
+| Python deps | **Pinned** via pip-compile lockfile: `requirements.in` → autogenerated `requirements.txt` (BIN-138) |
+| FastAPI | 0.140.13 (lockfile) |
+| SQLAlchemy | 2.0.51 (lockfile) |
+| Pydantic | 2.13.4 (lockfile) |
+| Celery | 5.6.3 (lockfile) |
+| Redis (client / server) | client 6.4.0 (lockfile) / server `redis:7-alpine` |
+| PostgreSQL + PostGIS + pgvector | Compose builds `Dockerfile.postgres` from `postgis/postgis:17-3.5-alpine` + pgvector compiled from source (BIN-272); Python `pgvector` in lockfile |
 | React | 19.2.8 (`frontend/package-lock.json`) |
 | Vite | 8.1.5 (`frontend/package-lock.json`) |
+| maplibre-gl | 6.1.0 (lockfile-resolved from `^6.1.0`, BIN-271) |
 | Local AI | Host Ollama and/or LM Studio (not containerized) |
+| Cloudflare bypass | FlareSolverr `v3.3.21` sidecar, compose profile `bypass` (BIN-246) |
+| Cloud assist (optional) | Gemini/Gemma free tier via `ai.backend` routing — bounded by AD-13 |
 
-*Stack seed refreshed 2026-07-23 on BIN-35 after BIN-34 landed on an outdated base (missed React 19 / Vite 8 upgrade and PostGIS+pgvector image).*
+*Stack seed refreshed 2026-08-05 (sprint-change-proposal §4.2): PostGIS 17-3.5, maplibre 6, lockfile pinning — earlier "unpinned" caveats resolved by BIN-138. Prior refresh 2026-07-23 (BIN-35).*
 
 ## Structural Seed
 
@@ -217,6 +230,11 @@ Sole system of record: **Postgres + PostGIS + pgvector** (embeddings for FR-15 s
 | FR-20 Proxy rotation | scraper adapters + AppConfig | AD-5, AD-2 |
 | FR-21 Export / digest | `api` export + pipeline digest | AD-8, AD-9, AD-11, AD-12 |
 | FR-22 Neighbourhood polygons | PostGIS + enrichment pipeline stage | AD-3, AD-10, structural seed |
+| FR-23..26 Shipped baseline (Zap scraper, neighbourhood quality, dual-type scoring, description enrichment) | per rows above — same homes | AD-5, AD-10, AD-4, AD-13 (FR-26 cloud batch) |
+| FR-27 Multi-backend enrichment routing | `adapters/ai` + `AppConfig` | AD-13, AD-2, AD-4 |
+| FR-28 Quota-governed cloud backfill surface | `core/backfill_runner.py`, `scripts/dev` CLI → operator surface | AD-13, AD-4, AD-10, AD-6 |
+| FR-29 Enrichment coverage telemetry | `api` system/admin + DB-derived metrics | AD-12, AD-2; no second telemetry bus (conventions) |
+| FR-30..32 Deal-intelligence (percentiles, TCO, saved-search alerts) | metrics pipeline stage (cohort stats) + `api` projection + `frontend`; alerts via pipeline | AD-10, AD-12, AD-3, AD-8, AD-9, AD-11; enrichment & derived-stats conventions |
 
 ## Deferred
 
@@ -225,13 +243,10 @@ Sole system of record: **Postgres + PostGIS + pgvector** (embeddings for FR-15 s
 | Parallel-worktree Compose port isolation | Harness / ADR 0004 — process, not product spine |
 | Image tags, VRAM tuning, host-AI OS quirks | `docs/setup.md` owns operational detail |
 | Git sync-with-main / merge hygiene | Feature-pipeline — design co-existence is AD-1..12 |
-| Exact auth mechanism (API-key vs local profiles) | PRD open question; constrained by AD-6 + AD-11 |
-| Digest channel (email vs in-app only) | PRD open question; constrained by AD-9 + AD-11 |
-| FR-22 polygon data source (open data vs manual GeoJSON) | PRD open question; revisit when FR-22 epic starts |
-| FR-23 additional platforms schedule | Product backlog; AD-5 constrains *how* |
-| Burning down AD-1 debt in `core` | Implementation stories after this spine |
-| Numeric success-metric instrumentation as KPIs | Product metrics — not architectural divergence points |
+| FR-28 operator surface (admin panel vs hardened CLI + telemetry) | PRD §9 open question; constrained by AD-6 + AD-13 either way |
+| Multi-city productization | v0.14 candidate (PRD §5); config may allow, UX stays BH-first |
+| Burning down AD-1 debt in `core` | Still open as of 2026-08-05 — dedupe ORM/enqueue leak remains and lazy `adapters` imports spread (neighbourhood/overlay/enrichment_rerun/olx_location); burn-down via dedicated stories |
+| Numeric success-metric instrumentation as KPIs | Product metrics — FR-29 coverage telemetry is the first step; not an architectural divergence point |
 | Event-driven bus / CQRS | Rejected for current altitude |
 | Multi-tenant cloud deploy | Explicit non-goal |
 | Modular-monolith redraw | Rejected for retrofit |
-| Pinning all Python deps in requirements.txt | Hygiene; note already in Stack seed |
