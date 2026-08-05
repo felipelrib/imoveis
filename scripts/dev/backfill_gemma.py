@@ -68,6 +68,7 @@ from core.backfill_runner import (  # noqa: E402
     Checkpoint,
     DailyBudget,
     Heartbeat,
+    TokenBudget,
     estimate_eta_days,
     launch_interval_for_rpm,
     run_backfill,
@@ -217,6 +218,22 @@ def _run(cfg, session, redis, args) -> BackfillResult:
     heartbeat = Heartbeat(redis, prefix=cfg.backfill.redis_prefix)
     launch_interval = _launch_interval(cfg, args.min_interval)
     concurrency = args.concurrency or cfg.backfill.concurrency
+    tokens_per_property = args.tokens_per_property or cfg.backfill.tokens_per_property
+    tpm_limit = args.tpm_limit or cfg.backfill.tpm_limit
+    token_budget = TokenBudget(
+        tpm_limit=tpm_limit,
+        tokens_per_property=tokens_per_property,
+        safety_margin=cfg.backfill.tpm_safety_margin,
+    )
+    logger.info(
+        "backfill_rate_limits",
+        concurrency=concurrency,
+        tpm_limit=tpm_limit,
+        tokens_per_property=tokens_per_property,
+        max_props_per_min=round(
+            tpm_limit * cfg.backfill.tpm_safety_margin / max(1, tokens_per_property), 2
+        ),
+    )
 
     def _on_progress(res: BackfillResult) -> None:
         heartbeat.beat()
@@ -242,6 +259,7 @@ def _run(cfg, session, redis, args) -> BackfillResult:
             dry_run=args.dry_run,
             concurrency=concurrency,
             launch_interval=launch_interval,
+            token_budget=None if args.dry_run else token_budget,
             on_progress=_on_progress,
         )
 
@@ -332,6 +350,18 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="properties to enrich in parallel (default: config; 1 = sequential)",
+    )
+    parser.add_argument(
+        "--tokens-per-property",
+        type=int,
+        default=None,
+        help="estimated tokens per property for TPM pacing (default: config, 7000)",
+    )
+    parser.add_argument(
+        "--tpm-limit",
+        type=int,
+        default=None,
+        help="tokens-per-minute ceiling to stay under (default: config, 16000)",
     )
     parser.add_argument(
         "--min-interval",

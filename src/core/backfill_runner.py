@@ -194,6 +194,10 @@ class BackfillResult:
     budget_exhausted: bool = False
     last_property_id: Optional[str] = None
     error_ids: list[str] = field(default_factory=list)
+    # How often (and how long) the TPM limiter held launches back — the signal
+    # that tokens, not requests, are the binding constraint.
+    tpm_waits: int = 0
+    tpm_wait_seconds: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +208,8 @@ class BackfillResult:
             "requests_consumed": self.requests_consumed,
             "budget_exhausted": self.budget_exhausted,
             "last_property_id": self.last_property_id,
+            "tpm_waits": self.tpm_waits,
+            "tpm_wait_seconds": round(self.tpm_wait_seconds, 1),
         }
 
 
@@ -212,6 +218,77 @@ def estimate_eta_days(remaining_properties: int, daily_property_rate: float) -> 
     if daily_property_rate <= 0:
         return float("inf")
     return remaining_properties / daily_property_rate
+
+
+class TokenBudget:
+    """Sliding-60s token limiter that keeps the run under the provider's TPM cap.
+
+    The daily budget gates *requests* and the launch interval gates *requests per
+    minute*, but the free-tier ceiling that actually bites on image-heavy
+    enrichment is **tokens per minute**: one property costs ~7,000 tokens
+    (measured on ``gemma-4-31b-it``: visual with 8×768px images ≈ 3,538, sentiment
+    ≈ 1,706, verdict ≈ 1,706), so 16K TPM allows only ~2.3 properties/min. Relying
+    on the client's reactive 429 backoff was not enough — it throttles only *after*
+    the violation and every retry silently consumes daily request quota.
+
+    This reserves a property's estimated tokens *before* it launches and makes the
+    caller wait until the trailing 60-second window has room, so the cap is
+    respected proactively and concurrency self-regulates.
+    """
+
+    WINDOW_SECONDS = 60.0
+
+    def __init__(
+        self,
+        *,
+        tpm_limit: int,
+        tokens_per_property: int,
+        safety_margin: float = 0.9,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._effective_limit = max(1.0, float(tpm_limit) * safety_margin)
+        self._tokens_per_property = max(1, int(tokens_per_property))
+        self._clock = clock
+        # (timestamp, tokens) reservations inside the trailing window.
+        self._events: list[tuple[float, int]] = []
+
+    @property
+    def tokens_per_property(self) -> int:
+        return self._tokens_per_property
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - self.WINDOW_SECONDS
+        self._events = [(ts, tok) for ts, tok in self._events if ts > cutoff]
+
+    def used(self) -> int:
+        """Tokens reserved within the trailing 60s window."""
+        self._prune(self._clock())
+        return sum(tok for _, tok in self._events)
+
+    def seconds_until_room(self, tokens: Optional[int] = None) -> float:
+        """Seconds to wait before ``tokens`` fit in the window (0 if they fit now)."""
+        need = self._tokens_per_property if tokens is None else int(tokens)
+        now = self._clock()
+        self._prune(now)
+        used = sum(tok for _, tok in self._events)
+        if used + need <= self._effective_limit:
+            return 0.0
+        # Wait for the oldest reservations to age out until `need` fits.
+        freed = 0.0
+        for ts, tok in self._events:  # oldest first
+            freed += tok
+            if used - freed + need <= self._effective_limit:
+                return max(0.0, ts + self.WINDOW_SECONDS - now)
+        # Even an empty window cannot fit it (property costs more than the cap):
+        # let it through once the window drains rather than deadlocking.
+        if self._events:
+            return max(0.0, self._events[-1][0] + self.WINDOW_SECONDS - now)
+        return 0.0
+
+    def reserve(self, tokens: Optional[int] = None) -> None:
+        """Record a reservation. Call after waiting ``seconds_until_room``."""
+        need = self._tokens_per_property if tokens is None else int(tokens)
+        self._events.append((self._clock(), need))
 
 
 def launch_interval_for_rpm(requests_per_property: int, rpm_limit: int) -> float:
@@ -262,6 +339,7 @@ async def run_backfill(
     dry_run: bool = False,
     concurrency: int = 1,
     launch_interval: float = 0.0,
+    token_budget: Optional[TokenBudget] = None,
     sleep_fn: SleepFn = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
     on_progress: Optional[Callable[[BackfillResult], None]] = None,
@@ -274,9 +352,11 @@ async def run_backfill(
     raises on hard failure; the row is counted as an error and the run continues.
 
     Up to ``concurrency`` properties run in parallel (each is ~3 sequential Gemma
-    calls, so parallelism is what lifts throughput). ``launch_interval`` spaces
-    successive launches to keep the request rate under the per-minute cap; the
-    daily budget still gates total requests.
+    calls, so parallelism is what lifts throughput). Three independent governors
+    keep the run inside the provider's limits: the daily ``budget`` (RPD),
+    ``launch_interval`` (RPM), and ``token_budget`` (TPM — usually the binding one
+    for image-heavy enrichment, which throttles launches so concurrency
+    self-regulates).
 
     ``limit`` caps the number of properties *attempted* this run (skipped rows do
     not count). ``dry_run`` reports how many rows *would* be processed within the
@@ -327,6 +407,16 @@ async def run_backfill(
             wait = launch_interval - (clock() - last_launch)
             if wait > 0:
                 await sleep_fn(wait)
+
+        # Proactively stay under the tokens-per-minute ceiling: wait until this
+        # property's estimated tokens fit the trailing 60s window, then reserve.
+        if token_budget is not None:
+            tpm_wait = token_budget.seconds_until_room()
+            if tpm_wait > 0:
+                result.tpm_waits += 1
+                result.tpm_wait_seconds += tpm_wait
+                await sleep_fn(tpm_wait)
+            token_budget.reserve()
 
         if not budget.try_consume(requests_per_property):
             result.budget_exhausted = True

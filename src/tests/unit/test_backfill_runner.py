@@ -17,6 +17,7 @@ from core.backfill_runner import (
     BackfillResult,
     Checkpoint,
     DailyBudget,
+    TokenBudget,
     estimate_eta_days,
     launch_interval_for_rpm,
     run_backfill,
@@ -457,6 +458,142 @@ def test_concurrency_respects_limit_and_budget():
     assert result.processed == 2
     assert result.budget_exhausted is True
     assert len(seen) == 2
+
+
+class FakeClock:
+    """Manually advanced monotonic clock."""
+
+    def __init__(self, t=1000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, secs):
+        self.t += secs
+
+
+def _tb(clock, *, tpm=16000, per_prop=7000, margin=0.9):
+    return TokenBudget(
+        tpm_limit=tpm, tokens_per_property=per_prop, safety_margin=margin, clock=clock
+    )
+
+
+def test_token_budget_allows_up_to_the_effective_limit():
+    """16000 TPM × 0.9 = 14400 → two 7000-token properties fit, a third does not."""
+    clock = FakeClock()
+    tb = _tb(clock)
+    assert tb.seconds_until_room() == 0.0
+    tb.reserve()
+    assert tb.seconds_until_room() == 0.0
+    tb.reserve()
+    assert tb.used() == 14000
+    # 14000 + 7000 = 21000 > 14400 → must wait for the window to roll.
+    assert tb.seconds_until_room() == pytest.approx(60.0)
+
+
+def test_token_budget_window_rolls_after_60s():
+    clock = FakeClock()
+    tb = _tb(clock)
+    tb.reserve()
+    tb.reserve()
+    assert tb.seconds_until_room() > 0
+    clock.advance(61)  # both reservations age out
+    assert tb.used() == 0
+    assert tb.seconds_until_room() == 0.0
+
+
+def test_token_budget_waits_only_for_the_oldest_reservation():
+    """Partial expiry: wait just long enough for the oldest to leave the window."""
+    clock = FakeClock()
+    tb = _tb(clock)
+    tb.reserve()          # t=0
+    clock.advance(20)
+    tb.reserve()          # t=20
+    # Need the t=0 reservation to age out → 60 - 20 = 40s.
+    assert tb.seconds_until_room() == pytest.approx(40.0)
+
+
+def test_token_budget_does_not_deadlock_on_oversized_property():
+    """A property costing more than the whole cap still eventually proceeds."""
+    clock = FakeClock()
+    tb = _tb(clock, tpm=1000, per_prop=5000)  # one property exceeds the cap
+    assert tb.seconds_until_room() == 0.0  # empty window → go
+    tb.reserve()
+    wait = tb.seconds_until_room()
+    assert 0 < wait <= 60.0  # bounded, not infinite
+
+
+def test_run_backfill_throttles_on_tpm_and_reports_waits():
+    """The TPM limiter delays launches and the result records the waiting."""
+    r = FakeRedis()
+    clock = FakeClock()
+    slept = []
+
+    async def sleep_fn(secs):
+        slept.append(secs)
+        clock.advance(secs)  # sleeping advances the window
+
+    async def enrich_fn(prop):
+        return None
+
+    async def _go():
+        return await run_backfill(
+            _rows(4),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=4,
+            token_budget=_tb(clock),
+            sleep_fn=sleep_fn,
+            clock=clock,
+        )
+
+    result = asyncio.run(_go())
+    assert result.processed == 4
+    # 14400 effective / 7000 → props 1-2 launch freely; prop 3 must wait a full
+    # window, which drains it, so prop 4 then fits without waiting again.
+    assert result.tpm_waits == 1
+    assert result.tpm_wait_seconds == pytest.approx(60.0)
+    assert any(s > 0 for s in slept)
+
+
+def test_token_budget_never_exceeds_cap_in_any_window():
+    """Invariant: reservations inside any trailing 60s never exceed the cap."""
+    clock = FakeClock()
+    tb = _tb(clock)  # effective cap 14400
+    peak = 0
+    for _ in range(20):
+        wait = tb.seconds_until_room()
+        clock.advance(wait)
+        tb.reserve()
+        peak = max(peak, tb.used())
+        clock.advance(1)  # a little real work between launches
+    assert peak <= 14400
+
+
+def test_run_backfill_without_token_budget_does_not_throttle():
+    """Opt-in: no token_budget → no TPM waiting (back-compat)."""
+    r = FakeRedis()
+
+    async def enrich_fn(prop):
+        return None
+
+    async def _go():
+        return await run_backfill(
+            _rows(4),
+            enrich_fn=enrich_fn,
+            budget=_budget(r, 10000),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=4,
+            sleep_fn=_noop_sleep,
+        )
+
+    result = asyncio.run(_go())
+    assert result.processed == 4
+    assert result.tpm_waits == 0
 
 
 def test_estimate_eta_days():

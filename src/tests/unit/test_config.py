@@ -518,6 +518,9 @@ def test_backfill_from_default_app_config_yaml():
     # BIN-269: RPM ceiling + parallelism.
     assert cfg.backfill.rpm_limit == 30
     assert cfg.backfill.concurrency == 1
+    # v0.13-fu2: measured per-property token cost + TPM headroom.
+    assert cfg.backfill.tokens_per_property == 7000
+    assert cfg.backfill.tpm_safety_margin == 0.9
 
 
 @pytest.mark.unit

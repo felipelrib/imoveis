@@ -123,3 +123,7 @@ development_status:
 
   # v0.13 pre-story harness track (PRD §6.2 gate — process, not FR)
   v0.13-fu1-harness-surgery: done
+  # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
+  # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
+  # token-bucket sized from measured per-property token cost (~7k).
+  v0.13-fu2-backfill-tpm-limiter: done

@@ -128,6 +128,14 @@ class BackfillConfig(BaseModel, frozen=True):
     # ~4,600 properties/day at the default 14,000. Below the 14,400 free-tier RPD.
     daily_request_budget: int = 14000
     tpm_limit: int = 16000
+    # Estimated tokens one property costs across its three calls. Measured on
+    # gemma-4-31b-it with 8×768px images: visual ≈ 3,538, sentiment ≈ 1,706,
+    # verdict ≈ 1,706. At 16K TPM this allows only ~2.3 properties/min, which is
+    # the real ceiling for image-heavy enrichment (v0.13-fu2).
+    tokens_per_property: int = 7000
+    # Fraction of tpm_limit the runner will actually use, leaving headroom for
+    # properties that tokenize above the estimate.
+    tpm_safety_margin: float = 0.9
     # Requests/min ceiling (free-tier Gemma ~30 RPM). Bounds the launch rate so
     # concurrency can't exceed the per-minute cap (BIN-269).
     rpm_limit: int = 30

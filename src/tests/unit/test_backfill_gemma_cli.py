@@ -63,6 +63,8 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None):
     cfg.backfill.requests_per_property = 3
     cfg.backfill.rpm_limit = 30
     cfg.backfill.concurrency = 1
+    cfg.backfill.tokens_per_property = 7000
+    cfg.backfill.tpm_safety_margin = 0.9
     cfg.ai.gemini_api_key = api_key
     rows = [
         (
