@@ -144,8 +144,8 @@ validate_conventional_branch() {
 }
 
 # --- Docs-only change detection ---------------------------------------------
-# True when every file in origin/main...HEAD is docs/planning prose (matches
-# ci.yml paths-ignore). Used to skip heavy validate.sh and wait on Docs CI.
+# True when every file in origin/main...HEAD is docs/planning prose. Used by
+# finish-feature.sh to swap the heavy validate gate for mkdocs build --strict.
 is_docs_only_vs_main() {
   local files f
   git fetch origin main --quiet 2>/dev/null || true

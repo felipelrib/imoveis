@@ -1,0 +1,11 @@
+# Imoveis project overrides for bmad-quick-dev (CAP-6, v0.13-fu1 harness surgery).
+# Merges over the skill's customize.toml (arrays append).
+
+[workflow]
+
+persistent_facts = [
+  "GATE (non-negotiable): validation is ONLY `bash scripts/agent/validate.sh [fast|backend|all]`. NEVER run raw `pytest`, `npm test`, or ad-hoc test commands — the gate derives the isolated ephemeral test-stack env that raw runners miss.",
+  "GATE (non-negotiable): shipping is ONLY `bash scripts/agent/finish-feature.sh` (validate → local squash-merge to main → mandatory `git push origin main` → cleanup). There is no PR step and no remote CI gate. Run it with a generous timeout or in the background — it takes minutes.",
+  "PRIMARY STACK IS INVIOLABLE: never run any `docker compose` command against the primary project `imoveis` (up/down/restart/stop/build/run). DB/Redis for tests come from `bash scripts/agent/test-stack.sh` (ephemeral `<workspace>-test` project). Primary DB migration is exclusively the operator step `bash scripts/agent/migrate-primary.sh`.",
+  "Domain hooks are merge-blocking and unweakenable: scraper changes → `bash scripts/agent/validate-scrapers.sh --require-live`; AI prompt/client changes → `bash scripts/agent/validate-ai.sh`; API schema changes → contract tests; DB schema changes → `alembic check`.",
+]

@@ -1,93 +1,17 @@
 name: Nightly
 
+# Post-CI-retirement (v0.13-fu1 harness surgery): the only job left is the
+# live scraper drift canary — it watches an EXTERNAL surface (portal HTML)
+# that local gates cannot cover. Unit/integration/dependency jobs were
+# deleted; those run locally via scripts/agent/validate.sh, the sole gate.
+
 on:
   schedule:
     - cron: "0 3 * * *"  # 3 AM UTC daily
   workflow_dispatch:
 
 jobs:
-  # ---- Full test suite ----
-  full-suite:
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Start Postgres (PostGIS + pgvector)
-        run: bash scripts/ci/start-postgres-pgvector.sh
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install deps
-        run: |
-          pip install -r requirements.txt pytest pytest-cov pytest-timeout isort flake8
-          npm ci --prefix frontend
-
-      - name: Lint
-        run: |
-          isort --check --diff src/
-          flake8 src/ --max-line-length=127 --extend-ignore=E203,W503
-
-      - name: Unit tests
-        run: pytest src/tests/unit/ -v --cov=src --cov-report=xml --timeout=30 -m "not slow"
-
-      - name: Ensure isolated test database
-        run: bash scripts/agent/ensure-test-db.sh
-        env:
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_PORT: "5432"
-          POSTGRES_HOST: localhost
-          POSTGRES_DB: realestate
-          POSTGRES_TEST_DB: realestate_test
-
-      - name: Integration tests
-        run: pytest src/tests/integration/ -v
-        env:
-          DATABASE_URL: postgresql://imoveis:test_password@localhost:5432/realestate_test
-          REDIS_URL: redis://localhost:6379/15
-          API_KEY: test-integration-key
-          JWT_SECRET: test-integration-jwt-secret
-
-  # ---- Dependency audit ----
-  dependency-audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Python dependency audit
-        run: |
-          pip install pip-audit
-          pip-audit --requirement requirements.txt || echo "pip-audit warnings"
-
-      - name: Frontend dependency audit
-        run: |
-          cd frontend && npm audit || echo "npm audit warnings"
-
-  # ---- Scrapers: cassettes + live (merge-blocking; same gate as CI) ----
+  # ---- Scrapers: cassettes + live drift canary ----
   scrapers:
     runs-on: ubuntu-latest
     steps:

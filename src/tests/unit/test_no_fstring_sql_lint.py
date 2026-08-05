@@ -3,9 +3,9 @@
 CLAUDE.md: "NEVER f-string SQL — parameterize." Column/fragment selection must
 come from an enum/allow-list, never Python string interpolation. This test
 runs the exact grep pattern wired into ``.pre-commit-config.yaml``
-(``forbid-fstring-sql``) and ``scripts/agent/validate.sh`` (``run_lint``) so
-a drift between the two copies, or a regression in ``src/``, fails fast in
-unit CI rather than only showing up in a pre-commit/CI lint job.
+(``forbid-fstring-sql``, executed by ``validate.sh``'s pre-commit lint stage)
+so a pattern drift, or a regression in ``src/``, fails fast in the unit stage
+rather than only showing up in the pre-commit lint stage.
 """
 
 from __future__ import annotations
@@ -78,7 +78,9 @@ class TestNoFstringSqlLint:
         config = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
         assert "forbid-fstring-sql" in config
 
-    def test_validate_sh_defines_the_check(self):
-        """validate.sh's run_lint must also run this check (fast local feedback)."""
+    def test_validate_sh_runs_the_hook_via_pre_commit(self):
+        """validate.sh's run_lint runs pre-commit on ALL files, which carries the
+        forbid-fstring-sql hook (post harness-surgery: the inline grep copy was
+        replaced by the single pre-commit source of truth)."""
         validate_sh = (REPO_ROOT / "scripts" / "agent" / "validate.sh").read_text()
-        assert "no f-string-built SQL" in validate_sh
+        assert "pre-commit run --all-files" in validate_sh

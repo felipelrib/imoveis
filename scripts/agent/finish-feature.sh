@@ -2,40 +2,45 @@
 # ---------------------------------------------------------------------------
 # finish-feature.sh [feature-slug]
 #
-# Validates the current feature branch, pushes it, and optionally opens a PR.
+# The LOCAL finish gate (no PR, no remote CI — CAP-8): validates the current
+# feature branch, squash-merges it into main locally, pushes main to origin
+# (mandatory — origin is the backup, not a gate), and cleans up the workspace.
 # Run from INSIDE the feature workspace (primary solo branch or a worktree).
 #
-# With --pr: after required checks are green, SQUASH-MERGES the PR into main, then
-# cleans up the workspace (worktree teardown --remove, or primary → main) and
-# runs docker-cleanup.sh (stopped containers + dangling/unused feat|wt images;
-# keeps primary imoveis-* + bases; never volumes).
-# Merge-ready is NOT finished — squash-merged to main is finished.
+# Flow:
+#   1. Feature-doc gate (docs/features/<story-key>-*.md must exist)
+#   2. validate.sh all (docs-only branches: mkdocs build --strict)
+#      — a red validation BLOCKS the merge; nothing proceeds past it
+#   3. Local squash-merge into main (one commit per feature, linear history)
+#   4. git push origin main (immediately — every local merge is pushed)
+#   5. Cleanup: worktree teardown --remove, or primary stays on main;
+#      ephemeral test stack down; docker-cleanup.sh (never volumes)
 #
-# Docs-only branches (prose under docs/, *.md, _bmad-output/, etc.):
-#   - Local gate is mkdocs build --strict (not validate.sh all)
-#   - GitHub full CI is paths-ignored; Docs workflow (`docs` check) is the gate
-#   - If no checks attach but the PR is MERGEABLE, merge proceeds after a short wait
-#
-# Idle invariant: after a successful finish on the PRIMARY checkout, checks out
-# main so the next agent sees primary_is_idle and can use solo mode.
+# The primary stack is never touched (validation runs on the ephemeral
+# test stack — see test-stack.sh / validate.sh).
 #
 # Exit codes:
-#   0  pushed, validated — PR merged (with --pr) / ready for PR
+#   0  merged into main and pushed (or --validate-only/--no-merge success)
 #   1  validation failed — fix, commit, re-run
+#   2  sync/merge conflict or main moved — reconcile manually, re-run
 #
 # Flags:
 #   --dry-run        Show what would happen without doing it
-#   --skip-docs      Skip the gen-docs step
-#   --skip-validate  Skip validation (use for rules/docs-only changes)
-#   --validate-only  Only validate, don't push
-#   --pr             Push, open/reuse PR, watch CI, merge, cleanup workspace
-#   --no-merge       With --pr: stop after CI green (do not merge / teardown)
-#   --keep-branch    Do not checkout main on primary after finish (rare)
+#   --skip-docs      Skip the feature-doc gate
+#   --skip-validate  Docs-only branches only: skip the heavy gate (the mkdocs
+#                    gate still runs — there is NO zero-gate path to main)
+#   --validate-only  Only validate, don't merge
+#   --no-merge       Stop after validation (do not merge / push / teardown)
+#   --keep-branch    Keep the feature branch/workspace after merge (rare);
+#                    test-stack down + docker-cleanup still run
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
+
+# Conflict-class failures exit 2 (die() is the generic exit-1 path).
+die2() { printf '\033[31m  [FAIL] %s\033[0m\n' "$*" >&2; exit 2; }
 
 # Worktree ports / PLAYWRIGHT_PORT (validate.sh also sources this).
 if [ -f "$REPO_ROOT/.env.local" ]; then
@@ -50,7 +55,6 @@ DRY_RUN=false
 SKIP_DOCS=false
 VALIDATE_ONLY=false
 SKIP_VALIDATE=false
-PR_MODE=false
 NO_MERGE=false
 KEEP_BRANCH=false
 
@@ -60,49 +64,10 @@ for arg in "$@"; do
     --skip-docs)      SKIP_DOCS=true ;;
     --skip-validate)  SKIP_VALIDATE=true ;;
     --validate-only)  VALIDATE_ONLY=true ;;
-    --pr)             PR_MODE=true ;;
     --no-merge)       NO_MERGE=true ;;
     --keep-branch)    KEEP_BRANCH=true ;;
   esac
 done
-
-return_primary_to_idle() {
-  if [ "$KEEP_BRANCH" = true ]; then
-    warn "skipping return-to-main (--keep-branch)"
-    return 0
-  fi
-  if in_linked_worktree; then
-    return 0
-  fi
-  if [ "$REPO_ROOT" != "$PRIMARY_ROOT" ]; then
-    return 0
-  fi
-  log "Returning primary checkout to main (idle invariant for parallel agents)..."
-  git -C "$PRIMARY_ROOT" fetch origin --quiet 2>/dev/null || true
-  if git -C "$PRIMARY_ROOT" checkout main 2>/dev/null; then
-    git -C "$PRIMARY_ROOT" pull --ff-only origin main 2>/dev/null || true
-    ok "primary now on $(git -C "$PRIMARY_ROOT" rev-parse --abbrev-ref HEAD)"
-  else
-    warn "could not checkout main on primary — fix manually so the next agent can detect idle"
-  fi
-}
-
-cleanup_after_merge() {
-  if [ "$KEEP_BRANCH" = true ]; then
-    warn "skipping workspace cleanup (--keep-branch)"
-    return 0
-  fi
-  if in_linked_worktree; then
-    log "Merged from worktree — tearing down worktree (teardown.sh --remove)..."
-    # teardown cds to PRIMARY_ROOT and removes this worktree; run in subshell-safe path.
-    # teardown also runs docker-cleanup.sh (temp containers/images; never volumes).
-    bash "$HERE/teardown.sh" --remove || warn "teardown.sh --remove failed — remove worktree manually"
-    return 0
-  fi
-  return_primary_to_idle
-  # Primary finish does not compose-down the shared stack; still prune temps.
-  bash "$HERE/docker-cleanup.sh" || warn "docker-cleanup.sh had issues"
-}
 
 # --- Resolve the feature branch ---------------------------------------------
 resolve_branch() {
@@ -157,43 +122,74 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   die "working tree is dirty — commit your work first"
 fi
 
-if [ "$DRY_RUN" = true ]; then
-  log "DRY RUN — would do:"
-  log "  1. Run validate.sh all"
-  log "  2. Push $BRANCH"
-  if [ "$PR_MODE" = true ]; then
-    log "  3. Open/reuse PR + watch CI"
-    if [ "$NO_MERGE" = true ]; then
-      log "  4. Stop after CI green (--no-merge)"
+# --- Feature-doc gate --------------------------------------------------------
+# Every story ships with docs/features/<story-key>-<slug>.md. Derive the key
+# from the branch name (feat/v0.13-s1.1-… → v0.13-s1.1; feat/v0.13-fu1-… →
+# v0.13-fu1; legacy bin-147-… → BIN-147).
+derive_story_key() {
+  local desc="${BRANCH#*/}"
+  case "$desc" in
+    v[0-9]*.[0-9]*-s[0-9]*.[0-9]*)
+      printf '%s' "$desc" | grep -oE '^v[0-9]+\.[0-9]+-s[0-9]+\.[0-9]+' ;;
+    v[0-9]*.[0-9]*-fu[0-9]*)
+      printf '%s' "$desc" | grep -oE '^v[0-9]+\.[0-9]+-fu[0-9]+' ;;
+    [Bb][Ii][Nn]-[0-9]*)
+      printf '%s' "$desc" | grep -oiE '^bin-[0-9]+' | tr 'a-z' 'A-Z' ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$SKIP_DOCS" = false ]; then
+  STORY_KEY="$(derive_story_key || true)"
+  if [ -n "${STORY_KEY:-}" ]; then
+    if ! ls "$REPO_ROOT/docs/features/${STORY_KEY}-"*.md >/dev/null 2>&1; then
+      if [ "$DRY_RUN" = true ]; then
+        warn "no feature doc for ${STORY_KEY} yet — a real run would refuse here"
+      else
+        die "no feature doc found for ${STORY_KEY} (docs/features/${STORY_KEY}-*.md). Create it (bash scripts/agent/gen-docs.sh <slug> \"<Title>\" ${STORY_KEY}), commit, and re-run — or pass --skip-docs."
+      fi
     else
-      log "  4. Merge PR into main"
-      log "  5. Cleanup workspace (teardown --remove if worktree, else checkout main)"
-      log "  6. docker-cleanup.sh (temp containers + dangling/unused feat|wt images; primary + volumes preserved)"
+      ok "feature doc present for ${STORY_KEY}"
     fi
   else
-    log "  3. Return primary to main (unless worktree / --keep-branch)"
+    warn "could not derive a story key from branch '$BRANCH' — skipping feature-doc gate"
   fi
-  exit 0
 fi
 
 # --- Sync with main before validation ---------------------------------------
 log "Syncing with latest main before validation..."
-git fetch origin --quiet 2>/dev/null || true
+git fetch origin --quiet 2>/dev/null || warn "git fetch failed — merging against local main"
 
 DOCS_ONLY=false
 if is_docs_only_vs_main; then
   DOCS_ONLY=true
-  ok "Detected docs-only change vs origin/main (heavy CI will be skipped by paths-ignore)"
+  ok "Detected docs-only change vs main (heavy validation skipped; mkdocs gate applies)"
 fi
 
-# --- Validation -------------------------------------------------------------
-if [ "$SKIP_VALIDATE" = true ]; then
-  warn "Skipping validation (--skip-validate)"
-elif [ "$DOCS_ONLY" = true ]; then
+if [ "$DRY_RUN" = true ]; then
+  log "DRY RUN — would do:"
+  if [ "$DOCS_ONLY" = true ]; then
+    log "  1. mkdocs build --strict (docs-only gate)"
+  else
+    log "  1. Run validate.sh all (ephemeral test stack; primary untouched)"
+  fi
+  log "  2. Squash-merge $BRANCH into main locally"
+  log "  3. git push origin main (mandatory)"
+  log "  4. Cleanup (worktree teardown --remove, or primary stays on main; test stack down; docker-cleanup.sh)"
+  exit 0
+fi
+
+# --- Validation (THE merge gate — red blocks the merge) ----------------------
+# There is deliberately NO zero-gate path to main: --skip-validate only swaps
+# the heavy gate for the docs gate, and only on docs-only branches.
+if [ "$SKIP_VALIDATE" = true ] && [ "$DOCS_ONLY" != true ]; then
+  die "--skip-validate is only allowed for docs-only branches — this branch touches code, run the full gate"
+fi
+if [ "$SKIP_VALIDATE" = true ] || [ "$DOCS_ONLY" = true ]; then
   if validate_docs_only; then
     ok "DOCS VALIDATION PASSED"
   else
-    warn "DOCS VALIDATION FAILED"
+    warn "DOCS VALIDATION FAILED — merge blocked"
     exit 1
   fi
 else
@@ -201,155 +197,116 @@ else
   if bash "$HERE/validate.sh" all; then
     ok "VALIDATION PASSED"
   else
-    warn "VALIDATION FAILED"
+    warn "VALIDATION FAILED — merge blocked. Fix, commit, re-run."
     exit 1
   fi
 fi
 
-# Wait for PR checks. Docs-only: tolerate "no checks yet", prefer Docs workflow.
-wait_for_pr_checks() {
-  local attempts=0
-  local max_attempts=90   # ~15 min at 10s
-  local out rc
-
-  if [ "$DOCS_ONLY" = true ]; then
-    log "Docs-only PR — waiting for Docs workflow (full CI is path-ignored)..."
-  else
-    log "Waiting for CI checks to pass (this may take a few minutes)..."
-  fi
-
-  # Brief settle so GitHub can attach the pull_request workflow run
-  sleep 8
-
-  while [ "$attempts" -lt "$max_attempts" ]; do
-    attempts=$((attempts + 1))
-    out="$(gh pr checks 2>&1)" || true
-    rc=0
-    gh pr checks >/dev/null 2>&1 || rc=$?
-
-    if echo "$out" | grep -qiE 'no checks reported'; then
-      if [ "$DOCS_ONLY" = true ] && [ "$attempts" -ge 6 ]; then
-        # After ~1 min with no checks: ruleset does not require status checks —
-        # allow merge for docs-only if the PR is still mergeable.
-        local mergeable
-        mergeable="$(gh pr view --json mergeable -q .mergeable 2>/dev/null || echo UNKNOWN)"
-        if [ "$mergeable" = "MERGEABLE" ]; then
-          warn "No checks attached after wait — docs-only + MERGEABLE; proceeding to merge"
-          return 0
-        fi
-      fi
-      sleep 10
-      continue
-    fi
-
-    if echo "$out" | grep -qiE '\b(fail|failure|cancelled|timed out)\b'; then
-      printf '%s\n' "$out"
-      return 1
-    fi
-
-    # Any pending/queued → keep waiting
-    if echo "$out" | grep -qiE '\b(pending|queued|in_progress|expected)\b'; then
-      sleep 10
-      continue
-    fi
-
-    # All reported checks look done and gh pr checks exit 0
-    if [ "$rc" -eq 0 ]; then
-      printf '%s\n' "$out"
-      return 0
-    fi
-
-    # Fallback: use --watch once checks exist
-    if gh pr checks --watch 2>/dev/null; then
-      return 0
-    fi
-    sleep 10
-  done
-
-  warn "Timed out waiting for PR checks"
-  return 1
-}
-
-# --- Open PR, wait for CI, merge (--pr mode) --------------------------------
-if [ "$PR_MODE" = true ]; then
-  log "Pushing branch $BRANCH..."
-  git push -u origin "$BRANCH" 2>/dev/null || die "git push failed"
-
-  EXISTING_PR="$(gh pr view --json url,state -q 'if .state == "OPEN" then .url else empty end' 2>/dev/null || true)"
-  if [ -n "$EXISTING_PR" ]; then
-    PR_URL="$EXISTING_PR"
-    ok "Reusing open PR: $PR_URL"
-  else
-    log "Opening pull request..."
-    PR_TITLE="$(git log -1 --pretty=%s "$BRANCH" 2>/dev/null || echo "Feature: $SLUG")"
-    CREATE_OUT=$(gh pr create \
-      --base main \
-      --head "$BRANCH" \
-      --title "$PR_TITLE" \
-      --body "$(printf '## Changes\n\n%s\n\n## Validation\n\n- [ ] CI must pass (lint, unit, integration, contract, E2E)\n- [ ] validate.sh all must pass locally' \
-        "$(git log main.."$BRANCH" --oneline --no-merges 2>/dev/null | sed 's/^/- /' || echo "- $PR_TITLE")")" \
-      2>&1) || {
-        # Race: PR may have been opened between view and create
-        EXISTING_PR="$(gh pr view --json url,state -q 'if .state == "OPEN" then .url else empty end' 2>/dev/null || true)"
-        if [ -n "$EXISTING_PR" ]; then
-          PR_URL="$EXISTING_PR"
-          warn "gh pr create failed but open PR exists — reusing $PR_URL"
-        else
-          die "gh pr create failed: $CREATE_OUT"
-        fi
-      }
-    if [ -z "${PR_URL:-}" ]; then
-      PR_URL="$CREATE_OUT"
-      ok "PR created: $PR_URL"
-    fi
-  fi
-
-  log "Waiting for required checks..."
-  if ! wait_for_pr_checks; then
-    warn "CI checks failed or timed out."
-    warn "Fix issues, push fixes, and re-run: bash scripts/agent/finish-feature.sh --pr"
-    warn "If checks are still queued, babysit with: gh pr checks --watch"
-    exit 1
-  fi
-  ok "Required checks passed (or docs-only merge allowed)"
-
-  if [ "$NO_MERGE" = true ]; then
-    warn "Stopping after CI green (--no-merge). Merge manually, then cleanup workspace."
-    exit 0
-  fi
-
-  log "Squash-merging PR into main (merge-ready is not finished)..."
-  # Always squash into main — keeps history linear (one commit per PR).
-  # Do NOT use gh --delete-branch: it tries to checkout main locally and can
-  # steal/switch the primary checkout when main is locked in another worktree.
-  gh pr merge --squash || die "gh pr merge failed — resolve blockers and re-run"
-  ok "PR merged: $PR_URL"
-  if git push origin --delete "$BRANCH" 2>/dev/null; then
-    ok "Deleted remote branch $BRANCH"
-  else
-    warn "could not delete remote branch $BRANCH (may already be gone)"
-  fi
-
-  cleanup_after_merge
+if [ "$NO_MERGE" = true ]; then
+  warn "Stopping after validation (--no-merge). Merge with: bash scripts/agent/finish-feature.sh"
   exit 0
 fi
 
-log "Pushing branch $BRANCH..."
-git push -u origin "$BRANCH" 2>/dev/null || die "git push failed"
-ok "Feature '$SLUG' is pushed and ready for PR."
-echo "  Run: gh pr create   (or: bash scripts/agent/finish-feature.sh --pr)"
-
-# --- Generate docs (unless skipped) -----------------------------------------
-if [ "$SKIP_DOCS" = false ] && [ -f "$HERE/gen-docs.sh" ]; then
-  log "Generating feature docs..."
-  if bash "$HERE/gen-docs.sh" "$SLUG" "" 2>/dev/null; then
-    ok "Docs generated"
-  else
-    warn "gen-docs.sh skipped (may need title argument)"
-  fi
+# --- Local squash-merge into main --------------------------------------------
+MERGE_TITLE="$(git log -1 --pretty=%s "$BRANCH" 2>/dev/null || echo "feat: $SLUG")"
+MERGE_BODY="$(git log main.."$BRANCH" --oneline --no-merges 2>/dev/null | sed 's/^/- /' || true)"
+ALEMBIC_TOUCHED=false
+if git diff --name-only main.."$BRANCH" 2>/dev/null | grep -q '^alembic/versions/'; then
+  ALEMBIC_TOUCHED=true
 fi
 
-return_primary_to_idle
+if in_linked_worktree; then
+  MERGE_DIR="$PRIMARY_ROOT"
+  # NEVER commandeer a busy primary: another agent may be mid-task there.
+  # Only merge in the primary when it already sits idle on main.
+  if [ "$(git -C "$MERGE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "main" ]; then
+    die "primary checkout is on '$(git -C "$MERGE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)', not main — another agent may be using it. Wait for it to return to main (idle invariant), or finish from the primary checkout."
+  fi
+  if [ -n "$(git -C "$MERGE_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    die "primary checkout is dirty — cannot squash-merge there. Clean it up and re-run."
+  fi
+else
+  MERGE_DIR="$REPO_ROOT"
+  git checkout main || die "could not checkout main (held by a worktree?) — resolve and re-run"
+fi
+
+restore_workspace_branch() {
+  # Undo a half-done merge and put the primary-checkout case back on its branch.
+  git -C "$MERGE_DIR" reset --merge 2>/dev/null || true
+  [ "$MERGE_DIR" = "$REPO_ROOT" ] && git checkout "$BRANCH" 2>/dev/null
+}
+
+log "Updating local main from origin (ff-only)..."
+if ! git -C "$MERGE_DIR" pull --ff-only origin main 2>/dev/null; then
+  # Offline is tolerable (push will fail loudly later); divergence is not.
+  if git -C "$MERGE_DIR" fetch origin main --quiet 2>/dev/null; then
+    restore_workspace_branch
+    die2 "local main and origin/main diverged — reconcile manually, then re-run"
+  fi
+  warn "origin unreachable — merging on local main (push will be retried below)"
+fi
+
+# main must not have moved past what validation saw — a squash of branch+newer
+# main is a combination no gate ever validated.
+if [ "$(git -C "$MERGE_DIR" rev-parse main)" != "$(git -C "$MERGE_DIR" merge-base main "$BRANCH")" ]; then
+  restore_workspace_branch
+  die2 "main moved since this branch was validated — merge main into '$BRANCH', re-validate, re-run"
+fi
+
+log "Squash-merging $BRANCH into main (one commit, linear history)..."
+if ! git -C "$MERGE_DIR" merge --squash "$BRANCH"; then
+  git -C "$MERGE_DIR" merge --abort 2>/dev/null || true
+  restore_workspace_branch
+  die2 "squash-merge conflict — merge main into '$BRANCH', resolve, validate, re-run"
+fi
+if git -C "$MERGE_DIR" diff --cached --quiet; then
+  warn "nothing to merge — '$BRANCH' adds no changes on top of main (already merged?); skipping commit"
+elif [ -n "$MERGE_BODY" ]; then
+  git -C "$MERGE_DIR" commit -m "$MERGE_TITLE" -m "$MERGE_BODY" \
+    || { restore_workspace_branch; die "merge commit failed — workspace restored to '$BRANCH'"; }
+  ok "Squash-merged into main: $MERGE_TITLE"
+else
+  git -C "$MERGE_DIR" commit -m "$MERGE_TITLE" \
+    || { restore_workspace_branch; die "merge commit failed — workspace restored to '$BRANCH'"; }
+  ok "Squash-merged into main: $MERGE_TITLE"
+fi
+
+# --- Push (mandatory — origin/main is the backup of record) ------------------
+log "Pushing main to origin..."
+if git -C "$MERGE_DIR" push origin main; then
+  ok "origin/main updated (equals local main)"
+else
+  die "git push origin main FAILED — the merge exists only locally. Re-run 'git push origin main' before doing anything else."
+fi
+
+# Legacy remote feature branches (pre-surgery pushes): best-effort removal.
+git push origin --delete "$BRANCH" 2>/dev/null || true
+
+if [ "$ALEMBIC_TOUCHED" = true ]; then
+  warn "This merge includes Alembic migrations. The PRIMARY realestate DB is NOT migrated by any gate —"
+  warn "run 'bash scripts/agent/migrate-primary.sh' when the backfill is idle to bring primary to head."
+fi
+
+# --- Cleanup ------------------------------------------------------------------
+if [ "$KEEP_BRANCH" = true ]; then
+  warn "keeping branch/workspace (--keep-branch) — still pruning docker temps"
+  bash "$HERE/test-stack.sh" down || warn "test-stack down had issues"
+  bash "$HERE/docker-cleanup.sh" || warn "docker-cleanup.sh had issues"
+  exit 0
+fi
+
+if in_linked_worktree; then
+  log "Merged from worktree — tearing down worktree (teardown.sh --remove)..."
+  # teardown downs this worktree's stacks (incl. ephemeral test stack), runs
+  # docker-cleanup.sh, and removes the worktree + registry entry.
+  bash "$HERE/teardown.sh" --remove || warn "teardown.sh --remove failed — remove worktree manually"
+  git -C "$PRIMARY_ROOT" branch -D "$BRANCH" 2>/dev/null && ok "deleted merged branch $BRANCH" || true
+else
+  # Primary checkout: we are already on main (idle invariant for parallel agents).
+  git branch -D "$BRANCH" 2>/dev/null && ok "deleted merged branch $BRANCH" || true
+  bash "$HERE/test-stack.sh" down || warn "test-stack down had issues"
+  bash "$HERE/docker-cleanup.sh" || warn "docker-cleanup.sh had issues"
+fi
 
 echo ""
-ok "Feature '$SLUG' processed."
+ok "Feature '$SLUG' merged into main and pushed."

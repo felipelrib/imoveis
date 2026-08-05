@@ -120,3 +120,6 @@ development_status:
   8-6-embeddings-semantic-search-locale-behaviour: done
   8-7-multi-locale-extensibility-checklist-nfr7: done
   epic-8-retrospective: optional
+
+  # v0.13 pre-story harness track (PRD §6.2 gate — process, not FR)
+  v0.13-fu1-harness-surgery: review

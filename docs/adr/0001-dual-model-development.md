@@ -8,7 +8,7 @@
 
 ~~All AI-assisted development uses a **Planner + Implementer** dual-model strategy.~~
 
-This ADR is historical. The project now uses a single Cursor agent with Plan mode, `scripts/agent/` validation gates, and PR babysitting (see ADR 0002).
+This ADR is historical. The project moved to a single agent with Plan mode and `scripts/agent/` validation gates (ADR 0002), later amended to a fully local merge gate and BMad-owned execution (ADR 0005 + v0.13-fu1 harness surgery).
 
 ## Original decision (archived)
 

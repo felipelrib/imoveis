@@ -6,6 +6,8 @@
 
 ## Decision
 
+> **Amended by the v0.13-fu1 harness surgery (2026-08-05):** still accepted, with three behavioural updates — (1) `validate.sh` no longer starts/migrates any primary services; each workspace's test DB/Redis come from its own ephemeral `<workspace>-test` compose project (`test-stack.sh`), so port pressure on the shared primary is gone during validation; (2) `teardown.sh` now **fails closed**: it reads `COMPOSE_PROJECT_NAME` from `.env.local` only and refuses ambiguous or primary identities (`--primary` = explicit operator override, volumes never wiped); (3) `finish-feature.sh` merges locally (squash) and pushes `main` — there is no PR step. The idle invariant, sibling-worktree layout, and port registry stand.
+
 Multiple Cursor agents may work on **different features in parallel**. Isolation is **opt-in when needed**, not mandatory for every feature:
 
 | Situation | Workspace |

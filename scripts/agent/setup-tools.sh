@@ -27,7 +27,7 @@ if [ -d "$HOME/.local/bin" ]; then
 fi
 
 # ---- Install Python dev tools ----
-PYTHON_TOOLS=(isort flake8 pytest pytest-timeout alembic autoflake)
+PYTHON_TOOLS=(isort flake8 pytest pytest-timeout alembic autoflake pre-commit)
 MISSING=()
 for tool in "${PYTHON_TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then

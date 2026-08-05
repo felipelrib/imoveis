@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Ephemeral validation stack (CAP-1 — primary-stack-safe validation).
+#
+# Used ONLY by scripts/agent/test-stack.sh, under the throwaway compose
+# project "<workspace>-test" (e.g. imoveis-test). Never the primary project.
+#
+# Invariants:
+#   - Host ports are docker-assigned (never hardcoded) — resolve them with
+#     `docker compose -p <proj> port <service> <port>` via test-stack.sh env.
+#   - No named volumes: data lives in the container layer and dies with
+#     `test-stack.sh down`. Nothing here can outlive validation.
+#   - Image parity with the primary stack: same Dockerfile.postgres
+#     (PostGIS 17-3.5 + pgvector) and the same redis image.
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-imoveis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imoveis_local_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-realestate}
+    ports:
+      - "127.0.0.1::5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-imoveis} -d ${POSTGRES_DB:-realestate}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1::6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

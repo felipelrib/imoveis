@@ -3,8 +3,10 @@
 # ensure-test-db.sh
 #
 # Create (if missing) and migrate the isolated integration-test database
-# (default: realestate_test) on the same Postgres server as the scraped
-# primary DB. Never points app/scraper containers at this database.
+# (default: realestate_test). Under validate.sh, TEST_DATABASE_URL points at
+# the ephemeral test stack (test-stack.sh) — the primary server is never
+# touched. Without TEST_DATABASE_URL (manual/operator use), falls back to the
+# POSTGRES_* env server. Never points app/scraper containers at this database.
 #
 # Usage:
 #   bash scripts/agent/ensure-test-db.sh
@@ -28,12 +30,14 @@ TEST_DB="${POSTGRES_TEST_DB:-realestate_test}"
 
 if [ -n "${TEST_DATABASE_URL:-}" ]; then
   TARGET_URL="$TEST_DATABASE_URL"
+  # Admin connection (CREATE DATABASE cannot run inside the target) goes to the
+  # SAME server as the target URL — with the ephemeral test stack this is the
+  # throwaway server's own maintenance DB, never the primary stack's server.
+  ADMIN_URL="${TARGET_URL%/*}/${PRIMARY_DB}"
 else
   TARGET_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${TEST_DB}"
+  ADMIN_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${PRIMARY_DB}"
 fi
-
-# Admin URL against the primary DB (CREATE DATABASE cannot run inside the target).
-ADMIN_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${PRIMARY_DB}"
 
 PYTHON_BIN=""
 if [ -x "$REPO_ROOT/.venv/bin/python" ]; then

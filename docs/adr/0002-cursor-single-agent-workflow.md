@@ -6,6 +6,8 @@
 
 ## Decision
 
+> **Amended by [ADR 0005](0005-drop-linear-bmad-artifacts-sole-tracker.md) + the v0.13-fu1 harness surgery (2026-08-05):** the PR/CI steps below are retired — the merge gate is now fully local (`validate.sh all` → local squash-merge → mandatory push inside `finish-feature.sh`), remote CI is reduced to a non-gating docs deploy + nightly scraper drift canary, Linear references are historical, and the local per-tool workflow skills were deleted in favour of BMad skills + `_bmad/custom/` gate bindings. The **enforcement-layer principle of this ADR stands**: shared, reviewable gates live in `scripts/agent/`, and no workflow may bypass them.
+
 AI-assisted development for Imoveis uses a **single Cursor agent** that plans and implements in one flow, gated by committed `scripts/agent/` tooling:
 
 1. **Plan** — Cursor Plan mode for non-trivial work.

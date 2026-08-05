@@ -1,18 +1,10 @@
 name: Docs
 
-# PR: validate MkDocs build. Main push: validate + deploy GitHub Pages.
-# Full CI (ci.yml) skips when the PR only touches docs/planning markdown — see
-# paths-ignore there. This workflow is the merge gate for docs-only PRs.
+# Main push: validate MkDocs build + deploy GitHub Pages. NON-GATING — the
+# merge gate is local (scripts/agent/validate.sh inside finish-feature.sh);
+# this workflow only publishes the docs site after main advances.
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "mkdocs.yml"
-      - "README.md"
-      - "_bmad-output/**"
-      - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:

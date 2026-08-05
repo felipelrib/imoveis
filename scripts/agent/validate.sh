@@ -2,12 +2,18 @@
 # ---------------------------------------------------------------------------
 # validate.sh [fast|backend|frontend|all]   (default: all)
 #
-# The single validation gate. Runs the SAME steps as CI, in the SAME order.
-# Exits 0 only if everything passes. Runs against THIS worktree's isolated
-# stack (uses its .env.local / compose project).
+# The single validation gate — and since CI retirement, THE merge gate.
+# Exits 0 only if everything passes.
+#
+# Primary-stack invariant (CAP-1): this script NEVER touches the primary
+# compose project. DB/Redis needs are met by the ephemeral "<workspace>-test"
+# stack (scripts/agent/test-stack.sh — docker-assigned ports, throwaway
+# volumes). Safe to run at any time, including during a live backfill.
+# Primary `realestate` migration is a separate explicit operator step:
+# scripts/agent/migrate-primary.sh.
 #
 # Scopes:
-#   fast      = lint + unit (pre-push equivalent, <60s)
+#   fast      = lint (pre-commit, all files) + unit (<60s)
 #   backend   = fast + integration + contract
 #   frontend  = install + build + lint
 #   all       = backend + frontend + E2E
@@ -16,6 +22,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
+
+# Project venv tools (pre-commit, alembic, pytest) win over system ones.
+if [ -d "$REPO_ROOT/.venv/bin" ]; then
+    export PATH="$REPO_ROOT/.venv/bin:$PATH"
+fi
 
 # Ensure required tools are installed
 if [ -f "$HERE/setup-tools.sh" ]; then
@@ -43,44 +54,11 @@ for arg in "${@}"; do
   esac
 done
 [ -z "$SCOPE" ] && SCOPE="all"
+# .env.local supplies workspace identity + PLAYWRIGHT_PORT; DB/Redis URLs for
+# tests are derived from the ephemeral test stack below, never from here.
 [ -f "$REPO_ROOT/.env.local" ] && { set -a; source "$REPO_ROOT/.env.local"; set +a; }
 cd "$REPO_ROOT"
-PROJ="${COMPOSE_PROJECT_NAME:-imoveis}"
-COMPOSE=(dc --env-file .env.local -p "$PROJ")
-[ -f "$REPO_ROOT/.env.local" ] || COMPOSE=(dc -p "$PROJ")
 
-# --- Auto-derive DATABASE_URL / REDIS_URL for host-side tests ----------------
-# Integration fixtures truncate all tables — never point host pytest at the
-# scraped primary DB (realestate). Use realestate_test on the same server.
-DB_USER="${POSTGRES_USER:-imoveis}"
-DB_PASS="${POSTGRES_PASSWORD:-imoveis_local_dev}"
-DB_HOST="${POSTGRES_HOST:-localhost}"
-DB_NAME="${POSTGRES_DB:-realestate}"
-TEST_DB_NAME="${POSTGRES_TEST_DB:-realestate_test}"
-if [ -n "${POSTGRES_PORT:-}" ]; then
-  if [ -z "${TEST_DATABASE_URL:-}" ]; then
-    export TEST_DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${POSTGRES_PORT}/${TEST_DB_NAME}"
-  fi
-  # Host pytest (integration/contract) always uses the isolated test DB.
-  # Stale shell DATABASE_URL pointing at /realestate must not win.
-  export DATABASE_URL="$TEST_DATABASE_URL"
-  log "Host pytest DATABASE_URL → ${TEST_DB_NAME} (Compose scrapers keep ${DB_NAME})"
-fi
-# Host pytest flushdb must not hit Compose Celery/API Redis DB 0 (BIN-117).
-REDIS_TEST_DB="${REDIS_TEST_DB:-15}"
-if [ -n "${REDIS_PORT:-}" ]; then
-  export REDIS_URL="redis://localhost:${REDIS_PORT}/${REDIS_TEST_DB}"
-  log "Host pytest REDIS_URL → DB ${REDIS_TEST_DB} (Compose keeps 0)"
-elif [ -n "${REDIS_URL:-}" ]; then
-  # Rewrite logical DB index; keep host/port/auth from the existing URL.
-  _redis_base="${REDIS_URL%/*}"
-  # If URL had no path (no trailing /N), %/* strips the whole string — rebuild.
-  case "${REDIS_URL}" in
-    */[0-9]*) export REDIS_URL="${_redis_base}/${REDIS_TEST_DB}" ;;
-    *) export REDIS_URL="${REDIS_URL%/}/${REDIS_TEST_DB}" ;;
-  esac
-  log "Host pytest REDIS_URL → DB ${REDIS_TEST_DB} (rewrote existing REDIS_URL; Compose keeps 0)"
-fi
 # Set API_KEY / JWT_SECRET for admin endpoint tests (via AppConfig env channel)
 if [ -z "${API_KEY:-}" ]; then
   export API_KEY="test-local-api-key"
@@ -107,22 +85,30 @@ _require() {
   return 0
 }
 
+# Bring up the ephemeral test stack and point host pytest at it.
+# Integration fixtures truncate all tables — they must NEVER see the primary
+# server. Everything below runs against the throwaway "<workspace>-test" stack.
+TEST_STACK_READY=false
+ensure_test_stack() {
+  [ "$TEST_STACK_READY" = true ] && return 0
+  log "Ephemeral test stack: up (never the primary project)"
+  bash "$HERE/test-stack.sh" up || { warn "test stack failed to start"; rc=1; return 1; }
+  local env_out
+  env_out="$(bash "$HERE/test-stack.sh" env)" || { warn "test stack env resolution failed"; rc=1; return 1; }
+  eval "$env_out"
+  export DATABASE_URL="$TEST_DATABASE_URL"
+  REDIS_TEST_DB="${REDIS_TEST_DB:-15}"
+  export REDIS_URL="redis://127.0.0.1:${TEST_STACK_REDIS_PORT}/${REDIS_TEST_DB}"
+  log "Host pytest DATABASE_URL → ephemeral ${TEST_DATABASE_URL##*/} (port ${TEST_STACK_POSTGRES_PORT})"
+  log "Host pytest REDIS_URL → ephemeral port ${TEST_STACK_REDIS_PORT} DB ${REDIS_TEST_DB}"
+  TEST_STACK_READY=true
+}
+
 # ---- Lint ----
 run_lint() {
-  log "Lint: isort + flake8"
-  if _require isort; then
-    isort --check --diff src/ 2>&1 && ok "isort OK" || { warn "isort FAILED"; rc=1; }
-  fi
-  if _require flake8; then
-    flake8 src/ --max-line-length=127 --extend-ignore=E203,W503 2>&1 && ok "flake8 OK" || { warn "flake8 FAILED"; rc=1; }
-  fi
-  log "Lint: no f-string-built SQL (BIN-135 — see .pre-commit-config.yaml forbid-fstring-sql)"
-  if grep -rnP "(\btext\(\s*f['\"]|\bf['\"][^'\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|ORDER BY)\b)" \
-      "$REPO_ROOT/src/" --include="*.py" | grep -v "/tests/"; then
-    warn "f-string-built SQL FAILED — parameterize or use an enum/allow-listed column map instead"
-    rc=1
-  else
-    ok "no f-string-built SQL"
+  log "Lint: pre-commit on ALL files (full CI-parity gate — src/ and beyond)"
+  if _require pre-commit; then
+    pre-commit run --all-files && ok "pre-commit OK" || { warn "pre-commit FAILED"; rc=1; }
   fi
   if [ -f "$REPO_ROOT/frontend/package.json" ]; then
     ( cd "$REPO_ROOT/frontend" && npm run lint 2>/dev/null ) && ok "eslint OK" || warn "eslint not configured — skip"
@@ -141,15 +127,17 @@ run_unit() {
   fi
 }
 
-# ---- Integration tests (needs PostGIS + Redis) ----
+# ---- Test DB (ephemeral stack) ----
+run_test_db() {
+  ensure_test_stack || return
+  log "Test DB: ensure + migrate ${TEST_DATABASE_URL##*/} on the ephemeral server"
+  bash "$HERE/ensure-test-db.sh" || { warn "ensure-test-db FAILED"; rc=1; }
+}
+
+# ---- Integration tests (needs PostGIS + Redis — ephemeral stack) ----
 run_integration() {
-  log "Integration: ensuring services are up (Postgres + Redis)"
-  "${COMPOSE[@]}" up -d postgres redis 2>/dev/null
-  log "Integration: migrating app DB (Compose / ${DB_NAME})"
-  "${COMPOSE[@]}" run --rm api python -m alembic upgrade head 2>/dev/null
-  log "Integration: ensuring isolated test DB (${TEST_DB_NAME})"
-  bash "$HERE/ensure-test-db.sh" || { warn "ensure-test-db FAILED"; rc=1; return; }
-  log "Integration: pytest (real PostGIS + Redis) against ${TEST_DB_NAME}"
+  ensure_test_stack || return
+  log "Integration: pytest (real PostGIS + Redis) against the ephemeral stack"
   if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
     "$PYTHON_BIN" -m pytest src/tests/integration/ -v && ok "integration tests passed" || { warn "integration tests FAILED"; rc=1; }
   else
@@ -158,17 +146,10 @@ run_integration() {
   fi
 }
 
-# ---- Alembic: ensure app DB is migrated before checks ----
-run_alembic_migrate() {
-  log "Alembic: upgrade head on app DB via Docker (Compose ${DB_NAME})"
-  "${COMPOSE[@]}" run --rm api python -m alembic upgrade head 2>&1 && ok "alembic upgrade head passed" || { warn "alembic upgrade head FAILED"; rc=1; }
-  log "Alembic: ensure isolated test DB is migrated (${TEST_DB_NAME})"
-  bash "$HERE/ensure-test-db.sh" || { warn "ensure-test-db FAILED"; rc=1; }
-}
-
 # ---- Contract tests ----
 run_contract() {
-  log "Contract: pytest + alembic check (host pytest → ${TEST_DB_NAME})"
+  ensure_test_stack || return
+  log "Contract: pytest + alembic check (host → ephemeral test DB)"
   if [ -d "$REPO_ROOT/src/tests/contract" ]; then
     if [ -n "$PYTHON_BIN" ] && command -v "$PYTHON_BIN" &>/dev/null; then
       "$PYTHON_BIN" -m pytest src/tests/contract/ -v && ok "contract tests passed" || { warn "contract tests FAILED"; rc=1; }
@@ -179,12 +160,15 @@ run_contract() {
   else
     warn "src/tests/contract/ directory not found — skip"
   fi
-  log "Contract: alembic schema check (via Docker / app DB)"
-  # PostGIS system tables (tiger, topology, spatial_ref_sys) always appear as
-  # "extra" in autogenerate, so alembic check always reports false positives.
-  # This check is informational only — never fails the build for PostGIS projects.
-  "${COMPOSE[@]}" run --rm api python -m alembic check 2>/dev/null && ok "alembic check passed" \
-    || warn "alembic check: PostGIS system tables detected (expected — informational only)"
+  if [ -n "$PYTHON_BIN" ]; then
+    log "Contract: alembic schema check (host → ephemeral test DB)"
+    # PostGIS system tables (tiger, topology, spatial_ref_sys) always appear as
+    # "extra" in autogenerate, so alembic check always reports false positives.
+    # This check is informational only — never fails the build for PostGIS projects.
+    ( cd "$REPO_ROOT" && PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PYTHON_BIN" -m alembic check 2>/dev/null ) && ok "alembic check passed" \
+      || warn "alembic check: PostGIS system tables detected (expected — informational only)"
+  fi
 }
 
 # ---- Frontend ----
@@ -218,7 +202,7 @@ case "$SCOPE" in
   backend)
     run_lint
     run_unit
-    run_alembic_migrate
+    run_test_db
     run_integration
     run_contract
     ;;
@@ -228,7 +212,7 @@ case "$SCOPE" in
   all)
     run_lint
     run_unit
-    run_alembic_migrate
+    run_test_db
     run_integration
     run_contract
     run_frontend

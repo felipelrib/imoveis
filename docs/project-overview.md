@@ -26,7 +26,7 @@ Imoveis is a local-first real-estate deal-finding tool. It scrapes rental and sa
 | Frontend | React 19, Vite 8, TypeScript, react-router 7, maplibre-gl 6, recharts 3 | Playwright e2e |
 | Config | Pydantic + YAML (`configs/app_config.yaml`) | Single source of truth; env overrides |
 | Auth | python-jose (JWT), slowapi rate limiting | Admin endpoints gated |
-| CI/CD | GitHub Actions (`ci.yml`, `nightly.yml`, `docs.yml`), SonarCloud | |
+| Gates | Local `scripts/agent/validate.sh` (merge gate); GitHub Actions: `docs.yml` Pages deploy + `nightly.yml` scraper drift canary (non-gating) | |
 | Docs | MkDocs Material (`docs/`) | 169 feature docs in `docs/features/` |
 | Tracking | BMad artifacts (`_bmad-output/`) | epics.md + sprint-status.yaml; Linear dropped 2026-08-05 (ADR 0005) |
 

@@ -7,6 +7,8 @@
 ## Decision
 
 > **Amended by [ADR 0005](0005-drop-linear-bmad-artifacts-sole-tracker.md) (2026-08-05):** Linear was dropped entirely; BMad artifacts (`epics.md` + `sprint-status.yaml`) are now the sole tracker. Linear references below are historical.
+>
+> **Further amended by the v0.13-fu1 harness surgery (2026-08-05):** the "bridge" is dissolved — BMad now owns execution too. The feature-pipeline and planning-bridge skills were deleted; ticket → ship is the BMad story cycle (`bmad-create-story` → `bmad-dev-story` → `bmad-code-review`, or `bmad-quick-dev`) bound to the `scripts/agent` gates via `_bmad/custom/` overrides. The PR/CI steps below are retired (local squash-merge + mandatory push). Alternative 1 ("replace feature-pipeline with BMad story cycle only") was effectively adopted — **without** losing the scraper/AI gates, which the overrides keep mandatory.
 
 Imoveis uses **BMad Method** for product planning and solutioning (PRD, architecture spine, epics/stories, implementation readiness, sprint planning). **Implementation and merge gates stay on ADR 0002**: single Cursor agent, Linear as execution tracker, committed `scripts/agent/` validate / finish-feature / babysit.
 

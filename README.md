@@ -31,8 +31,8 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 | Frontend    | React 19 + Vite 8      | Score-coloured property grid    |
 | Config      | Pydantic + YAML        | Single source of truth          |
 | Migrations  | Alembic                | Schema versioning               |
-| CI/CD       | GitHub Actions         | Tests, lint, build, security    |
-| Tracking    | Linear                 | Feature queue, project board    |
+| Gates       | `scripts/agent/` local | validate.sh = the merge gate; GitHub Actions = docs deploy + nightly scraper drift canary |
+| Tracking    | BMad artifacts (`_bmad-output/`) | epics.md = plan of record; sprint-status.yaml = status |
 
 ```
 src/
@@ -164,12 +164,12 @@ Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-starte
 
 - Orientation: invoke **`bmad-help`** (see `_bmad-output/planning-artifacts/bmad-help-session.md`).
 - Sprint tracker: `_bmad-output/implementation-artifacts/sprint-status.yaml`.
-- Bridge to shipping: [ADR 0003](docs/adr/0003-bmad-planning-bridge.md) — BMad plans; Linear + `scripts/agent/` / local `feature-pipeline` execute. Local skill: `.cursor/skills/imoveis-planning-bridge` (Cursor) / `.claude/skills/imoveis-planning-bridge` (Claude Code).
+- Shipping: BMad owns execution too ([ADR 0003](docs/adr/0003-bmad-planning-bridge.md) as amended, [ADR 0005](docs/adr/0005-drop-linear-bmad-artifacts-sole-tracker.md)) — the BMad story cycle (`bmad-create-story` → `bmad-dev-story` → `bmad-code-review`, or `bmad-quick-dev`) bound to the `scripts/agent/` gates via `_bmad/custom/` overrides.
 - Re-install / update: `npx bmad-method install --yes --modules bmm --tools cursor --action update`
 
 ## Development Workflow
 
-Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
+Features are tracked in BMad artifacts: `_bmad-output/planning-artifacts/epics.md` (plan of record) + `_bmad-output/implementation-artifacts/sprint-status.yaml` (execution status). Story keys look like `v0.13-s1.1`; follow-ups mint `v0.13-fu<N>`.
 
 **Feature / merge-bound work:**
 
@@ -177,10 +177,9 @@ Features are tracked in [Linear](https://linear.app/felipelrib/) (team "Bino").
 2. **Workspace** — `bash scripts/agent/setup-workspace.sh <feature-slug>` (solo on idle primary, or sibling worktree if primary is busy). See [ADR 0004](docs/adr/0004-parallel-agent-workspaces.md).
 3. **Implement** — TDD with conventional commits.
 4. **Validate** — `bash scripts/agent/validate.sh all`.
-5. **PR** — `bash scripts/agent/finish-feature.sh --pr` (returns primary to `main` when finishing solo; prunes temp Docker containers/images via `docker-cleanup.sh` — including leftover `feat-*` / `imoveis-wt-*` images; keeps the primary `imoveis-*` stack).
-6. **Babysit** — Watch CI until green, then merge + cleanup (include Docker temps if finishing manually).
-7. **Linear Done** + numbered `docs/features/` doc.
-8. **Harness retrospect** — update local Cursor rules/skills if the session exposed a gap.
+5. **Finish** — `bash scripts/agent/finish-feature.sh` (validate → local squash-merge into `main` → mandatory `git push origin main` → cleanup: worktree teardown or primary back on `main`, ephemeral test stack down, `docker-cleanup.sh` — keeps the primary `imoveis-*` stack, never volumes).
+6. **Story done** — set the story key to `done` in sprint-status.yaml **after** the merge is pushed + `docs/features/<story-key>-<slug>.md` doc (the finish gate refuses story-key branches without one).
+7. **Harness retrospect** — fold durable lessons into `CLAUDE.md` / `.cursor/rules/` if the session exposed a gap.
 
 **Parallel agents:** run `bash scripts/agent/workspace-status.sh`. If `primary_idle=no`, the next agent gets a worktree under `../imoveis-wt-<slug>` with private Compose ports.
 

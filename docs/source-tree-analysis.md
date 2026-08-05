@@ -52,16 +52,22 @@ imoveis/
 ├── alembic/versions/             # 24 migrations (schema history)
 ├── configs/app_config.yaml       # Single source of truth (database, auth, scraping, ai, gpu, alerts…)
 ├── scripts/
-│   ├── agent/                    # Gate scripts: validate.sh, finish-feature.sh, setup-branch.sh,
-│   │                             # validate-scrapers.sh, validate-ai.sh, docker-cleanup.sh, worktree tooling
-│   ├── ci/ & dev/                # CI helpers, cassette recording, benchmarks
+│   ├── agent/                    # Gate scripts: validate.sh, finish-feature.sh, test-stack.sh,
+│   │                             # migrate-primary.sh, setup-branch.sh, validate-scrapers.sh,
+│   │                             # validate-ai.sh, docker-cleanup.sh, teardown.sh, worktree tooling
+│   ├── dev/                      # Cassette recording, benchmarks, backfill runners
 │   └── setup.sh / start.sh / …   # Stack lifecycle
-├── docker-compose.yml            # postgres(PostGIS), redis, api, worker_ai, worker_scraper, beat,
-│                                 # ollama_init, flaresolverr + volumes
-├── .github/workflows/            # ci.yml, nightly.yml, docs.yml
-├── docs/                         # MkDocs site + this generated knowledge set + 169 feature docs + 4 ADRs
+├── docker-compose.yml            # PRIMARY stack (project `imoveis`): postgres(PostGIS), redis, api,
+│                                 # worker_ai, worker_scraper, beat, ollama_init, flaresolverr + volumes
+├── docker-compose.test.yml       # EPHEMERAL validation stack (project `<workspace>-test`) — postgres+redis
+│                                 # only, docker-assigned ports, throwaway volumes (test-stack.sh owns it)
+├── .github/workflows/            # docs.yml (Pages deploy) + nightly.yml (scraper drift canary) — non-gating;
+│                                 # the merge gate is local (validate.sh inside finish-feature.sh)
+├── docs/                         # MkDocs site + this generated knowledge set + 169 feature docs + 5 ADRs
 ├── _bmad-output/                 # BMad planning artifacts (PRD, architecture spine, epics, sprint status)
-└── .agents/ & .claude/           # BMad skills (committed) / Claude harness skills (local)
+├── _bmad/custom/                 # Committed BMad skill overrides (gate bindings for dev skills)
+└── .agents/ & .claude/           # BMad skills (committed) / framework skill mirrors (local; no
+                                  # project-workflow skills — discipline lives in CLAUDE.md + scripts/agent/)
 ```
 
 ## Entry points

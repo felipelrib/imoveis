@@ -34,7 +34,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Never `eval()`/`exec()`/`os.system()` on user-influenced data.
 - `get_logger` kwargs become LogRecord extras — never pass reserved keys (`name`, `msg`, `args`, `level`, …); use prefixed names like `neighbourhood_name` (BIN-87).
 - AI scores are **floats in [0.0, 1.0]**, never ints — Pydantic `response_model` types must match domain producers (BIN-56/BIN-148).
-- Multi-branch parsers: split helpers early (load → signal → fallback) to stay under Sonar S3776 complexity.
+- Multi-branch parsers: split helpers early (load → signal → fallback) — deep nesting is a maintenance smell.
 
 ### Framework-Specific Rules
 
@@ -55,10 +55,10 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - NEVER raw `pytest`/`npm test` — always `bash scripts/agent/validate.sh {fast|backend|all}` (wrappers encode env setup, DB provisioning, migrations).
 - Risk-tiered: TDD on `src/core/`; oracle-first (live probe → cassette fixture) for scrapers; a characterization lock before changing brownfield SQL/dedupe/projection; one happy + one error path for thin glue — no coverage theater.
 - Every `fix:` ships with a regression test that fails without the fix.
-- Rebuild the API image (`docker compose build api`) before `validate.sh backend` when tests **or migrations** changed — compose runs migrations from the image, not the host tree.
-- Config tests must clear `get_config()`'s `lru_cache` (autouse fixture) when `DATABASE_URL`/`REDIS_URL` are set; unset stale host `DATABASE_URL` if integration fails with password auth errors.
-- Unit tests hitting rate-limited routes must bypass slowapi Redis (unit CI has none).
-- Sonar new-code gate ~80% — earn it from domain/classifier branches, not adapter padding.
+- Validation never uses the API image or the primary stack — no rebuild is needed before `validate.sh backend`; alembic and pytest run host-side against the ephemeral test stack. Rebuild `api` (`docker compose --env-file .env.local build api`) only to **run the app** after `src/api/` changes (BIN-79).
+- Config tests must clear `get_config()`'s `lru_cache` (autouse fixture) when `DATABASE_URL`/`REDIS_URL` are set; `validate.sh backend`/`all` override stale host DB/Redis env from the test stack automatically.
+- Unit tests hitting rate-limited routes must bypass slowapi Redis (unit runs have none).
+- Meaningful coverage comes from domain/classifier branches, not adapter padding — no coverage theater.
 
 ### Code Quality & Style Rules
 
@@ -71,7 +71,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 ### Development Workflow Rules
 
 - First action every session: `git rev-parse --abbrev-ref HEAD`. On `main`: `bash scripts/agent/setup-branch.sh "<slug>"` before any edit. Never a `claude/`-prefixed branch name.
-- Finish = `bash scripts/agent/finish-feature.sh --pr` (squash-merge after CI green; run with a long timeout — it takes minutes). Merge-ready ≠ finished. Never manual `git push` / `gh pr create`.
+- Finish = `bash scripts/agent/finish-feature.sh` (validate → **local** squash-merge to `main` → mandatory `git push origin main` → cleanup; run with a long timeout — it takes minutes). There is no PR step and no remote CI gate; a red `validate.sh all` blocks the merge. Validated ≠ finished; merged-and-pushed is finished. Never merge manually.
 - Domain gates after touching: scrapers → `validate-scrapers.sh --require-live`; AI prompts/clients → `validate-ai.sh` (WSL: `OLLAMA_HOST` via default route); API schema → contract tests; DB schema → `alembic check`.
 - Tracking is **BMad artifacts only** (ADR 0005, 2026-08-05 — Linear dropped): `epics.md` = plan of record, `sprint-status.yaml` = execution status (`in-progress` at start, `done` only **after** merge, never downgrade); story keys `v0.N-sE.S` replace `BIN-<id>` in feature-doc names and branches; epic close only on a fresh re-check of all sibling story keys + non-ticketed leftovers.
 - Scope: stop and ask if touching >3 unexpected files; no out-of-scope refactoring.
@@ -79,12 +79,12 @@ _This file contains critical rules and patterns that AI agents must follow when 
 ### Critical Don't-Miss Rules
 
 - Never `docker system prune`, `docker volume rm`, or `compose down -v` on the primary stack; cleanup only via `scripts/agent/docker-cleanup.sh` (keeps `imoveis-*` images and all named volumes).
-- `validate.sh`/`finish-feature.sh` recreate the primary Postgres container — never run concurrently with a long DB job (backfill/migration); restore port drift with `docker compose --env-file .env.local`.
+- `validate.sh`/`finish-feature.sh` **never touch the primary stack** — DB/Redis come from the ephemeral `<workspace>-test` compose project (`test-stack.sh`; docker-assigned ports, throwaway volumes), so validation is safe at any time, **including during a live backfill**. Primary `realestate` migration is exclusively the operator step `bash scripts/agent/migrate-primary.sh` (refuses while the backfill heartbeat `backfill:gemma:active` is alive; the key self-clears — never delete it manually). `teardown.sh` fails closed on ambiguous/primary identity. Restore primary port drift with `docker compose --env-file .env.local`.
 - Bare `docker compose up` (without `--env-file .env.local`) drifts ports and breaks `API_KEY` auth (403s).
 - Worktree checkouts (`.claude/worktrees/`) have no `.venv`/`.env.local` — run `setup-worktree.sh` before validating there.
 - Mass-scrape returning `0 processed`, beat tasks not firing, `max_price` filtering: check `docs/harness-troubleshooting.md` before "fixing" — these have known incident-derived causes (BIN-77, BIN-79, task_routes, …).
 - Gemini API key is **free tier**: Gemma ≈ 30 RPM / **14,400 RPD** / 16K TPM (best-case — `ResourceExhausted` can fire early); Gemini Flash free RPD is an order of magnitude smaller (2.5 Flash ≈ 20 RPD). At 3 requests/property that's ~4,600 properties/day — don't plan single-day whole-DB cloud backfills. Exactly **one pacer** (Redis `backfill:gemma`, BIN-248 runner) owns the daily budget — never add a second consumer of the quota.
-- BMad dev-side skills (`bmad-dev-story`, `bmad-quick-dev`, `bmad-dev-auto`) must NOT replace the feature-pipeline gates (`validate.sh` / `finish-feature.sh` / squash-merge).
+- BMad dev-side skills (`bmad-dev-story`, `bmad-quick-dev`, `bmad-dev-auto`) **are the sanctioned executors** for ticket → ship, bound by `_bmad/custom/` overrides to the `scripts/agent` gates: validation only via `validate.sh`, shipping only via `finish-feature.sh`, never any compose action against the primary project, never raw `pytest`/`npm test`.
 
 ---
 

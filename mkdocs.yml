@@ -68,6 +68,7 @@ nav:
       - AppConfig API Credential: features/BIN-44-appconfig-api-credential.md
       - Frontend Credential Gate: features/BIN-46-frontend-credential-gate.md
       - Symlink Cursor Harness: features/BIN-185-symlink-cursor-harness.md
+      - Harness Surgery (primary-safe validation, local merge gate): features/v0.13-fu1-harness-surgery.md
   - ADR:
       - Dual-Model Development (superseded): adr/0001-dual-model-development.md
       - Cursor Single-Agent Workflow: adr/0002-cursor-single-agent-workflow.md
