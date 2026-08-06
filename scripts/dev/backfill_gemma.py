@@ -79,12 +79,15 @@ code as well as the closing banner (v0.13-fu3):
 
 Scope (``--task-classes``)
 --------------------------
-Only two scopes are supported, because ``run_enrichment`` always runs visual +
-sentiment and writes a deal verdict only on the full pass:
-``visual,sentiment,deal_verdict`` (the default, full enrichment) and
-``visual,sentiment``. A ``deal_verdict``-only scope is refused: it would spend
-cloud quota on visual+sentiment, overwrite ``ai_score``, and still never write
-the verdict it was asked for.
+``visual,sentiment,deal_verdict`` (the default, full enrichment) is the only
+scope this runner accepts, because ``run_enrichment`` always runs visual +
+sentiment and writes a deal verdict only on the full pass. Both narrower scopes
+are refused, for the same underlying reason: ``deal_verdict`` alone would spend
+cloud quota on visual+sentiment, overwrite ``ai_score`` and still never write
+the verdict; ``visual,sentiment`` writes ``ai_score`` with no verdict, and since
+candidate selection (``mode=missing``) keys only on ``ai_score``, every row it
+touched would stop being a candidate and never get a verdict from a later full
+pass. Both stay part of the task-class vocabulary for stories 1.5/1.6.
 
 Completion is measured against the **candidate queue** — active rows with no AI
 score — not ``total properties - enriched``. The runner never fetches inactive
@@ -142,6 +145,7 @@ from core.enrichment import EnrichmentBackend, is_cloud_backend  # noqa: E402
 from core.enrichment_rerun import (  # noqa: E402
     MODE_MISSING,
     STAGES_VERDICT_ONLY,
+    STAGES_VISUAL_SENTIMENT,
     EnrichmentRerunParams,
     fetch_candidate_rows,
 )
@@ -164,10 +168,16 @@ EXIT_LEASE_LOST = 7               # the lease lapsed mid-run; someone else may o
 
 _BANNER_WIDTH = 68
 
-# The only scopes ``run_enrichment`` can actually serve (see the module docstring).
-_SUPPORTED_SCOPES_HELP = (
-    "'visual,sentiment,deal_verdict' (full enrichment) or 'visual,sentiment'"
-)
+# Consecutive ``--continuous`` passes that end in a provider quota refusal with
+# nothing enriched before the short (per-minute-throttle) back-off is ruled out
+# and the runner waits out the whole RPD window instead. Four passes is ~1h at
+# the default ``quota_backoff_seconds``: long past any per-minute throttle.
+_MAX_QUOTA_BACKOFF_CYCLES = 4
+
+# The only scope ``run_enrichment`` can serve without stranding rows (see
+# ``_stages_for``). Narrower scopes stay part of the task-class vocabulary for
+# stories 1.5/1.6; this *runner* refuses them.
+_SUPPORTED_SCOPES_HELP = "'visual,sentiment,deal_verdict' (full enrichment)"
 
 
 def _counts(session) -> tuple[int, int]:
@@ -302,11 +312,34 @@ def _stages_for(scope) -> str:
             "quota on visual+sentiment, overwrite ai_score, and still never "
             f"write a verdict.\n  Supported scopes: {_SUPPORTED_SCOPES_HELP}."
         )
+    if stages == STAGES_VISUAL_SENTIMENT:
+        raise SystemExit(
+            "--task-classes: a visual+sentiment backfill is not supported. It "
+            "writes ai_score without a deal verdict, and candidate selection "
+            "(mode=missing) keys only on ai_score — so every row it touches "
+            "stops being a candidate and never gets a verdict from a later "
+            "full pass. Recovering costs a --force re-run of the whole "
+            "visual+sentiment spend.\n"
+            f"  Supported scopes: {_SUPPORTED_SCOPES_HELP}."
+        )
     return stages
 
 
 def _ordered(scope) -> list:
     return sorted(scope, key=lambda tc: tc.value)
+
+
+def _api_key(cfg) -> str:
+    """The cloud key as ``cloud_available`` reads it — stripped.
+
+    ``resolve_enrichment_backend`` degrades cloud routing to local on a *blank*
+    key (``cloud_available`` strips before testing), so a key of whitespace has
+    to count as missing here too. Testing the raw value made a whitespace key
+    take the "these resolve local" branch — telling the operator to set routing
+    entries they had already set — and then sent the blank bearer token to the
+    provider, 401-ing every row.
+    """
+    return (cfg.ai.gemini_api_key or "").strip()
 
 
 def _resolve_backfill_backend(cfg, scope) -> str:
@@ -326,6 +359,21 @@ def _resolve_backfill_backend(cfg, scope) -> str:
     local = [tc for tc, backend in resolved.items() if not is_cloud_backend(backend)]
     if local:
         keys = ", ".join(f"ai.enrichment_routing.{tc.value}" for tc in local)
+        # ``resolve_enrichment_backend`` degrades a cloud routing entry to local
+        # when no key is present, so "these resolve local" is a misdiagnosis
+        # when the map is already cloud and only GEMINI_API_KEY is missing —
+        # the operator would be told to set keys they have already set.
+        routed_cloud = [
+            tc for tc in local if is_cloud_backend(cfg.ai.enrichment_routing[tc.value])
+        ]
+        if len(routed_cloud) == len(local) and not _api_key(cfg):
+            raise SystemExit(
+                f"The backfill needs a cloud backend for every task class in "
+                f"scope. {keys} are routed to cloud, but GEMINI_API_KEY is not "
+                f"set, so they degrade to the local backend "
+                f"('{cfg.ai.backend}').\n"
+                f"  Fix: export GEMINI_API_KEY."
+            )
         raise SystemExit(
             f"The backfill needs a cloud backend for every task class in scope, "
             f"but these resolve local: {keys}.\n"
@@ -353,7 +401,7 @@ def _build_client(cfg, scope=DEFAULT_BACKFILL_SCOPE):
     backend = _resolve_backfill_backend(cfg, scope)
     # Key is loaded from the GEMINI_API_KEY env into cfg by infra.config — the
     # single place env is read (never os.getenv here, per repo convention).
-    api_key = cfg.ai.gemini_api_key
+    api_key = _api_key(cfg)
     if not api_key:
         raise SystemExit(
             "GEMINI_API_KEY is not set — the cloud backfill needs a free-tier key."
@@ -390,7 +438,7 @@ def _dry_run_backend_preflight(cfg, scope) -> None:
             file=sys.stderr,
         )
         return
-    if not cfg.ai.gemini_api_key:
+    if not _api_key(cfg):
         print(
             "WARNING: this scope would refuse to start a real run: "
             f"routing resolves to '{backend}' but GEMINI_API_KEY is not set.",
@@ -754,24 +802,53 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
     step = max(0.05, float(cfg.backfill.control_poll_seconds))
     renew_every = max(1.0, float(cfg.backfill.lease_ttl_seconds) / 3.0)
     state_every = float(_STATE_REFRESH_SECONDS)
-    remaining = max(0.0, float(wait))
-    elapsed = 0.0
+    wait = max(0.0, float(wait))
+    # Elapsed time is the *later* of the requested chunks and the wall clock.
+    # ``time.sleep`` only guarantees a lower bound, so on a host that suspends
+    # (or is heavily descheduled) an accumulator of requested chunks under-counts
+    # real elapsed time and the renew cadence silently drifts past the lease TTL
+    # — the lease lapses mid-wait and a second runner can start.
+    started = time.monotonic()
+    slept = 0.0
     next_renew = 0.0
     next_state = 0.0
-    while remaining > 0:
-        if control is not None:
-            if control.should_stop():
-                return
-            if elapsed >= next_state:
-                control.publish_state(BackfillState.BACKING_OFF)
-                next_state = elapsed + state_every
+    while True:
+        elapsed = max(slept, time.monotonic() - started)
+        if elapsed >= wait:
+            return
+        if control is not None and control.should_stop():
+            return
         if lease is not None and elapsed >= next_renew:
-            lease.renew()
-            next_renew = elapsed + renew_every
-        chunk = min(remaining, step)
+            # Losing the lease mid-wait used to go unnoticed for the rest of the
+            # window — potentially hours asleep on a lease someone else now
+            # owns. Return so the next pass sees it and exits EXIT_LEASE_LOST.
+            # Checked *before* publishing: a lapsed lease means the state key
+            # already describes the successor, and stamping ``backing-off`` over
+            # their ``running`` is exactly the lie the exit path guards against.
+            if not lease.renew():
+                return
+            # Fixed cadence (``+=``), not ``elapsed + every``: the latter folds
+            # each check's own offset into the next deadline and drifts.
+            next_renew += renew_every
+            if next_renew <= elapsed:  # a long stall skipped whole periods
+                next_renew = elapsed + renew_every
+        if control is not None and elapsed >= next_state:
+            # A pause issued during the wait was invisible: the key kept
+            # reading ``backing-off`` for the whole window, so the operator
+            # (and story 1.5's API) got no acknowledgement the request had
+            # been seen. The wait itself is unchanged — the launch loop is
+            # what actually holds on a pause.
+            control.publish_state(
+                BackfillState.PAUSED
+                if control.is_paused()
+                else BackfillState.BACKING_OFF
+            )
+            next_state += state_every
+            if next_state <= elapsed:
+                next_state = elapsed + state_every
+        chunk = min(step, wait - elapsed)
         time.sleep(chunk)
-        remaining -= chunk
-        elapsed += chunk
+        slept += chunk
 
 
 def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
@@ -787,16 +864,29 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
     exhausts the budget *and* finishes the queue exits now instead of sleeping
     ~24h to discover there is nothing left (v0.13-fu3).
     """
+    daily_limit = args.daily_budget or cfg.backfill.daily_request_budget
+    # A cap smaller than one property's request cost can never reserve anything,
+    # so every pass ends budget_exhausted with nothing processed and the loop
+    # sleeps out a full 24h window — forever, without ever tripping the stall
+    # detector (which only fires when the budget is *not* exhausted).
+    if daily_limit < cfg.backfill.requests_per_property:
+        raise SystemExit(
+            f"Daily budget {daily_limit} is below backfill.requests_per_property "
+            f"({cfg.backfill.requests_per_property}): no property could ever be "
+            f"reserved and --continuous would sleep out a 24h window forever. "
+            f"Raise --daily-budget / backfill.daily_request_budget."
+        )
     budget = DailyBudget(
         redis,
         prefix=cfg.backfill.redis_prefix,
-        daily_limit=args.daily_budget or cfg.backfill.daily_request_budget,
+        daily_limit=daily_limit,
     )
     ledger = _build_ledger(cfg, redis, getattr(args, "max_attempts", None))
     started = time.monotonic()
     cycle = 0
     enriched_this_run = 0
     errors_this_run = 0
+    quota_zero_cycles = 0
     while True:
         cycle += 1
         with SessionLocal() as session:
@@ -828,14 +918,12 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                 errors=errors_this_run,
             )
 
-        # Completion is checked *before* the budget branch: a pass that spends the
-        # last of its budget on the last of the queue must exit now, not sleep out
-        # the remaining ~24h only to find an empty queue.
-        if census.is_complete:
-            return _end()
-        # Losing the lease is terminal and takes precedence over everything
-        # else: another runner may already own the queue, so continuing would
-        # make this process a second writer.
+        # Losing the lease is terminal and takes precedence over everything else
+        # — including a queue that now reads complete. Another runner may hold
+        # the lease and have drained it; reporting *this* process as the one
+        # that completed the backfill (exit 0) would hide the displacement the
+        # exit code exists to surface, and let ``main`` stamp its final state
+        # over the successor's.
         if result.lease_lost:
             _print_banner(
                 "BACKFILL LEASE LOST — another runner may have taken over; "
@@ -849,6 +937,17 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                 ),
             )
             return EXIT_LEASE_LOST
+        # Completion is checked *before* the budget branch: a pass that spends the
+        # last of its budget on the last of the queue must exit now, not sleep out
+        # the remaining ~24h only to find an empty queue.
+        if census.is_complete:
+            if control is not None:
+                # A pause/stop aimed at this run is moot now that the queue is
+                # drained, and leaving it set makes ``--status`` report a
+                # pending request with no runner alive for the 7-day request
+                # TTL. We still hold the lease, so these are unambiguously ours.
+                control.clear_requests()
+            return _end()
         # An operator stop is terminal and is *not* a stall: the checkpoint is
         # intact and the next start resumes exactly here.
         if result.stopped or (control is not None and control.should_stop()):
@@ -862,6 +961,9 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                     errors=errors_this_run,
                 ),
             )
+            if control is not None:
+                # Served — see the matching note in ``main``.
+                control.clear_stop()
             return EXIT_STOPPED
         if not result.budget_exhausted:
             # Budget left, work left, yet nothing moved → a real stall (every
@@ -880,13 +982,35 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # window; only a genuinely spent local budget sleeps to the reset.
         headroom = budget.remaining()
         rpd_spent = headroom < cfg.backfill.requests_per_property
-        if result.quota_exhausted and not rpd_spent:
+        # A quota refusal sets ``budget_exhausted`` too, which puts the pass out
+        # of reach of the stall detector above. So a provider that refuses every
+        # request — a spent RPD, a revoked key — produced a pass that enriched
+        # nothing, slept the short back-off, and repeated: ~96 identical passes a
+        # day, each re-spending the client's retry budget against an account that
+        # is already refusing, with no exit and no escalation. The short back-off
+        # is right for a *per-minute* throttle, which clears in minutes; after
+        # this many consecutive zero-progress refusals it plainly is not one, so
+        # fall back to the RPD-window wait (never shorter than the back-off).
+        if result.quota_exhausted and result.processed == 0:
+            quota_zero_cycles += 1
+        else:
+            quota_zero_cycles = 0
+        throttle_ruled_out = quota_zero_cycles >= _MAX_QUOTA_BACKOFF_CYCLES
+        if result.quota_exhausted and not rpd_spent and not throttle_ruled_out:
             wait = min(wait, float(cfg.backfill.quota_backoff_seconds))
             reason = (
                 f"Provider refused on quota, but the local daily budget still "
                 f"has {headroom} requests — treating it as a per-minute "
                 f"throttle and backing off {wait / 60:.0f}min "
                 f"(backfill.quota_backoff_seconds)"
+            )
+        elif result.quota_exhausted and not rpd_spent:
+            wait = max(wait, float(cfg.backfill.quota_backoff_seconds))
+            reason = (
+                f"Provider has refused on quota for {quota_zero_cycles} "
+                f"consecutive passes without enriching anything — this is not a "
+                f"per-minute throttle. Waiting out the RPD window instead of "
+                f"re-spending retries against a refusing account"
             )
         elif result.quota_exhausted:
             reason = "Provider quota exhausted and the local daily budget is spent"
@@ -966,10 +1090,10 @@ def main(argv: list[str] | None = None) -> int:
         "--task-classes",
         default=None,
         help=(
-            "backfill scope; exactly one of 'visual,sentiment,deal_verdict' "
-            "(default — full enrichment) or 'visual,sentiment'. No other "
-            "combination is supported: run_enrichment always runs "
-            "visual+sentiment and writes a deal verdict only on the full pass"
+            "backfill scope; only 'visual,sentiment,deal_verdict' (the default "
+            "— full enrichment) is supported. Narrower scopes are refused: "
+            "run_enrichment always runs visual+sentiment and writes a deal "
+            "verdict only on the full pass, so they strand rows"
         ),
     )
     parser.add_argument(
@@ -986,14 +1110,52 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--status", action="store_true", help="print status and exit")
     args = parser.parse_args(argv)
 
+    # Each of these takes over the whole invocation and returns; combining them
+    # silently ran the first and dropped the rest, so `--stop --status` reported
+    # nothing and `--reset-quarantine --pause` never paused anything.
+    exclusive = [
+        flag
+        for flag in ("reset_quarantine", "pause", "resume", "stop", "status")
+        if getattr(args, flag)
+    ]
+    if len(exclusive) > 1:
+        names = ", ".join(f"--{flag.replace('_', '-')}" for flag in exclusive)
+        parser.error(f"pick exactly one of {names} — they cannot be combined")
+    if args.reset_margin < 0:
+        # A negative margin can drive the post-budget wait to zero, and a
+        # zero-length sleep turns --continuous into a tight loop of passes that
+        # can reserve nothing.
+        parser.error("--reset-margin cannot be negative")
+
     cfg = get_config()
     redis = get_redis()
     control = _control_for(cfg, redis)
 
     if args.reset_quarantine:
-        ledger = _build_ledger(cfg, redis, args.max_attempts)
-        released = ledger.quarantined_count()
-        ledger.reset_all()
+        # The ledger is shared state a live run consults on every row. Clearing
+        # it under an active runner releases the rows that runner quarantined,
+        # which it then re-fetches and re-attempts — spending cloud quota on
+        # properties already proven unenrichable. Mutual exclusion has to cover
+        # the one command that rewrites the same Redis state, not just the run.
+        #
+        # It *takes* the lease rather than reading the holder: a read is
+        # check-then-act, and a run starting in the gap between the read and
+        # ``reset_all()`` gets its ledger wiped underneath it anyway.
+        guard = _lease_for(cfg, redis)
+        if not guard.acquire():
+            print(
+                "Refusing to reset the attempt ledger: a backfill run holds the "
+                f"lease.\n  {_lease_summary(guard.holder())}\n"
+                "  Ask it to finish with --stop first, then retry.",
+                file=sys.stderr,
+            )
+            return EXIT_LEASE_HELD
+        try:
+            ledger = _build_ledger(cfg, redis, args.max_attempts)
+            released = ledger.quarantined_count()
+            ledger.reset_all()
+        finally:
+            guard.release()
         print(f"Attempt ledger cleared — {released} quarantined properties released.")
         return 0
 
@@ -1010,6 +1172,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.continuous and args.dry_run:
         parser.error("--continuous cannot be combined with --dry-run")
 
+    # Validate the scope and the routing it implies *before* taking the lease —
+    # which is what `_resolve_backfill_backend` already claimed to do. Resolving
+    # it inside `_run` meant a misconfigured start acquired the lease and ran
+    # `clear_requests()`, silently discarding an operator's pending pause/stop,
+    # only to die on the routing refusal a moment later.
+    _stages_for(_scope_from_args(args))
+    if not args.dry_run:
+        _resolve_backfill_backend(cfg, _scope_from_args(args))
+
     lease = None
     if not args.dry_run:
         lease = _lease_for(cfg, redis)
@@ -1021,6 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
     # lease was taken must still hand it back, or the next run is refused for
     # the whole 900s TTL.
     quota_backoff = False
+    lease_lost = False
+    stopped = False
     try:
         if lease is not None:
             # A fresh run must not inherit a pause/stop left over from the last
@@ -1038,7 +1211,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             # run_backfill publishes BACKING_OFF when the provider refused; the
             # finally below must not erase it.
-            quota_backoff = control.state() is BackfillState.BACKING_OFF
+            # A finished backfill is not backing off, whatever the last pass
+            # published on its way to draining the queue — publishing
+            # ``backing-off`` for a completed run misreports it to --status and
+            # story 1.5's API for the whole state TTL.
+            quota_backoff = (
+                control.state() is BackfillState.BACKING_OFF
+                and rc not in (EXIT_COMPLETE, EXIT_COMPLETE_WITH_QUARANTINE)
+            )
+            lease_lost = rc == EXIT_LEASE_LOST
             return rc
 
         with SessionLocal() as session:
@@ -1051,15 +1232,41 @@ def main(argv: list[str] | None = None) -> int:
                 lease=lease,
             )
         quota_backoff = result.quota_exhausted
+        lease_lost = result.lease_lost
+        # Read the stop request while the lease is still held. Reading it after
+        # the release (as this did) means a runner that started in between owns
+        # these keys, so an operator's stop aimed at *that* live run was
+        # reported as served by this one — and then cleared, so it never stopped.
+        stopped = result.stopped or (not args.dry_run and control.should_stop())
     finally:
         if lease is not None:
+            # Everything that touches the control keys happens *before* the
+            # release. Releasing first opens a window in which a newly started
+            # runner takes the freed lease and publishes ``running``, only for
+            # this exiting process to stamp ``idle`` over it. A run that *lost*
+            # its lease touches nothing at all — the keys already describe
+            # whoever took it over.
+            if not lease_lost:
+                if stopped:
+                    # The request has been served. Leaving it set made
+                    # ``--status`` report a pending stop for the next 7 days and
+                    # made the following start announce it as an operator
+                    # request being discarded — when it had been honored.
+                    control.clear_stop()
+                try:
+                    # A deliberate ``backing-off`` is what tells the operator
+                    # (and story 1.5's API) the provider refused; overwriting it
+                    # with ``idle`` on the way out hid exactly that. It decays to
+                    # idle via the TTL. A failure here must not cost the release:
+                    # an unreleased lease locks the next run out for the full TTL.
+                    control.publish_state(
+                        BackfillState.BACKING_OFF
+                        if quota_backoff
+                        else BackfillState.IDLE
+                    )
+                except Exception as exc:  # noqa: BLE001 - never skip the release
+                    logger.warning("backfill_final_state_publish_failed", error=str(exc))
             lease.release()
-            # A deliberate ``backing-off`` is what tells the operator (and story
-            # 1.5's API) the provider refused; overwriting it with ``idle`` on
-            # the way out hid exactly that. It decays to idle via the TTL.
-            control.publish_state(
-                BackfillState.BACKING_OFF if quota_backoff else BackfillState.IDLE
-            )
 
     logger.info("backfill_done", **result.to_dict())
     verb = "would enrich" if args.dry_run else "enriched"
@@ -1083,9 +1290,8 @@ def main(argv: list[str] | None = None) -> int:
             ],
         )
         return EXIT_LEASE_LOST
-    # A stop that lands after the last row was launched never reaches
-    # ``result.stopped`` — read the request itself so it is still reported.
-    stopped = result.stopped or (not args.dry_run and control.should_stop())
+    # ``stopped`` was resolved (and the served request retired) inside the try /
+    # finally above, while this process still held the lease.
     return EXIT_STOPPED if stopped else 0
 
 
@@ -1127,7 +1333,10 @@ def _apply_control_command(control: BackfillControl, args) -> int:
         # Clearing only the pause key left an earlier --stop in force, so the
         # run ended anyway while this command claimed it would continue.
         had_stop = control.should_stop()
-        control.clear_requests()  # pause *and* stop — "resume" means both
+        # ``request_resume`` itself clears pause *and* stop — "resume" means
+        # both. Going through it (rather than ``clear_requests``) keeps the CLI
+        # and story 1.5's endpoints on literally the same code path.
+        control.request_resume()
         print("Resume requested — the running backfill will continue launching rows.")
         if had_stop:
             print("  (also cleared a pending stop request)")

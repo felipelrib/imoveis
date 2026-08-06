@@ -53,6 +53,31 @@ EnrichFn = Callable[[Any], Awaitable[None]]
 SleepFn = Callable[[float], Awaitable[None]]
 
 
+def _warn_non_atomic_fallback(owner: Any, surface: str) -> None:
+    """Say once, per object, that the non-atomic Redis path was selected.
+
+    The lease CAS and the budget reservation downgrade to a multi-round-trip
+    sequence whenever the injected client exposes no callable ``eval``. That is
+    intended for test doubles, but the sniff is silent: any production client
+    that lacked ``eval`` (a wrapper, a restricted command set) would quietly
+    stop enforcing mutual exclusion and the RPD ceiling with nothing in the log
+    to say so. A guarantee this load-bearing does not get downgraded in silence.
+    """
+    if getattr(owner, "_fallback_warned", False):
+        return
+    setattr(owner, "_fallback_warned", True)
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_non_atomic_redis_fallback",
+        surface=surface,
+        detail=(
+            "redis client exposes no callable eval(); atomicity is NOT enforced "
+            "for this surface"
+        ),
+    )
+
+
 def _utc_today(now_fn: Callable[[], datetime]) -> date:
     return now_fn().astimezone(timezone.utc).date()
 
@@ -66,6 +91,23 @@ _WINDOW_SECONDS = 24 * 3600
 
 def _decode(value: Any) -> Any:
     return value.decode() if isinstance(value, bytes) else value
+
+
+def _reply_is_true(raw: Any) -> bool:
+    """Interpret a Lua ``return 1`` / ``return 0`` reply as a boolean.
+
+    A bare ``bool(raw)`` fallback is a trap: a client that hands back the reply
+    as bytes turns a *refusal* (``b"0"``) into ``True``, which for a lease renew
+    means the runner believes it still owns a lease someone else took over —
+    two writers, silently. Decode first, then compare.
+    """
+    value = _decode(raw)
+    if isinstance(value, bool):
+        return value
+    try:
+        return int(value) == 1
+    except (TypeError, ValueError):
+        return bool(value)
 
 
 def _parse_iso(raw: Any) -> Optional[datetime]:
@@ -231,11 +273,9 @@ class DailyBudget:
                 _BUDGET_TTL_SECONDS,
                 now.isoformat(),
             )
-            try:
-                return int(raw) == 1
-            except (TypeError, ValueError):
-                return bool(raw)
+            return _reply_is_true(raw)
 
+        _warn_non_atomic_fallback(self, "daily budget reservation")
         _, start = self._active_window(now)
         opened = start is None
         if opened:
@@ -400,13 +440,25 @@ class BackfillLease:
         return self._ttl
 
     def _write_meta(self, *, acquired: bool) -> None:
+        """Refresh the human-facing provenance hash. Never raises.
+
+        The meta hash is decoration — correctness rests entirely on the token in
+        the lease key — but it was written *after* the atomic ``SET NX``, so a
+        Redis blip in between propagated out of :meth:`acquire` with the lease
+        already taken and no ``finally`` yet in place to hand it back: the next
+        run was refused for the whole TTL over a failed cosmetic write. Same for
+        :meth:`renew`, whose caller is the launch loop.
+        """
         stamp = self._now_fn().isoformat()
         mapping = {"token": self._token, "last_seen": stamp}
         if acquired:
             mapping["acquired_at"] = stamp
             mapping["owner"] = self._owner or "unknown"
-        self._redis.hset(self._meta_key, mapping=mapping)
-        self._redis.expire(self._meta_key, self._ttl * 4)
+        try:
+            self._redis.hset(self._meta_key, mapping=mapping)
+            self._redis.expire(self._meta_key, self._ttl * 4)
+        except Exception as exc:  # noqa: BLE001 - decoration never fails a lease
+            _log_lease_meta_failed(exc)
 
     def acquire(self) -> bool:
         """Atomically take the lease. False means someone else holds it."""
@@ -419,20 +471,19 @@ class BackfillLease:
         """Run an owner-token CAS, atomically when the client supports ``eval``."""
         eval_fn = getattr(self._redis, "eval", None)
         if callable(eval_fn):
-            raw = eval_fn(script, 1, self._key, self._token, *args)
-            try:
-                return int(raw) == 1
-            except (TypeError, ValueError):
-                return bool(raw)
+            return _reply_is_true(eval_fn(script, 1, self._key, self._token, *args))
         # Fallback: guarded check-then-act. Not atomic, but still token-guarded —
         # the window is bounded by the lease TTL, which is minutes wide.
+        _warn_non_atomic_fallback(self, "lease CAS")
         if _decode(self._redis.get(self._key)) != self._token:
             return False
         if script is _LEASE_RELEASE_LUA:
             self._redis.delete(self._key)
-        else:
-            self._redis.expire(self._key, self._ttl)
-        return True
+            return True
+        # ``EXPIRE`` returns 0 when the key is already gone: the lease expired
+        # between the GET and here. Reporting that as a successful renew is how
+        # a runner keeps writing on a lease a successor may already hold.
+        return bool(self._redis.expire(self._key, self._ttl))
 
     def renew(self) -> bool:
         """Extend the TTL iff this process still owns the lease."""
@@ -498,11 +549,44 @@ class BackfillControl:
         self._state_ttl = max(1, int(state_ttl_seconds))
         self._request_ttl = max(1, int(request_ttl_seconds))
 
+    @property
+    def state_ttl_seconds(self) -> int:
+        return self._state_ttl
+
+    @property
+    def refresh_interval_seconds(self) -> float:
+        """How often a live runner must re-publish to keep the state key alive.
+
+        Derived from *this* control's TTL rather than read from the module
+        constant: a caller that constructs the control with a shorter
+        ``state_ttl_seconds`` (story 1.5 does construct its own) would otherwise
+        refresh on the default cadence and let the key expire under a live run.
+        """
+        return max(1.0, self._state_ttl / 4)
+
     def request_pause(self) -> None:
         self._redis.set(self._pause_key, "1", ex=self._request_ttl)
 
     def request_resume(self) -> None:
+        """Undo a pause **and** a pending stop — "resume" means both.
+
+        Clearing only the pause key left an outstanding ``--stop`` in force, so
+        the runner resumed and immediately stopped again while the caller was
+        told it would continue. The CLI worked around this locally; story 1.5's
+        endpoints call *this* method, so the semantics belong here — one control
+        path, never a second one (AD-13).
+        """
         self._redis.delete(self._pause_key)
+        self._redis.delete(self._stop_key)
+
+    def clear_stop(self) -> None:
+        """Drop a stop request that has been served.
+
+        A honored stop that stays set is reported as still-pending for the whole
+        request TTL, and the next start announces it as an operator request being
+        discarded — when it had in fact already been carried out.
+        """
+        self._redis.delete(self._stop_key)
 
     def request_stop(self) -> None:
         self._redis.set(self._stop_key, "1", ex=self._request_ttl)
@@ -1086,24 +1170,39 @@ async def run_backfill(
     last_launch: Optional[float] = None
     sem = asyncio.Semaphore(max(1, concurrency))
     tasks: list[asyncio.Task] = []
+    # A non-positive poll would turn the paused loop into a Redis busy-spin.
+    # ``AppConfig`` constrains the CLI's value, but this is a public core
+    # function story 1.5 calls directly — it defends its own loop.
+    poll_seconds = max(0.05, float(pause_poll_seconds))
 
     last_state_publish = clock()
+    current_state = BackfillState.IDLE
+    state_refresh_seconds = (
+        control.refresh_interval_seconds
+        if control is not None
+        else _STATE_REFRESH_SECONDS
+    )
 
     def _publish(state: BackfillState) -> None:
-        nonlocal last_state_publish
+        nonlocal last_state_publish, current_state
         if control is not None:
             control.publish_state(state)
+            current_state = state
             last_state_publish = clock()
 
-    def _refresh_running() -> None:
-        """Keep the published ``running`` state alive while work is happening.
+    def _refresh_state() -> None:
+        """Keep the published state alive while the run is alive.
 
-        The state key has a 120s TTL so a crashed runner decays to ``idle``;
-        publishing it only once at start-up therefore made any run of real
-        length read back as ``idle`` from ``--status`` and story 1.5's API.
+        The state key has a short TTL so a crashed runner decays to ``idle``;
+        publishing it only once therefore made any run of real length read back
+        as ``idle`` from ``--status`` and story 1.5's API. It re-publishes
+        *whatever the current state is* — ``running``, ``paused`` or
+        ``backing-off`` — because this is also driven from a worker's ``finally``
+        (see :func:`_tick_lease`), which must not stamp ``running`` over a
+        deliberate pause or a provider back-off.
         """
-        if control is not None and clock() - last_state_publish >= _STATE_REFRESH_SECONDS:
-            _publish(BackfillState.RUNNING)
+        if control is not None and clock() - last_state_publish >= state_refresh_seconds:
+            _publish(current_state)
 
     def _lease_held() -> bool:
         """Renew the lease. False = we lost it; stop launching immediately."""
@@ -1114,6 +1213,25 @@ async def run_backfill(
         result.lease_lost = True
         _log_lease_lost()
         return False
+
+    def _tick_lease() -> None:
+        """Renew the lease and refresh the state from a worker's ``finally``.
+
+        Never raises. The launch loop stops renewing the moment it breaks, so
+        the final ``gather`` drain — and any row that outlives the loop — ran on
+        a lease nobody was refreshing. The published state has the same problem
+        and a tighter deadline: the loop refreshes it once per launch, so a
+        single row slower than the state TTL (three cloud calls, each with
+        client-side retries, is easily that) let a live run read back as
+        ``idle``. A Redis blip here must not abandon in-flight rows, so the
+        failure is logged rather than propagated.
+        """
+        try:
+            if lease is not None:
+                _lease_held()
+            _refresh_state()
+        except Exception as exc:  # noqa: BLE001 - bookkeeping never aborts a run
+            _log_lease_tick_failed(exc)
 
     _publish(BackfillState.RUNNING)
 
@@ -1147,9 +1265,21 @@ async def run_backfill(
             # Every finished row ticks progress — success, hard error *and*
             # quota refusal. Ticking only on success meant a storm of failing
             # rows never refreshed the caller's heartbeat.
-            if on_progress is not None:
-                on_progress(result)
-            sem.release()
+            #
+            # The hook is caller-supplied and ``sem.release()`` must survive it:
+            # a raising hook that skipped the release would block the launch
+            # loop on ``sem.acquire()`` forever while still holding the lease —
+            # a hang, not an error. Renewing here as well is what keeps the
+            # lease alive through the final ``gather`` drain, which the launch
+            # loop has by then stopped covering.
+            try:
+                if on_progress is not None:
+                    on_progress(result)
+            except Exception as exc:  # noqa: BLE001 - a hook never aborts a run
+                _log_progress_hook_failed(exc)
+            finally:
+                _tick_lease()
+                sem.release()
 
     async def _may_launch() -> bool:
         """Honor pause/stop. False means: stop launching new rows.
@@ -1176,80 +1306,97 @@ async def run_backfill(
                     return False
                 if not _lease_held():
                     return False
-                await sleep_fn(pause_poll_seconds)
+                # The state key has a short TTL, so publishing ``paused`` once
+                # made any longer pause read back as ``idle`` from ``--status``
+                # and story 1.5's API — for a runner that is alive, holding the
+                # lease and deliberately held.
+                _refresh_state()
+                await sleep_fn(poll_seconds)
         finally:
             result.paused_seconds += max(0.0, clock() - paused_at)
         _publish(BackfillState.RUNNING)
         return True
 
-    for prop, metrics in rows:
-        # A quota refusal means every further launch would 429 too — and each
-        # retry burns daily request quota. Stop launching immediately.
-        if result.quota_exhausted:
-            break
-        # Renewing here (not in ``on_progress``) means the lease is refreshed
-        # even through rows that only ever fail.
-        if not _lease_held():
-            break
-        if not await _may_launch():
-            # A lost lease is not an operator stop — do not mislabel it.
-            if not result.lease_lost:
-                result.stopped = True
-            break
-        _refresh_running()
-        # Idempotency: skip rows a concurrent live worker already enriched,
-        # unless the operator forces a re-run.
-        if not force and not mode_is_missing_ai(metrics):
-            result.skipped_already_enriched += 1
-            continue
-        # Rows retired by the ledger cost nothing: no budget, no tokens, no call.
-        pid = str(getattr(prop, "id", ""))
-        if ledger is not None and ledger.is_quarantined(pid):
-            result.skipped_quarantined += 1
-            continue
-        if limit is not None and attempted >= limit:
-            break
+    # The drain below lives in a ``finally``: every Redis touch in this loop
+    # (lease renew, control reads, budget reservation, ledger writes) can raise
+    # on a transient blip, and letting that escape with tasks still pending left
+    # in-flight rows to be cancelled at an arbitrary await point by
+    # ``asyncio.run`` — mid-enrichment, mid-write. In-flight rows always drain.
+    try:
+        for prop, metrics in rows:
+            # A quota refusal means every further launch would 429 too — and each
+            # retry burns daily request quota. Stop launching immediately.
+            if result.quota_exhausted:
+                break
+            # Renewing here (not in ``on_progress``) means the lease is refreshed
+            # even through rows that only ever fail.
+            if not _lease_held():
+                break
+            if not await _may_launch():
+                # A lost lease is not an operator stop — do not mislabel it.
+                if not result.lease_lost:
+                    result.stopped = True
+                break
+            _refresh_state()
+            # Idempotency: skip rows a concurrent live worker already enriched,
+            # unless the operator forces a re-run.
+            if not force and not mode_is_missing_ai(metrics):
+                result.skipped_already_enriched += 1
+                continue
+            # Rows retired by the ledger cost nothing: no budget, no tokens, no call.
+            pid = str(getattr(prop, "id", ""))
+            if ledger is not None and ledger.is_quarantined(pid):
+                result.skipped_quarantined += 1
+                continue
+            if limit is not None and attempted >= limit:
+                break
 
-        # Rate-limit launches (RPM smoothing) before reserving budget.
-        if launch_interval > 0 and last_launch is not None:
-            wait = launch_interval - (clock() - last_launch)
-            if wait > 0:
-                await sleep_fn(wait)
+            # Rate-limit launches (RPM smoothing) before reserving budget.
+            if launch_interval > 0 and last_launch is not None:
+                wait = launch_interval - (clock() - last_launch)
+                if wait > 0:
+                    await sleep_fn(wait)
 
-        # Proactively stay under the tokens-per-minute ceiling: wait until this
-        # property's estimated tokens fit the trailing 60s window, then reserve.
-        if token_budget is not None:
-            tpm_wait = token_budget.seconds_until_room()
-            if tpm_wait > 0:
-                result.tpm_waits += 1
-                result.tpm_wait_seconds += tpm_wait
-                await sleep_fn(tpm_wait)
-            token_budget.reserve()
+            # Proactively stay under the tokens-per-minute ceiling: wait until this
+            # property's estimated tokens fit the trailing 60s window, then reserve.
+            if token_budget is not None:
+                tpm_wait = token_budget.seconds_until_room()
+                if tpm_wait > 0:
+                    result.tpm_waits += 1
+                    result.tpm_wait_seconds += tpm_wait
+                    await sleep_fn(tpm_wait)
+                token_budget.reserve()
 
-        await sem.acquire()  # bound in-flight properties to ``concurrency``
-        # Waiting for a slot is the point at which an in-flight worker can have
-        # discovered the provider is out of quota. Re-check before spending
-        # anything on this row: budget reserved here would never be used.
-        if result.quota_exhausted:
-            sem.release()
-            break
-        if not budget.try_consume(requests_per_property):
-            sem.release()
-            result.budget_exhausted = True
-            break
+            await sem.acquire()  # bound in-flight properties to ``concurrency``
+            # Waiting for a slot is the point at which an in-flight worker can have
+            # discovered the provider is out of quota. Re-check before spending
+            # anything on this row: budget reserved here would never be used.
+            if result.quota_exhausted:
+                sem.release()
+                break
+            if not budget.try_consume(requests_per_property):
+                sem.release()
+                result.budget_exhausted = True
+                break
 
-        if ledger is not None:
-            # Count the attempt, not just failures: a row that enriches to a
-            # falsy ai_score stays a ``mode=missing`` candidate and would
-            # otherwise be re-fetched every cycle forever.
-            ledger.record_attempt(pid)
-        attempted += 1
-        result.requests_consumed += requests_per_property
-        last_launch = clock()
-        tasks.append(asyncio.create_task(_worker(prop)))
+            if ledger is not None:
+                # Count the attempt, not just failures: a row that enriches to a
+                # falsy ai_score stays a ``mode=missing`` candidate and would
+                # otherwise be re-fetched every cycle forever.
+                ledger.record_attempt(pid)
+            attempted += 1
+            result.requests_consumed += requests_per_property
+            last_launch = clock()
+            tasks.append(asyncio.create_task(_worker(prop)))
 
-    if tasks:
-        await asyncio.gather(*tasks)
+    finally:
+        if tasks:
+            # ``return_exceptions``: ``checkpoint.advance()`` runs outside the
+            # worker's ``except``, so a Redis error there would otherwise abort
+            # the gather on the first failure and abandon the remaining rows.
+            for outcome in await asyncio.gather(*tasks, return_exceptions=True):
+                if isinstance(outcome, BaseException):
+                    _log_row_error(None, outcome)
     # A quota-exhausted run stays "backing-off" for the operator/API to see;
     # anything else (including an operator stop) has genuinely gone idle. A run
     # that lost its lease publishes nothing: the state key now describes whoever
@@ -1277,6 +1424,33 @@ def _log_lease_lost() -> None:
     get_logger(__name__).warning(
         "backfill_lease_lost",
         reason="renew refused — another runner may hold the lease; stopped launching",
+    )
+
+
+def _log_progress_hook_failed(exc: Exception) -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_progress_hook_failed",
+        error=str(exc),
+    )
+
+
+def _log_lease_meta_failed(exc: Exception) -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_lease_meta_write_failed",
+        error=str(exc),
+    )
+
+
+def _log_lease_tick_failed(exc: Exception) -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_lease_tick_failed",
+        error=str(exc),
     )
 
 

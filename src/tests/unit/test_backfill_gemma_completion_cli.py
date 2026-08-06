@@ -43,7 +43,9 @@ class _FakeRedis:
         self.hashes.pop(k, None)
 
     def expire(self, k, ttl):
-        pass
+        # Redis returns 1 when the key exists and 0 when it is already gone —
+        # the non-atomic lease renew relies on that to notice a lapsed lease.
+        return 1 if (k in self.kv or k in self.hashes) else 0
 
     def hgetall(self, k):
         return dict(self.hashes.get(k, {}))
@@ -115,6 +117,13 @@ def _wire(mod, monkeypatch):
     monkeypatch.setattr(mod, "SessionLocal", MagicMock())
     monkeypatch.setattr(mod.time, "sleep", MagicMock())
     return cfg
+
+
+def _args(mod, **kw):
+    """Namespace with the fields ``_run_continuous`` reads off ``args``."""
+    base = dict(daily_budget=None, reset_margin=120.0, max_attempts=None, limit=None)
+    base.update(kw)
+    return SimpleNamespace(**base)
 
 
 def _census(**kw):
@@ -488,3 +497,116 @@ def test_budget_sleep_is_cut_short_by_a_stop_request(monkeypatch):
     mod._sleep_for_reset(3600.0, cfg=cfg, control=control, lease=None)
 
     assert sleeps == []
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass 3 (v0.13-s1.3)
+# ---------------------------------------------------------------------------
+
+
+def _quota_pass():
+    """A pass the provider refused outright: nothing enriched, quota flagged."""
+    return BackfillResult(processed=0, budget_exhausted=True, quota_exhausted=True)
+
+
+def test_repeated_quota_refusals_stop_hammering_a_refusing_account(monkeypatch):
+    """A quota refusal sets ``budget_exhausted``, which puts the pass out of
+    reach of the stall detector — so a provider refusing everything produced
+    ~96 identical short-back-off passes a day, forever, each re-spending the
+    client's retry budget. After a few consecutive zero-progress refusals the
+    per-minute-throttle reading is ruled out and the runner waits out the RPD
+    window instead."""
+    from datetime import datetime, timezone
+
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch)
+    cfg.backfill.quota_backoff_seconds = 900
+    cycles = mod._MAX_QUOTA_BACKOFF_CYCLES + 1
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(side_effect=[_quota_pass()] * cycles + [BackfillResult(processed=1)]),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(
+            side_effect=[_census(enriched=1, candidates=5)] * cycles + [_census()]
+        ),
+    )
+    redis = mod.get_redis()
+    # A live 24h window with plenty of local headroom: the short cap is what
+    # applies until the escalation kicks in.
+    now = datetime.now(timezone.utc)
+    redis.hashes["t:budget"] = {
+        "count": "30",
+        "start": now.isoformat(),
+        "start_epoch": str(now.timestamp()),
+    }
+    waits = []
+    monkeypatch.setattr(mod, "_sleep_for_reset", lambda w, **kw: waits.append(w))
+
+    rc = mod._run_continuous(cfg, redis, _args(mod, continuous=True))
+
+    assert rc == mod.EXIT_COMPLETE
+    assert len(waits) == cycles
+    # Short back-off while a per-minute throttle is still plausible...
+    assert sum(1 for w in waits if w <= 900) == mod._MAX_QUOTA_BACKOFF_CYCLES - 1
+    # ...then the whole window, instead of retrying every 15 minutes forever.
+    assert waits[-1] > 3600
+
+
+def test_a_completed_queue_retires_the_operator_requests_it_served(monkeypatch):
+    """A pause/stop is moot once the queue is drained, and a request left set is
+    reported as pending for the 7-day TTL with no runner alive."""
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch)
+    redis = mod.get_redis()
+    control = mod.BackfillControl(redis, prefix="t")
+    control.request_stop()
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=BackfillResult(processed=2)))
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+
+    rc = mod._run_continuous(cfg, redis, _args(mod, continuous=True), control=control)
+
+    assert rc == mod.EXIT_COMPLETE
+    assert control.should_stop() is False
+    assert control.is_paused() is False
+
+
+def test_a_lease_lost_on_the_final_pass_is_not_reported_as_completion(monkeypatch):
+    """The successor may have drained the queue — this run was displaced, and
+    exiting 0 would hide that (and let ``main`` stamp state over the successor)."""
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(return_value=BackfillResult(processed=1, lease_lost=True)),
+    )
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+
+    rc = mod._run_continuous(cfg, mod.get_redis(), _args(mod, continuous=True))
+
+    assert rc == mod.EXIT_LEASE_LOST
+
+
+def test_a_completed_continuous_run_does_not_exit_backing_off(monkeypatch):
+    """The last pass may have published ``backing-off`` on its way to draining
+    the queue; a finished backfill must not read as backing off."""
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch)
+    redis = mod.get_redis()
+    monkeypatch.setattr(mod, "get_redis", lambda: redis)
+    monkeypatch.setattr(
+        mod, "_run_continuous", MagicMock(return_value=mod.EXIT_COMPLETE)
+    )
+    control = mod.BackfillControl(redis, prefix="t")
+    control.publish_state(mod.BackfillState.BACKING_OFF)
+    monkeypatch.setattr(mod, "_control_for", lambda c, r: control)
+    del cfg
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_COMPLETE
+    assert control.state() is mod.BackfillState.IDLE

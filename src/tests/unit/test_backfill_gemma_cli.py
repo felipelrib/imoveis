@@ -42,7 +42,9 @@ class _FakeRedis:
         return self.kv[k]
 
     def expire(self, k, ttl):
-        pass
+        # Redis returns 1 when the key exists and 0 when it is already gone —
+        # the non-atomic lease renew relies on that to notice a lapsed lease.
+        return 1 if (k in self.kv or k in self.hashes) else 0
 
     def hgetall(self, k):
         return dict(self.hashes.get(k, {}))
@@ -154,7 +156,9 @@ def _census(**kw):
 
 def test_continuous_waits_between_cycles_then_completes(monkeypatch):
     mod = _load_module()
-    _wire(mod, monkeypatch, api_key="k")
+    # Cloud routing: ``main`` now resolves the backend *before* taking the
+    # lease, so an all-local map refuses the run outright.
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
 
     # Cycle 1: budget exhausted, 5 remain → sleep, resume.
     # Cycle 2: processed the rest, 0 remain → done.
@@ -188,7 +192,7 @@ def test_continuous_waits_between_cycles_then_completes(monkeypatch):
 
 def test_continuous_stops_when_no_progress(monkeypatch):
     mod = _load_module()
-    _wire(mod, monkeypatch, api_key="k")
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
     # Budget not exhausted, nothing processed, rows still remain → stop, no sleep.
     monkeypatch.setattr(
         mod, "_run", MagicMock(return_value=_br(mod, processed=0, budget_exhausted=False))
@@ -436,7 +440,7 @@ def test_client_is_built_from_the_routing_map_not_a_hardcoded_gemma(monkeypatch)
     assert client.model == "gemini-2.5-flash"
 
 
-def test_task_classes_flag_narrows_the_stages(monkeypatch):
+def test_task_classes_flag_drives_the_stages(monkeypatch):
     mod = _load_module()
     _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
     seen = {}
@@ -450,9 +454,43 @@ def test_task_classes_flag_narrows_the_stages(monkeypatch):
         return BackfillResult()
 
     monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
-    mod.main(["--dry-run", "--task-classes", "visual,sentiment"])
+    mod.main(["--dry-run", "--task-classes", "visual,sentiment,deal_verdict"])
 
-    assert seen["stages"] == "visual+sentiment"
+    assert seen["stages"] == "all"
+
+
+def test_visual_sentiment_scope_is_refused_by_the_cli(monkeypatch):
+    """A partial scope strands every row it touches — refuse before spending.
+
+    ``stages=visual+sentiment`` writes ``ai_score`` but no deal verdict, and
+    candidate selection (``mode=missing``) keys *only* on ``ai_score``. Every
+    row the pass touches therefore stops being a candidate and never receives a
+    verdict from a later full pass; recovering costs a ``--force`` re-run of the
+    entire visual+sentiment spend.
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(["--dry-run", "--task-classes", "visual,sentiment"])
+
+    msg = str(exc.value)
+    assert "visual+sentiment backfill is not supported" in msg
+    assert "mode=missing" in msg  # names *why* the rows are stranded
+    assert "visual,sentiment,deal_verdict" in msg  # names the supported scope
+
+
+def test_partial_scopes_stay_valid_in_the_core_vocabulary():
+    """Both refusals are CLI policy, not a change to the shared helper."""
+    from core.backfill_runner import stages_for_task_classes
+    from core.enrichment import EnrichmentTaskClass
+
+    assert (
+        stages_for_task_classes(
+            {EnrichmentTaskClass.VISUAL, EnrichmentTaskClass.SENTIMENT}
+        )
+        == "visual+sentiment"
+    )
 
 
 def test_deal_verdict_only_scope_is_refused_by_the_cli(monkeypatch):
@@ -471,8 +509,7 @@ def test_deal_verdict_only_scope_is_refused_by_the_cli(monkeypatch):
 
     msg = str(exc.value)
     assert "deal_verdict-only" in msg
-    assert "visual,sentiment,deal_verdict" in msg  # names the supported scopes
-    assert "visual,sentiment'" in msg
+    assert "visual,sentiment,deal_verdict" in msg  # names the supported scope
 
 
 def test_verdict_only_stays_valid_in_the_core_vocabulary(monkeypatch):
@@ -743,3 +780,375 @@ def test_control_is_threaded_into_run_backfill(monkeypatch):
 
     assert captured["control"] is not None
     assert captured["pause_poll_seconds"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass (v0.13-s1.3): regressions for the review-driven fixes
+# ---------------------------------------------------------------------------
+
+
+def test_reset_quarantine_is_refused_while_a_run_holds_the_lease(monkeypatch):
+    """The ledger is shared state a live run reads on every row.
+
+    Clearing it under an active runner releases the rows that runner
+    quarantined, which it then re-fetches and re-attempts — spending cloud quota
+    on properties already proven unenrichable.
+    """
+    from core.backfill_runner import BackfillLease
+
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    other = BackfillLease(shared, prefix="t", ttl_seconds=900, owner="other-run")
+    assert other.acquire()
+
+    rc = mod.main(["--reset-quarantine"])
+
+    assert rc == mod.EXIT_LEASE_HELD
+    assert other.is_held_by_self()  # the ledger reset did not touch the lease
+
+
+def test_reset_quarantine_still_works_with_no_run_active(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    ledger = MagicMock()
+    ledger.quarantined_count.return_value = 4
+    monkeypatch.setattr(mod, "_build_ledger", lambda *a, **k: ledger)
+
+    rc = mod.main(["--reset-quarantine"])
+
+    assert rc == 0
+    ledger.reset_all.assert_called_once()
+
+
+def test_continuous_refuses_a_budget_below_one_property(monkeypatch):
+    """A cap under ``requests_per_property`` can never reserve anything.
+
+    Every pass would end ``budget_exhausted`` with nothing processed, and the
+    loop would sleep out a full 24h window forever without ever tripping the
+    stall detector (which only fires when the budget is *not* exhausted).
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(["--continuous", "--daily-budget", "2"])
+
+    assert "requests_per_property" in str(exc.value)
+
+
+def test_routing_is_refused_before_the_lease_is_taken(monkeypatch):
+    """The refusal claimed to happen "before taking the lease" — now it does.
+
+    Resolving routing inside ``_run`` meant a misconfigured start acquired the
+    lease and ran ``clear_requests()``, silently discarding an operator's
+    pending pause/stop, only to die on the refusal a moment later.
+    """
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", redis=shared)  # all-local routing
+    control = mod._control_for(mod.get_config(), shared)
+    control.request_stop()
+
+    with pytest.raises(SystemExit):
+        mod.main(["--limit", "1"])
+
+    # The operator's request survived a start that was never going to run.
+    assert control.should_stop() is True
+    assert shared.get("t:lease") is None
+
+
+def test_missing_key_is_diagnosed_as_a_missing_key(monkeypatch):
+    """Cloud routing + no key degrades to local — do not blame the routing map.
+
+    The all-local refusal told the operator to set keys they had already set.
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(["--limit", "1"])
+
+    msg = str(exc.value)
+    assert "GEMINI_API_KEY is not set" in msg
+    assert "Fix: export GEMINI_API_KEY." in msg
+
+
+def test_exit_publishes_state_before_releasing_the_lease(monkeypatch):
+    """Releasing first lets a new runner's ``running`` be stamped with ``idle``.
+
+    Between ``release()`` and ``publish_state()`` a waiting runner can take the
+    freed lease and publish ``running`` — which this exiting process then
+    overwrote.
+    """
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=1)))
+    order = []
+
+    real_lease_for = mod._lease_for
+
+    def tracking_lease_for(cfg, redis):
+        lease = real_lease_for(cfg, redis)
+        real_release = lease.release
+        lease.release = lambda: (order.append("release"), real_release())[1]
+        return lease
+
+    monkeypatch.setattr(mod, "_lease_for", tracking_lease_for)
+
+    real_control_for = mod._control_for
+
+    def tracking_control_for(cfg, redis):
+        control = real_control_for(cfg, redis)
+        real_publish = control.publish_state
+        control.publish_state = lambda s: (order.append(f"publish:{s.value}"),
+                                           real_publish(s))[1]
+        return control
+
+    monkeypatch.setattr(mod, "_control_for", tracking_control_for)
+
+    mod.main(["--limit", "1"])
+
+    assert order[-2:] == ["publish:idle", "release"]
+
+
+def test_a_lost_lease_publishes_no_state_on_the_way_out(monkeypatch):
+    """The state key now describes the successor — do not stamp it.
+
+    ``run_backfill`` deliberately publishes nothing on lease loss; ``main``'s
+    ``finally`` used to undo that immediately.
+    """
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=_br(mod, processed=1, lease_lost=True))
+    )
+    published = []
+
+    real_control_for = mod._control_for
+
+    def tracking_control_for(cfg, redis):
+        control = real_control_for(cfg, redis)
+        real_publish = control.publish_state
+        control.publish_state = lambda s: (published.append(s), real_publish(s))[1]
+        return control
+
+    monkeypatch.setattr(mod, "_control_for", tracking_control_for)
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_LEASE_LOST
+    assert published == []
+
+
+def test_a_served_stop_request_is_retired(monkeypatch):
+    """A honored stop must not be re-reported as pending for the request TTL."""
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=_br(mod, processed=1, stopped=True))
+    )
+    control = mod._control_for(mod.get_config(), shared)
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_STOPPED
+    assert control.should_stop() is False
+
+
+def test_sleep_for_reset_reports_a_pause_instead_of_backing_off(monkeypatch):
+    """A pause during the budget wait was invisible for the whole window."""
+    from core.backfill_runner import BackfillState
+
+    mod = _load_module()
+    cfg = MagicMock()
+    cfg.backfill.control_poll_seconds = 1.0
+    cfg.backfill.lease_ttl_seconds = 900
+    control = MagicMock()
+    control.should_stop.return_value = False
+    control.is_paused.return_value = True
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+
+    mod._sleep_for_reset(3.0, cfg=cfg, control=control)
+
+    states = [c[0][0] for c in control.publish_state.call_args_list]
+    assert BackfillState.PAUSED in states
+    assert BackfillState.BACKING_OFF not in states
+
+
+def test_sleep_for_reset_stops_waiting_once_the_lease_is_lost(monkeypatch):
+    """Sleeping out hours on a lease someone else owns helps nobody."""
+    mod = _load_module()
+    cfg = MagicMock()
+    cfg.backfill.control_poll_seconds = 1.0
+    cfg.backfill.lease_ttl_seconds = 900
+    lease = MagicMock()
+    lease.renew.return_value = False
+    sleep_spy = MagicMock()
+    monkeypatch.setattr(mod.time, "sleep", sleep_spy)
+
+    mod._sleep_for_reset(3600.0, cfg=cfg, control=None, lease=lease)
+
+    sleep_spy.assert_not_called()  # bailed on the very first renew
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass 3 (v0.13-s1.3)
+# ---------------------------------------------------------------------------
+
+
+def test_a_served_stop_is_retired_before_the_lease_is_released(monkeypatch):
+    """Reading the stop after the release can discard a *successor's* request.
+
+    Between ``lease.release()`` and the stop read, a waiting runner takes the
+    freed lease; an operator stopping *that* run had their request reported as
+    served by this one — and then cleared, so the live run never stopped.
+    """
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=_br(mod, processed=1, stopped=True))
+    )
+    order = []
+
+    real_lease_for = mod._lease_for
+
+    def tracking_lease_for(cfg, redis):
+        lease = real_lease_for(cfg, redis)
+        real_release = lease.release
+        lease.release = lambda: (order.append("release"), real_release())[1]
+        return lease
+
+    monkeypatch.setattr(mod, "_lease_for", tracking_lease_for)
+
+    real_control_for = mod._control_for
+    control_box = {}
+
+    def tracking_control_for(cfg, redis):
+        control = real_control_for(cfg, redis)
+        real_clear = control.clear_stop
+        control.clear_stop = lambda: (order.append("clear_stop"), real_clear())[1]
+        control_box["control"] = control
+        return control
+
+    monkeypatch.setattr(mod, "_control_for", tracking_control_for)
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_STOPPED
+    assert order.index("clear_stop") < order.index("release")
+    assert control_box["control"].should_stop() is False
+
+
+def test_a_final_state_publish_failure_still_releases_the_lease(monkeypatch):
+    """An unreleased lease locks the next run out for the whole TTL."""
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=1)))
+
+    real_control_for = mod._control_for
+
+    def exploding_control_for(cfg, redis):
+        control = real_control_for(cfg, redis)
+        control.publish_state = MagicMock(side_effect=ConnectionError("redis down"))
+        return control
+
+    monkeypatch.setattr(mod, "_control_for", exploding_control_for)
+
+    mod.main(["--limit", "1"])
+
+    assert shared.get("t:lease") is None  # released despite the publish failure
+
+
+def test_reset_quarantine_holds_the_lease_while_it_rewrites_the_ledger(monkeypatch):
+    """Reading ``holder()`` is check-then-act: a run starting in the gap still
+    gets its ledger wiped underneath it. The command takes the lease instead."""
+    mod = _load_module()
+    shared = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=shared)
+    held = []
+
+    class _Ledger:
+        def quarantined_count(self):
+            return 2
+
+        def reset_all(self):
+            held.append(shared.get("t:lease"))
+
+    monkeypatch.setattr(mod, "_build_ledger", lambda *a, **k: _Ledger())
+
+    rc = mod.main(["--reset-quarantine"])
+
+    assert rc == 0
+    assert held and held[0] is not None  # the lease was held during the rewrite
+    assert shared.get("t:lease") is None  # and handed back afterwards
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--stop", "--status"],
+        ["--reset-quarantine", "--pause"],
+        ["--status", "--reset-quarantine"],
+    ],
+)
+def test_mutually_exclusive_commands_are_rejected_not_silently_dropped(
+    monkeypatch, argv
+):
+    """Combining them ran the first and silently ignored the rest."""
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(argv)
+
+    assert exc.value.code == 2
+
+
+def test_a_negative_reset_margin_is_rejected(monkeypatch):
+    """It can drive the post-budget wait to zero — a tight loop of empty passes."""
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(["--continuous", "--reset-margin", "-60"])
+
+    assert exc.value.code == 2
+
+
+def test_a_whitespace_only_key_is_diagnosed_as_a_missing_key(monkeypatch):
+    """``cloud_available`` strips before testing, so this key routes local.
+
+    Testing the raw value blamed the routing map for a blank key — and would
+    have sent the blank bearer token to the provider.
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="   ", routing=_CLOUD_ROUTING)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main(["--limit", "1"])
+
+    assert "GEMINI_API_KEY is not set" in str(exc.value)
+
+
+def test_the_task_classes_help_matches_what_the_cli_accepts(capsys):
+    """The help (and the module docstring) advertised a scope ``_stages_for``
+    refuses outright: an operator following ``--help`` got a hard exit."""
+    mod = _load_module()
+
+    with pytest.raises(SystemExit):
+        mod._stages_for(mod.parse_task_classes("visual,sentiment"))
+
+    with pytest.raises(SystemExit):
+        mod.main(["--help"])
+    help_text = capsys.readouterr().out
+
+    assert "'visual,sentiment,deal_verdict'" in help_text
+    assert "or 'visual,sentiment'" not in help_text
+    assert "or\n``visual,sentiment``" not in mod.__doc__
+    assert "Only two scopes are supported" not in mod.__doc__

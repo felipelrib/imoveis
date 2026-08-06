@@ -242,11 +242,27 @@ class AIQuotaExhaustedError(AIClientError):
     is_quota_exhausted = True
 
 
+# Body markers that mean "quota/rate limit spent" on a status other than 429.
+# Google returns RESOURCE_EXHAUSTED with 429 on the OpenAI-compatible endpoint,
+# but quota refusals also surface as 403 (project/billing quota) and the
+# OpenAI-compatible shim can echo ``rate_limit_exceeded`` — reading those as
+# ordinary errors would resume fabricating 0.5 scores, which is the exact data
+# corruption this story exists to stop.
+_QUOTA_BODY_MARKERS = (
+    "resource_exhausted",
+    "quota exceeded",
+    "quotaexceeded",
+    "rate_limit_exceeded",
+    "rate limit exceeded",
+)
+
+
 def _is_quota_response(status: int, body: str) -> bool:
     """True when an HTTP failure means the provider quota/rate limit is spent."""
     if status == 429:
         return True
-    return "resource_exhausted" in (body or "").lower()
+    text = (body or "").lower()
+    return any(marker in text for marker in _QUOTA_BODY_MARKERS)
 
 
 def _reraise_if_quota(exc: BaseException) -> None:
@@ -969,7 +985,14 @@ class GeminiClient(LMStudioClient):
                             f"Gemini quota exhausted: {response.status} "
                             f"{error_text[:200].strip()}"
                         )
-                    raise AIClientError(f"Gemini API error: {response.status}")
+                    # Keep the body on the message: ``core.backfill_runner``'s
+                    # text-matching safety net is the last line of defence for a
+                    # quota refusal this function failed to tag, and a message
+                    # carrying only the status code can never match it.
+                    raise AIClientError(
+                        f"Gemini API error: {response.status} "
+                        f"{error_text[:200].strip()}"
+                    )
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 last_exc = exc
                 if final_attempt:

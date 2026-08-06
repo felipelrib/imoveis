@@ -194,3 +194,43 @@ def test_happy_path_is_untouched():
     result = asyncio.run(client.analyze_text("nice place", "prompt"))
 
     assert result.sentiment_score == 0.8
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass (v0.13-s1.3): quota detection breadth + error detail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status,body",
+    [
+        (403, '{"error": {"message": "Quota exceeded for quota metric"}}'),
+        (400, '{"error": {"code": "rate_limit_exceeded"}}'),
+        (403, "Rate limit exceeded for this project"),
+    ],
+)
+def test_quota_refusals_outside_429_are_still_quota_errors(status, body):
+    """Not every quota refusal arrives as 429 with RESOURCE_EXHAUSTED.
+
+    Reading one as an ordinary error resumes fabricating 0.5 scores for every
+    remaining row — the exact data corruption this story exists to stop.
+    """
+    client = _client_with_status(status, body)
+
+    with pytest.raises(AIQuotaExhaustedError):
+        asyncio.run(client.chat_completions("m", [{"role": "user", "content": "hi"}]))
+
+
+def test_non_quota_error_message_carries_the_response_body():
+    """``core``'s text-matching safety net needs something to match on.
+
+    A message carrying only the status code made the last line of defence for an
+    untagged quota refusal structurally unreachable.
+    """
+    client = _client_with_status(500, "upstream said: too many requests, back off")
+
+    with pytest.raises(AIClientError) as exc:
+        asyncio.run(client.chat_completions("m", [{"role": "user", "content": "hi"}]))
+
+    assert "too many requests" in str(exc.value)
+    assert is_quota_exhausted(exc.value) is True
