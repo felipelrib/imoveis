@@ -61,7 +61,7 @@
 # - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short description)
 
 generated: 2026-08-05T06:51:14-03:00
-last_updated: 2026-08-05T07:20:00-03:00
+last_updated: 2026-08-06
 project: imoveis
 project_key: NOKEY
 tracking_system: file-system
@@ -80,6 +80,10 @@ development_status:
   # the "no progress" valve. Census-based completion + exit codes/banner, photo
   # gate applied, and an attempt ledger that retires rows that never clear.
   v0.13-fu3-backfill-completion-detection: done
+  # Follow-up: independent review of the s1.2 review delta (spec flagged
+  # followup_review_recommended). RoutingAIClient lifecycle hardening +
+  # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
+  v0.13-fu4-s1.2-followup-review: done
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

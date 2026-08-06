@@ -204,9 +204,7 @@ def test_create_ai_client_task_class_cloud_entry_returns_local(monkeypatch):
         backend="ollama",
         gemini_api_key="secret-key",  # key present, but live path ignores cloud
     )
-    monkeypatch.setattr(
-        "infra.config.get_config", lambda: cfg, raising=False
-    )
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
     got = create_ai_client(task_class=EnrichmentTaskClass.VISUAL)
     assert isinstance(got, OllamaClient)
     assert not isinstance(got, (GeminiClient, GemmaClient))
@@ -215,9 +213,7 @@ def test_create_ai_client_task_class_cloud_entry_returns_local(monkeypatch):
 @pytest.mark.unit
 def test_create_ai_client_task_class_local_map_wins(monkeypatch):
     cfg = _cfg({**_DEFAULT_ROUTING, "sentiment": "lmstudio"}, backend="ollama")
-    monkeypatch.setattr(
-        "infra.config.get_config", lambda: cfg, raising=False
-    )
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
     got = create_ai_client(task_class=EnrichmentTaskClass.SENTIMENT)
     assert isinstance(got, LMStudioClient)
 
@@ -225,9 +221,7 @@ def test_create_ai_client_task_class_local_map_wins(monkeypatch):
 @pytest.mark.unit
 def test_create_ai_client_embedding_local(monkeypatch):
     cfg = _cfg({**_DEFAULT_ROUTING, "embedding": "gemma"}, backend="ollama")
-    monkeypatch.setattr(
-        "infra.config.get_config", lambda: cfg, raising=False
-    )
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
     got = create_ai_client(task_class=EnrichmentTaskClass.EMBEDDING)
     assert isinstance(got, OllamaClient)
     assert not isinstance(got, (GeminiClient, GemmaClient))
@@ -269,7 +263,13 @@ def _patch_build_local(monkeypatch):
 def test_routing_client_dispatches_each_method_to_its_backend(monkeypatch):
     built = _patch_build_local(monkeypatch)
     cfg = _cfg(
-        {**_DEFAULT_ROUTING, "visual": "ollama", "sentiment": "lmstudio"},
+        {
+            **_DEFAULT_ROUTING,
+            "visual": "ollama",
+            "sentiment": "lmstudio",
+            "deal_verdict": "ollama",
+            "embedding": "lmstudio",
+        },
         backend="ollama",
     )
     rc = RoutingAIClient(
@@ -278,16 +278,23 @@ def test_routing_client_dispatches_each_method_to_its_backend(monkeypatch):
             EnrichmentTaskClass.VISUAL,
             EnrichmentTaskClass.SENTIMENT,
             EnrichmentTaskClass.DEAL_VERDICT,
+            EnrichmentTaskClass.EMBEDDING,
         ),
     )
 
     assert asyncio.run(rc.analyze_visuals(["a"], "p")) == "visual::ollama"
     assert asyncio.run(rc.analyze_text("d", "p")) == "text::lmstudio"
+    assert asyncio.run(rc.summarize_deal(price=1)) == "verdict::ollama"
+    assert asyncio.run(rc.embed("t")) == "embed::lmstudio"
 
     built["ollama"].analyze_visuals.assert_awaited_once()
     built["lmstudio"].analyze_text.assert_awaited_once()
-    # The visual (ollama) client must NOT have handled the sentiment call.
+    built["ollama"].summarize_deal.assert_awaited_once()
+    built["lmstudio"].embed.assert_awaited_once()
+    # Cross-routing must not leak: each method hits only its own client.
     built["ollama"].analyze_text.assert_not_awaited()
+    built["lmstudio"].summarize_deal.assert_not_awaited()
+    built["ollama"].embed.assert_not_awaited()
 
 
 @pytest.mark.unit
@@ -464,6 +471,130 @@ def test_routing_client_async_with_opens_and_closes_all(monkeypatch):
     asyncio.run(_run())
     assert sorted(entered) == ["lmstudio", "ollama"]
     assert sorted(exited) == ["lmstudio", "ollama"]
+
+
+@pytest.mark.unit
+def test_routing_client_aenter_partial_failure_unwinds_opened_sessions(monkeypatch):
+    # Regression (v0.13-fu4): if the Nth session enter fails, the N-1 already
+    # opened sessions must be closed — __aexit__ never runs when __aenter__
+    # raises, so __aenter__ itself has to unwind.
+    from contextlib import asynccontextmanager
+
+    built = _patch_build_local(monkeypatch)
+    entered: list[str] = []
+    exited: list[str] = []
+
+    def _ok_ctx(backend):
+        @asynccontextmanager
+        async def _ctx():
+            entered.append(backend)
+            try:
+                yield None
+            finally:
+                exited.append(backend)
+
+        return _ctx
+
+    def _boom_ctx():
+        @asynccontextmanager
+        async def _ctx():
+            raise RuntimeError("enter boom")
+            yield None  # pragma: no cover
+
+        return _ctx
+
+    cfg = _cfg(
+        {**_DEFAULT_ROUTING, "visual": "ollama", "sentiment": "lmstudio"},
+        backend="ollama",
+    )
+    rc = RoutingAIClient(
+        cfg, (EnrichmentTaskClass.VISUAL, EnrichmentTaskClass.SENTIMENT)
+    )
+    first, second = list(rc._clients)  # provisioning order == dict order
+    built[first].session_context = _ok_ctx(first)
+    built[second].session_context = _boom_ctx()
+
+    async def _run():
+        with pytest.raises(RuntimeError, match="enter boom"):
+            async with rc:
+                pass  # pragma: no cover - body never entered
+
+    asyncio.run(_run())
+    assert entered == [first]
+    assert exited == [first]  # the opened session was closed again
+    assert getattr(rc, "_stack", None) is None  # no orphaned stack kept
+
+
+@pytest.mark.unit
+def test_routing_client_aenter_is_not_reentrant(monkeypatch):
+    # Regression (v0.13-fu4): a second __aenter__ must fail loudly instead of
+    # silently overwriting self._stack and orphaning the first stack's sessions.
+    from contextlib import asynccontextmanager
+
+    built = _patch_build_local(monkeypatch)
+
+    def _make_ctx():
+        @asynccontextmanager
+        async def _ctx():
+            yield None
+
+        return _ctx
+
+    cfg = _cfg(
+        {**_DEFAULT_ROUTING, "visual": "ollama", "sentiment": "lmstudio"},
+        backend="ollama",
+    )
+    rc = RoutingAIClient(
+        cfg, (EnrichmentTaskClass.VISUAL, EnrichmentTaskClass.SENTIMENT)
+    )
+    for c in built.values():
+        c.session_context = _make_ctx()
+
+    async def _run():
+        async with rc:
+            with pytest.raises(RuntimeError, match="not re-entrant"):
+                await rc.__aenter__()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.unit
+def test_routing_client_aexit_propagates_exception_to_sessions(monkeypatch):
+    # Regression (v0.13-fu4): __aexit__ must delegate the in-flight exception
+    # to the underlying session contexts (aclose() would exit them cleanly).
+    from contextlib import asynccontextmanager
+
+    built = _patch_build_local(monkeypatch)
+    seen: list[str] = []
+
+    def _make_ctx(backend):
+        @asynccontextmanager
+        async def _ctx():
+            try:
+                yield None
+            except RuntimeError:
+                seen.append(backend)
+                raise
+
+        return _ctx
+
+    cfg = _cfg(
+        {**_DEFAULT_ROUTING, "visual": "ollama", "sentiment": "lmstudio"},
+        backend="ollama",
+    )
+    rc = RoutingAIClient(
+        cfg, (EnrichmentTaskClass.VISUAL, EnrichmentTaskClass.SENTIMENT)
+    )
+    for backend, c in built.items():
+        c.session_context = _make_ctx(backend)
+
+    async def _run():
+        with pytest.raises(RuntimeError, match="body boom"):
+            async with rc:
+                raise RuntimeError("body boom")
+
+    asyncio.run(_run())
+    assert sorted(seen) == ["lmstudio", "ollama"]  # both sessions observed it
 
 
 @pytest.mark.unit

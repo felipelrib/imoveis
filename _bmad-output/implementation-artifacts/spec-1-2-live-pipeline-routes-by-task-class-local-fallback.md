@@ -6,7 +6,7 @@ baseline_revision: 'e0ce58cc667405f4d1cf04d4b27998aa85b8d804'
 final_revision: 'squash-merged to main by finish-feature.sh (see main git log)'
 status: 'done'
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false  # performed 2026-08-06 (v0.13-fu4) — see Review Findings
 context:
   - '{project-root}/CLAUDE.md'
 warnings: ['oversized']
@@ -22,7 +22,7 @@ warnings: ['oversized']
 
 ## Boundaries & Constraints
 
-**Always:** Live/incremental enrichment resolves each task class's backend from `enrichment_routing` and only ever executes on a **local** backend — any cloud (`gemini`/`gemma`) routing entry degrades to `cfg.ai.backend` (validated non-cloud by story 1.1) on the live path (AD-13, AD-4). No model call happens inline from an API request thread (unchanged — work stays on the `ai` queue under the GPU semaphore). The resolver is the single source of truth for backend selection; degradation is silent (a warning log, never a failure) and never marks a property failed (NFR-4). AI scores stay floats in `[0.0, 1.0]`. `core` gains no `adapters`/`api` import.
+**Always:** Live/incremental enrichment resolves each task class's backend from `enrichment_routing` and only ever executes on a **local** backend — any cloud (`gemini`/`gemma`) routing entry degrades to `cfg.ai.backend` (validated non-cloud by story 1.1) on the live path (AD-13, AD-4). No model call happens inline from an API request thread (unchanged — work stays on the `ai` queue under the GPU semaphore). The resolver is the single source of truth for backend selection; degradation is silent (a log line — DEBUG on the live path where degrade is the designed steady state, WARNING only for a backfill missing its key — never a failure) and never marks a property failed (NFR-4). AI scores stay floats in `[0.0, 1.0]`. `core` gains no `adapters`/`api` import.
 
 **Block If:** The intent is fully resolved; nothing requires human input. (No operator-only external actions exist for this story.)
 
@@ -34,7 +34,7 @@ warnings: ['oversized']
 |----------|--------------|---------------------------|----------------|
 | Live local-default | routing `visual: ollama`, scalar `ollama`, `for_backfill=False` | resolves `ollama` | No error |
 | Live local-explicit | routing `sentiment: lmstudio`, scalar `ollama` | resolves `lmstudio` (map wins for local values) | No error |
-| Live cloud degrade | routing `visual: gemma`, scalar `ollama`, `for_backfill=False` | resolves `ollama` (degrade to scalar-local); warning logged | No error, never cloud |
+| Live cloud degrade | routing `visual: gemma`, scalar `ollama`, `for_backfill=False` | resolves `ollama` (degrade to scalar-local); DEBUG log (designed steady state, no WARNING flood) | No error, never cloud |
 | Backfill cloud-eligible | routing `deal_verdict: gemma`, `for_backfill=True`, `GEMINI_API_KEY` set | resolves `gemma` (cloud honored) | No error |
 | Backfill cloud unavailable | routing `deal_verdict: gemma`, `for_backfill=True`, no key | resolves scalar-local (`ollama`); warning logged | No error, never failure (NFR-4) |
 | RoutingAIClient dispatch | routing `visual: ollama`, `sentiment: lmstudio` | `analyze_visuals`→Ollama client, `analyze_text`→LMStudio client; distinct backends → distinct clients, shared backend → one client | No error |
@@ -63,6 +63,18 @@ warnings: ['oversized']
 - Given the routing map, when the live `ai`-queue pipeline enriches a property, then each task class's backend is resolved from the map and only local backends ever execute on the live path (cloud entries degrade to the local scalar); no model call runs inline from an API request thread (unchanged).
 - Given a cloud-eligible task class with cloud unavailable (no `GEMINI_API_KEY`), when the resolver runs in `for_backfill` mode, then it resolves to the local scalar backend (degrade, warning logged) without raising — the tested contract story 1.3's runner consumes.
 - Given the AI client surface changed, when the story completes, then `bash scripts/agent/validate-ai.sh` passes, contract tests still hold (scores remain floats in `[0,1]`), and routing resolution has unit coverage for local-default, cloud-eligible, and degraded branches.
+
+### Review Findings
+
+<!-- Follow-up review 2026-08-06 (the independent pass this spec's frontmatter recommended): 3 layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) on the merged 11ceaf5 diff scoped to the review-delta surfaces. 0 decision-needed, 3 patch, 1 defer, 10 dismissed. -->
+
+- [x] [Review][Patch] `RoutingAIClient.__aenter__` lifecycle gaps: partial-failure leak (a failing Nth `session_context()` enter strands the N−1 already-opened sessions — no unwind, unlike `session_context()`'s `async with AsyncExitStack`), re-entrant `__aenter__` silently clobbers `self._stack` (first stack's sessions orphaned), and `__aexit__` calls `stack.aclose()` instead of propagating exc info via `stack.__aexit__(...)`. Latent — no production caller uses `async with routing_client:` today (both live sites use `session_context()`) — but it is the exact contract the pass-1 fix claimed to provide. [src/adapters/ai/client.py:1151]
+- [x] [Review][Patch] Dispatch coverage gap: only `analyze_visuals`→VISUAL and `analyze_text`→SENTIMENT are asserted; a transposition bug in `summarize_deal`→DEAL_VERDICT or `embed`→EMBEDDING routing would pass the suite. Add the two missing happy-path dispatch assertions; drop the pointless `raising=False` on the `get_config` monkeypatches while there. [src/tests/unit/test_ai_routing.py:567]
+- [x] [Review][Patch] Spec-internal contradiction (docs-only): Boundaries ("degradation is silent (a warning log…)") and the I/O matrix row "Live cloud degrade … warning logged" still describe WARNING, but the shipped, test-locked behavior is DEBUG on the live path (WARNING only for backfill no-key) — the pass-1 triage applied the demotion without amending the frozen contract. Amend Boundaries + matrix to match shipped behavior. [_bmad-output/implementation-artifacts/spec-1-2-live-pipeline-routes-by-task-class-local-fallback.md]
+- [x] [Review][Defer] Backfill-mode cloud EMBEDDING breaks read/write vector-space symmetry: `resolve_enrichment_backend(…, for_backfill=True)` has no task-class restriction, so `enrichment_routing.embedding: gemma` + key present lets a backfill store cloud-space vectors while the query side (`_get_embedding_client`) stays local — dimension mismatch / silently corrupted similarity. Dead branch until story 1.3 wires the runner; resolve there (exclude EMBEDDING from cloud honor, or re-embed coherently). [src/adapters/ai/client.py:1027] — deferred, story-1.3 seam
+
+<!-- Dismissed (10): missing-routing-key KeyError + cloud degrade target (AIConfig._validate_backends enforces totality and a non-cloud scalar at load — fail-loud by design, matches pass-1 rejection); live-degrade DEBUG invisibility (designed steady state — cloud routing entries mean backfill-cloud/live-local; visibility is story 1.4 telemetry); dead defensive scalar cloud branch (retention mandated by this spec's Never); empty task_classes→trio (deliberate pass-1 decision, no caller can produce ()); session_context yields self (documented, both callers use no-`as` form); package exports (pre-existing convention — consumers import adapters.ai.client directly); tests poking _clients/_by_task (tolerable churn); routing-flip vector invalidation (pre-existing, already in Residual Risks); VALUATION provisionable-but-undispatchable (no caller passes it; dispatch already fail-loud via _client_for). -->
+
 
 ## Review Triage Log
 

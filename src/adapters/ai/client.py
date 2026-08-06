@@ -1153,16 +1153,30 @@ class RoutingAIClient(LocalAIClient):
         # caller using that form does not leave the underlying clients'
         # sessions unopened/unclosed (the base class would only manage this
         # wrapper's own — empty-URL — session).
-        self._stack = AsyncExitStack()
-        for client in self._clients.values():
-            await self._stack.enter_async_context(client.session_context())
+        if getattr(self, "_stack", None) is not None:
+            raise RuntimeError(
+                "RoutingAIClient is already entered; it is not re-entrant"
+            )
+        stack = AsyncExitStack()
+        try:
+            for client in self._clients.values():
+                await stack.enter_async_context(client.session_context())
+        except BaseException:
+            # A failing Nth enter must not strand the N-1 sessions already
+            # opened — __aexit__ never runs when __aenter__ raises.
+            await stack.aclose()
+            raise
+        self._stack = stack
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         stack = getattr(self, "_stack", None)
-        if stack is not None:
-            self._stack = None
-            await stack.aclose()
+        if stack is None:
+            return None
+        self._stack = None
+        # Delegate the in-flight exception so the underlying session contexts
+        # observe it (aclose() would exit them cleanly, hiding it).
+        return await stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def close(self) -> None:
         # Best-effort: one client's close() must not strand the others' sessions.
