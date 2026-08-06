@@ -159,6 +159,24 @@ class BackfillConfig(BaseModel, frozen=True):
     batch_size: int = 50
     # Redis key namespace for the daily budget counter, checkpoint, and heartbeat.
     redis_prefix: str = "backfill:gemma"
+    # Single-instance lease TTL (v0.13-s1.3). The runner renews it as it works;
+    # the TTL — not a shutdown hook — is what releases the lease after a hard
+    # kill, so a crashed run self-heals within this many seconds without any
+    # operator action. Too short risks a live run losing its lease mid-pause.
+    # Floor of 30s: a TTL shorter than the renew cadence would expire under a
+    # live run and let a second runner in — the exact failure the lease exists
+    # to prevent.
+    lease_ttl_seconds: int = Field(default=900, ge=30)
+    # How often a paused runner re-checks the pause/stop control keys, and how
+    # often the CLI wakes to renew its lease while sleeping out a budget window.
+    # Must be > 0: a zero poll turns the paused loop into a Redis busy-spin.
+    control_poll_seconds: float = Field(default=2.0, gt=0.0)
+    # Back-off after the provider itself refuses on quota while the *local*
+    # daily budget still has room. A 429 that survives the client's retries is
+    # usually a per-minute (RPM/TPM) throttle, not the per-day (RPD) ceiling, so
+    # sleeping to the local window reset (up to ~24h) would idle the runner for
+    # a day over a minute-scale limit. Caps that wait instead.
+    quota_backoff_seconds: int = Field(default=900, ge=0)
 
 
 class AIConfig(BaseModel, frozen=True):

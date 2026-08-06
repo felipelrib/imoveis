@@ -224,6 +224,37 @@ class AIClientError(RuntimeError):
     """Raised when a local AI backend returns a non-success response."""
 
 
+class AIQuotaExhaustedError(AIClientError):
+    """The provider's quota / rate limit is spent — back off, never fall back.
+
+    Every other transport failure is allowed to degrade into a deterministic
+    template (a fabricated ``0.5`` visual/sentiment score), because a single bad
+    response should not abort a whole enrichment. Quota exhaustion is different:
+    it affects *every* subsequent call, so falling back would persist a fake 0.5
+    for every remaining property, and ``mode=missing`` would never re-queue those
+    rows because they now look scored. Raising a distinguished error lets the
+    backfill runner see the truth, back off and write nothing (v0.13-s1.3).
+
+    ``is_quota_exhausted`` is the duck-typed contract ``src/core`` reads: core
+    must not import adapters (AD-1), so it checks the attribute, not the type.
+    """
+
+    is_quota_exhausted = True
+
+
+def _is_quota_response(status: int, body: str) -> bool:
+    """True when an HTTP failure means the provider quota/rate limit is spent."""
+    if status == 429:
+        return True
+    return "resource_exhausted" in (body or "").lower()
+
+
+def _reraise_if_quota(exc: BaseException) -> None:
+    """Let a quota refusal through a fabricated-score fallback handler."""
+    if getattr(exc, "is_quota_exhausted", False):
+        raise exc
+
+
 def _clamp_unit_score(value: float, *, field_name: str) -> float:
     """Clamp an AI-model score onto the ``[0.0, 1.0]`` contract (BIN-148).
 
@@ -335,6 +366,7 @@ class LocalAIClient(ABC):
             result = await self._llm_verdict(prompt)
             return result
         except Exception as exc:
+            _reraise_if_quota(exc)  # quota is not a per-call blip: back off
             logger.warning("deal_verdict_llm_fallback: %s", str(exc))
             try:
                 from infra.ui_locale import resolve_ai_output_language
@@ -517,6 +549,7 @@ class OllamaClient(LocalAIClient):
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception as exc:
+            _reraise_if_quota(exc)  # quota is not a per-call blip: back off
             logger.warning("ollama_verdict_error: %s", str(exc))
             return DealVerdictResult(
                 verdict=template_deal_verdict(),
@@ -582,7 +615,8 @@ class OllamaClient(LocalAIClient):
                 )
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
-        except Exception:
+        except Exception as exc:
+            _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
 
@@ -609,7 +643,8 @@ class OllamaClient(LocalAIClient):
                 )
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
-        except Exception:
+        except Exception as exc:
+            _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
@@ -685,6 +720,7 @@ class LMStudioClient(LocalAIClient):
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
         except Exception as exc:
+            _reraise_if_quota(exc)  # quota is not a per-call blip: back off
             logger.warning("lmstudio_verdict_error: %s", str(exc))
             return DealVerdictResult(
                 verdict=template_deal_verdict(),
@@ -763,7 +799,8 @@ class LMStudioClient(LocalAIClient):
                 )
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
-        except Exception:
+        except Exception as exc:
+            _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in LMStudioClient.analyze_visuals")
             return VisualResult(condition_score=0.5, analysis="Error")
 
@@ -797,7 +834,8 @@ class LMStudioClient(LocalAIClient):
                 )
 
             return await self._run_json_retry_loop(fetch, apply_hint, build)
-        except Exception:
+        except Exception as exc:
+            _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in LMStudioClient.analyze_text")
             return SentimentResult(sentiment_score=0.5, analysis="Error")
 
@@ -922,6 +960,15 @@ class GeminiClient(LMStudioClient):
                         continue
                     logger.error("Gemini API error: %s - %s", response.status, error_text)
                     self.last_error = f"{response.status}: {error_text[:200].strip()}"
+                    if _is_quota_response(response.status, error_text):
+                        # Retries are spent and the provider is still refusing on
+                        # quota. Raise the distinguished error so no caller
+                        # fabricates a 0.5 score for this (or any later) row.
+                        self.rate_limit_hits += 1
+                        raise AIQuotaExhaustedError(
+                            f"Gemini quota exhausted: {response.status} "
+                            f"{error_text[:200].strip()}"
+                        )
                     raise AIClientError(f"Gemini API error: {response.status}")
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 last_exc = exc
@@ -1025,6 +1072,25 @@ def resolve_enrichment_backend(
     """
     routed = cfg.ai.enrichment_routing[task_class.value]
     if is_cloud_backend(routed):
+        # Embeddings are the one task class cloud can never serve, backfill or
+        # not: ``properties.embedding`` is a vector(1024) written by the local
+        # bge-m3 model and read back by cosine search. A cloud-written vector
+        # from a different model lives in a different space, so the row would
+        # silently stop matching. Read/write symmetry beats backfill throughput.
+        if task_class is EnrichmentTaskClass.EMBEDDING:
+            # Same rule as the degrade branch below: on the live path this fires
+            # once per task class per property, so WARNING would flood the log
+            # (the story-1.2 review's finding). A *backfill* asking for a cloud
+            # embedding is an operator misconfiguration worth warning about.
+            log = logger.warning if for_backfill else logger.debug
+            log(
+                "enrichment_backend_degraded: task_class=%s routed=%s chosen=%s "
+                "reason=embeddings_never_cloud (vector-space symmetry)",
+                task_class.value,
+                routed,
+                cfg.ai.backend,
+            )
+            return cfg.ai.backend
         if for_backfill and cloud_available(cfg):
             return routed  # cloud honored only for backfill + key present
         local = cfg.ai.backend

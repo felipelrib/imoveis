@@ -38,10 +38,15 @@ class FakeRedis:
     def get(self, key):
         return self.kv.get(key)
 
-    def set(self, key, val, ex=None):
+    def set(self, key, val, ex=None, nx=False):
+        # ``nx`` is what makes the v0.13-s1.3 lease atomic; the budget/checkpoint
+        # paths never pass it.
+        if nx and key in self.kv:
+            return None
         self.kv[key] = str(val)
         if ex:
             self.expires[key] = ex
+        return True
 
     def incrby(self, key, n):
         self.kv[key] = str(int(self.kv.get(key, 0)) + int(n))
@@ -51,7 +56,10 @@ class FakeRedis:
         self.expires[key] = ttl
 
     def delete(self, key):
+        # Real DEL drops the hash too — the budget's phantom-window cleanup
+        # relies on that.
         self.kv.pop(key, None)
+        self.hashes.pop(key, None)
 
     # hash ops
     def hgetall(self, key):
@@ -66,6 +74,10 @@ class FakeRedis:
         h = self.hashes.setdefault(key, {})
         h[field] = str(int(h.get(field, 0)) + int(n))
         return int(h[field])
+
+    def hdel(self, key, *fields):
+        for field in fields:
+            self.hashes.setdefault(key, {}).pop(field, None)
 
 
 def _rows(n, *, enriched_ids=()):
@@ -106,6 +118,25 @@ def test_budget_try_consume_stops_at_limit():
     # 6 + 6 = 12 > 10 → refused, nothing reserved.
     assert b.try_consume(6) is False
     assert b.consumed() == 6
+
+
+def test_budget_overshoot_leaves_the_counter_untouched():
+    """The atomic reservation must roll back, not leak, a refused increment."""
+    r = FakeRedis()
+    b = _budget(r, 10)
+    b.try_consume(9)
+    assert b.try_consume(3) is False
+    assert r.hashes["t:budget"]["count"] == "9"
+    assert b.remaining() == 1  # the refused 3 did not shrink tomorrow's budget
+
+
+def test_budget_reservation_after_a_window_roll_starts_from_zero():
+    """A stale window's count must not be incremented into the new window."""
+    r = FakeRedis()
+    _budget(r, 10, day="2026-08-03").try_consume(9)
+    fresh = _budget(r, 10, day="2026-08-04")
+    assert fresh.try_consume(6) is True
+    assert fresh.consumed() == 6
 
 
 def test_budget_rolling_window_resets_after_24h():

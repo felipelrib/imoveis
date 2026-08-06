@@ -25,15 +25,21 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "dev" / "backfill_ge
 
 class _FakeRedis:
     def __init__(self):
+        self.kv = {}
         self.hashes = {}
 
     def get(self, k):
-        return None
+        return self.kv.get(k)
 
-    def set(self, k, v, ex=None):
-        pass
+    def set(self, k, v, ex=None, nx=False):
+        # ``nx`` is what makes the v0.13-s1.3 lease single-instance.
+        if nx and k in self.kv:
+            return None
+        self.kv[k] = v
+        return True
 
     def delete(self, k):
+        self.kv.pop(k, None)
         self.hashes.pop(k, None)
 
     def expire(self, k, ttl):
@@ -80,7 +86,20 @@ def _cfg():
     cfg.backfill.tpm_limit = 16000
     cfg.backfill.tpm_safety_margin = 0.9
     cfg.backfill.max_attempts = 3
+    cfg.backfill.lease_ttl_seconds = 900
+    cfg.backfill.control_poll_seconds = 2.0
+    cfg.backfill.quota_backoff_seconds = 900
     cfg.ai.gemini_api_key = "k"
+    cfg.ai.backend = "ollama"
+    cfg.ai.gemma_model = "gemma-4-31b-it"
+    cfg.ai.gemini_model = "gemini-2.5-flash"
+    cfg.ai.enrichment_routing = {
+        "visual": "gemma",
+        "sentiment": "gemma",
+        "deal_verdict": "gemma",
+        "valuation": "ollama",
+        "embedding": "ollama",
+    }
     cfg.ai.max_images_per_property = 8
     cfg.scraping.photo_gate.enabled = True
     cfg.scraping.photo_gate.floor_min = 8
@@ -216,7 +235,9 @@ def test_continuous_still_sleeps_across_the_budget_reset_when_work_remains(monke
     rc = mod.main(["--continuous"])
 
     assert rc == mod.EXIT_COMPLETE
-    sleep_spy.assert_called_once()
+    # Chunked into control_poll_seconds steps now, so count > 1 — what matters
+    # is that it waited at all between the two cycles.
+    assert sleep_spy.call_count >= 1
 
 
 def test_continuous_sleeps_rather_than_stalling_when_the_window_was_already_spent(
@@ -244,7 +265,7 @@ def test_continuous_sleeps_rather_than_stalling_when_the_window_was_already_spen
     rc = mod.main(["--continuous"])
 
     assert rc == mod.EXIT_COMPLETE
-    sleep_spy.assert_called_once()
+    assert sleep_spy.call_count >= 1
     assert "BACKFILL STALLED" not in capsys.readouterr().out
 
 
@@ -364,3 +385,106 @@ def test_census_counts_quarantined_candidates(monkeypatch):
     assert census.blocked_no_photos == 5
     assert census.quarantined == 2  # only the ones still in the queue
     assert census.remaining == 53
+
+
+# ---------------------------------------------------------------------------
+# v0.13-s1.3 — operator stop is terminal and is not a stall
+# ---------------------------------------------------------------------------
+
+
+def test_continuous_exits_stopped_when_an_operator_asked_it_to_stop(monkeypatch, capsys):
+    """A stop leaves work behind on purpose — reporting STALLED would lie."""
+    mod = _load_module()
+    _wire(mod, monkeypatch)
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=BackfillResult(processed=3, stopped=True))
+    )
+    monkeypatch.setattr(
+        mod, "_census",
+        MagicMock(return_value=_census(total_properties=100, enriched=50, candidates=50)),
+    )
+    sleep_spy = MagicMock()
+    monkeypatch.setattr(mod.time, "sleep", sleep_spy)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_STOPPED
+    assert "BACKFILL STOPPED" in capsys.readouterr().out
+    sleep_spy.assert_not_called()
+
+
+def test_budget_sleep_renews_the_lease_so_no_second_runner_slips_in(monkeypatch):
+    """A ~24h sleep outlives the lease TTL unless it wakes to renew."""
+    mod = _load_module()
+    cfg = _cfg()
+    cfg.backfill.lease_ttl_seconds = 30  # → renew every 10s
+    cfg.backfill.control_poll_seconds = 5.0
+    redis = _FakeRedis()
+    lease = MagicMock()
+    sleeps = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+
+    mod._sleep_for_reset(
+        25.0, cfg=cfg, control=mod.BackfillControl(redis, prefix="t"), lease=lease
+    )
+
+    # Slept in control_poll_seconds steps, but the total wait is unchanged.
+    assert sleeps == [5.0, 5.0, 5.0, 5.0, 5.0]
+    # Renewed at t=0, 10, 20 — every lease_ttl/3, independent of the step size.
+    assert lease.renew.call_count == 3
+    assert redis.get("t:state") == "backing-off"
+
+
+def test_budget_sleep_notices_a_stop_within_one_poll_interval(monkeypatch):
+    """PEP 475: time.sleep resumes after a signal handler, so long chunks made
+    Ctrl-C (which only *requests* a stop) unresponsive for up to lease_ttl/3."""
+    mod = _load_module()
+    cfg = _cfg()  # control_poll_seconds 2.0, lease_ttl 900 → old chunk was 300s
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    sleeps = []
+
+    def _sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:  # a SIGINT handler requests a stop mid-sleep
+            control.request_stop()
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    mod._sleep_for_reset(86400.0, cfg=cfg, control=control, lease=None)
+
+    assert sleeps == [2.0, 2.0]  # noticed on the very next poll, not 300s later
+    assert sum(sleeps) < 10
+
+
+def test_budget_sleep_republishes_the_state_below_its_ttl(monkeypatch):
+    """The state key TTLs out in 120s; a long back-off must keep it fresh."""
+    mod = _load_module()
+    cfg = _cfg()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    published = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        control, "publish_state", lambda state: published.append(state)
+    )
+
+    mod._sleep_for_reset(600.0, cfg=cfg, control=control, lease=None)
+
+    # 600s of back-off at a refresh interval strictly below the 120s TTL.
+    assert len(published) >= 600 / mod._STATE_REFRESH_SECONDS
+    assert mod._STATE_REFRESH_SECONDS < 120
+
+
+def test_budget_sleep_is_cut_short_by_a_stop_request(monkeypatch):
+    mod = _load_module()
+    cfg = _cfg()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    control.request_stop()
+    sleeps = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+
+    mod._sleep_for_reset(3600.0, cfg=cfg, control=control, lease=None)
+
+    assert sleeps == []

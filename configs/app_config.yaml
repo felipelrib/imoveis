@@ -335,6 +335,27 @@ backfill:
   max_attempts: 3
   batch_size: 50
   redis_prefix: "backfill:gemma"
+  # Single-instance lease (v0.13-s1.3). Only one runner may hold
+  # `<redis_prefix>:lease`; a second start is refused. The runner renews the
+  # lease as it works, so this TTL is how long after a hard kill the lease
+  # frees itself — no operator cleanup needed.
+  lease_ttl_seconds: 900
+  # Pause/stop poll interval: how often a paused runner re-reads the control
+  # keys, and how often a sleeping runner wakes to renew its lease.
+  control_poll_seconds: 2.0
+  # Bounded back-off when the *provider* refuses on quota but the local daily
+  # budget still has room. Free-tier limits are both per-minute (RPM/TPM) and
+  # per-day (RPD): a 429 that survives the client's retries is usually the
+  # per-minute one, so waiting out the rolling 24h RPD window (up to ~24h)
+  # would park the runner for a day over a minute-scale throttle. When the
+  # local budget is genuinely spent the runner still sleeps to the reset.
+  quota_backoff_seconds: 900
+
+# NOTE (v0.13-s1.3): the cloud backfill now derives its backend from
+# `ai.enrichment_routing` instead of hardcoding Gemma. With the shipped
+# all-local default it refuses to start; set
+# `ai.enrichment_routing.{visual,sentiment,deal_verdict}: gemma` (or `gemini`)
+# and export GEMINI_API_KEY to run it.
 
 # ---------------------------------------------------------------------------
 # Proxy Configuration (scraper HTTP layer — FR-20 / AD-5)

@@ -142,6 +142,46 @@ def test_resolve_cloud_unavailable_for_backfill_degrades(caplog):
 
 
 @pytest.mark.unit
+def test_embedding_is_never_cloud_even_for_backfill_with_a_key(caplog):
+    """Vector-space symmetry: cloud vectors would not match bge-m3 reads.
+
+    ``properties.embedding`` is a vector(1024) written by the local bge-m3 model
+    and read back by cosine search, so a cloud-written vector from a different
+    model lives in a different space and silently stops matching.
+    """
+    cfg = _cfg(
+        {**_DEFAULT_ROUTING, "embedding": "gemma"},
+        backend="ollama",
+        gemini_api_key="secret-key",
+    )
+    with caplog.at_level("WARNING"):
+        got = resolve_enrichment_backend(
+            EnrichmentTaskClass.EMBEDDING, cfg, for_backfill=True
+        )
+    assert got == "ollama"
+    assert any("degraded" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
+def test_embedding_live_path_degrade_is_debug_not_a_warning_flood(caplog):
+    """The live path hits this once per property — WARNING would flood the log.
+
+    Same rule as the ordinary cloud-degrade branch, which the story-1.2 review
+    already demoted to DEBUG.
+    """
+    cfg = _cfg(
+        {**_DEFAULT_ROUTING, "embedding": "gemma"},
+        backend="ollama",
+        gemini_api_key="secret-key",
+    )
+    with caplog.at_level("WARNING"):
+        got = resolve_enrichment_backend(EnrichmentTaskClass.EMBEDDING, cfg)
+
+    assert got == "ollama"
+    assert [rec for rec in caplog.records if rec.levelname == "WARNING"] == []
+
+
+@pytest.mark.unit
 def test_resolve_local_value_honored_even_for_backfill():
     cfg = _cfg({**_DEFAULT_ROUTING, "visual": "lmstudio"}, backend="ollama")
     assert (

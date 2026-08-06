@@ -614,6 +614,29 @@ def test_backfill_from_default_app_config_yaml():
     # v0.13-fu2: measured per-property token cost + TPM headroom.
     assert cfg.backfill.tokens_per_property == 7000
     assert cfg.backfill.tpm_safety_margin == 0.9
+    # v0.13-s1.3: single-instance lease + operator control poll interval.
+    assert cfg.backfill.lease_ttl_seconds == 900
+    assert cfg.backfill.control_poll_seconds == 2.0
+    # Bounded back-off for a provider 429 that is not the daily (RPD) ceiling.
+    assert cfg.backfill.quota_backoff_seconds == 900
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("lease_ttl_seconds", 10),      # shorter than the renew cadence
+        ("control_poll_seconds", 0.0),  # busy-spins the paused loop on Redis
+        ("control_poll_seconds", -1.0),
+        ("quota_backoff_seconds", -1),
+    ],
+)
+def test_backfill_rejects_out_of_range_pacing_values(field, value):
+    """These are pacing knobs against a live provider — bad values are refused."""
+    from src.infra.config import BackfillConfig
+
+    with pytest.raises(ValidationError):
+        BackfillConfig(**{field: value})
 
 
 @pytest.mark.unit

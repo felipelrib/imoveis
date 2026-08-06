@@ -19,16 +19,35 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from enum import Enum
 from typing import Any, Awaitable, Callable, Iterable, Optional, Tuple
 
-from core.enrichment_rerun import evaluate_candidate, mode_is_missing_ai
+from core.enrichment import EnrichmentTaskClass
+from core.enrichment_rerun import (
+    STAGES_ALL,
+    STAGES_VERDICT_ONLY,
+    STAGES_VISUAL_SENTIMENT,
+    evaluate_candidate,
+    mode_is_missing_ai,
+)
 
 # Keep the daily counter around long enough to inspect yesterday's usage.
 _BUDGET_TTL_SECONDS = 2 * 24 * 3600
 # The attempt ledger has to outlive a multi-day pass; refreshed on every write.
 _LEDGER_TTL_SECONDS = 30 * 24 * 3600
+# A pause/stop request outlives the runner that has to observe it (an operator
+# may pause a run that is mid-sleep across a budget window), but never forever.
+_CONTROL_REQUEST_TTL_SECONDS = 7 * 24 * 3600
+# Published state is a liveness signal: it must expire so a crashed runner reads
+# back as ``idle`` instead of a stuck ``running``.
+_STATE_TTL_SECONDS = 120
+# How often a working run re-publishes ``running``. Strictly below the state TTL
+# (a quarter of it), so ``--status`` and story 1.5's API never read a live run
+# back as ``idle`` just because the single startup publish aged out.
+_STATE_REFRESH_SECONDS = _STATE_TTL_SECONDS / 4
 
 EnrichFn = Callable[[Any], Awaitable[None]]
 SleepFn = Callable[[float], Awaitable[None]]
@@ -45,6 +64,10 @@ def _now_utc() -> datetime:
 _WINDOW_SECONDS = 24 * 3600
 
 
+def _decode(value: Any) -> Any:
+    return value.decode() if isinstance(value, bytes) else value
+
+
 def _parse_iso(raw: Any) -> Optional[datetime]:
     if isinstance(raw, bytes):
         raw = raw.decode()
@@ -54,6 +77,49 @@ def _parse_iso(raw: Any) -> Optional[datetime]:
         return datetime.fromisoformat(raw)
     except ValueError:
         return None
+
+
+# Window-roll + reserve + limit-check + rollback in one atomic step. Doing the
+# roll as a separate round-trip from the increment (as the first cut did) lets
+# two writers that both read a stale window each stamp ``count=0`` and wipe the
+# other's reservation, so the counter can drift *below* what was really spent
+# and the RPD cap is overshot. Redis evaluates this whole script atomically.
+#
+# ``start_epoch`` is the machine-comparable twin of the human-readable ``start``
+# ISO stamp (Lua cannot parse ISO-8601): both are written together and always
+# describe the same instant. A hash written before v0.13-s1.3 carries only
+# ``start``; :meth:`DailyBudget._migrate_start_epoch` backfills the twin from it
+# before the first eval, so an upgrade mid-window does not silently roll the
+# window (which would hand the run a second full day's budget inside one real
+# 24h and push the account past the provider's RPD).
+_BUDGET_RESERVE_LUA = """
+local n = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local limit = tonumber(ARGV[4])
+local ttl = tonumber(ARGV[5])
+local now_iso = ARGV[6]
+local start_epoch = tonumber(redis.call('hget', KEYS[1], 'start_epoch'))
+local opened = 0
+local count
+if (start_epoch == nil) or ((now - start_epoch) >= window) then
+  redis.call('hset', KEYS[1], 'count', n, 'start', now_iso, 'start_epoch', now)
+  opened = 1
+  count = n
+else
+  count = redis.call('hincrby', KEYS[1], 'count', n)
+end
+if count > limit then
+  if opened == 1 then
+    redis.call('del', KEYS[1])
+  else
+    redis.call('hincrby', KEYS[1], 'count', -n)
+  end
+  return 0
+end
+redis.call('expire', KEYS[1], ttl)
+return 1
+"""
 
 
 class DailyBudget:
@@ -81,6 +147,27 @@ class DailyBudget:
         self._daily_limit = int(daily_limit)
         self._now_fn = now_fn
         self._key = f"{prefix}:budget"
+        self._epoch_migrated = False
+
+    def _migrate_start_epoch(self) -> None:
+        """Give a pre-v0.13-s1.3 budget hash the ``start_epoch`` Lua reads.
+
+        Without this a live window written by the old code looks like *no*
+        window to :data:`_BUDGET_RESERVE_LUA`, which would roll it and grant a
+        second full day's budget inside one real 24 hours. Checked once per
+        runner: after the first reservation the field is always present.
+        """
+        if self._epoch_migrated:
+            return
+        self._epoch_migrated = True
+        raw = self._redis.hgetall(self._key) or {}
+        decoded = {_decode(k): _decode(v) for k, v in raw.items()}
+        if not decoded or decoded.get("start_epoch"):
+            return
+        start = _parse_iso(decoded.get("start"))
+        if start is None:
+            return
+        self._redis.hset(self._key, mapping={"start_epoch": start.timestamp()})
 
     def _active_window(self, now: datetime) -> tuple[int, Optional[datetime]]:
         """Return ``(count, window_start)`` for the live window, or ``(0, None)``.
@@ -105,19 +192,71 @@ class DailyBudget:
         return max(0, self._daily_limit - self.consumed())
 
     def try_consume(self, n: int) -> bool:
-        """Reserve ``n`` requests; return False (and reserve nothing) if over."""
+        """Reserve ``n`` requests; reserve nothing when that would pass the cap.
+
+        Two branches, and they differ in their guarantees:
+
+        * **Atomic** (the injected client exposes a callable ``eval``, i.e. every
+          real Redis client): :data:`_BUDGET_RESERVE_LUA` does the window roll,
+          the increment, the limit check and the rollback in one server-side
+          step, so two runners (or two coroutines) racing the same counter can
+          neither overshoot the provider's RPD cap nor wipe each other's
+          reservation by both stamping a fresh ``count=0``.
+        * **Fallback** (test doubles and any client without ``eval``): the same
+          sequence as separate round-trips. It is *not* atomic — an interleaved
+          window roll can still lose a reservation — and exists only so the pure
+          logic stays testable against a dict-backed fake.
+
+        Either way, a reservation that opened a fresh window and then failed the
+        limit check deletes the key rather than leaving a phantom zero-count
+        window behind: such a window would report ~24h of
+        :meth:`seconds_until_reset`, which is exactly how ``--continuous`` ended
+        up sleeping a day at a time on a limit it could never satisfy
+        (v0.13-s1.3, AC-1).
+        """
         if n <= 0:
             return True
         now = self._now_fn()
-        count, start = self._active_window(now)
-        if count + n > self._daily_limit:
+        eval_fn = getattr(self._redis, "eval", None)
+        if callable(eval_fn):
+            self._migrate_start_epoch()
+            raw = eval_fn(
+                _BUDGET_RESERVE_LUA,
+                1,
+                self._key,
+                int(n),
+                now.timestamp(),
+                _WINDOW_SECONDS,
+                self._daily_limit,
+                _BUDGET_TTL_SECONDS,
+                now.isoformat(),
+            )
+            try:
+                return int(raw) == 1
+            except (TypeError, ValueError):
+                return bool(raw)
+
+        _, start = self._active_window(now)
+        opened = start is None
+        if opened:
+            # No live window: open a fresh one *before* incrementing so the
+            # increment can never land on a stale (expired-window) count.
+            self._redis.hset(
+                self._key,
+                mapping={
+                    "count": 0,
+                    "start": now.isoformat(),
+                    "start_epoch": now.timestamp(),
+                },
+            )
+        count = int(self._redis.hincrby(self._key, "count", n) or 0)
+        if count > self._daily_limit:
+            if opened:
+                # Never leave a window this call opened and could not use.
+                self._redis.delete(self._key)
+            else:
+                self._redis.hincrby(self._key, "count", -n)  # give it back
             return False
-        if start is None:  # open a fresh window on first reservation
-            start = now
-        self._redis.hset(
-            self._key,
-            mapping={"count": count + n, "start": start.isoformat()},
-        )
         # Expire well after the window so a stale window can't linger forever.
         self._redis.expire(self._key, _BUDGET_TTL_SECONDS)
         return True
@@ -182,6 +321,302 @@ class Heartbeat:
 
     def clear(self) -> None:
         self._redis.delete(self._key)
+
+
+class BackfillState(str, Enum):
+    """Published control state of the backfill runner.
+
+    This is the wire vocabulary the CLI writes and stories 1.5/1.6 (admin API,
+    UI) read. It is *control* state only — never a second progress metric.
+    """
+
+    IDLE = "idle"
+    RUNNING = "running"
+    PAUSED = "paused"
+    BACKING_OFF = "backing-off"
+
+
+# Owner-token CAS scripts. Redis evaluates each atomically, so a runner whose
+# lease already expired (and was taken over) can never extend or delete its
+# successor's lease between the GET and the EXPIRE/DEL.
+_LEASE_RENEW_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('expire', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+_LEASE_RELEASE_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+
+class BackfillLease:
+    """Single-instance mutual exclusion for the backfill runner (AC-1).
+
+    Distinct from :class:`Heartbeat`: the heartbeat (``<prefix>:active``) is the
+    *advisory* signal ``migrate-primary.sh`` observes and stays exactly as it is.
+    This lease (``<prefix>:lease``) is the *enforcing* key — ``SET key token NX
+    EX ttl`` is atomic, so exactly one runner wins, and ``renew``/``release`` are
+    owner-token compare-and-swap. The TTL (not a shutdown hook) is what recovers
+    the lease after a hard kill, so a crashed run self-heals without an operator.
+
+    A companion ``<prefix>:lease:meta`` hash carries human-facing provenance
+    (who holds it, since when, last seen) for the refusal message. It is
+    advisory decoration: correctness rests entirely on the token in the lease key.
+    """
+
+    def __init__(
+        self,
+        redis: Any,
+        *,
+        prefix: str,
+        ttl_seconds: int = 900,
+        token: Optional[str] = None,
+        owner: str = "",
+        now_fn: Callable[[], datetime] = _now_utc,
+    ) -> None:
+        self._redis = redis
+        self._key = f"{prefix}:lease"
+        self._meta_key = f"{prefix}:lease:meta"
+        self._ttl = max(1, int(ttl_seconds))
+        self._token = token or uuid.uuid4().hex
+        self._owner = owner
+        self._now_fn = now_fn
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    @property
+    def ttl_seconds(self) -> int:
+        return self._ttl
+
+    def _write_meta(self, *, acquired: bool) -> None:
+        stamp = self._now_fn().isoformat()
+        mapping = {"token": self._token, "last_seen": stamp}
+        if acquired:
+            mapping["acquired_at"] = stamp
+            mapping["owner"] = self._owner or "unknown"
+        self._redis.hset(self._meta_key, mapping=mapping)
+        self._redis.expire(self._meta_key, self._ttl * 4)
+
+    def acquire(self) -> bool:
+        """Atomically take the lease. False means someone else holds it."""
+        ok = bool(self._redis.set(self._key, self._token, nx=True, ex=self._ttl))
+        if ok:
+            self._write_meta(acquired=True)
+        return ok
+
+    def _cas(self, script: str, *args: Any) -> bool:
+        """Run an owner-token CAS, atomically when the client supports ``eval``."""
+        eval_fn = getattr(self._redis, "eval", None)
+        if callable(eval_fn):
+            raw = eval_fn(script, 1, self._key, self._token, *args)
+            try:
+                return int(raw) == 1
+            except (TypeError, ValueError):
+                return bool(raw)
+        # Fallback: guarded check-then-act. Not atomic, but still token-guarded —
+        # the window is bounded by the lease TTL, which is minutes wide.
+        if _decode(self._redis.get(self._key)) != self._token:
+            return False
+        if script is _LEASE_RELEASE_LUA:
+            self._redis.delete(self._key)
+        else:
+            self._redis.expire(self._key, self._ttl)
+        return True
+
+    def renew(self) -> bool:
+        """Extend the TTL iff this process still owns the lease."""
+        ok = self._cas(_LEASE_RENEW_LUA, self._ttl)
+        if ok:
+            self._write_meta(acquired=False)
+        return ok
+
+    def release(self) -> bool:
+        """Drop the lease iff this process still owns it."""
+        return self._cas(_LEASE_RELEASE_LUA)
+
+    def is_held_by_self(self) -> bool:
+        return _decode(self._redis.get(self._key)) == self._token
+
+    def holder(self) -> Optional[dict[str, Any]]:
+        """Who holds the lease right now, or None when it is free."""
+        token = _decode(self._redis.get(self._key))
+        if not token:
+            return None
+        raw = self._redis.hgetall(self._meta_key) or {}
+        meta = {_decode(k): _decode(v) for k, v in raw.items()}
+        if meta.get("token") != token:
+            meta = {}  # stale decoration from a previous holder — ignore it
+        last_seen = _parse_iso(meta.get("last_seen"))
+        age = None
+        if last_seen is not None:
+            age = max(0.0, (self._now_fn() - last_seen).total_seconds())
+        return {
+            "token": str(token),
+            "owner": meta.get("owner", "unknown"),
+            "acquired_at": meta.get("acquired_at"),
+            "last_seen": meta.get("last_seen"),
+            "seconds_since_last_seen": age,
+            "is_self": str(token) == self._token,
+        }
+
+
+class BackfillControl:
+    """Pause / resume / stop requests plus the published runner state.
+
+    Requests are single keys (``<prefix>:control:pause`` / ``:stop``) rather than
+    a queue: they are *levels*, not events, so a second pause is idempotent and a
+    runner that starts later still observes an outstanding request. The state key
+    is published with a short TTL, so a crashed runner decays to ``idle``.
+
+    Story 1.5's admin endpoints construct the same object against the same keys —
+    one control path, never a second one (AD-13).
+    """
+
+    def __init__(
+        self,
+        redis: Any,
+        *,
+        prefix: str,
+        state_ttl_seconds: int = _STATE_TTL_SECONDS,
+        request_ttl_seconds: int = _CONTROL_REQUEST_TTL_SECONDS,
+    ) -> None:
+        self._redis = redis
+        self._pause_key = f"{prefix}:control:pause"
+        self._stop_key = f"{prefix}:control:stop"
+        self._state_key = f"{prefix}:state"
+        self._state_ttl = max(1, int(state_ttl_seconds))
+        self._request_ttl = max(1, int(request_ttl_seconds))
+
+    def request_pause(self) -> None:
+        self._redis.set(self._pause_key, "1", ex=self._request_ttl)
+
+    def request_resume(self) -> None:
+        self._redis.delete(self._pause_key)
+
+    def request_stop(self) -> None:
+        self._redis.set(self._stop_key, "1", ex=self._request_ttl)
+
+    def clear_requests(self) -> None:
+        """Drop stale pause/stop requests (a fresh run starts unencumbered)."""
+        self._redis.delete(self._pause_key)
+        self._redis.delete(self._stop_key)
+
+    def is_paused(self) -> bool:
+        return bool(self._redis.get(self._pause_key))
+
+    def should_stop(self) -> bool:
+        return bool(self._redis.get(self._stop_key))
+
+    def publish_state(self, state: BackfillState) -> None:
+        self._redis.set(self._state_key, BackfillState(state).value, ex=self._state_ttl)
+
+    def state(self) -> BackfillState:
+        raw = _decode(self._redis.get(self._state_key))
+        try:
+            return BackfillState(raw)
+        except ValueError:
+            return BackfillState.IDLE
+
+
+# The task classes a cloud backfill drives by default: exactly the three stages
+# ``run_enrichment`` performs. VALUATION is statistical (no model call) and
+# EMBEDDING is never cloud-eligible (vector-space symmetry).
+DEFAULT_BACKFILL_SCOPE = frozenset(
+    {
+        EnrichmentTaskClass.VISUAL,
+        EnrichmentTaskClass.SENTIMENT,
+        EnrichmentTaskClass.DEAL_VERDICT,
+    }
+)
+
+# Scope (story 1.1 vocabulary) → the legacy ``stages`` literal that
+# ``fetch_candidate_rows`` / ``run_enrichment`` still speak. The translation
+# lives here, at the edge, so the runner and CLI only ever handle task classes.
+_STAGES_BY_SCOPE: dict[frozenset, str] = {
+    DEFAULT_BACKFILL_SCOPE: STAGES_ALL,
+    frozenset(
+        {EnrichmentTaskClass.VISUAL, EnrichmentTaskClass.SENTIMENT}
+    ): STAGES_VISUAL_SENTIMENT,
+    frozenset({EnrichmentTaskClass.DEAL_VERDICT}): STAGES_VERDICT_ONLY,
+}
+
+
+def parse_task_classes(raw: Any) -> frozenset:
+    """Parse a comma-separated string (or iterable) into task classes."""
+    items = raw.split(",") if isinstance(raw, str) else list(raw or [])
+    known = ", ".join(tc.value for tc in EnrichmentTaskClass)
+    out = set()
+    for item in items:
+        name = str(_decode(item)).strip().lower()
+        if not name:
+            continue
+        try:
+            out.add(EnrichmentTaskClass(name))
+        except ValueError as exc:
+            raise ValueError(
+                f"unknown enrichment task class '{name}' (expected one of {known})"
+            ) from exc
+    if not out:
+        raise ValueError(f"no enrichment task classes given (expected one of {known})")
+    return frozenset(out)
+
+
+def stages_for_task_classes(task_classes: Iterable) -> str:
+    """Translate a backfill scope onto the supported ``stages`` literal."""
+    scope = frozenset(EnrichmentTaskClass(tc) for tc in task_classes)
+    if not scope:
+        raise ValueError("empty backfill scope: at least one task class is required")
+    try:
+        return _STAGES_BY_SCOPE[scope]
+    except KeyError:
+        supported = " | ".join(
+            "{" + ", ".join(sorted(tc.value for tc in combo)) + "}"
+            for combo in _STAGES_BY_SCOPE
+        )
+        raise ValueError(
+            "unsupported backfill scope "
+            "{" + ", ".join(sorted(tc.value for tc in scope)) + "}"
+            f"; supported combinations are {supported}"
+        ) from None
+
+
+# Substrings that identify a provider quota/rate-limit refusal in an exception
+# the adapter layer did not tag. The duck-typed flag is the contract; this is the
+# safety net for a transport that raises a plain error.
+_QUOTA_MARKERS = (
+    "resource_exhausted",
+    "quota exceeded",
+    "quota exhausted",
+    "too many requests",
+    "rate limit exceeded",
+)
+
+
+def is_quota_exhausted(exc: BaseException) -> bool:
+    """True when ``exc`` means the provider's quota/rate limit is spent.
+
+    Duck-typed on purpose: ``src/core`` must not import ``adapters`` (AD-1), so
+    the distinguished ``AIQuotaExhaustedError`` is recognised by its
+    ``is_quota_exhausted`` class attribute (and, as a fallback, its class name /
+    message) rather than by ``isinstance``.
+    """
+    if getattr(exc, "is_quota_exhausted", False):
+        return True
+    if type(exc).__name__ == "AIQuotaExhaustedError":
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _QUOTA_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -251,10 +686,6 @@ class QueueCensus:
         }
 
 
-def _decode(value: Any) -> Any:
-    return value.decode() if isinstance(value, bytes) else value
-
-
 class AttemptLedger:
     """Persistent per-property attempt counter that retires rows that never clear.
 
@@ -299,6 +730,21 @@ class AttemptLedger:
     def record_attempt(self, property_id: str) -> int:
         """Increment and return this row's attempt count."""
         count = int(self._redis.hincrby(self._attempts_key, str(property_id), 1))
+        self._touch(self._attempts_key)
+        return count
+
+    def rollback_attempt(self, property_id: str) -> int:
+        """Undo one recorded attempt and return the remaining count.
+
+        A row whose call died on a provider quota refusal was never really
+        attempted — nothing was scored and nothing was written — so charging it
+        an attempt would march an innocent row towards quarantine across a
+        multi-day run that merely ran out of budget (v0.13-s1.3, AC-2).
+        """
+        count = int(self._redis.hincrby(self._attempts_key, str(property_id), -1) or 0)
+        if count <= 0:
+            self._redis.hdel(self._attempts_key, str(property_id))
+            return 0
         self._touch(self._attempts_key)
         return count
 
@@ -406,6 +852,16 @@ class BackfillResult:
     errors: int = 0
     requests_consumed: int = 0
     budget_exhausted: bool = False
+    # The provider refused on quota: back off, do not treat rows as failed.
+    quota_exhausted: bool = False
+    # An operator asked the run to stop (CLI flag, signal, or story 1.5's API).
+    stopped: bool = False
+    # The single-instance lease was lost mid-run (renew() came back False):
+    # another runner may already own the queue, so this one stopped launching
+    # rather than become a second writer.
+    lease_lost: bool = False
+    # Wall-clock seconds the launch loop spent held by a pause request.
+    paused_seconds: float = 0.0
     last_property_id: Optional[str] = None
     error_ids: list[str] = field(default_factory=list)
     # How often (and how long) the TPM limiter held launches back — the signal
@@ -422,6 +878,10 @@ class BackfillResult:
             "errors": self.errors,
             "requests_consumed": self.requests_consumed,
             "budget_exhausted": self.budget_exhausted,
+            "quota_exhausted": self.quota_exhausted,
+            "stopped": self.stopped,
+            "lease_lost": self.lease_lost,
+            "paused_seconds": round(self.paused_seconds, 1),
             "last_property_id": self.last_property_id,
             "tpm_waits": self.tpm_waits,
             "tpm_wait_seconds": round(self.tpm_wait_seconds, 1),
@@ -564,6 +1024,10 @@ async def run_backfill(
     sleep_fn: SleepFn = asyncio.sleep,
     clock: Callable[[], float] = time.monotonic,
     on_progress: Optional[Callable[[BackfillResult], None]] = None,
+    control: Optional[BackfillControl] = None,
+    lease: Optional[BackfillLease] = None,
+    is_quota_error: Optional[Callable[[BaseException], bool]] = is_quota_exhausted,
+    pause_poll_seconds: float = 2.0,
 ) -> BackfillResult:
     """Enrich candidate ``(property, metrics)`` rows, up to ``concurrency`` at once.
 
@@ -587,6 +1051,25 @@ async def run_backfill(
     records an attempt, errors record their reason, and a row that has been
     attempted ``max_attempts`` times without leaving the candidate set is skipped
     for free from then on instead of burning budget every cycle.
+
+    An optional ``control`` makes the run interruptible: a pause request holds
+    the launch loop (already-launched rows still finish) and a stop request ends
+    it, both without losing the checkpoint.
+
+    An optional ``lease`` is renewed **here** — once per launch-loop iteration
+    and once per pause poll — rather than by the caller's ``on_progress`` hook.
+    That hook only fired on rows, so a storm of failing rows or a long pause
+    could let the lease lapse and a second runner start. When ``renew()`` returns
+    ``False`` this process no longer owns the lease: another runner may already
+    be working the same queue, so launching anything further would make this a
+    second writer. It stops launching immediately, flags
+    :attr:`BackfillResult.lease_lost`, and lets already-launched rows drain.
+
+    ``is_quota_error`` classifies a row
+    failure as *provider quota spent* rather than *this row is bad*: such a row
+    costs no error, no ledger attempt and no checkpoint advance — nothing was
+    written for it — and the run stops launching so the caller can back off
+    (v0.13-s1.3, AC-2). Pass ``is_quota_error=None`` to disable the distinction.
     """
     if dry_run:
         return _run_dry(
@@ -604,25 +1087,116 @@ async def run_backfill(
     sem = asyncio.Semaphore(max(1, concurrency))
     tasks: list[asyncio.Task] = []
 
+    last_state_publish = clock()
+
+    def _publish(state: BackfillState) -> None:
+        nonlocal last_state_publish
+        if control is not None:
+            control.publish_state(state)
+            last_state_publish = clock()
+
+    def _refresh_running() -> None:
+        """Keep the published ``running`` state alive while work is happening.
+
+        The state key has a 120s TTL so a crashed runner decays to ``idle``;
+        publishing it only once at start-up therefore made any run of real
+        length read back as ``idle`` from ``--status`` and story 1.5's API.
+        """
+        if control is not None and clock() - last_state_publish >= _STATE_REFRESH_SECONDS:
+            _publish(BackfillState.RUNNING)
+
+    def _lease_held() -> bool:
+        """Renew the lease. False = we lost it; stop launching immediately."""
+        if lease is None:
+            return True
+        if lease.renew():
+            return True
+        result.lease_lost = True
+        _log_lease_lost()
+        return False
+
+    _publish(BackfillState.RUNNING)
+
     async def _worker(prop: Any) -> None:
+        pid = str(getattr(prop, "id", "?"))
         try:
             await enrich_fn(prop)
         except Exception as exc:  # noqa: BLE001 - one bad row must not abort
-            result.errors += 1
-            result.error_ids.append(str(getattr(prop, "id", "?")))
-            if ledger is not None:
-                ledger.record_error(str(getattr(prop, "id", "?")), str(exc))
-            _log_row_error(prop, exc)
+            if is_quota_error is not None and is_quota_error(exc):
+                # The provider is out of quota: this row was never scored and
+                # nothing was persisted for it. Charging an error (or an attempt)
+                # would blame the row for the account's ceiling and eventually
+                # quarantine a perfectly good property. Back off instead.
+                result.quota_exhausted = True
+                result.budget_exhausted = True
+                if ledger is not None:
+                    ledger.rollback_attempt(pid)
+                _publish(BackfillState.BACKING_OFF)
+                _log_quota_backoff(prop, exc)
+            else:
+                result.errors += 1
+                result.error_ids.append(pid)
+                if ledger is not None:
+                    ledger.record_error(pid, str(exc))
+                _log_row_error(prop, exc)
         else:
             result.processed += 1
             result.last_property_id = str(getattr(prop, "id", ""))
             checkpoint.advance(result.last_property_id)
+        finally:
+            # Every finished row ticks progress — success, hard error *and*
+            # quota refusal. Ticking only on success meant a storm of failing
+            # rows never refreshed the caller's heartbeat.
             if on_progress is not None:
                 on_progress(result)
-        finally:
             sem.release()
 
+    async def _may_launch() -> bool:
+        """Honor pause/stop. False means: stop launching new rows.
+
+        A pause holds the loop here rather than ending the run, so in-flight
+        rows finish and the checkpoint stays exactly where it was. The lease is
+        renewed on every poll so an arbitrarily long pause can never let it
+        lapse; ``on_progress`` is deliberately *not* ticked here — the caller's
+        hook beats the advisory ``:active`` heartbeat, and a paused runner that
+        keeps beating it blocks ``migrate-primary.sh`` forever, defeating the
+        main reason an operator pauses.
+        """
+        if control is None:
+            return True
+        if control.should_stop():
+            return False
+        if not control.is_paused():
+            return True
+        _publish(BackfillState.PAUSED)
+        paused_at = clock()
+        try:
+            while control.is_paused():
+                if control.should_stop():
+                    return False
+                if not _lease_held():
+                    return False
+                await sleep_fn(pause_poll_seconds)
+        finally:
+            result.paused_seconds += max(0.0, clock() - paused_at)
+        _publish(BackfillState.RUNNING)
+        return True
+
     for prop, metrics in rows:
+        # A quota refusal means every further launch would 429 too — and each
+        # retry burns daily request quota. Stop launching immediately.
+        if result.quota_exhausted:
+            break
+        # Renewing here (not in ``on_progress``) means the lease is refreshed
+        # even through rows that only ever fail.
+        if not _lease_held():
+            break
+        if not await _may_launch():
+            # A lost lease is not an operator stop — do not mislabel it.
+            if not result.lease_lost:
+                result.stopped = True
+            break
+        _refresh_running()
         # Idempotency: skip rows a concurrent live worker already enriched,
         # unless the operator forces a re-run.
         if not force and not mode_is_missing_ai(metrics):
@@ -652,11 +1226,18 @@ async def run_backfill(
                 await sleep_fn(tpm_wait)
             token_budget.reserve()
 
+        await sem.acquire()  # bound in-flight properties to ``concurrency``
+        # Waiting for a slot is the point at which an in-flight worker can have
+        # discovered the provider is out of quota. Re-check before spending
+        # anything on this row: budget reserved here would never be used.
+        if result.quota_exhausted:
+            sem.release()
+            break
         if not budget.try_consume(requests_per_property):
+            sem.release()
             result.budget_exhausted = True
             break
 
-        await sem.acquire()  # bound in-flight properties to ``concurrency``
         if ledger is not None:
             # Count the attempt, not just failures: a row that enriches to a
             # falsy ai_score stays a ``mode=missing`` candidate and would
@@ -669,6 +1250,14 @@ async def run_backfill(
 
     if tasks:
         await asyncio.gather(*tasks)
+    # A quota-exhausted run stays "backing-off" for the operator/API to see;
+    # anything else (including an operator stop) has genuinely gone idle. A run
+    # that lost its lease publishes nothing: the state key now describes whoever
+    # took the lease over, and stamping ``idle`` on it would erase their liveness.
+    if not result.lease_lost:
+        _publish(
+            BackfillState.BACKING_OFF if result.quota_exhausted else BackfillState.IDLE
+        )
     return result
 
 
@@ -677,6 +1266,25 @@ def _log_row_error(prop: Any, exc: Exception) -> None:
 
     get_logger(__name__).warning(
         "backfill_row_error",
+        property_id=str(getattr(prop, "id", "?")),
+        error=str(exc),
+    )
+
+
+def _log_lease_lost() -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_lease_lost",
+        reason="renew refused — another runner may hold the lease; stopped launching",
+    )
+
+
+def _log_quota_backoff(prop: Any, exc: Exception) -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_quota_exhausted",
         property_id=str(getattr(prop, "id", "?")),
         error=str(exc),
     )
