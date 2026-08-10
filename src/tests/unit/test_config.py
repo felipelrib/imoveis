@@ -626,9 +626,16 @@ def test_backfill_from_default_app_config_yaml():
     "field,value",
     [
         ("lease_ttl_seconds", 10),      # shorter than the renew cadence
+        # Renewal rides on row completions, so a TTL under the worst-case
+        # single-property latency expires under a live run — the exact failure
+        # the lease exists to prevent. The old ge=30 floor allowed it.
+        ("lease_ttl_seconds", 60),
         ("control_poll_seconds", 0.0),  # busy-spins the paused loop on Redis
         ("control_poll_seconds", -1.0),
         ("quota_backoff_seconds", -1),
+        # ``0`` reads as "no cap" but means *no back-off at all*: a provider
+        # refusal becomes a tight retry loop against a throttled account.
+        ("quota_backoff_seconds", 0),
     ],
 )
 def test_backfill_rejects_out_of_range_pacing_values(field, value):
@@ -637,6 +644,22 @@ def test_backfill_rejects_out_of_range_pacing_values(field, value):
 
     with pytest.raises(ValidationError):
         BackfillConfig(**{field: value})
+
+
+@pytest.mark.unit
+def test_backfill_control_poll_must_stay_well_under_the_lease_ttl():
+    """The lease is renewed once per poll, so the *ratio* is what matters.
+
+    Each field passed its own floor here, but a poll that slow lets the lease
+    expire under a paused (or budget-waiting) runner and a second one start.
+    """
+    from src.infra.config import BackfillConfig
+
+    with pytest.raises(ValidationError):
+        BackfillConfig(lease_ttl_seconds=300, control_poll_seconds=200.0)
+
+    # The shipped defaults are comfortably inside the ratio.
+    assert BackfillConfig().control_poll_seconds < BackfillConfig().lease_ttl_seconds / 3
 
 
 @pytest.mark.unit

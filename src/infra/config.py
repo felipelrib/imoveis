@@ -163,10 +163,12 @@ class BackfillConfig(BaseModel, frozen=True):
     # the TTL — not a shutdown hook — is what releases the lease after a hard
     # kill, so a crashed run self-heals within this many seconds without any
     # operator action. Too short risks a live run losing its lease mid-pause.
-    # Floor of 30s: a TTL shorter than the renew cadence would expire under a
-    # live run and let a second runner in — the exact failure the lease exists
-    # to prevent.
-    lease_ttl_seconds: int = Field(default=900, ge=30)
+    # Floor of 300s: renewal is driven by row completions and pause polls, so
+    # the TTL must comfortably exceed the worst-case time to enrich a *single*
+    # property (3 cloud calls plus image downloads, each with client-side 429
+    # retries). A 30s floor was accepted while claiming to prevent exactly the
+    # expiry-under-a-live-run it allowed.
+    lease_ttl_seconds: int = Field(default=900, ge=300)
     # How often a paused runner re-checks the pause/stop control keys, and how
     # often the CLI wakes to renew its lease while sleeping out a budget window.
     # Must be > 0: a zero poll turns the paused loop into a Redis busy-spin.
@@ -176,7 +178,31 @@ class BackfillConfig(BaseModel, frozen=True):
     # usually a per-minute (RPM/TPM) throttle, not the per-day (RPD) ceiling, so
     # sleeping to the local window reset (up to ~24h) would idle the runner for
     # a day over a minute-scale limit. Caps that wait instead.
-    quota_backoff_seconds: int = Field(default=900, ge=0)
+    # Floor of 60s: ``0`` read as "no cap" but actually meant *no back-off at
+    # all*, turning a provider refusal into a tight retry loop that re-spends
+    # the client's retry budget against an account that is already throttled.
+    quota_backoff_seconds: int = Field(default=900, ge=60)
+
+    @model_validator(mode="after")
+    def _poll_stays_under_lease_ttl(self) -> "BackfillConfig":
+        """Renewal rides on the poll, so the poll must be far below the TTL.
+
+        Both the paused launch loop and the CLI's budget-window sleep renew the
+        lease once per poll. A poll interval anywhere near ``lease_ttl_seconds``
+        therefore lets the lease lapse under a live (paused or waiting) runner
+        and a second one start — the exact thing the lease exists to prevent.
+        The individual field floors could not catch this: it is the *ratio* that
+        is wrong.
+        """
+        ceiling = self.lease_ttl_seconds / 3.0
+        if self.control_poll_seconds >= ceiling:
+            raise ValueError(
+                f"backfill.control_poll_seconds ({self.control_poll_seconds}) must "
+                f"stay below lease_ttl_seconds/3 ({ceiling:.0f}s): the lease is "
+                f"renewed once per poll, so a slower poll lets it expire under a "
+                f"live runner"
+            )
+        return self
 
 
 class AIConfig(BaseModel, frozen=True):

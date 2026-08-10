@@ -19,6 +19,7 @@ from core.backfill_runner import (
     _BUDGET_RESERVE_LUA,
     _LEASE_RELEASE_LUA,
     _LEASE_RENEW_LUA,
+    _STATE_REFRESH_SECONDS,
     DEFAULT_BACKFILL_SCOPE,
     AttemptLedger,
     BackfillControl,
@@ -198,6 +199,10 @@ class _ScriptedControl:
 
     def publish_state(self, state):
         self.states.append(state)
+
+    @property
+    def refresh_interval_seconds(self):
+        return _STATE_REFRESH_SECONDS
 
 
 class _QuotaError(RuntimeError):
@@ -1056,3 +1061,512 @@ def test_run_backfill_without_control_is_unchanged():
     assert result.stopped is False
     assert result.paused_seconds == 0.0
     assert result.to_dict()["quota_exhausted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass (v0.13-s1.3): regressions for the review-driven fixes
+# ---------------------------------------------------------------------------
+
+
+def test_raising_progress_hook_does_not_wedge_the_launch_loop():
+    """A caller-supplied hook must never skip ``sem.release()``.
+
+    ``on_progress`` used to run *before* the release in the worker's ``finally``
+    without a guard, so a hook that raised left the semaphore permanently down.
+    With ``concurrency=1`` the launch loop then blocked on ``sem.acquire()``
+    forever — holding the lease, renewing nothing, and hanging rather than
+    failing. The run must still finish every row.
+    """
+    r = FakeRedis()
+    seen = []
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    def exploding_hook(_res):
+        raise RuntimeError("bookkeeping backend is down")
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(3),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=1,
+                sleep_fn=_noop_sleep,
+                on_progress=exploding_hook,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert seen == ["prop-0", "prop-1", "prop-2"]
+    assert result.processed == 3
+
+
+def test_worker_renews_the_lease_so_the_final_drain_is_covered():
+    """The launch loop stops renewing once it breaks — the drain must not.
+
+    Renewing only per launch-loop iteration left the closing
+    ``asyncio.gather`` running on a lease nobody refreshed.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=900)
+    assert lease.acquire()
+    renewals = []
+
+    original_renew = lease.renew
+
+    def counting_renew():
+        renewals.append(1)
+        return original_renew()
+
+    lease.renew = counting_renew  # type: ignore[method-assign]
+
+    async def enrich(_prop):
+        return None
+
+    asyncio.run(
+        run_backfill(
+            _rows(2),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            lease=lease,
+        )
+    )
+
+    # 2 launch-loop ticks + 2 worker ticks: strictly more than the loop alone.
+    assert len(renewals) > 2
+
+
+def test_lease_tick_failure_in_a_worker_never_aborts_the_run():
+    """A Redis blip on the *worker's* renew must not abandon in-flight rows.
+
+    The worker tick lives in the same ``finally`` as ``sem.release()``, so a
+    raise there would strand the semaphore and wedge the launch loop. The
+    launch-loop tick is deliberately left unguarded — it runs between rows, with
+    nothing in flight to strand.
+    """
+    r = FakeRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=900)
+    assert lease.acquire()
+    just_enriched = {"flag": False}
+
+    def flaky_renew():
+        if just_enriched["flag"]:
+            just_enriched["flag"] = False
+            raise ConnectionError("redis blip")
+        return True
+
+    lease.renew = flaky_renew  # type: ignore[method-assign]
+
+    async def enrich(_prop):
+        just_enriched["flag"] = True
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(3),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            lease=lease,
+        )
+    )
+
+    assert result.processed == 3
+    assert result.lease_lost is False
+
+
+def test_paused_state_is_republished_before_the_key_can_decay():
+    """A pause longer than the state TTL must not read back as ``idle``.
+
+    ``publish_state`` writes with a 120s TTL, so publishing ``paused`` once made
+    a long hold look like a dead runner to ``--status`` and story 1.5's API.
+    """
+    from core.backfill_runner import _STATE_REFRESH_SECONDS
+
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    control.request_pause()
+    ticks = {"n": 0}
+
+    # Each poll advances the clock past the refresh interval; the third poll
+    # lifts the pause so the run can finish.
+    def clock():
+        return ticks["n"] * (_STATE_REFRESH_SECONDS + 1)
+
+    async def sleep_fn(_):
+        ticks["n"] += 1
+        if ticks["n"] >= 3:
+            control.request_resume()
+
+    published = []
+    original_publish = control.publish_state
+
+    def recording_publish(state):
+        published.append(state)
+        original_publish(state)
+
+    control.publish_state = recording_publish  # type: ignore[method-assign]
+
+    async def enrich(_prop):
+        return None
+
+    asyncio.run(
+        run_backfill(
+            _rows(1),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=sleep_fn,
+            clock=clock,
+            control=control,
+            pause_poll_seconds=0.0,
+        )
+    )
+
+    assert published.count(BackfillState.PAUSED) > 1
+
+
+def test_request_resume_clears_a_pending_stop_too():
+    """"Resume" means both keys — story 1.5 calls this method, not the CLI's.
+
+    Clearing only the pause key left an outstanding stop in force, so the runner
+    resumed and immediately stopped while the caller was told it would continue.
+    """
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    control.request_pause()
+    control.request_stop()
+
+    control.request_resume()
+
+    assert control.is_paused() is False
+    assert control.should_stop() is False
+
+
+def test_clear_stop_retires_a_served_request():
+    """A honored stop must not linger and be re-reported as pending."""
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    control.request_pause()
+    control.request_stop()
+
+    control.clear_stop()
+
+    assert control.should_stop() is False
+    assert control.is_paused() is True  # only the stop was retired
+
+
+def test_lease_cas_reply_as_bytes_is_not_read_as_success():
+    """``bool(b"0")`` is ``True`` — a refused renew must not read as owned.
+
+    The decode fallback turned a *lost* lease into a held one for any client
+    handing back the Lua reply as bytes: two writers, silently.
+    """
+
+    class BytesReplyRedis(FakeRedis):
+        def eval(self, script, numkeys, key, *args):
+            return b"0"
+
+    r = BytesReplyRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=900)
+
+    assert lease.renew() is False
+    assert lease.release() is False
+
+
+def test_budget_reply_as_bytes_is_not_read_as_a_reservation():
+    """Same decode trap on the budget's atomic branch."""
+
+    class BytesReplyRedis(FakeRedis):
+        def eval(self, script, numkeys, key, *args):
+            return b"0"
+
+    budget = _budget(BytesReplyRedis(), 100)
+
+    assert budget.try_consume(3) is False
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass 3 (v0.13-s1.3)
+# ---------------------------------------------------------------------------
+
+
+def test_launch_loop_failure_still_drains_in_flight_rows():
+    """A Redis blip in the loop must not abandon rows already launched.
+
+    Every control/budget/ledger read in the launch loop can raise. Letting that
+    escape with tasks pending left ``asyncio.run`` to cancel in-flight
+    enrichments at an arbitrary await point — mid-call, mid-write. The drain is
+    now a ``finally``.
+    """
+    r = FakeRedis()
+    finished = []
+
+    async def enrich(prop):
+        await asyncio.sleep(0)
+        finished.append(prop.id)
+
+    class ExplodingControl(_ScriptedControl):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def should_stop(self):
+            self.calls += 1
+            if self.calls > 1:  # blows up while row 0 is still in flight
+                raise ConnectionError("redis went away")
+            return False
+
+    async def _go():
+        with pytest.raises(ConnectionError):
+            await run_backfill(
+                _rows(3),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=2,
+                sleep_fn=_noop_sleep,
+                control=ExplodingControl(),
+            )
+
+    asyncio.run(asyncio.wait_for(_go(), timeout=5))
+
+    # Row 0 was launched before the failure and must have been awaited, not
+    # cancelled on the way out.
+    assert finished == ["prop-0"]
+
+
+def test_a_worker_exception_does_not_abandon_its_siblings():
+    """``checkpoint.advance`` runs outside the worker's ``except``.
+
+    A Redis error there escapes ``_worker``; a bare ``gather`` would abort on it
+    and leave the remaining rows pending.
+    """
+    r = FakeRedis()
+    done = []
+
+    class OneShotCheckpoint(Checkpoint):
+        def advance(self, property_id):
+            if property_id == "prop-0":
+                raise ConnectionError("checkpoint write failed")
+            done.append(property_id)
+
+    async def enrich(prop):
+        await asyncio.sleep(0)
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(3),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=OneShotCheckpoint(r, prefix="t"),
+                requests_per_property=3,
+                concurrency=3,
+                sleep_fn=_noop_sleep,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert done == ["prop-1", "prop-2"]  # siblings still completed
+    assert result.processed == 3
+
+
+def test_a_slow_row_does_not_let_the_state_key_decay_to_idle():
+    """One row longer than the state TTL made a live run read back ``idle``.
+
+    The launch loop refreshes state once per launch, so with ``concurrency=1``
+    the refresh cadence is the *row* duration. The worker's tick now refreshes
+    it too.
+    """
+    r = FakeRedis()
+    control = _ScriptedControl()
+    # Clock jumps 10 minutes per read: every row outlives the 120s state TTL.
+    ticks = iter([600.0 * i for i in range(200)])
+
+    async def enrich(prop):
+        return None
+
+    asyncio.run(
+        run_backfill(
+            _rows(3),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            concurrency=1,
+            sleep_fn=_noop_sleep,
+            control=control,
+            clock=lambda: next(ticks),
+        )
+    )
+
+    # One publish per row at least, not a single start-up publish.
+    assert len([s for s in control.states if s is BackfillState.RUNNING]) >= 3
+
+
+def test_the_worker_tick_never_stamps_running_over_a_pause():
+    """The refresh re-publishes the *current* state, not a hardcoded ``running``.
+
+    Driving the state refresh from a worker's ``finally`` is what keeps a slow
+    row from letting the key decay — but a row that finishes while the operator
+    has the run paused must not stamp ``running`` over the ``paused`` the launch
+    loop published.
+    """
+    r = FakeRedis()
+    gate = asyncio.Event()
+    ticks = iter([600.0 * i for i in range(200)])
+
+    class _PauseAfterFirstLaunch(_ScriptedControl):
+        def __init__(self):
+            super().__init__()
+            self.checks = 0
+            self.stop = False
+
+        def is_paused(self):
+            self.checks += 1
+            return self.checks > 1  # row 0 launches, then the operator pauses
+
+        def should_stop(self):
+            return self.stop
+
+    control = _PauseAfterFirstLaunch()
+    polls = {"n": 0}
+
+    async def sleeper(_):
+        polls["n"] += 1
+        if polls["n"] == 1:
+            gate.set()  # the in-flight row completes *during* the pause
+        elif polls["n"] >= 3:
+            control.stop = True
+        await asyncio.sleep(0)
+
+    async def enrich(prop):
+        await gate.wait()
+
+    asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(3),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=2,
+                sleep_fn=sleeper,
+                control=control,
+                clock=lambda: next(ticks),
+            ),
+            timeout=5,
+        )
+    )
+
+    first_pause = control.states.index(BackfillState.PAUSED)
+    after = control.states[first_pause:]
+    assert BackfillState.RUNNING not in after  # only paused, then idle on exit
+
+
+def test_state_refresh_follows_a_custom_control_ttl():
+    """Story 1.5 constructs its own control; a shorter TTL must refresh faster."""
+    control = BackfillControl(FakeRedis(), prefix="t", state_ttl_seconds=20)
+
+    assert control.state_ttl_seconds == 20
+    assert control.refresh_interval_seconds < 20
+
+
+def test_a_non_positive_pause_poll_cannot_busy_spin():
+    """``AppConfig`` guards the CLI's value; core guards its own loop."""
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    control.request_pause()
+    waits = []
+
+    async def sleeper(seconds):
+        waits.append(seconds)
+        if len(waits) >= 2:
+            control.request_stop()
+
+    async def enrich(prop):
+        return None
+
+    asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(1),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                sleep_fn=sleeper,
+                control=control,
+                pause_poll_seconds=0.0,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert waits and all(w > 0 for w in waits)
+
+
+def test_non_atomic_renew_reports_an_already_expired_lease():
+    """``EXPIRE`` returns 0 when the key is gone — that is not a renewal.
+
+    The fallback path returned an unconditional ``True``, so a runner whose
+    lease had already lapsed kept writing while a successor held it.
+    """
+    r = FakeRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    assert lease.renew() is True
+
+    r.kv.pop("t:lease")  # TTL fired between the GET and the EXPIRE
+
+    assert lease.renew() is False
+
+
+def test_acquire_keeps_the_lease_usable_when_the_meta_write_fails():
+    """The meta hash is decoration; a blip there must not orphan the lease.
+
+    ``SET NX`` had already taken the lease, so an exception out of ``acquire()``
+    (before the caller's ``try/finally`` exists) locked the next run out for the
+    whole TTL over a failed cosmetic write.
+    """
+
+    class NoHashRedis(FakeRedis):
+        def hset(self, *a, **kw):
+            raise ConnectionError("redis went away")
+
+    r = NoHashRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+
+    assert lease.acquire() is True
+    assert lease.is_held_by_self() is True
+    assert lease.release() is True
+
+
+def test_the_non_atomic_fallback_announces_itself(caplog):
+    """A silently downgraded RPD ceiling is worse than a loud one."""
+    import logging
+
+    r = FakeRedis()  # no ``eval``
+    budget = _budget(r, 100)
+
+    with caplog.at_level(logging.WARNING):
+        budget.try_consume(3)
+        budget.try_consume(3)
+
+    warned = [rec for rec in caplog.records
+              if "backfill_non_atomic_redis_fallback" in rec.getMessage()]
+    assert len(warned) == 1  # once per object, not once per reservation
