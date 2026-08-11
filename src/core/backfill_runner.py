@@ -18,6 +18,7 @@ if a live worker enriched a row in between.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -41,6 +42,13 @@ _LEDGER_TTL_SECONDS = 30 * 24 * 3600
 # A pause/stop request outlives the runner that has to observe it (an operator
 # may pause a run that is mid-sleep across a budget window), but never forever.
 _CONTROL_REQUEST_TTL_SECONDS = 7 * 24 * 3600
+# A *start* request is an intent to begin now, not a standing level: it is
+# consumed by the host-side supervisor within one poll or it is stale. Far
+# shorter than the pause/stop TTL on purpose — a week-old start firing a
+# multi-day cloud spend at nobody's request is worse than a forgotten request
+# dying quietly, and ``start_requested_at`` keeps it visible meanwhile
+# (v0.13-s1.5).
+_START_REQUEST_TTL_SECONDS = 3600
 # Published state is a liveness signal: it must expire so a crashed runner reads
 # back as ``idle`` instead of a stuck ``running``.
 _STATE_TTL_SECONDS = 120
@@ -362,6 +370,27 @@ class Heartbeat:
     def clear(self) -> None:
         self._redis.delete(self._key)
 
+    def is_active(self) -> bool:
+        """Read-only liveness probe — never beats the key.
+
+        Story 1.5's admin API observes this (and the supervisor's own
+        heartbeat) without touching it: a status call that *beat* ``:active``
+        would block ``migrate-primary.sh`` for the whole TTL over a read.
+        """
+        return bool(self._redis.get(self._key))
+
+
+def supervisor_prefix(prefix: str) -> str:
+    """Key namespace of the host-side ``--serve`` supervisor (v0.13-s1.5).
+
+    Its heartbeat (``<prefix>:supervisor:active``) is what lets the admin API
+    answer "is anything listening for a start request?" without confusing it
+    with the runner's own ``<prefix>:active`` — which is the advisory key
+    ``migrate-primary.sh`` observes and must keep meaning "rows are being
+    enriched right now". Derived in one place so API and CLI cannot drift.
+    """
+    return f"{prefix}:supervisor"
+
 
 class MigrationGate:
     """Read-only view of the migration-held exclusion key ``<prefix>:migrating``.
@@ -582,13 +611,18 @@ class BackfillControl:
         prefix: str,
         state_ttl_seconds: int = _STATE_TTL_SECONDS,
         request_ttl_seconds: int = _CONTROL_REQUEST_TTL_SECONDS,
+        start_ttl_seconds: int = _START_REQUEST_TTL_SECONDS,
+        now_fn: Callable[[], datetime] = _now_utc,
     ) -> None:
         self._redis = redis
         self._pause_key = f"{prefix}:control:pause"
         self._stop_key = f"{prefix}:control:stop"
+        self._start_key = f"{prefix}:control:start"
         self._state_key = f"{prefix}:state"
         self._state_ttl = max(1, int(state_ttl_seconds))
         self._request_ttl = max(1, int(request_ttl_seconds))
+        self._start_ttl = max(1, int(start_ttl_seconds))
+        self._now_fn = now_fn
 
     @property
     def state_ttl_seconds(self) -> int:
@@ -633,9 +667,113 @@ class BackfillControl:
         self._redis.set(self._stop_key, "1", ex=self._request_ttl)
 
     def clear_requests(self) -> None:
-        """Drop stale pause/stop requests (a fresh run starts unencumbered)."""
+        """Drop stale pause/stop requests (a fresh run starts unencumbered).
+
+        Deliberately **not** the start key: a run launched by a start request
+        would otherwise eat the very request that spawned it, and the supervisor
+        that consumed it is the only thing entitled to retire it (v0.13-s1.5).
+        """
         self._redis.delete(self._pause_key)
         self._redis.delete(self._stop_key)
+
+    # -- start requests (v0.13-s1.5) ---------------------------------------
+    #
+    # The API container carries no cloud key and must never spawn a runner from
+    # a request thread, so "start" is a *request*: a short-lived level key the
+    # host-side ``--serve`` supervisor consumes and turns into an ordinary
+    # ``--continuous`` run. Same shape as pause/stop, one control path (AD-13).
+
+    def _start_payload(self, raw: Any) -> dict[str, Any]:
+        """Decode a start-request value, tolerating anything we did not write."""
+        try:
+            data = json.loads(_decode(raw))
+        except (TypeError, ValueError):
+            data = None
+        if not isinstance(data, dict):
+            return {"source": "unknown", "requested_at": None}
+        stamp = data.get("requested_at") or None
+        return {
+            "source": str(data.get("source") or "unknown"),
+            # Coerced like ``source``, and for the same reason: this value is
+            # published as ``start_requested_at`` on a response model typed
+            # ``Optional[str]``, so a payload we did not write (a number, an
+            # object) would fail response validation and turn every status poll
+            # into a 500 — the decode-anything guard above, undone one line
+            # later. Non-strings are strange but readable; a 500 is neither.
+            "requested_at": None if stamp is None else str(stamp),
+        }
+
+    def request_start(self, source: str) -> dict[str, Any]:
+        """Ask a supervisor to start a run; report whether one was already asked.
+
+        ``SET NX`` so a second caller cannot overwrite the first request's
+        stamp: an operator watching ``start_requested_at`` must see when the
+        run was actually asked for, not when the button was last pressed.
+        """
+        payload = {
+            "source": str(source or "unknown"),
+            "requested_at": self._now_fn().isoformat(),
+        }
+        written = self._redis.set(
+            self._start_key, json.dumps(payload), ex=self._start_ttl, nx=True
+        )
+        if written:
+            return {"already_requested": False, **payload}
+        existing = self.start_request()
+        if existing is None:
+            # The pending request expired between the SET NX and this read;
+            # honor the caller rather than swallowing their request — but still
+            # with NX, or two callers racing through this same window would both
+            # take the "honor the caller" path and the second would clobber the
+            # first's ``requested_at``, which is the one guarantee this method
+            # exists to make.
+            if self._redis.set(
+                self._start_key, json.dumps(payload), ex=self._start_ttl, nx=True
+            ):
+                return {"already_requested": False, **payload}
+            recovered = self.start_request()
+            if recovered is not None:
+                return {"already_requested": True, **recovered}
+            return {"already_requested": False, **payload}
+        return {"already_requested": True, **existing}
+
+    def start_request(self) -> Optional[dict[str, Any]]:
+        """The pending start request, or None when nobody has asked."""
+        raw = self._redis.get(self._start_key)
+        if not raw:
+            return None
+        return self._start_payload(raw)
+
+    def consume_start(self) -> Optional[dict[str, Any]]:
+        """Take the pending start request exactly once (atomic where possible).
+
+        ``GETDEL`` on any real client, so two supervisors cannot both read the
+        same request and launch two runs. Clients without it (test doubles) fall
+        back to get-then-delete; the lease still refuses the second runner, but
+        the fallback is announced rather than silently downgrading.
+        """
+        getdel = getattr(self._redis, "getdel", None)
+        if callable(getdel):
+            raw = getdel(self._start_key)
+        else:
+            _warn_non_atomic_fallback(self, "start request consumption")
+            raw = self._redis.get(self._start_key)
+            if raw:
+                self._redis.delete(self._start_key)
+        if not raw:
+            return None
+        return self._start_payload(raw)
+
+    def clear_start(self) -> bool:
+        """Drop a pending start request without consuming it as a launch.
+
+        Returns whether a request was actually removed. A caller that read the
+        request a moment earlier cannot assume it is still there — a supervisor
+        polling every couple of seconds may have consumed it in between — and
+        reporting a cancellation that did not happen is worse than reporting
+        none, so the delete's own answer is the one to tell the operator.
+        """
+        return bool(self._redis.delete(self._start_key))
 
     def is_paused(self) -> bool:
         return bool(self._redis.get(self._pause_key))
@@ -652,6 +790,119 @@ class BackfillControl:
             return BackfillState(raw)
         except ValueError:
             return BackfillState.IDLE
+
+
+def pending_control_requests(control: Any) -> list[str]:
+    """Outstanding pause/stop levels, as the words the whole system speaks.
+
+    One derivation of the vocabulary: the status snapshot, the admin API's
+    ``discarded_requests`` and the CLI's ``--status`` all call *this*. Three
+    private copies of the same two ``if``s is how the wire contract and the CLI
+    drift into disagreeing about what is pending (AD-13).
+    """
+    pending: list[str] = []
+    if control.is_paused():
+        pending.append("pause")
+    if control.should_stop():
+        pending.append("stop")
+    return pending
+
+
+def build_status_snapshot(
+    *,
+    lease: Any,
+    control: Any,
+    budget: Any,
+    checkpoint: Any,
+    heartbeat: Any,
+    migration_gate: Any,
+    supervisor_heartbeat: Any,
+    daily_limit: int,
+    pacing: dict[str, Any],
+    ledger: Any = None,
+) -> dict[str, Any]:
+    """Aggregate the control-plane primitives into one read-only status dict.
+
+    The single place the backfill's Redis state is turned into a wire shape, so
+    key layout never leaks into ``src/api`` (AD-13). It only ever reads — it
+    never beats a heartbeat, takes a lease, publishes a state or queries the DB.
+
+    Its one caller today is the admin status endpoint. The CLI's ``--status``
+    still formats its own print-out from the same primitives (it interleaves
+    DB-derived census/ETA figures this dict deliberately excludes), so the two
+    *can* still drift on wording and on which fields they show; only the pending
+    request vocabulary is genuinely shared, via
+    :func:`pending_control_requests`. Adopting this aggregator in ``--status``
+    is the way to close that, and is why ``ledger`` stays accepted below.
+
+    Two liveness fields, deliberately: ``state`` is whatever the runner last
+    published and ``active`` is "does anyone hold the lease". They disagree
+    exactly when DW-20 bites (a single row slower than the 120s state TTL makes
+    a live run read back ``idle``), and the lease is the one to trust.
+
+    Progress figures stay out on purpose: coverage/throughput/ETA are story
+    1.4's, computed from the DB — the runner's Redis state must never become a
+    second progress metric (FR-29).
+
+    ``ledger`` is **optional** and ``quarantined`` is ``None`` without it.
+    Counting quarantined rows is an ``HGETALL`` over ``<prefix>:attempts`` — one
+    field per property ever attempted (~26k on a full pass) — plus a sort, on
+    every call. That is fine for a one-shot CLI read and wrong for the admin
+    status endpoint, which story 1.6 polls every few seconds and which carries no
+    rate limit; so the API passes ``ledger=None`` and ``quarantined`` is null on
+    the wire by design. No caller passes a ledger today — the CLI counts
+    quarantined rows in its own print-out — so the parameter exists for the
+    ``--status`` adoption described above, not for a caller that already uses it.
+    """
+    holder = lease.holder()
+    lease_view = None
+    if holder:
+        # Provenance only. The lease token is the CAS secret that makes mutual
+        # exclusion work; it has no business on an HTTP response.
+        lease_view = {
+            "owner": holder.get("owner") or "unknown",
+            "acquired_at": holder.get("acquired_at"),
+            "last_seen": holder.get("last_seen"),
+            "seconds_since_last_seen": holder.get("seconds_since_last_seen"),
+        }
+    pending = pending_control_requests(control)
+    start = control.start_request() or {}
+    cp = checkpoint.load()
+    supervisor_present = bool(
+        supervisor_heartbeat is not None and supervisor_heartbeat.is_active()
+    )
+    consumed = int(budget.consumed())
+    return {
+        "state": BackfillState(control.state()).value,
+        "active": holder is not None,
+        # "Is anything listening?" — a lease-holding run, or a supervisor
+        # waiting for a start request. False means the start button would queue
+        # into the void, which story 1.6 has to be able to say out loud (UX-DR3).
+        "runner_present": holder is not None or supervisor_present,
+        "heartbeat_active": bool(heartbeat.is_active()),
+        "migration_active": bool(migration_gate.is_migrating()),
+        "pending_requests": pending,
+        "start_requested_at": start.get("requested_at"),
+        "lease": lease_view,
+        "budget": {
+            "limit": int(daily_limit),
+            "consumed": consumed,
+            # Derived from the single ``consumed`` read above, never a second
+            # ``budget.remaining()`` round trip: that re-reads the whole hash, so
+            # a live run reserving in between yields a body where
+            # ``consumed + remaining != limit`` — and a window rolling between
+            # the two reads yields a nonsense pair outright.
+            "remaining": max(0, int(daily_limit) - consumed),
+            "seconds_until_reset": float(budget.seconds_until_reset()),
+        },
+        "checkpoint": {
+            "last_property_id": cp.get("last_property_id"),
+            "last_run_date": cp.get("last_run_date"),
+            "processed_total": int(cp.get("processed_total", 0) or 0),
+        },
+        "quarantined": None if ledger is None else int(ledger.quarantined_count()),
+        "pacing": dict(pacing),
+    }
 
 
 # The task classes a cloud backfill drives by default: exactly the three stages

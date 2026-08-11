@@ -232,3 +232,140 @@ class PipelineHistoryPoint(BaseModel):
 
 class PipelineHistoryResponse(BaseModel):
     points: List[PipelineHistoryPoint]
+
+
+# ---------------------------------------------------------------------------
+# Backfill control plane (v0.13-s1.5)
+#
+# Wire contract for ``/admin/backfill/*``: the *control* state of the cloud
+# enrichment backfill, read from the same Redis keys the CLI uses. Never any
+# DB-derived progress figure (coverage/throughput/ETA belong to story 1.4), and
+# the state vocabulary stays English on the wire — pt-BR rendering is story 1.6.
+# ---------------------------------------------------------------------------
+
+
+class BackfillLeaseModel(BaseModel):
+    """Who holds the single-instance runner lease (provenance, never the token)."""
+
+    owner: str
+    acquired_at: Optional[str] = None
+    last_seen: Optional[str] = None
+    seconds_since_last_seen: Optional[float] = None
+
+
+class BackfillBudgetModel(BaseModel):
+    """Today's request budget over the runner's rolling 24h window.
+
+    ``consumed`` and ``seconds_until_reset`` come from the live window in Redis;
+    ``limit`` is the configured ceiling (AppConfig ``backfill``) and
+    ``remaining`` is arithmetic on the two. The runner accepts a
+    ``--daily-budget`` override, which this endpoint cannot see — so ``--serve``
+    refuses that flag, keeping the configured ceiling the one an API-requested
+    run actually paces to.
+    """
+
+    limit: int
+    consumed: int
+    remaining: int
+    seconds_until_reset: float
+
+
+class BackfillCheckpointModel(BaseModel):
+    """Resume marker — where the multi-day pass left off."""
+
+    last_property_id: Optional[str] = None
+    last_run_date: Optional[str] = None
+    processed_total: int = 0
+
+
+class BackfillPacingModel(BaseModel):
+    """Configured pacing governors (AppConfig ``backfill``), for context.
+
+    Configured, not observed: a run started by hand with ``--concurrency`` /
+    ``--tpm-limit`` / ``--min-interval`` can pace differently. ``--serve``
+    refuses those overrides so a run the *API* asked for always matches what is
+    reported here.
+    """
+
+    requests_per_property: int
+    rpm_limit: int
+    concurrency: int
+    tpm_limit: int
+
+
+class BackfillStatusResponse(BaseModel):
+    """``GET /admin/backfill/status``.
+
+    **Four liveness-ish fields, and they mean different things.** Read them in
+    this precedence:
+
+    - ``active`` — **the** liveness signal: someone holds the single-instance
+      runner lease. Render "a run is in progress" from this and nothing else.
+    - ``state`` — what the runner last *published* (``idle|running|paused|
+      backing-off|blocked``). It decays on a 120s TTL, so one row slower than
+      that makes a live run read back ``idle`` while ``active`` stays true
+      (DW-20). Use it to say *what* the run is doing, never *whether* it lives.
+    - ``heartbeat_active`` — "rows are being enriched **right now**", not
+      "alive". A deliberately paused run is healthy and stops beating the
+      ``:active`` key on purpose (that key blocks ``migrate-primary.sh``, and a
+      paused run must not), so a paused run reads ``active=true``,
+      ``state=paused``, ``heartbeat_active=false``. Never render this as dead.
+    - ``runner_present`` — "is anything listening at all": a lease holder **or**
+      a waiting ``--serve`` supervisor. False means a start request would queue
+      into the void, which is the one thing the UI must say out loud (UX-DR3).
+    """
+
+    state: str
+    active: bool
+    runner_present: bool
+    heartbeat_active: bool
+    migration_active: bool
+    pending_requests: List[str] = Field(default_factory=list)
+    start_requested_at: Optional[str] = None
+    lease: Optional[BackfillLeaseModel] = None
+    budget: BackfillBudgetModel
+    checkpoint: BackfillCheckpointModel
+    # Deliberately **not** computed on this surface: counting quarantined rows
+    # is an O(properties-ever-attempted) HGETALL + sort, and this endpoint is
+    # polled every few seconds and carries no rate limit. Always null here; the
+    # CLI's one-shot ``--status`` still reports it, and progress telemetry is
+    # story 1.4's (DB-derived).
+    quarantined: Optional[int] = None
+    pacing: BackfillPacingModel
+
+
+class BackfillControlResponse(BaseModel):
+    """``POST /admin/backfill/pause|resume`` — the action plus refreshed status.
+
+    ``status`` is **nullable and its absence is not a failure**: a null status
+    means the request WAS applied and only the follow-up status read failed
+    (Redis blip mid-response). Reporting an applied pause as a 500 would tell the
+    operator it did not take, so the mutation's own outcome is the response code
+    and the status is best-effort — poll ``GET /admin/backfill/status``.
+    """
+
+    action: str
+    # "resume" clears a pending stop as well as the pause; saying so keeps the
+    # caller from thinking a stop it issued earlier is still in force.
+    cleared_stop: bool = False
+    # "pause" withdraws a pending start request when no run holds the lease —
+    # otherwise the launching run would discard the pause at start-up and the
+    # operator's second command would be silently void.
+    cleared_start: bool = False
+    status: Optional[BackfillStatusResponse] = None
+
+
+class BackfillStartResponse(BaseModel):
+    """``POST /admin/backfill/start`` — a *request*, not an execution.
+
+    The API never spawns a runner (no cloud key in the container, no subprocess
+    from a request thread): it records the request and a host-side ``--serve``
+    supervisor consumes it. ``runner_present`` says whether anything is
+    listening at all.
+    """
+
+    requested: bool
+    already_requested: bool
+    requested_at: Optional[str] = None
+    runner_present: bool
+    discarded_requests: List[str] = Field(default_factory=list)

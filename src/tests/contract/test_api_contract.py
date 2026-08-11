@@ -550,3 +550,192 @@ class TestAdminEndpoints:
             assert data["default"] in data["supported"]
         elif response.status_code == 403:
             assert "detail" in data
+
+
+# ---------------------------------------------------------------------------
+# Backfill control plane (v0.13-s1.5)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBackfillRedis:
+    """Dict-backed stand-in so the contract shape does not need a live runner."""
+
+    def __init__(self) -> None:
+        self.kv: dict = {}
+        self.hashes: dict = {}
+
+    def get(self, key):
+        return self.kv.get(key)
+
+    def set(self, key, val, ex=None, nx=False):
+        if nx and key in self.kv:
+            return None
+        self.kv[key] = str(val)
+        return True
+
+    def expire(self, key, ttl):
+        return 1 if key in self.kv or key in self.hashes else 0
+
+    def delete(self, key):
+        existed = key in self.kv or key in self.hashes
+        self.kv.pop(key, None)
+        self.hashes.pop(key, None)
+        return 1 if existed else 0
+
+    def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
+    def hset(self, key, field=None, value=None, mapping=None):
+        h = self.hashes.setdefault(key, {})
+        if mapping:
+            h.update({k: str(v) for k, v in mapping.items()})
+        if field is not None:
+            h[field] = str(value)
+
+    def hincrby(self, key, field, n=1):
+        h = self.hashes.setdefault(key, {})
+        h[field] = str(int(h.get(field, 0)) + int(n))
+        return int(h[field])
+
+    def hdel(self, key, *fields):
+        for f in fields:
+            self.hashes.setdefault(key, {}).pop(f, None)
+
+
+class TestAdminBackfillControlContract:
+    """``/admin/backfill/*``: auth gate first, then the wire shape story 1.6 codes
+    against. The runner's Redis is faked — this locks the contract, not a run."""
+
+    _ENDPOINTS = (
+        ("get", "/admin/backfill/status"),
+        ("post", "/admin/backfill/start"),
+        ("post", "/admin/backfill/pause"),
+        ("post", "/admin/backfill/resume"),
+    )
+
+    @pytest.fixture
+    def backfill_redis(self, monkeypatch):
+        fake = _FakeBackfillRedis()
+        monkeypatch.setattr("api.admin.get_redis", lambda: fake)
+        # The audit trail is exercised by the unit tests; here it would need the
+        # admin_audit table and says nothing about the response shape.
+        monkeypatch.setattr("api.admin.log_audit_action", lambda *a, **k: None)
+        return fake
+
+    @pytest.mark.parametrize("method,path", _ENDPOINTS)
+    def test_requires_admin_credentials(self, client, method, path):
+        response = getattr(client, method)(path)
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    @pytest.mark.parametrize("method,path", _ENDPOINTS)
+    def test_rejects_an_invalid_credential(self, client, method, path):
+        response = getattr(client, method)(path, headers={"X-API-Key": "wrong-key"})
+        assert response.status_code == 403
+
+    def test_status_matches_the_response_model(self, client, admin_headers, backfill_redis):
+        from api.schemas import BackfillStatusResponse
+
+        response = client.get("/admin/backfill/status", headers=admin_headers)
+        assert response.status_code == 200, response.text[:300]
+        body = BackfillStatusResponse.model_validate(response.json())
+        assert body.state in (
+            "idle",
+            "running",
+            "paused",
+            "backing-off",
+            "blocked",
+        )
+        assert body.active is False
+        assert body.lease is None
+        assert body.budget.limit >= 0
+        # Arithmetically consistent, because it comes from one ``consumed`` read.
+        assert body.budget.consumed + body.budget.remaining == body.budget.limit
+        # Null on purpose: counting quarantined rows is an O(attempted-rows)
+        # scan and this endpoint is polled. The CLI's --status still reports it.
+        assert body.quarantined is None
+        assert response.json()["quarantined"] is None
+        # Story 1.4 owns coverage/ETA; the control plane must not grow one.
+        for forbidden in ("coverage", "eta_days", "throughput", "remaining_properties"):
+            assert forbidden not in response.json()
+
+    def test_start_is_accepted_as_a_request_not_an_execution(
+        self, client, admin_headers, backfill_redis
+    ):
+        from api.schemas import BackfillStartResponse
+
+        response = client.post("/admin/backfill/start", headers=admin_headers)
+        assert response.status_code == 202, response.text[:300]
+        body = BackfillStartResponse.model_validate(response.json())
+        assert body.requested is True
+        assert body.already_requested is False
+        assert body.requested_at
+        assert body.runner_present is False
+
+        again = client.post("/admin/backfill/start", headers=admin_headers)
+        assert again.status_code == 202
+        repeat = BackfillStartResponse.model_validate(again.json())
+        assert repeat.already_requested is True
+        assert repeat.requested_at == body.requested_at
+
+    def test_start_conflicts_with_a_held_lease(self, client, admin_headers, backfill_redis):
+        prefix = get_config().backfill.redis_prefix
+        backfill_redis.set(f"{prefix}:lease", "someone-elses-token")
+        backfill_redis.hset(
+            f"{prefix}:lease:meta",
+            mapping={"token": "someone-elses-token", "owner": "host:4711"},
+        )
+
+        response = client.post("/admin/backfill/start", headers=admin_headers)
+
+        assert response.status_code == 409
+        assert "host:4711" in response.json()["detail"]
+        assert f"{prefix}:control:start" not in backfill_redis.kv
+
+    @pytest.mark.parametrize("action", ["pause", "resume"])
+    def test_pause_and_resume_return_the_refreshed_status(
+        self, client, admin_headers, backfill_redis, action
+    ):
+        from api.schemas import BackfillControlResponse
+
+        response = client.post(f"/admin/backfill/{action}", headers=admin_headers)
+        assert response.status_code == 200, response.text[:300]
+        body = BackfillControlResponse.model_validate(response.json())
+        assert body.action == action
+        expected = ["pause"] if action == "pause" else []
+        assert body.status is not None
+        assert body.status.pending_requests == expected
+        # ``cleared_start`` is part of the wire shape (pause withdraws a start
+        # request that no run could ever honor); nothing was queued here.
+        assert body.cleared_start is False
+        assert "cleared_start" in response.json()
+
+    def test_a_control_response_may_carry_a_null_status(self, client, admin_headers):
+        """A null status means the mutation WAS applied and only the follow-up
+        status read failed — story 1.6 must not render that as an error."""
+        from api.schemas import BackfillControlResponse
+
+        body = BackfillControlResponse.model_validate(
+            {"action": "pause", "status": None}
+        )
+        assert body.status is None
+        assert body.cleared_start is False
+
+    def test_pause_withdraws_a_start_request_nothing_can_honor(
+        self, client, admin_headers, backfill_redis
+    ):
+        from api.schemas import BackfillControlResponse
+
+        started = client.post("/admin/backfill/start", headers=admin_headers)
+        assert started.status_code == 202
+
+        response = client.post("/admin/backfill/pause", headers=admin_headers)
+
+        assert response.status_code == 200, response.text[:300]
+        body = BackfillControlResponse.model_validate(response.json())
+        assert body.cleared_start is True
+        prefix = get_config().backfill.redis_prefix
+        assert f"{prefix}:control:start" not in backfill_redis.kv

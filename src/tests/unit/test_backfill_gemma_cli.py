@@ -1560,3 +1560,533 @@ def test_a_failing_lease_release_does_not_replace_the_exit_code(monkeypatch):
 
     assert mod.main(["--limit", "3"]) == 0
     lease.release.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# --serve supervisor (v0.13-s1.5)
+#
+# The admin API can only *request* a start (no cloud key in the container, no
+# runner spawned from a request thread), so this loop is the seam that makes
+# the start endpoint real. Without it the dashboard's button queues into the
+# void.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSetRedis(_FakeRedis):
+    """Fake that remembers which keys were written, so a beat is observable."""
+
+    def __init__(self):
+        super().__init__()
+        self.sets = []
+
+    def set(self, k, v, ex=None, nx=False):
+        written = super().set(k, v, ex=ex, nx=nx)
+        if written:
+            self.sets.append(k)
+        return written
+
+
+def _serve_args(**overrides):
+    args = SimpleNamespace(
+        reset_margin=120.0,
+        daily_budget=None,
+        concurrency=None,
+        tokens_per_property=None,
+        tpm_limit=None,
+        min_interval=None,
+        max_attempts=None,
+        task_classes=None,
+        force=False,
+    )
+    for key, value in overrides.items():
+        setattr(args, key, value)
+    return args
+
+
+def test_serve_consumes_a_start_request_and_launches_a_continuous_run(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    launched = MagicMock(return_value=0)
+    monkeypatch.setattr(mod, "main", launched)
+
+    rc = mod._serve(
+        cfg, redis, _serve_args(task_classes="visual"), sleep_fn=MagicMock(), max_cycles=1
+    )
+
+    assert rc == 0
+    argv = launched.call_args[0][0]
+    assert "--continuous" in argv
+    # Scope carries over; the pacing knobs the status endpoint reports are
+    # refused at parse time instead, so they can never diverge from config.
+    assert argv[argv.index("--task-classes") + 1] == "visual"
+    # Consumed exactly once — a second cycle must not re-launch the same request.
+    assert mod._control_for(cfg, redis).start_request() is None
+    # It beat its own supervisor key, never the runner's `:active` heartbeat
+    # (which is what blocks migrate-primary.sh).
+    assert "t:supervisor:active" in redis.sets
+    assert "t:active" not in redis.sets
+    # …and cleared it on the way out, so nothing claims to be listening.
+    assert redis.get("t:supervisor:active") is None
+    assert "launching a continuous run" in capsys.readouterr().out
+
+
+def test_serve_idle_beats_and_waits_without_taking_a_lease(monkeypatch):
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("nothing was requested"))
+    )
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=2)
+
+    assert rc == 0
+    assert slept == [cfg.backfill.control_poll_seconds] * 2
+    assert "t:supervisor:active" in redis.sets
+    assert redis.get("t:lease") is None
+
+
+def test_serve_keeps_serving_after_a_run_is_refused(monkeypatch, capsys):
+    """A second supervisor loses the lease race — that ends the run, not the loop."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    monkeypatch.setattr(mod, "main", MagicMock(return_value=mod.EXIT_LEASE_HELD))
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=2)
+
+    assert rc == 0
+    assert slept == [cfg.backfill.control_poll_seconds]  # second cycle idled
+    assert f"exit {mod.EXIT_LEASE_HELD}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--serve", "--status"],
+        ["--serve", "--pause"],
+        ["--serve", "--reset-quarantine"],
+        ["--serve", "--dry-run"],
+        ["--serve", "--limit", "5"],
+        # ``_continuous_argv`` carries --force into *every* API-requested run,
+        # so each dashboard Start would re-enrich already-scored rows and burn
+        # the whole daily cloud budget on work already paid for.
+        ["--serve", "--force"],
+        # Reads as "run now", which is exactly what --serve does not do until
+        # the API asks; accepting it silently dropped that intent.
+        ["--serve", "--continuous"],
+        # The status endpoint reports the configured budget and pacing and
+        # cannot see this argv, so an API-requested run carrying an override
+        # would pace to figures the dashboard never shows.
+        ["--serve", "--daily-budget", "5000"],
+        ["--serve", "--concurrency", "4"],
+        ["--serve", "--tpm-limit", "8000"],
+        ["--serve", "--min-interval", "2"],
+    ],
+)
+def test_serve_refuses_the_flag_combinations_it_cannot_honor(monkeypatch, argv):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    monkeypatch.setattr(
+        mod, "_serve", MagicMock(side_effect=AssertionError("must not serve"))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main(argv)
+
+    assert exc_info.value.code == 2
+
+
+def test_the_cli_pending_request_words_come_from_the_core_helper():
+    """One derivation of the vocabulary: the CLI printing one set of words while
+    the wire reports another is exactly the drift a shared helper prevents."""
+    from core.backfill_runner import pending_control_requests
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    control.request_pause()
+    control.request_stop()
+
+    # Behavioural, not a source grep: what must not drift is the words, and a
+    # reworded delegation is fine as long as both sides still say the same two.
+    assert mod._pending_requests(control) == pending_control_requests(control)
+    assert mod._pending_requests(control) == ["pause", "stop"]
+    assert mod.pending_control_requests is pending_control_requests
+
+
+def test_serve_survives_a_run_that_exits_and_keeps_serving(monkeypatch, capsys):
+    """``main()`` raises SystemExit for a refusal. The supervisor has already
+    consumed the (destructive) start request by then, so dying here would leave
+    the request gone, no run, and nothing recording the loss."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    monkeypatch.setattr(mod, "main", MagicMock(side_effect=SystemExit(2)))
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=3)
+
+    assert rc == 0
+    # Cycles 2 and 3 kept polling — the loop outlived the failed run.
+    assert slept == [cfg.backfill.control_poll_seconds] * 2
+    out = capsys.readouterr()
+    assert "exit 2" in out.out + out.err
+
+
+def test_serve_survives_a_run_that_raises_and_keeps_serving(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    monkeypatch.setattr(mod, "main", MagicMock(side_effect=RuntimeError("boom")))
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=3)
+
+    assert rc == 0
+    assert slept == [cfg.backfill.control_poll_seconds] * 2
+    out = capsys.readouterr()
+    assert "boom" in out.out + out.err
+    # And the heartbeat is still cleared on the way out.
+    assert redis.get("t:supervisor:active") is None
+
+
+def test_serve_leaves_a_start_request_pending_while_the_lease_is_held(
+    monkeypatch, capsys
+):
+    """``consume_start`` is destructive: consuming while another run holds the
+    lease burns the request on a run that is refused a moment later."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    real_control = mod._control_for(cfg, redis)
+    real_control.request_start("admin-api")
+    spy = MagicMock(wraps=real_control)
+    monkeypatch.setattr(mod, "_control_for", lambda *a, **k: spy)
+    assert mod.BackfillLease(redis, prefix="t", owner="host:4711").acquire()
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("must not launch a run"))
+    )
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=3)
+
+    assert rc == 0
+    spy.consume_start.assert_not_called()
+    assert real_control.start_request() is not None
+    assert slept == [cfg.backfill.control_poll_seconds] * 3
+    # Said once, not once per poll — this loop wakes every couple of seconds and
+    # a live run holds the lease for days.
+    assert capsys.readouterr().out.count("holds the run lease") == 1
+
+
+def test_serve_refuses_a_scope_or_backend_it_cannot_run_before_it_looks_ready(
+    monkeypatch,
+):
+    """A supervisor that beats a "ready" heartbeat while structurally unable to
+    run tells the dashboard something is listening and then refuses every
+    request it accepts."""
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="", routing=_CLOUD_ROUTING)  # no cloud key
+    monkeypatch.setattr(
+        mod, "_serve", MagicMock(side_effect=AssertionError("must not serve"))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main(["--serve"])
+
+    assert "GEMINI_API_KEY" in str(exc_info.value)
+
+
+def test_serve_refuses_an_unsupported_scope_before_it_looks_ready(monkeypatch):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    monkeypatch.setattr(
+        mod, "_serve", MagicMock(side_effect=AssertionError("must not serve"))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main(["--serve", "--task-classes", "deal_verdict"])
+
+    assert "--task-classes" in str(exc_info.value)
+
+
+def test_serve_answers_sigterm_by_clearing_its_heartbeat(monkeypatch, capsys):
+    """Under systemd / ``docker stop`` the supervisor is ended with SIGTERM,
+    whose default disposition kills it outright — leaving the heartbeat set, so
+    ``runner_present`` lies until the key's TTL expires."""
+    import signal
+
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("nothing was requested"))
+    )
+    before = signal.getsignal(signal.SIGTERM)
+
+    def _sigterm(_seconds):
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler), "SIGTERM left at SIG_DFL kills the supervisor"
+        handler(signal.SIGTERM, None)
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=_sigterm, max_cycles=5)
+
+    assert rc == 0
+    assert redis.get("t:supervisor:active") is None
+    assert "Supervisor stopped" in capsys.readouterr().out
+    # The supervisor puts the disposition back; a test process must not inherit it.
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_serve_rearms_its_sigterm_handler_after_every_supervised_run(monkeypatch):
+    """A run hands SIGTERM back to SIG_DFL when it finishes
+    (``_restore_default_signals``); without re-arming, a kill after the first
+    run leaves the heartbeat behind again."""
+    import signal
+
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+
+    def _run(_argv):
+        # What a real run's ``finally`` does on the way out.
+        mod._restore_default_signals()
+        return 0
+
+    monkeypatch.setattr(mod, "main", _run)
+    seen = []
+
+    rc = mod._serve(
+        cfg,
+        redis,
+        _serve_args(),
+        sleep_fn=lambda _s: seen.append(callable(signal.getsignal(signal.SIGTERM))),
+        max_cycles=2,
+    )
+
+    assert rc == 0
+    assert seen == [True]
+
+
+def test_status_reports_the_pending_start_request_and_the_supervisor(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    monkeypatch.setattr(mod, "_observed_rate_per_day", lambda s: None)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    mod._supervisor_heartbeat_for(cfg, redis).beat()
+
+    mod._print_status(cfg, MagicMock(), redis)
+
+    out = capsys.readouterr().out
+    assert "start request        : from admin-api" in out
+    assert "waiting for start requests" in out
+
+
+# ---------------------------------------------------------------------------
+# Supervisor resilience and honesty (v0.13-s1.5 follow-up review)
+# ---------------------------------------------------------------------------
+
+
+def test_serve_survives_a_redis_blip_and_serves_the_next_request(monkeypatch, capsys):
+    """A supervisor that dies on a connection reset takes the Start button with
+    it, and nothing restarts it — the same "request accepted, nothing happens"
+    failure ``_run_supervised`` prevents one level down."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    blips = {"n": 0}
+    real_beat = mod._supervisor_heartbeat_for(cfg, redis).beat
+
+    def _flaky_heartbeat(*_a, **_k):
+        heartbeat = MagicMock()
+
+        def _beat():
+            blips["n"] += 1
+            if blips["n"] == 1:
+                raise ConnectionError("Connection reset by peer")
+            return real_beat()
+
+        heartbeat.beat = _beat
+        return heartbeat
+
+    monkeypatch.setattr(mod, "_supervisor_heartbeat_for", _flaky_heartbeat)
+    launched = MagicMock(return_value=0)
+    monkeypatch.setattr(mod, "main", launched)
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=MagicMock(), max_cycles=2)
+
+    assert rc == 0
+    # The blip cost one poll, not the supervisor: the request is still served.
+    launched.assert_called_once()
+    assert "Poll failed" in capsys.readouterr().err
+
+
+def test_serve_exits_when_a_signal_stopped_the_run_it_was_supervising(
+    monkeypatch, capsys
+):
+    """``systemctl stop`` during a live run reaches the supervisor, whose signal
+    dispositions the run had taken over. Returning to the poll loop is how a
+    stop request turned into a SIGKILL after ``TimeoutStopSec``."""
+    import signal
+
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+
+    def _run_stopped_by_systemd(_argv):
+        # Exactly what a live run does: it owns the dispositions for its
+        # duration, and the signal arrives there rather than in the loop.
+        mod._install_stop_signals(control)
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        return mod.EXIT_STOPPED
+
+    monkeypatch.setattr(mod, "main", _run_stopped_by_systemd)
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=9)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "stop requested, exiting" in out
+    # It exited on the signal instead of polling out the remaining cycles.
+    assert slept == []
+    assert redis.get("t:supervisor:active") is None
+
+
+def test_serve_leaves_a_start_request_pending_while_a_migration_holds_the_db(
+    monkeypatch, capsys
+):
+    """The launched run would only wait the migration out (up to
+    ``migration_wait_seconds``) or be refused — and ``consume_start`` is
+    destructive, so the request would be spent on a run that never happened."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    real_control = mod._control_for(cfg, redis)
+    real_control.request_start("admin-api")
+    spy = MagicMock(wraps=real_control)
+    monkeypatch.setattr(mod, "_control_for", lambda *a, **k: spy)
+    # The key belongs to ``migrate-primary.sh``; the runner only ever reads it.
+    redis.set(mod._migration_gate_for(cfg, redis).key, "migrate-primary:1234")
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("must not launch a run"))
+    )
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=MagicMock(), max_cycles=3)
+
+    assert rc == 0
+    spy.consume_start.assert_not_called()
+    assert real_control.start_request() is not None
+    out = capsys.readouterr().out
+    assert "a primary migration holds the database" in out
+    assert out.count("keeping the request") == 1
+
+
+def test_serve_says_so_when_a_deferred_start_request_expires_unserved(
+    monkeypatch, capsys
+):
+    """The loop promises to hold the request until the lease frees, but the
+    level expires in an hour — so a request can vanish after that promise with
+    nothing anywhere saying the run will not happen."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+    assert mod.BackfillLease(redis, prefix="t", owner="host:4711").acquire()
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("must not launch a run"))
+    )
+
+    def _expire_the_request(_seconds):
+        control.clear_start()  # the 1h TTL lapsing, deterministically
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=_expire_the_request, max_cycles=3)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "keeping the request" in out
+    # Named as gone, not as "expired": a pause cancels a pending start too, and
+    # this loop cannot tell the two apart (see the cancellation test below).
+    assert "The pending start request is gone" in out
+    assert "nothing was launched for it" in out
+
+
+def test_serve_does_not_blame_expiry_for_a_start_a_pause_cancelled(
+    monkeypatch, capsys
+):
+    """``POST /admin/backfill/pause`` withdraws a pending start whenever no run
+    holds the lease — so under a migration blocker the request disappears
+    because the operator cancelled it. Telling them it expired and to "press
+    Start again" prescribes undoing the command they just issued."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+    # A migration, not a lease: the blocker the API still cancels a start under.
+    redis.set(mod._migration_gate_for(cfg, redis).key, "migrate-primary:1234")
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("must not launch a run"))
+    )
+
+    def _pause_cancels_it(_seconds):
+        control.clear_start()  # exactly what backfill_pause does
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=_pause_cancels_it, max_cycles=3)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "expired before it could be served" not in out
+    assert "press Start again" not in out
+    assert "expired, or was cancelled by a pause" in out
+
+
+def test_serve_announces_a_deferred_request_that_vanishes_as_the_blocker_clears(
+    monkeypatch, capsys
+):
+    """The blocker clearing and the request disappearing in the same poll fell
+    between the two branches: the deferred announcement only fires while a
+    blocker is still in place, and the consume path said nothing at all — so the
+    promise to hold the request ended in silence."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+    lease = mod.BackfillLease(redis, prefix="t", owner="host:4711")
+    assert lease.acquire()
+    monkeypatch.setattr(
+        mod, "main", MagicMock(side_effect=AssertionError("must not launch a run"))
+    )
+
+    def _free_the_lease_and_lose_the_request(_seconds):
+        lease.release()
+        control.clear_start()
+
+    rc = mod._serve(
+        cfg,
+        redis,
+        _serve_args(),
+        sleep_fn=_free_the_lease_and_lose_the_request,
+        max_cycles=3,
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "keeping the request" in out
+    assert "The pending start request is gone" in out

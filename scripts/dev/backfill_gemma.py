@@ -46,6 +46,12 @@ the DB; a real run also needs ``GEMINI_API_KEY``.
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --resume
     PYTHONPATH=src python scripts/dev/backfill_gemma.py --stop
 
+    # Supervisor: stay up and run whatever POST /admin/backfill/start asks for
+    # (v0.13-s1.5). The API container has no GEMINI_API_KEY and never spawns a
+    # runner, so without this process the dashboard's start button queues a
+    # request nobody consumes:
+    GEMINI_API_KEY=... PYTHONPATH=src python scripts/dev/backfill_gemma.py --serve
+
 A real run calls the live Gemma endpoint (free tier) and mutates DB scores.
 
 Backend selection (v0.13-s1.3)
@@ -143,8 +149,10 @@ from core.backfill_runner import (  # noqa: E402
     launch_interval_for_rpm,
     parse_task_classes,
     partition_candidates,
+    pending_control_requests,
     run_backfill,
     stages_for_task_classes,
+    supervisor_prefix,
 )
 from core.enrichment import EnrichmentBackend, is_cloud_backend  # noqa: E402
 from core.enrichment_rerun import (  # noqa: E402
@@ -173,6 +181,11 @@ EXIT_LEASE_LOST = 7               # the lease lapsed mid-run; someone else may o
 EXIT_MIGRATION_ACTIVE = 8         # migrate-primary.sh holds the primary DB (DW-3/DW-4)
 
 _BANNER_WIDTH = 68
+
+# Set by the run-level stop handler so ``--serve`` can tell "a signal arrived
+# while a run owned the signal dispositions" from "the run ended on its own".
+# The supervisor exits after such a run instead of returning to the poll loop.
+_STOP_SIGNAL_RECEIVED = False
 
 # Consecutive ``--continuous`` passes that end in a provider quota refusal with
 # nothing enriched before the short (per-minute-throttle) back-off is ruled out
@@ -575,6 +588,22 @@ def _print_status(cfg, session, redis) -> None:
     # would discard (or one a dead run never observed) was invisible here.
     pending = _pending_requests(control)
     print(f"  pending requests     : {', '.join(pending) if pending else 'none'}")
+    # A start request with no supervisor waiting is a run that will never
+    # happen: both halves have to be visible, or the operator sees a request
+    # "accepted" by the API and nothing else for the hour it lives (v0.13-s1.5).
+    start = control.start_request()
+    if start:
+        print(
+            f"  start request        : from {start['source']} at "
+            f"{start['requested_at'] or 'unknown'}"
+        )
+    else:
+        print("  start request        : none")
+    serving = _supervisor_heartbeat_for(cfg, redis).is_active()
+    print(
+        f"  supervisor           : "
+        f"{'waiting for start requests' if serving else 'not running (--serve)'}"
+    )
     print(f"  lease                : {_lease_summary(_lease_for(cfg, redis).holder())}")
     _print_quarantine(_quarantine_report(ledger), indent="  ")
 
@@ -1300,6 +1329,302 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
             return EXIT_LEASE_LOST
 
 
+def _supervisor_heartbeat_for(cfg, redis) -> Heartbeat:
+    """Liveness key of a waiting ``--serve`` supervisor (v0.13-s1.5).
+
+    Deliberately **not** the runner's ``<prefix>:active`` heartbeat: that one is
+    the advisory signal ``migrate-primary.sh`` observes to mean "rows are being
+    enriched right now", and a supervisor that merely waits must never block a
+    migration. The TTL is a small multiple of the poll, so a killed supervisor
+    stops reading as present within seconds rather than minutes — the admin API
+    reports this as ``runner_present``, and a stale ``true`` there is exactly
+    the "button that does nothing" this mode exists to prevent.
+    """
+    ttl = max(30, int(float(cfg.backfill.control_poll_seconds) * 5))
+    return Heartbeat(
+        redis,
+        prefix=supervisor_prefix(cfg.backfill.redis_prefix),
+        ttl_seconds=ttl,
+    )
+
+
+def _continuous_argv(args) -> list[str]:
+    """The ``--continuous`` invocation a start request turns into.
+
+    The supervisor's own scope flags are carried over, so an operator who
+    started it with ``--task-classes visual`` gets that for API-requested runs
+    too. The four knobs the admin status endpoint *reports* (daily budget,
+    concurrency, TPM limit, min interval) are refused at parse time instead:
+    the endpoint reads them from AppConfig and cannot see this argv, so
+    carrying an override here would make the dashboard describe a run that is
+    not the one executing.
+    """
+    argv = ["--continuous", "--reset-margin", str(args.reset_margin)]
+    for flag, value in (
+        ("--daily-budget", args.daily_budget),
+        ("--concurrency", args.concurrency),
+        ("--tokens-per-property", args.tokens_per_property),
+        ("--tpm-limit", args.tpm_limit),
+        ("--min-interval", args.min_interval),
+        ("--max-attempts", args.max_attempts),
+        ("--task-classes", args.task_classes),
+    ):
+        if value is not None:
+            argv += [flag, str(value)]
+    if args.force:
+        argv.append("--force")
+    return argv
+
+
+def _restore_default_signals() -> None:
+    """Hand SIGINT/SIGTERM back to Python between supervised runs.
+
+    ``_install_stop_signals`` replaces both dispositions for the duration of a
+    run (and its handler restores ``SIG_DFL`` after firing once). Left in place,
+    an idle supervisor would answer Ctrl-C by requesting a stop for a run that
+    already ended — a keystroke that appears to do nothing, and leaves a stop
+    level behind for the next one. Restoring the interpreter default means one
+    Ctrl-C stops a live run and one Ctrl-C exits an idle supervisor.
+    """
+    for sig, handler in (
+        (signal.SIGINT, signal.default_int_handler),
+        (signal.SIGTERM, signal.SIG_DFL),
+    ):
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):  # not the main thread / unsupported
+            logger.debug("backfill_signal_restore_unavailable", signum=int(sig))
+
+
+def _install_supervisor_signals():
+    """SIGTERM → the same clean exit an idle supervisor gets from Ctrl-C.
+
+    Under systemd or ``docker stop`` the supervisor is ended with SIGTERM, whose
+    default disposition kills the process outright — leaving the supervisor
+    heartbeat set, so ``runner_present`` claims something is listening until the
+    key's TTL expires and the operator's start requests vanish into it. Raising
+    ``KeyboardInterrupt`` funnels SIGTERM into the loop's existing clean path:
+    heartbeat cleared, message printed. SIGINT keeps the interpreter default,
+    which already raises it.
+
+    Returns the previous SIGTERM disposition so the caller can put it back.
+    """
+    def _handler(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        return signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError):  # not the main thread / unsupported platform
+        logger.debug("backfill_supervisor_signal_unavailable", signum=int(signal.SIGTERM))
+        return None
+
+
+def _announce_unserved_request(*, blocker: str | None) -> None:
+    """Report a deferred start request that disappeared before it could run.
+
+    Two things remove it and this loop cannot tell them apart — the level
+    expiring (an hour, by design) and ``POST /admin/backfill/pause`` cancelling
+    it, which the API does whenever a start is pending with no run holding the
+    lease. Calling that "expired — press Start again" told an operator who had
+    just deliberately cancelled to press the button again, so the message names
+    both readings and prescribes nothing.
+    """
+    print(
+        "The pending start request is gone (it expired, or was cancelled by a "
+        "pause) — nothing was launched for it."
+    )
+    logger.info("backfill_serve_start_unserved", blocker=blocker)
+
+
+def _serve_blocker(holder: dict | None, gate) -> str | None:
+    """Why a pending start must wait, in the words the operator gets told.
+
+    Both blockers are reasons the launched run would refuse or stall, and
+    ``consume_start`` is destructive — so the request is worth more left
+    pending than spent on a run that cannot happen.
+    """
+    if holder is not None:
+        return f"{holder.get('owner') or 'unknown'} holds the run lease"
+    if gate.is_migrating():
+        return "a primary migration holds the database"
+    return None
+
+
+def _run_supervised(argv: list[str]) -> int:
+    """Run one API-requested pass, converting *any* failure into an exit code.
+
+    The supervisor has already consumed the start request by the time this is
+    called — that is destructive — so a run that dies must not take the
+    supervisor with it. ``main()`` raises ``SystemExit`` for an ordinary refusal
+    (missing ``GEMINI_API_KEY``, local routing, a rejected ``--task-classes``)
+    and anything unexpected propagates as a plain exception; either one killing
+    the loop would leave the request gone, no run, and ``runner_present``
+    flipping to false with nothing anywhere recording the loss.
+
+    ``KeyboardInterrupt`` deliberately propagates: that is the operator ending
+    the supervisor, not a failed run.
+    """
+    try:
+        return main(argv)
+    except SystemExit as exc:
+        code = exc.code
+        rc = code if isinstance(code, int) else (0 if code is None else 1)
+        message = "" if isinstance(code, (int, type(None))) else f": {code}"
+        print(f"Run refused (exit {rc}){message}", file=sys.stderr)
+        logger.warning("backfill_serve_run_refused", exit_code=rc, reason=str(code))
+        return rc
+    except Exception as exc:  # noqa: BLE001 - the supervisor must outlive a run
+        print(f"Run failed: {exc!r}", file=sys.stderr)
+        logger.exception("backfill_serve_run_failed", error=str(exc))
+        return 1
+
+
+def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = None) -> int:
+    """Run whatever ``POST /admin/backfill/start`` asks for, on this host.
+
+    The admin API can only *request* a start: the runner needs ``GEMINI_API_KEY``
+    (host-shell only, by design) and no API request thread may drive a multi-day
+    pass. This loop is the consumer that makes the request real — it takes no
+    lease of its own, queries no database and holds no quota (the run it
+    launches does all three, and the admin API's own mutations write one AD-6
+    audit row apiece); each accepted request simply re-enters ``main()`` with an
+    ordinary ``--continuous`` argv, so the run it launches is byte-for-byte the
+    run an operator would have started by hand, under the same lease, budget and
+    pacer.
+
+    ``max_cycles`` bounds the loop for tests; production leaves it unbounded.
+    """
+    global _STOP_SIGNAL_RECEIVED
+    control = _control_for(cfg, redis)
+    heartbeat = _supervisor_heartbeat_for(cfg, redis)
+    # Read-only handle: the supervisor asks *who holds* the lease and never
+    # acquires it — the run it launches takes its own.
+    lease = _lease_for(cfg, redis)
+    gate = _migration_gate_for(cfg, redis)
+    poll = max(0.05, float(cfg.backfill.control_poll_seconds))
+    print(
+        "Backfill supervisor ready — waiting for start requests from "
+        f"POST /admin/backfill/start (polling every {poll:g}s). Ctrl-C to exit."
+    )
+    logger.info("backfill_serve_started", poll_seconds=poll)
+    cycles = 0
+    previous_sigterm = _install_supervisor_signals()
+    deferred = False
+    try:
+        while max_cycles is None or cycles < max_cycles:
+            cycles += 1
+            # One poll's Redis calls, tolerated as a group: a supervisor that
+            # dies on a connection reset (a Redis restart, a failover) takes the
+            # Start button down with it and nothing brings it back — the same
+            # "request accepted, nothing happens" failure ``_run_supervised``
+            # exists to prevent, one level up. Nothing here mutates anything but
+            # the heartbeat, so retrying the whole poll next tick is safe.
+            try:
+                # Beat first: until this key exists the API reports that nothing
+                # is listening, and an operator pressing a button into the void
+                # is the exact failure this mode exists to prevent (UX-DR3).
+                heartbeat.beat()
+                # Check the lease *before* consuming: ``consume_start`` is
+                # destructive, and consuming a request while another run holds
+                # the lease burns it on a run that is refused a moment later —
+                # the operator's start silently evaporates. Left pending, it
+                # fires the moment the lease frees. A primary migration is the
+                # same hazard by another name: the run would only wait it out or
+                # be refused, so the request waits instead of being spent.
+                holder = lease.holder()
+                blocker = _serve_blocker(holder, gate)
+                if blocker is not None:
+                    pending = control.start_request() is not None
+                    if pending and not deferred:
+                        # Once per occurrence, not once per poll: this loop wakes
+                        # every couple of seconds and a live run holds the lease
+                        # for days.
+                        deferred = True
+                        print(
+                            f"Start request pending, but {blocker} — keeping the "
+                            f"request and waiting."
+                        )
+                        logger.info("backfill_serve_start_deferred", blocker=blocker)
+                    elif deferred and not pending:
+                        # The request this loop promised to hold onto is gone and
+                        # it was not this supervisor that took it. Saying so is
+                        # the difference between a request that quietly
+                        # evaporated and one the operator can act on.
+                        deferred = False
+                        _announce_unserved_request(blocker=blocker)
+                    sleep_fn(poll)
+                    continue
+                was_deferred = deferred
+                deferred = False
+                request = control.consume_start()
+                if request is None and was_deferred:
+                    # The blocker cleared and the request went with it, in the
+                    # same poll: the branch above never fired, so without this
+                    # the promise to "keep the request and wait" ends in
+                    # silence — the one case the announcement exists for.
+                    _announce_unserved_request(blocker=None)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the supervisor must outlive a blip
+                print(f"Poll failed ({exc!r}) — retrying.", file=sys.stderr)
+                logger.warning("backfill_serve_poll_failed", error=str(exc))
+                sleep_fn(poll)
+                continue
+            if request is None:
+                sleep_fn(poll)
+                continue
+            source = request.get("source") or "unknown"
+            requested_at = request.get("requested_at") or "unknown"
+            print(
+                f"Start request from {source} (requested at {requested_at}) — "
+                f"launching a continuous run."
+            )
+            logger.info(
+                "backfill_serve_start_consumed", source=source, requested_at=requested_at
+            )
+            _STOP_SIGNAL_RECEIVED = False
+            try:
+                # Never lets a failing run end the supervisor: the request it
+                # consumed is already gone, so dying here would lose both.
+                rc = _run_supervised(_continuous_argv(args))
+            finally:
+                # The run installed its own stop-signal handlers; take them back
+                # so the idle loop below answers Ctrl-C itself — and re-arm the
+                # supervisor's SIGTERM, which ``_restore_default_signals`` just
+                # handed back to SIG_DFL (a kill would otherwise leave the
+                # heartbeat set).
+                _restore_default_signals()
+                _install_supervisor_signals()
+            if _STOP_SIGNAL_RECEIVED:
+                # The signal that stopped the run was aimed at this process, not
+                # at that one run: ``systemctl stop`` (or Ctrl-C) reaches the
+                # supervisor, whose handlers the run had temporarily taken over.
+                # Returning to the poll loop here is how a stop request turned
+                # into a SIGKILL after ``TimeoutStopSec``.
+                print(f"Run finished (exit {rc}) — stop requested, exiting.")
+                logger.info("backfill_serve_stop_signalled", exit_code=rc)
+                break
+            # Includes the refusals: a second supervisor that loses the lease
+            # race exits 5 here and simply keeps serving.
+            print(f"Run finished (exit {rc}) — waiting for the next start request.")
+            logger.info("backfill_serve_run_finished", exit_code=rc)
+    except KeyboardInterrupt:
+        # Ctrl-C, or the SIGTERM handler installed above: same clean path.
+        print("\nSupervisor stopped — no start requests will be served.")
+    finally:
+        if previous_sigterm is not None:
+            try:
+                signal.signal(signal.SIGTERM, previous_sigterm)
+            except (ValueError, OSError):
+                logger.debug("backfill_supervisor_signal_restore_unavailable")
+        # Never leave a dead supervisor claiming to listen.
+        try:
+            heartbeat.clear()
+        except Exception as exc:  # noqa: BLE001 - the key expires on its own TTL
+            logger.warning("backfill_serve_heartbeat_clear_failed", error=str(exc))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resumable Gemma enrichment backfill (BIN-248)")
     parser.add_argument("--limit", type=int, default=None, help="cap candidates this run")
@@ -1376,6 +1701,14 @@ def main(argv: list[str] | None = None) -> int:
         help="ask the running backfill to stop after in-flight rows drain, then exit",
     )
     parser.add_argument("--status", action="store_true", help="print status and exit")
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help=(
+            "supervisor mode (v0.13-s1.5): stay up, and run a --continuous pass "
+            "whenever POST /admin/backfill/start requests one"
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Each of these takes over the whole invocation and returns; combining them
@@ -1389,6 +1722,67 @@ def main(argv: list[str] | None = None) -> int:
     if len(exclusive) > 1:
         names = ", ".join(f"--{flag.replace('_', '-')}" for flag in exclusive)
         parser.error(f"pick exactly one of {names} — they cannot be combined")
+    if args.serve:
+        # The supervisor owns the whole invocation for as long as it runs, so
+        # pairing it with a one-shot command would silently drop one of the two.
+        if exclusive:
+            names = ", ".join(f"--{flag.replace('_', '-')}" for flag in exclusive)
+            parser.error(
+                f"--serve cannot be combined with {names}: it supervises runs, "
+                f"it does not issue one-shot commands"
+            )
+        if args.dry_run:
+            parser.error(
+                "--serve cannot be combined with --dry-run: it launches real runs "
+                "when the API asks for one"
+            )
+        if args.limit is not None:
+            parser.error(
+                "--serve cannot be combined with --limit: an API-requested run is "
+                "a --continuous pass, which processes to completion"
+            )
+        if args.force:
+            # ``_continuous_argv`` carries the supervisor's flags into every run
+            # it launches, so this would make *each* dashboard Start re-enrich
+            # rows that already have scores — burning the whole daily cloud
+            # budget on work that was already paid for.
+            parser.error(
+                "--serve cannot be combined with --force: every API-requested "
+                "run would re-enrich already-scored rows and spend the daily "
+                "cloud budget on them. Run a one-shot --force pass by hand."
+            )
+        if args.continuous:
+            # Every run this mode launches is already a --continuous pass; the
+            # flag reads as "run now", which is precisely what --serve does not
+            # do until the API asks. Accepting it silently dropped that intent.
+            parser.error(
+                "--serve cannot be combined with --continuous: it does not run "
+                "now, it waits for POST /admin/backfill/start and launches a "
+                "--continuous pass then. Drop --serve to run one immediately."
+            )
+        # ``GET /admin/backfill/status`` reports the daily limit and the pacing
+        # from AppConfig — it cannot see this process's argv. Since
+        # ``_continuous_argv`` carries these flags into every API-requested run,
+        # accepting them here makes the dashboard report figures the run is not
+        # using (a budget of 14000 while it paces to 5000). Config is the one
+        # place both sides read, so overrides belong there.
+        misreported = [
+            flag
+            for flag, value in (
+                ("--daily-budget", args.daily_budget),
+                ("--concurrency", args.concurrency),
+                ("--tpm-limit", args.tpm_limit),
+                ("--min-interval", args.min_interval),
+            )
+            if value is not None
+        ]
+        if misreported:
+            parser.error(
+                f"--serve cannot be combined with {', '.join(misreported)}: the "
+                f"admin status endpoint reports the configured budget and pacing, "
+                f"so an API-requested run would use values the dashboard does not "
+                f"show. Set them in configs/app_config.yaml instead."
+            )
     if args.reset_margin < 0:
         # A negative margin can drive the post-budget wait to zero, and a
         # zero-length sleep turns --continuous into a tight loop of passes that
@@ -1398,6 +1792,18 @@ def main(argv: list[str] | None = None) -> int:
     cfg = get_config()
     redis = get_redis()
     control = _control_for(cfg, redis)
+
+    if args.serve:
+        # Validate the scope and the routing it implies *before* entering the
+        # loop, exactly as the one-shot path does before taking the lease. A
+        # supervisor that beats a "ready" heartbeat while structurally unable to
+        # run anything (no cloud key, all-local routing, a refused
+        # --task-classes) tells the dashboard something is listening and then
+        # refuses every request it accepts — a lie that only surfaces after the
+        # operator has pressed Start.
+        _stages_for(_scope_from_args(args))
+        _resolve_backfill_backend(cfg, _scope_from_args(args))
+        return _serve(cfg, redis, args)
 
     if args.reset_quarantine:
         # The ledger is shared state a live run consults on every row. Clearing
@@ -1606,13 +2012,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _pending_requests(control: BackfillControl) -> list[str]:
-    """Outstanding operator requests, as human-readable words."""
-    pending = []
-    if control.is_paused():
-        pending.append("pause")
-    if control.should_stop():
-        pending.append("stop")
-    return pending
+    """Outstanding operator requests, as human-readable words.
+
+    Delegates to the core helper the status snapshot and the admin API also use:
+    the CLI printing one vocabulary while the wire reports another is exactly
+    the drift a shared derivation prevents (AD-13).
+    """
+    return pending_control_requests(control)
 
 
 def _report_discarded_requests(control: BackfillControl) -> None:
@@ -1682,9 +2088,17 @@ def _install_stop_signals(control: BackfillControl) -> None:
     The first signal drains in-flight rows so nothing is half-written; the
     handler immediately restores the default disposition, so an impatient
     operator pressing Ctrl-C twice still gets the usual hard abort.
+
+    It also records that a shutdown was asked for, which is the only way
+    ``_serve`` can learn about a signal that arrived while a supervised run
+    owned the dispositions: without it, ``systemctl stop`` during a live run
+    drained the run and then went straight back to waiting for requests, so the
+    unit never exited and systemd SIGKILLed it after ``TimeoutStopSec``.
     """
     def _handler(signum, _frame):
+        global _STOP_SIGNAL_RECEIVED
         signal.signal(signum, signal.SIG_DFL)
+        _STOP_SIGNAL_RECEIVED = True
         control.request_stop()
         print(
             "\nStop requested — draining in-flight properties. "
