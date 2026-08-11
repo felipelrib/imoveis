@@ -104,6 +104,13 @@ development_status:
   # configurable recency window of an observed 429 now raise the distinguished
   # quota error; everything else stays a hard error.
   v0.13-fu8-gemini-transport-quota-classification: in-progress
+  # Follow-up (DW-2): CI retirement deleted the Trivy scan and the nightly
+  # pip-audit/npm audit jobs on the premise that local gates covered them, but
+  # no local gate audited anything and Dependabot has no checks on bot PRs.
+  # Added scripts/agent/audit-deps.sh (pip-audit + npm audit, JSON-parsed) as an
+  # advisory stage of `validate.sh all` — reports findings, never mutates rc,
+  # degrades to a visible skip offline.
+  v0.13-fu9-dependency-audit-gate: in-progress
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

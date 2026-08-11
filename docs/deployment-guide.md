@@ -30,7 +30,7 @@ A second, **ephemeral** compose file (`docker-compose.test.yml`, project `<works
 
 ## Merge gate & automation
 
-- The merge gate is fully **local**: `scripts/agent/validate.sh all` (lint via pre-commit on all files, unit, integration, contract, frontend build, E2E) inside `scripts/agent/finish-feature.sh` (validate → local squash-merge to `main` → mandatory `git push origin main` → cleanup).
+- The merge gate is fully **local**: `scripts/agent/validate.sh all` (lint via pre-commit on all files, unit, integration, contract, frontend build, E2E, plus a **non-gating** dependency audit — `audit-deps.sh`, which reports `pip-audit`/`npm audit` findings without affecting the exit code) inside `scripts/agent/finish-feature.sh` (validate → local squash-merge to `main` → mandatory `git push origin main` → cleanup).
 - GitHub Actions (non-gating): `docs.yml` — MkDocs Material site build/deploy; `nightly.yml` — live scraper drift canary. Dependabot stays advisory-only; bumps are validated locally before merge.
 
 ## Operational guardrails

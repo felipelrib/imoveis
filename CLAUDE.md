@@ -111,6 +111,8 @@ NEVER merge manually. ALWAYS use:
 bash scripts/agent/finish-feature.sh
 ```
 
+`all` ends with an **advisory** dependency audit (`scripts/agent/audit-deps.sh`: `pip-audit` + `npm audit`) — it never affects the verdict, missing tools/offline degrade to a visible `[WARN]` skip, and a real finding is resolved by a deliberate dependency bump, never by muting the tool.
+
 If validation fails: diagnose → fix → re-run. Missing tools (`pre-commit`, `isort`, `flake8`, `pytest`): `pip install`.
 
 The lint stage's pre-commit fixer hooks (whitespace, end-of-file, isort) **modify files** when they fail — that's the fix. Commit the hook's edits and re-run; never `git checkout --` them away and never reach for `--skip-validate` (which is docs-only-branches only — there is no zero-gate path to `main`).

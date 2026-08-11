@@ -27,7 +27,10 @@ if [ -d "$HOME/.local/bin" ]; then
 fi
 
 # ---- Install Python dev tools ----
-PYTHON_TOOLS=(isort flake8 pytest pytest-timeout alembic autoflake pre-commit)
+# Gate-only tools — deliberately NOT in requirements.in/.txt, which is the
+# pip-compile'd RUNTIME lockfile that builds the API image (pip-audit powers
+# the advisory audit-deps.sh stage; it must not ship to production).
+PYTHON_TOOLS=(isort flake8 pytest pytest-timeout alembic autoflake pre-commit pip-audit)
 MISSING=()
 for tool in "${PYTHON_TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then

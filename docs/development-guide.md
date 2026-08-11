@@ -24,8 +24,10 @@ Compose stack (primary project `imoveis`): `postgres` (PostGIS 17-3.5), `redis`,
 ```bash
 bash scripts/agent/validate.sh fast      # lint (pre-commit, all files) + unit (<60s)
 bash scripts/agent/validate.sh backend   # + integration + contract
-bash scripts/agent/validate.sh all       # full gate before merge
+bash scripts/agent/validate.sh all       # full gate before merge (+ advisory dependency audit)
 ```
+
+`all` ends with an **advisory** dependency audit (`scripts/agent/audit-deps.sh` — `pip-audit` over `requirements.txt`, `npm audit` over `frontend/`). It reports findings and never changes the verdict: a run with advisories still prints `VALIDATION PASSED`. Missing tools or an unreachable network degrade to a visible `[WARN]` skip (each call bounded by `$AUDIT_TIMEOUT`, default 180s), so offline merges keep working — a degraded source reads `skipped`, never `0`, including when a resolution produced nothing to audit. npm findings are listed per package with `isDirect` and fix availability. The stage is skipped entirely when the gate has already failed. Act on a critical advisory by **bumping the dependency deliberately and revalidating** through the normal gate — do not mute the tool, add a suppression file, or make the stage blocking. `bash scripts/agent/audit-deps.sh --strict` is the operator-only variant that exits 1 on findings *or* on a degraded run; `validate.sh` never passes it. Scope is dependency manifests only — the retired CI's Trivy filesystem/base-image scan is still not replaced.
 
 Validation runs against the **ephemeral test stack** (`scripts/agent/test-stack.sh`, compose project `<workspace>-test`, docker-assigned ports, throwaway volumes) — the primary stack is never touched, so validation is safe at any time, including during a live backfill. Migrating the primary `realestate` DB is a separate explicit operator step: `bash scripts/agent/migrate-primary.sh` (guarded by the backfill heartbeat).
 

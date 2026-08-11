@@ -16,7 +16,8 @@
 #   fast      = lint (pre-commit, all files) + unit (<60s)
 #   backend   = fast + integration + contract
 #   frontend  = install + build + lint
-#   all       = backend + frontend + E2E
+#   all       = backend + frontend + E2E + advisory dependency audit
+#               (audit-deps.sh — reports only, never changes the exit code)
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -194,6 +195,28 @@ run_e2e() {
     && ok "E2E tests passed" || { warn "E2E tests FAILED"; rc=1; }
 }
 
+# ---- Dependency audit (ADVISORY — never gates the merge) ----
+# Same informational-only contract as the `alembic check` block above: findings
+# are reported, never turned into rc=1. A real advisory is resolved by a
+# deliberate dependency bump revalidated through this gate — never by muting
+# the tool or adding a suppression. Never pass --strict from here.
+run_audit() {
+  # Read-only use of rc (never assigned here): the audit is the last stage and
+  # makes bounded network calls, so spending minutes on it after the gate has
+  # already gone red only delays a verdict nobody can act on yet.
+  if [ "$rc" -ne 0 ]; then
+    warn "skipping dependency audit — validation already failed (re-run after fixing)"
+    return 0
+  fi
+  # No stage banner here: audit-deps.sh logs its own as its first line, and two
+  # near-identical sentences from two files is a drift waiting to happen.
+  # No `&& ok` here on purpose: audit-deps.sh always exits 0 in default mode, so
+  # a trailing ok would print a green "audit complete" even for a fully degraded
+  # run that audited nothing. The script's own summary line IS the stage verdict.
+  bash "$HERE/audit-deps.sh" \
+    || warn "dependency audit script failed to run (advisory — not blocking)"
+}
+
 case "$SCOPE" in
   fast)
     run_lint
@@ -217,6 +240,7 @@ case "$SCOPE" in
     run_contract
     run_frontend
     run_e2e
+    run_audit
     ;;
   *)
     die "usage: validate.sh [fast|backend|frontend|all]"

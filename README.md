@@ -190,9 +190,10 @@ Features are tracked in BMad artifacts: `_bmad-output/planning-artifacts/epics.m
 - Pre-commit hooks: `pre-commit install && pre-commit install --hook-type pre-push`
 - Linting: isort, flake8 (backend), eslint (frontend)
 - Tests: pytest (unit/cassettes/integration/contract), Playwright (E2E)
-- CI jobs (`lint`, `unit`, `integration`, `contract`, `scrapers`, `e2e`, `security-scan`) run **in parallel**; all required checks must still pass to merge.
+- The merge gate is local: `bash scripts/agent/validate.sh all` (lint, unit, integration, contract, frontend build, E2E) must pass before `finish-feature.sh` merges.
+- Dependency audit: `bash scripts/agent/audit-deps.sh` (`pip-audit` + `npm audit`) runs as the last stage of `validate.sh all` — **advisory only**, it reports findings and never blocks the merge. Act on findings with a deliberate dependency bump.
 - Scraper fixtures: `src/tests/fixtures/scrapers/` — refresh with `python scripts/dev/record_scraper_cassettes.py` on live HTML drift.
-- Scraper gate: `bash scripts/agent/validate-scrapers.sh --require-live` (CI job `scrapers`).
+- Scraper gate: `bash scripts/agent/validate-scrapers.sh --require-live` (merge-blocking; the nightly GitHub drift canary watches live portals between sessions).
 
 Agent rules/skills are **local** (`.cursor/` for Cursor, `.claude/` for Claude Code — both gitignored). Shared gates live in `scripts/agent/`. See [ADR 0002](docs/adr/0002-cursor-single-agent-workflow.md).
 

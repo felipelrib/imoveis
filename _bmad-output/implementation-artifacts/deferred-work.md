@@ -16,7 +16,9 @@ origin: migrated from legacy ledger (flat review-defer append, spec-harness-surg
 location: scripts/agent/validate.sh (no audit stage; .github/workflows/ci.yml carried the deleted scans)
 source_spec: `_bmad-output/implementation-artifacts/spec-harness-surgery.md`
 reason: OQ-4 deleted the nightly dependency-audit as "redundant with local gates", but no local gate runs any audit; skill-dispositions assumed "CI security workflow unchanged" while ci.yml (which carried it) was deleted — a spec-internal inconsistency surfaced by review. Nothing in the repo now scans dependencies or the filesystem for known vulnerabilities, and Dependabot is advisory-only (no checks on bot PRs).
-status: open
+status: done 2026-08-11
+resolution: resolved by sweep bundle dw-decision-dw-2
+resolution-undo: 07de55da1004249dce793d8cebf2c9c0c21c6b18ae1f80d3c6827a91ad46b7d3 2026-08-11 7374617475733a206f70656e
 decision: 2026-08-10 Advisory local audit: new scripts/agent/audit-deps.sh, wired into validate.sh all as warn-only — Add `scripts/agent/audit-deps.sh` running `pip-audit` against requirements.txt and `npm audit` against frontend/, following the existing scripts/agent/lib.sh conventions (log/ok/die, REPO_ROOT, .venv python). Wire it into `validate.sh all` as a non-blocking stage: it prints findings and a summary count but never fails the gate, and it degrades to a clear skip when the network or the tools are unavailable so an offline merge is still possible. Keep it out of `validate.sh fast` and `validate.sh backend` so the common inner-loop stays fast. Add pip-audit to the dev requirements, and document the stage plus the escalation path (a critical finding is handled by a deliberate bump, not by muting the tool) in docs/ alongside the other gate descriptions.
 
 ### DW-3: migrate-primary.sh heartbeat guard is check-then-act — a backfill runner starting between the check and alembic upgrade is not excluded
@@ -173,4 +175,26 @@ origin: review-defer (bmad-dev-auto follow-up review pass, spec-1-3-backfill-run
 location: src/core/backfill_runner.py (`_CONTROL_REQUEST_TTL_SECONDS = 7 * 24 * 3600`, `BackfillControl.request_pause` sets it with `ex=`, `run_backfill`'s `while control.is_paused()` loop)
 source_spec: `_bmad-output/implementation-artifacts/spec-1-3-backfill-runner-control-core.md`
 reason: Pause is a *level* with a TTL, and nothing refreshes it — not the CLI, not the paused loop that is holding the lease and polling the key. An operator who pauses a `--continuous` run for maintenance, a stalled migration or a holiday longer than the TTL gets a run that resumes launching quota-spending rows with no log line, no acknowledgement and no re-request, against a system they believe is held. Resolving it means deciding who owns the request key once it has been observed — refreshing it from the paused loop makes the runner a writer of operator requests, and treating expiry as a stop changes what `--status` reports — so it is a control-semantics decision rather than a review patch.
+status: open
+
+### DW-24: DW-2 restored dependency scanning only — the deleted Trivy filesystem/base-image scan has no replacement, and `.trivyignore` is now an accepted-risk register no scanner reads
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-decision-dw-2.md), 2026-08-11
+location: scripts/agent/audit-deps.sh (manifest scanning only), .trivyignore (orphaned), docs/harness-troubleshooting.md § Dependency audit (scope caveat)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-decision-dw-2.md`
+reason: DW-2's problem statement names the deleted Trivy *filesystem* scan as well as the nightly dependency audits, but the human-chosen option ("advisory local audit: pip-audit + npm audit") only restores dependency-manifest scanning. Container and OS-package CVEs in the API image remain unscanned by anything in the repo. Compounding it, `.trivyignore` survives as the only written record of an accepted risk (CVE-2024-23342 / ecdsa) and `audit-deps.sh` cannot consult it — so that advisory is reported as a finding on every single run, with suppression explicitly forbidden by the chosen design, leaving the summary permanently amber and a genuinely new critical indistinguishable from standing noise. Deciding between a restored image scan, a baseline/ratchet artifact, and a sanctioned accepted-risk mechanism is a scope decision, not a review patch.
+status: open
+
+### DW-25: The dependency audit's first run found real fixable advisories — including a high-severity direct runtime dependency — and no bump story exists for them
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-decision-dw-2.md), 2026-08-11
+location: frontend/package.json (`react-router-dom`), requirements.in / requirements.txt (`cryptography`)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-decision-dw-2.md`
+reason: The detector shipped; the vulnerabilities it found did not get a work item. `npm audit --json` reports `react-router-dom` as high severity with `isDirect: true` and a fix available — a direct runtime dependency that ships in the browser bundle — and `pip-audit` reports `cryptography 49.0.0` / PYSEC-2026-3552 with fix 50.0.0 published. The spec's own boundary ("no dependency bumps here") correctly kept them out of that change, and the feature doc records them as a `BUG (Medium)` bullet, but a doc bullet is not tracked work: `grep -i "bump\|cryptography\|react-router" sprint-status.yaml` returns nothing. Each bump needs its own validation (a `react-router-dom` major touches routing behaviour and the E2E suite), so this is a bump story, not a review patch.
+status: open
+
+### DW-26: Follow-up review still recommended for dw-decision-dw-2 after the damping cap was spent
+origin: review-budget-followup
+location: n/a
+source_spec: `spec-dw-decision-dw-2.md`
+severity: low
+reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260810-193244-9de6; this entry preserves the lingering recommendation for a deliberate later review.
 status: open
