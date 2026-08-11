@@ -27,6 +27,8 @@ from core.backfill_runner import (
     BackfillState,
     Checkpoint,
     DailyBudget,
+    Heartbeat,
+    MigrationGate,
     is_quota_exhausted,
     parse_task_classes,
     run_backfill,
@@ -1061,6 +1063,279 @@ def test_run_backfill_without_control_is_unchanged():
     assert result.stopped is False
     assert result.paused_seconds == 0.0
     assert result.to_dict()["quota_exhausted"] is False
+
+
+# ---------------------------------------------------------------------------
+# MigrationGate — mutual exclusion with migrate-primary.sh (v0.13-fu6, DW-3/DW-4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("client_cls", [FakeRedis, BytesRedis])
+def test_migration_gate_reads_the_key_the_script_writes(client_cls):
+    r = client_cls()
+    gate = MigrationGate(r, prefix="t")
+
+    assert gate.key == "t:migrating"
+    assert gate.is_migrating() is False
+    assert gate.holder_token() is None
+
+    # Exactly what migrate-primary.sh writes: the key carries its token.
+    r.set("t:migrating", "migrate-primary:host:42:1754500000")
+    assert gate.is_migrating() is True
+    assert gate.holder_token() == "migrate-primary:host:42:1754500000"
+
+
+def test_migration_gate_reads_the_key_with_get_and_names_the_holder():
+    """The refusal names the holder, and every Redis double here implements ``get``.
+
+    ``exists`` would work against a real client and blow up on the minimal fakes
+    the backfill CLI tests use — and it could not report which invocation holds
+    the key.
+    """
+
+    class _GetOnlyRedis:
+        """Exactly the surface the gate is allowed to use."""
+
+        def __init__(self) -> None:
+            self.kv: dict[str, str] = {}
+            self.reads: list[str] = []
+
+        def get(self, key):
+            self.reads.append(key)
+            return self.kv.get(key)
+
+    r = _GetOnlyRedis()
+    r.kv["t:migrating"] = "migrate-primary:host:42:1754500000"
+    gate = MigrationGate(r, prefix="t")
+
+    assert gate.is_migrating() is True
+    assert gate.holder_token() == "migrate-primary:host:42:1754500000"
+    # The requirement is *which* key it reads, not how many round-trips it takes
+    # — pinning the call count would fail a memoising gate that is just as correct.
+    assert set(r.reads) == {"t:migrating"}
+
+
+def _script_half(r):
+    """``migrate-primary.sh``'s set-then-check, as its two observable steps."""
+    state = {}
+
+    def acquire():
+        state["took"] = bool(r.set("t:migrating", "migrate-primary:tok", nx=True, ex=1800))
+
+    def proceed() -> bool:
+        # Won the lock AND no live heartbeat — the script's two refusal points.
+        return bool(state["took"]) and r.get("t:active") is None
+
+    return acquire, proceed
+
+
+def _runner_half(r):
+    """The runner's set-then-check: beat ``:active``, then read ``:migrating``."""
+    heartbeat = Heartbeat(r, prefix="t")
+    gate = MigrationGate(r, prefix="t")
+    return heartbeat.beat, lambda: not gate.is_migrating()
+
+
+@pytest.mark.parametrize("script_first", [True, False], ids=["script-first", "runner-first"])
+def test_the_two_halves_are_mutually_exclusive_in_both_interleavings(script_first):
+    """The headline AC: in any interleaving, at least one side refuses.
+
+    Both halves against ONE Redis, fully interleaved. If the runner does not see
+    ``:migrating`` its read happened before the script's write, so its heartbeat
+    was already there when the script probed — and the script refuses. Symmetric
+    the other way. Both refusing is safe (``--continuous`` waits); both
+    proceeding is the bug this feature exists to make impossible.
+    """
+    r = FakeRedis()
+    acquire, script_proceeds = _script_half(r)
+    beat, runner_proceeds = _runner_half(r)
+
+    if script_first:
+        acquire()
+        beat()
+        script_ok = script_proceeds()
+        runner_ok = runner_proceeds()
+    else:
+        beat()
+        acquire()
+        runner_ok = runner_proceeds()
+        script_ok = script_proceeds()
+
+    assert not (script_ok and runner_ok), (
+        "both the migration and the backfill runner proceeded against the same "
+        "primary DB"
+    )
+    assert (script_ok, runner_ok) == (False, False)  # this interleaving refuses both
+
+
+def test_an_uncontended_migration_and_an_uncontended_runner_each_proceed():
+    """The guard must not be a permanent refusal — the other half of the AC."""
+    r = FakeRedis()
+    acquire, script_proceeds = _script_half(r)
+    acquire()
+    assert script_proceeds() is True  # nobody beat :active
+
+    r.delete("t:migrating")  # the migration finished and released it
+    beat, runner_proceeds = _runner_half(r)
+    beat()
+    assert runner_proceeds() is True
+
+
+def test_run_backfill_launches_nothing_while_a_migration_holds_the_key():
+    """DW-3: a runner must not write into a schema ``alembic`` is upgrading."""
+    r = FakeRedis()
+    seen: list[str] = []
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(3),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            is_migrating=lambda: True,
+        )
+    )
+
+    assert seen == []
+    assert result.migration_blocked is True
+    assert result.processed == 0
+    assert result.requests_consumed == 0  # no budget spent on a blocked pass
+    # A blocked pass is not a stall, a stop, or a completion.
+    assert result.stopped is False
+    assert _checkpoint(r).processed_total() == 0
+    assert result.to_dict()["migration_blocked"] is True
+
+
+def test_run_backfill_stops_launching_when_a_migration_starts_mid_run():
+    r = FakeRedis()
+    seen: list[str] = []
+    reads = {"n": 0}
+
+    def is_migrating():
+        reads["n"] += 1
+        # Two reads per row — at the loop head and again after ``sem.acquire()``,
+        # because minutes of launch-interval/TPM/semaphore waiting sit between
+        # them — so the migration lands after two rows launched.
+        return reads["n"] > 4
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(5),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            is_migrating=is_migrating,
+        )
+    )
+
+    assert seen == ["prop-0", "prop-1"]  # in-flight rows still drained
+    assert result.migration_blocked is True
+    assert result.processed == 2
+    assert _checkpoint(r).processed_total() == 2  # resume point survives
+
+
+def test_run_backfill_rechecks_the_migration_after_waiting_for_a_slot():
+    """The loop-head check can be minutes stale by the time a slot frees up.
+
+    ``launch_interval``, the TPM window and ``sem.acquire()`` all sit between the
+    head check and the actual launch — the same reason the ``quota_exhausted``
+    re-check exists right there. Without it, a migration starting in that window
+    still gets one row launched into it, and its budget spent.
+    """
+    r = FakeRedis()
+    seen: list[str] = []
+    reads = {"n": 0}
+
+    def is_migrating():
+        reads["n"] += 1
+        return reads["n"] == 2  # free at the loop head, held after the acquire
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(3),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            is_migrating=is_migrating,
+        )
+    )
+
+    assert seen == []
+    assert result.migration_blocked is True
+    assert result.requests_consumed == 0  # the row cost nothing
+
+
+def test_run_backfill_migration_during_a_pause_is_not_reported_as_stopped():
+    """A pause could end at any poll — the resume must see the migration first."""
+    r = FakeRedis()
+    seen: list[str] = []
+    reads = {"n": 0}
+
+    def is_migrating():
+        reads["n"] += 1
+        return reads["n"] >= 2  # free at the loop head, held at the pause poll
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    control = _ScriptedControl(paused=[True, True, False])
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(2),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            control=control,
+            is_migrating=is_migrating,
+            pause_poll_seconds=0.0,
+        )
+    )
+
+    assert seen == []
+    assert result.migration_blocked is True
+    # ``stopped`` would tell the CLI an operator ended this run and make
+    # --continuous exit EXIT_STOPPED instead of waiting the migration out.
+    assert result.stopped is False
+
+
+def test_run_backfill_without_a_migration_gate_never_blocks():
+    """``is_migrating=None`` (story 1.5's API, dry runs) is today's behaviour."""
+    r = FakeRedis()
+
+    async def enrich(prop):
+        return None
+
+    result = asyncio.run(
+        run_backfill(
+            _rows(2),
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+        )
+    )
+
+    assert result.processed == 2
+    assert result.migration_blocked is False
 
 
 # ---------------------------------------------------------------------------

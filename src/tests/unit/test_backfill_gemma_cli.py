@@ -99,6 +99,7 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None, routing=No
     cfg.backfill.lease_ttl_seconds = 900
     cfg.backfill.control_poll_seconds = 2.0
     cfg.backfill.quota_backoff_seconds = 900
+    cfg.backfill.migration_wait_seconds = 1800
     cfg.ai.gemini_api_key = api_key
     cfg.ai.backend = "ollama"
     cfg.ai.gemma_model = "gemma-4-31b-it"
@@ -1152,3 +1153,184 @@ def test_the_task_classes_help_matches_what_the_cli_accepts(capsys):
     assert "or 'visual,sentiment'" not in help_text
     assert "or\n``visual,sentiment``" not in mod.__doc__
     assert "Only two scopes are supported" not in mod.__doc__
+
+
+# ---------------------------------------------------------------------------
+# v0.13-fu6 — mutual exclusion with migrate-primary.sh (DW-3 / DW-4)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingRedis(_FakeRedis):
+    """Fake that remembers call order — the whole fix is an ordering argument."""
+
+    def __init__(self):
+        super().__init__()
+        self.ops: list[tuple[str, str]] = []
+
+    def get(self, k):
+        self.ops.append(("get", k))
+        return super().get(k)
+
+    def set(self, k, v, ex=None, nx=False):
+        self.ops.append(("set", k))
+        return super().set(k, v, ex=ex, nx=nx)
+
+
+class _LateMigrationRedis(_RecordingRedis):
+    """The migration lands *between* ``_run``'s early probe and the pass gate.
+
+    ``_run`` now short-circuits a blocked pass before it queries the DB (its
+    SELECTs would otherwise block on the upgrade's ACCESS EXCLUSIVE lock), so
+    this race — key free at the probe, held at pass entry — is what the
+    authoritative beat-then-check inside ``_go`` exists for, and the only way to
+    observe that ordering.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._probed = False
+
+    def get(self, k):
+        value = super().get(k)
+        if k == "t:migrating" and not self._probed:
+            self._probed = True
+            return None
+        return value
+
+
+def _run_args(**kw):
+    """Namespace with the fields ``_run`` reads off ``args``."""
+    base = dict(
+        limit=None, dry_run=False, force=False, daily_budget=None, concurrency=None,
+        tokens_per_property=None, tpm_limit=None, min_interval=None,
+        max_attempts=None, task_classes=None,
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_a_migration_in_progress_refuses_the_run_and_takes_no_lease(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    run_spy = MagicMock(side_effect=AssertionError("a blocked runner must not enrich"))
+    monkeypatch.setattr(mod, "_run", run_spy)
+    redis.set("t:migrating", "migrate-primary:host-a:9:1754500000")
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_MIGRATION_ACTIVE == 8
+    run_spy.assert_not_called()
+    # Refused before taking anything: the lease is free and the operator's
+    # pending pause/stop requests were never cleared.
+    assert redis.get("t:lease") is None
+    assert "migrate-primary:host-a:9" in capsys.readouterr().err
+
+
+def test_pass_entry_beats_the_heartbeat_before_reading_the_migrating_key(
+    monkeypatch, capsys
+):
+    """DW-4: the wake-up gate must beat ``:active`` *first*, then read the key.
+
+    ``_go``'s ``finally`` clears the heartbeat, so a runner sleeping out an RPD
+    window reads as idle to ``migrate-primary.sh`` and used to come back writing
+    mid-migration. Beating before the read is what makes the two set-then-check
+    sequences mutually exclusive — reversing them reopens the hole.
+    """
+    mod = _load_module()
+    redis = _LateMigrationRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    monkeypatch.setattr(
+        mod,
+        "run_backfill",
+        MagicMock(side_effect=AssertionError("a blocked pass must launch nothing")),
+    )
+    redis.set("t:migrating", "migrate-primary:host-b:7:1754500000")
+    redis.ops.clear()
+
+    result = mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+
+    assert result.migration_blocked is True
+    assert result.processed == 0
+    beat = redis.ops.index(("set", "t:active"))
+    gate_reads = [i for i, op in enumerate(redis.ops) if op == ("get", "t:migrating")]
+    # The first read is the pre-DB optimization (it may run before the beat — it
+    # can only refuse early, never wave a pass through). The one that decides
+    # comes *after* the beat: that is what makes the two halves exclusive.
+    assert gate_reads[-1] > beat
+    assert redis.get("t:active") is None  # the pass still cleared its heartbeat
+    assert "migrate-primary:host-b:7" in capsys.readouterr().err
+
+
+def test_a_blocked_pass_never_touches_the_primary_db(monkeypatch, capsys):
+    """The gate is read before the first SELECT, not after it.
+
+    ``fetch_candidate_rows`` (and the census right behind it) can block on the
+    ACCESS EXCLUSIVE lock an ``ALTER TABLE`` holds — for the whole upgrade, long
+    enough for this runner's lease to lapse — on behalf of a pass that is going
+    to be refused anyway.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod,
+        "fetch_candidate_rows",
+        MagicMock(side_effect=AssertionError("a blocked pass must not query the DB")),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_build_client",
+        MagicMock(side_effect=AssertionError("a blocked pass needs no client")),
+    )
+    redis.set("t:migrating", "migrate-primary:host-e:5:1754500000")
+
+    result = mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+
+    assert result.migration_blocked is True
+    assert result.processed == 0
+    assert "migrate-primary:host-e:5" in capsys.readouterr().err
+
+
+def test_the_migration_predicate_is_wired_into_run_backfill(monkeypatch):
+    """Re-read per launch, not once per pass: a migration can start mid-pass."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured.update(kwargs)
+        from core.backfill_runner import BackfillResult
+
+        return BackfillResult()
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+
+    assert captured["is_migrating"]() is False
+    redis.set("t:migrating", "migrate-primary:host-c:1:1754500000")
+    assert captured["is_migrating"]() is True
+
+
+def test_a_dry_run_is_not_gated_by_a_migration(monkeypatch):
+    """It writes nothing, so it takes no lease, no control keys and no gate."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    redis.set("t:migrating", "migrate-primary:host-d:2:1754500000")
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured.update(kwargs)
+        from core.backfill_runner import BackfillResult
+
+        return BackfillResult()
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+    assert mod.main(["--dry-run", "--limit", "1"]) == 0
+    assert captured["is_migrating"] is None

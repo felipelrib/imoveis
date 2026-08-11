@@ -84,6 +84,12 @@ development_status:
   # followup_review_recommended). RoutingAIClient lifecycle hardening +
   # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
   v0.13-fu4-s1.2-followup-review: done
+  # Follow-up (DW-3/DW-4): migrate-primary.sh's backfill guard was
+  # check-then-act — it probed the `:active` heartbeat once and then ran alembic
+  # with nothing holding the window, and a runner sleeping out an RPD window
+  # cleared that heartbeat and resumed mid-migration. Added the migration-held
+  # key `backfill:gemma:migrating` with set-then-check on both sides.
+  v0.13-fu6-migration-backfill-mutual-exclusion: in-progress
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

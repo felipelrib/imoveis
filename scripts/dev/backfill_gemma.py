@@ -75,6 +75,10 @@ code as well as the closing banner (v0.13-fu3):
 6    stopped — an operator asked it to stop (``--stop`` / SIGINT / SIGTERM)
 7    lease lost mid-run — another runner may have taken over, so this one exited
      rather than become a second writer (v0.13-s1.3)
+8    blocked — ``scripts/agent/migrate-primary.sh`` holds the migration
+     exclusion key, so no row was launched; with ``--continuous`` this only
+     appears once the run has spent ``backfill.migration_wait_seconds`` in
+     total (across every blocked cycle) waiting for it to clear
 ===  ==========================================================================
 
 Scope (``--task-classes``)
@@ -132,6 +136,7 @@ from core.backfill_runner import (  # noqa: E402
     Checkpoint,
     DailyBudget,
     Heartbeat,
+    MigrationGate,
     QueueCensus,
     TokenBudget,
     estimate_eta_days,
@@ -165,6 +170,7 @@ EXIT_COMPLETE_WITH_QUARANTINE = 4 # queue drained, but rows were retired unenric
 EXIT_LEASE_HELD = 5               # another runner already holds the lease
 EXIT_STOPPED = 6                  # an operator asked this run to stop
 EXIT_LEASE_LOST = 7               # the lease lapsed mid-run; someone else may own it
+EXIT_MIGRATION_ACTIVE = 8         # migrate-primary.sh holds the primary DB (DW-3/DW-4)
 
 _BANNER_WIDTH = 68
 
@@ -178,6 +184,23 @@ _MAX_QUOTA_BACKOFF_CYCLES = 4
 # ``_stages_for``). Narrower scopes stay part of the task-class vocabulary for
 # stories 1.5/1.6; this *runner* refuses them.
 _SUPPORTED_SCOPES_HELP = "'visual,sentiment,deal_verdict' (full enrichment)"
+
+_LEASE_LOST_TITLE = (
+    "BACKFILL LEASE LOST — another runner may have taken over; "
+    "exiting to avoid two writers"
+)
+# Banner body for the outcomes that never measured a census: a migration-blocked
+# pass deliberately skips it (its SELECTs can block on the migration's ACCESS
+# EXCLUSIVE lock for the whole upgrade).
+_LEASE_LOST_LINES = [
+    "The checkpoint is intact: whoever holds the lease continues from it.",
+    "Check `--status` before starting another run.",
+]
+_MIGRATION_BLOCKED_LINES = [
+    "No row was launched and the checkpoint is exactly where the last pass "
+    "left it.",
+    "Re-run the same command once migrate-primary.sh has finished.",
+]
 
 
 def _counts(session) -> tuple[int, int]:
@@ -538,6 +561,12 @@ def _print_status(cfg, session, redis) -> None:
     print(f"  ETA (~days)          : {eta_str}")
     control = _control_for(cfg, redis)
     print(f"  control state        : {control.state().value}")
+    # "Why is the runner launching nothing?" has two answers, and this was the
+    # invisible one: a migration holding the key blocks every pass, and without
+    # it here the operator's only way to see that was to run migrate-primary.sh.
+    gate = _migration_gate_for(cfg, redis)
+    holder = gate.holder_token()
+    print(f"  primary migration    : {('IN PROGRESS — ' + holder) if holder else 'none'}")
     # Pending requests, not just the published state: a request the next start
     # would discard (or one a dead run never observed) was invisible here.
     pending = _pending_requests(control)
@@ -558,6 +587,11 @@ def _lease_for(cfg, redis) -> BackfillLease:
         ttl_seconds=int(cfg.backfill.lease_ttl_seconds),
         owner=f"{socket.gethostname()}:{os.getpid()}",
     )
+
+
+def _migration_gate_for(cfg, redis) -> MigrationGate:
+    """Read-only handle on the key ``migrate-primary.sh`` holds while migrating."""
+    return MigrationGate(redis, prefix=cfg.backfill.redis_prefix)
 
 
 def _lease_summary(holder: dict | None) -> str:
@@ -586,6 +620,19 @@ def _build_ledger(cfg, redis, max_attempts: int | None = None) -> AttemptLedger:
 def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResult:
     scope = _scope_from_args(args)
     stages = _stages_for(scope)
+    # Read the gate before the first DB query. ``fetch_candidate_rows`` (and the
+    # census right after it) can block for the whole upgrade on the ACCESS
+    # EXCLUSIVE lock an ALTER TABLE holds, so a pass that is going to be refused
+    # anyway would sit inside Postgres long enough for its own lease to lapse.
+    # This is a pure optimization — it can only refuse a pass early, never let
+    # one through — so the *authoritative* beat-then-check stays exactly where it
+    # is, in ``_go`` after ``heartbeat.beat()``: only that ordering makes the two
+    # halves mutually exclusive (DW-3/DW-4).
+    if not args.dry_run:
+        early_gate = _migration_gate_for(cfg, redis)
+        if early_gate.is_migrating():
+            print(_migration_refusal(early_gate.holder_token()), file=sys.stderr)
+            return BackfillResult(migration_blocked=True)
     # A dry-run makes no API calls, so it must not require a key/client — build
     # the cloud client only for a real run. It still pre-flights the routing a
     # real run would demand, as a warning rather than a refusal.
@@ -629,6 +676,9 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
     )
     checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix)
     heartbeat = Heartbeat(redis, prefix=cfg.backfill.redis_prefix)
+    # A dry run takes no lease and writes nothing, so it takes no control keys
+    # either — the migration gate follows the same rule.
+    migration_gate = None if args.dry_run else _migration_gate_for(cfg, redis)
     launch_interval = _launch_interval(cfg, args.min_interval)
     concurrency = args.concurrency or cfg.backfill.concurrency
     tokens_per_property = args.tokens_per_property or cfg.backfill.tokens_per_property
@@ -693,12 +743,26 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             # iteration and once per pause poll, so neither a storm of failing
             # rows nor a long pause can let it lapse under a second runner.
             lease=lease,
+            # Re-read on every launch and every pause poll: a migration can
+            # start at any point in a pass that runs for hours.
+            is_migrating=None if migration_gate is None else migration_gate.is_migrating,
             pause_poll_seconds=float(cfg.backfill.control_poll_seconds),
         )
 
     async def _go() -> BackfillResult:
+        # Beat *before* reading the migrating key, never after. migrate-primary.sh
+        # takes `:migrating` before it probes `:active`, so with both sides
+        # set-then-check at least one of the two always sees the other and they
+        # can never both proceed (DW-3). This is also the wake-up gate: every
+        # --continuous pass funnels through here, including the one resuming
+        # from `_sleep_for_reset`, whose `finally` cleared the heartbeat on the
+        # way in — so a sleeping runner read as idle to the guard and came back
+        # writing mid-migration (DW-4).
         heartbeat.beat()
         try:
+            if migration_gate is not None and migration_gate.is_migrating():
+                print(_migration_refusal(migration_gate.holder_token()), file=sys.stderr)
+                return BackfillResult(migration_blocked=True)
             if args.dry_run:  # no client / no HTTP session needed
                 return await _run_backfill()
             async with client.session_context():
@@ -851,6 +915,90 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
         slept += chunk
 
 
+def _wait_out_migration(
+    cfg, redis, *, control=None, lease=None, budget_seconds=None
+) -> str:
+    """Poll until ``migrate-primary.sh`` releases the key.
+
+    A migration is minutes and a blocked pass launched nothing, so an unattended
+    run waits it out and resumes rather than dying and needing an operator to
+    restart it. The wait renews the lease on ``_sleep_for_reset``'s
+    ``lease_ttl/3`` cadence — parking here for half an hour on an unrenewed
+    lease is exactly how a second runner starts — and re-publishes the control
+    state on its ``_STATE_REFRESH_SECONDS`` cadence, because the state key's TTL
+    is 120s and a wait of up to ``migration_wait_seconds`` would otherwise make
+    ``--status`` report a live, lease-holding runner as ``idle``.
+
+    Returns the outcome, which the caller maps to an exit code:
+    ``"cleared"`` (resume), ``"stopped"``, ``"lease_lost"``, ``"timeout"``.
+    A boolean cannot express those: a lost lease reported as "resume" sends the
+    next pass straight back into the gate — ``_go`` short-circuits before
+    ``run_backfill`` ever renews — so the run loops on ``migration_blocked``
+    forever, re-beating ``:active`` each cycle and blocking the *next* legitimate
+    ``migrate-primary.sh`` along the way.
+
+    ``budget_seconds`` is the wait left in this run's *cumulative* budget, so
+    repeated blocked cycles cannot add up to an unbounded wait.
+
+    The key is only ever read: it belongs to the migration and self-clears on
+    its own TTL, so clearing it here would green-light writes mid-upgrade.
+    """
+    gate = _migration_gate_for(cfg, redis)
+    limit = float(cfg.backfill.migration_wait_seconds)
+    if budget_seconds is not None:
+        limit = min(limit, float(budget_seconds))
+    limit = max(0.0, limit)
+    step = max(0.05, float(cfg.backfill.control_poll_seconds))
+    renew_every = max(1.0, float(cfg.backfill.lease_ttl_seconds) / 3.0)
+    state_every = float(_STATE_REFRESH_SECONDS)
+    started = time.monotonic()
+    next_renew = renew_every
+    # 0.0, like ``_sleep_for_reset``: the pass that got here published ``idle``
+    # (``run_backfill``'s exit) or nothing at all (the short-circuit in ``_go``),
+    # so waiting a full refresh interval before the first publish is exactly the
+    # "live, lease-holding runner reads back as idle" window this loop exists to
+    # close — just 30s of it.
+    next_state = 0.0
+    announced = False
+    while True:
+        if not gate.is_migrating():
+            return "cleared"
+        elapsed = time.monotonic() - started
+        # Before the timeout: a stop that arrives on the timing-out iteration
+        # (or any stop at all when the budget is already spent, where the
+        # timeout returns on the first pass through this loop) would otherwise
+        # never be observed here — and never be cleared, leaving a pending
+        # request behind for its whole TTL.
+        if control is not None and control.should_stop():
+            return "stopped"
+        if elapsed >= limit:
+            return "timeout"
+        if lease is not None and elapsed >= next_renew:
+            if not lease.renew():
+                return "lease_lost"
+            next_renew = max(next_renew + renew_every, elapsed + renew_every)
+        if control is not None and elapsed >= next_state:
+            # Same fix as ``_sleep_for_reset``: publish what is actually true —
+            # a pause issued during the wait must still read back as ``paused``.
+            # ``BLOCKED``, never ``BACKING_OFF``: no provider refused anything
+            # here, and "backing-off" points the operator at the wrong system.
+            control.publish_state(
+                BackfillState.PAUSED
+                if control.is_paused()
+                else BackfillState.BLOCKED
+            )
+            next_state = max(next_state + state_every, elapsed + state_every)
+        if not announced:
+            announced = True
+            logger.info("backfill_waiting_for_migration", limit_seconds=round(limit))
+            print(
+                f"A primary database migration holds {gate.key}; waiting up to "
+                f"{limit / 60:.0f}min for it to finish, then resuming. "
+                f"Ctrl-C to stop; safe to resume."
+            )
+        time.sleep(min(step, limit - elapsed))
+
+
 def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
     """Run passes until the backfill completes, sleeping across RPD-window resets.
 
@@ -887,26 +1035,95 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
     enriched_this_run = 0
     errors_this_run = 0
     quota_zero_cycles = 0
+    # Cumulative across *consecutive blocked* cycles, not per call: a migration
+    # that keeps the key (or a runner that keeps being blocked at pass entry)
+    # must not be able to stretch ``migration_wait_seconds`` into an unbounded
+    # wait one cycle at a time. It resets on any cycle that actually ran, or a
+    # multi-day ``--continuous`` run would spend the whole budget on its first
+    # migration and then refuse to wait a single second for the next one —
+    # exiting 8 on a key that was about to clear.
+    migration_waited = 0.0
     while True:
         cycle += 1
         with SessionLocal() as session:
             result = _run(cfg, session, redis, args, control=control, lease=lease)
-            census = _census(cfg, session, ledger)
+            # A blocked pass launched nothing, so there is nothing to measure —
+            # and the census SELECTs run on the same session, where an ALTER
+            # TABLE's ACCESS EXCLUSIVE lock can hold them for the whole upgrade.
+            # Waiting there instead of in ``_wait_out_migration`` costs this
+            # runner its lease.
+            census = None if result.migration_blocked else _census(cfg, session, ledger)
         enriched_this_run += result.processed
         errors_this_run += result.errors
+        remaining = "unmeasured" if census is None else census.remaining
         logger.info(
             "backfill_cycle_done",
             cycle=cycle,
             processed=result.processed,
             errors=result.errors,
             skipped_quarantined=result.skipped_quarantined,
-            remaining=census.remaining,
+            # ``None``, not the human string: this field is an int everywhere
+            # else, and a log consumer parsing it should not have to special-case
+            # a word. The console line below still says "unmeasured".
+            remaining=None if census is None else census.remaining,
             budget_exhausted=result.budget_exhausted,
+            # Without this a blocked pass reads exactly like an ordinary empty
+            # one in the logs.
+            migration_blocked=result.migration_blocked,
         )
         print(
             f"[cycle {cycle}] enriched {result.processed}, errors {result.errors}, "
-            f"quarantined-skips {result.skipped_quarantined}, remaining {census.remaining}"
+            f"quarantined-skips {result.skipped_quarantined}, "
+            f"migration-blocked {result.migration_blocked}, remaining {remaining}"
         )
+
+        # First, because it is the only branch that runs without a census — and
+        # because the wait renews the lease and honors a stop, so a lost lease or
+        # an operator stop during a blocked pass still surfaces as itself.
+        if result.migration_blocked:
+            if result.lease_lost:
+                # Both flags set (a worker's renew failed while the pass was
+                # breaking on the gate): there is nothing to wait for, a
+                # successor owns the run.
+                _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+                return EXIT_LEASE_LOST
+            waited_from = time.monotonic()
+            outcome = _wait_out_migration(
+                cfg,
+                redis,
+                control=control,
+                lease=lease,
+                budget_seconds=max(
+                    0.0, float(cfg.backfill.migration_wait_seconds) - migration_waited
+                ),
+            )
+            migration_waited += time.monotonic() - waited_from
+            if outcome == "cleared":
+                continue  # the migration released the key → fresh pass now
+            if outcome == "lease_lost":
+                _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+                return EXIT_LEASE_LOST
+            if outcome == "stopped":
+                _print_banner(
+                    "BACKFILL STOPPED — operator requested; resume with the "
+                    "same command",
+                    _MIGRATION_BLOCKED_LINES,
+                )
+                if control is not None:
+                    # Served — see the matching note in ``main``.
+                    control.clear_stop()
+                return EXIT_STOPPED
+            _print_banner(
+                "BACKFILL BLOCKED BY A PRIMARY MIGRATION — "
+                "restart once migrate-primary.sh has finished",
+                _MIGRATION_BLOCKED_LINES,
+            )
+            return EXIT_MIGRATION_ACTIVE
+
+        # This cycle ran, so the next migration gets the full budget again: the
+        # bound is on one uninterrupted stretch of blocked cycles, not on the
+        # lifetime of a runner that may stay up for days.
+        migration_waited = 0.0
 
         def _end() -> int:
             return _finish(
@@ -926,8 +1143,7 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # over the successor's.
         if result.lease_lost:
             _print_banner(
-                "BACKFILL LEASE LOST — another runner may have taken over; "
-                "exiting to avoid two writers",
+                _LEASE_LOST_TITLE,
                 _terminal_summary(
                     census,
                     cycle=cycle,
@@ -1181,6 +1397,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dry_run:
         _resolve_backfill_backend(cfg, _scope_from_args(args))
 
+    # Refuse a single pass up front: a migration holds the primary DB, so this
+    # run would launch nothing anyway, and refusing here means it never takes
+    # the lease nor clears an operator's pending pause/stop. ``--continuous``
+    # deliberately falls through — it takes the lease and waits the migration
+    # out (see ``_wait_out_migration``) instead of dying unattended.
+    if not args.dry_run and not args.continuous:
+        gate = _migration_gate_for(cfg, redis)
+        if gate.is_migrating():
+            print(_migration_refusal(gate.holder_token()), file=sys.stderr)
+            return EXIT_MIGRATION_ACTIVE
+
     lease = None
     if not args.dry_run:
         lease = _lease_for(cfg, redis)
@@ -1217,7 +1444,15 @@ def main(argv: list[str] | None = None) -> int:
             # story 1.5's API for the whole state TTL.
             quota_backoff = (
                 control.state() is BackfillState.BACKING_OFF
-                and rc not in (EXIT_COMPLETE, EXIT_COMPLETE_WITH_QUARANTINE)
+                and rc
+                not in (
+                    EXIT_COMPLETE,
+                    EXIT_COMPLETE_WITH_QUARANTINE,
+                    # A run that ends blocked by a migration never hit a quota
+                    # ceiling; stamping ``backing-off`` on the way out reports a
+                    # provider refusal that did not happen for the state TTL.
+                    EXIT_MIGRATION_ACTIVE,
+                )
             )
             lease_lost = rc == EXIT_LEASE_LOST
             return rc
@@ -1269,27 +1504,33 @@ def main(argv: list[str] | None = None) -> int:
             lease.release()
 
     logger.info("backfill_done", **result.to_dict())
-    verb = "would enrich" if args.dry_run else "enriched"
-    n = result.would_process if args.dry_run else result.processed
-    # "pass done", not "complete" — a single pass says nothing about the queue.
-    # Only --continuous prints the terminal BACKFILL COMPLETE banner.
-    print(
-        f"Backfill pass done: {verb} {n} properties "
-        f"(skipped {result.skipped_already_enriched}, "
-        f"quarantined {result.skipped_quarantined}, errors {result.errors}, "
-        f"budget_exhausted={result.budget_exhausted})"
-    )
-    if result.lease_lost:
-        _print_banner(
-            "BACKFILL LEASE LOST — another runner may have taken over; "
-            "exiting to avoid two writers",
-            [
-                "The checkpoint is intact: whoever holds the lease continues "
-                "from it.",
-                "Check `--status` before starting another run.",
-            ],
+    if result.migration_blocked:
+        # "enriched 0" is the same sentence an ordinary empty pass prints, so a
+        # blocked run looked like a run with nothing left to do.
+        print(
+            "Backfill pass blocked by a primary database migration: no property "
+            "was launched, nothing was enriched, and the checkpoint is intact. "
+            "Re-run once migrate-primary.sh has finished."
         )
+    else:
+        verb = "would enrich" if args.dry_run else "enriched"
+        n = result.would_process if args.dry_run else result.processed
+        # "pass done", not "complete" — a single pass says nothing about the
+        # queue. Only --continuous prints the terminal BACKFILL COMPLETE banner.
+        print(
+            f"Backfill pass done: {verb} {n} properties "
+            f"(skipped {result.skipped_already_enriched}, "
+            f"quarantined {result.skipped_quarantined}, errors {result.errors}, "
+            f"budget_exhausted={result.budget_exhausted})"
+        )
+    if result.lease_lost:
+        _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
         return EXIT_LEASE_LOST
+    # A migration took the primary DB between the startup check and pass entry:
+    # nothing was launched and the checkpoint is intact, so the exit code — not
+    # a silent "enriched 0" — is what tells the operator to re-run afterwards.
+    if result.migration_blocked:
+        return EXIT_MIGRATION_ACTIVE
     # ``stopped`` was resolved (and the served request retired) inside the try /
     # finally above, while this process still held the lease.
     return EXIT_STOPPED if stopped else 0
@@ -1353,6 +1594,16 @@ def _lease_refusal(holder: dict | None) -> str:
         f"  {_lease_summary(holder)}\n"
         "  Use --status to inspect it, --stop to ask it to finish, or wait for "
         "the lease TTL to expire if that run is gone."
+    )
+
+
+def _migration_refusal(token: str | None) -> str:
+    return (
+        "Refusing to launch rows: a primary database migration is in progress "
+        f"(migrate-primary.sh holds the exclusion key; token {token or 'unknown'}).\n"
+        "  Enriching now would write against a schema mid-upgrade.\n"
+        "  Wait for the migration to finish (the key self-clears within its TTL "
+        "— never delete it manually) and re-run; the checkpoint is intact."
     )
 
 

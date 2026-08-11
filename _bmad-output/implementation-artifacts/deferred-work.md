@@ -22,14 +22,18 @@ origin: migrated from legacy ledger (flat review-defer append, spec-harness-surg
 location: scripts/agent/migrate-primary.sh (heartbeat guard on `backfill:gemma:active`)
 source_spec: `_bmad-output/implementation-artifacts/spec-harness-surgery.md`
 reason: The guard reads `backfill:gemma:active` once and then runs `alembic upgrade`, so a runner that starts inside that window migrates against a live writer. Closing the race needs a migration-side mutual-exclusion key that the backfill runner honors (src/core/backfill_runner.py change — product code, excluded from the surgery's scope).
-status: open
+status: done 2026-08-11
+resolution: resolved by sweep bundle dw-migration-backfill-mutual-exclusion
+resolution-undo: 8512a41fd8f3b937d753a466b562e4e2b44c1c0962f4dfe5c41efd475338d489 2026-08-11 7374617475733a206f70656e
 
 ### DW-4: A backfill sleeping out its budget window clears the heartbeat, so migrate-primary.sh can migrate the primary DB and still be running when the runner wakes and resumes writing
 origin: migrated from legacy ledger (flat review-defer append, spec-1-3-backfill-runner-control-core.md), 2026-08-10
 location: scripts/dev/backfill_gemma.py:786 (`_sleep_for_reset`) with scripts/agent/migrate-primary.sh
 source_spec: `_bmad-output/implementation-artifacts/spec-1-3-backfill-runner-control-core.md`
 reason: `_sleep_for_reset` deliberately keeps the lease alive but the heartbeat was cleared by `_go`'s `finally` — correct while nothing is being written, yet nothing stops the runner resuming mid-migration when the window resets. Story 1.3 added the Redis lease that makes a proper fix cheap (the runner could honor a migration-held key at wake-up), but the paired `migrate-primary.sh` change is outside that story's scope. Same root cause as DW-3; closing both together is the sensible unit of work.
-status: open
+status: done 2026-08-11
+resolution: resolved by sweep bundle dw-migration-backfill-mutual-exclusion
+resolution-undo: 8512a41fd8f3b937d753a466b562e4e2b44c1c0962f4dfe5c41efd475338d489 2026-08-11 7374617475733a206f70656e
 
 ### DW-5: Backfill-mode cloud EMBEDDING breaks read/write vector-space symmetry
 origin: migrated from legacy ledger (resolved-note block, spec-1-3-backfill-runner-control-core.md), 2026-08-10
@@ -51,4 +55,18 @@ origin: migrated from legacy ledger (flat review-defer append, spec-1-3-backfill
 location: src/adapters/ai/client.py:979 (`GeminiClient.chat_completions` / `_is_quota_response`)
 source_spec: `_bmad-output/implementation-artifacts/spec-1-3-backfill-runner-control-core.md`
 reason: Quota is classified only on the HTTP-status path; the `except (aiohttp.ClientError, asyncio.TimeoutError)` arm re-raises the raw transport error untagged, so `is_quota_exhausted` does not match, `run_backfill` counts a hard error and `AttemptLedger.record_attempt` stands. After `max_attempts` cycles inside the same throttle window those rows are retired unenriched and only an operator `--reset-quarantine` brings them back. Pre-existing `AttemptLedger` behaviour from v0.13-fu2/fu3 (story 1.3 only changed the *status*-carrying path), and the fix is a judgement call about when repeated transport failure may be read as quota — treating every connection failure as quota would mask genuine outages; it wants its own change with a deliberate heuristic (e.g. all attempts failing identically while `rate_limit_hits` is recent), not a review patch.
+status: open
+
+### DW-8: migrate-primary.sh addresses Redis by hardcoded host/db and literal key names, so any REDIS_URL or redis_prefix change silently disables both halves of the migration↔backfill exclusion
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-migration-backfill-mutual-exclusion.md), 2026-08-11
+location: scripts/agent/migrate-primary.sh:64-67 (`REDIS_HOST`, `db=0`, `HEARTBEAT_KEY`, `MIGRATE_LOCK_KEY`) vs src/infra/config.py (`redis.url`, `backfill.redis_prefix`)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-migration-backfill-mutual-exclusion.md`
+reason: The script talks to `localhost:${REDIS_PORT}` db 0 with the literal keys `backfill:gemma:active` / `backfill:gemma:migrating`; the runner resolves its client from `REDIS_URL` and its keys from `backfill.redis_prefix`. Point `REDIS_URL` at another host or a non-zero db — or change the prefix — and the two write into different keyspaces: neither side ever sees the other's key, both proceed, and every test stays green (the parity test added in v0.13-fu6 pins only the *prefix default*, not the endpoint). Pre-existing for `:active` since the guard was written; the new `:migrating` key inherits it. Fixing it means giving the shell script the same config resolution the runner uses (or having it refuse when the two disagree), which is a change to how agent scripts read app config — deliberately outside the fu6 patch scope.
+status: open
+
+### DW-9: The `:active` heartbeat is beaten only per completed row, so a single slow enrichment lets it lapse under a live writer and migrate-primary.sh reads "idle"
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-migration-backfill-mutual-exclusion.md), 2026-08-11
+location: scripts/dev/backfill_gemma.py (`_on_progress` → `heartbeat.beat()`), src/core/backfill_runner.py (`_worker`'s `finally`)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-migration-backfill-mutual-exclusion.md`
+reason: The runner-first half of the v0.13-fu6 exclusion proof assumes `:active` is visible when the script probes it, but the heartbeat has a 300s TTL and is refreshed only when a row *finishes* — nothing ticks it while a row is in flight. One enrichment slower than the TTL (three cloud calls, each with client-side 429 retries) lets `:active` expire under a live writer, so `migrate-primary.sh` sees an idle guard and migrates alongside it. This caps what the fu6 mutual exclusion can guarantee ("no *new* writer starts, provided the runner completed a row within the heartbeat TTL"). Same missing-background-timer root cause as DW-6 but a different key and a different consequence — DW-6 is the lease (two writers), this is the heartbeat (migration exclusion); a background ticker would close both. Not introduced by fu6.
 status: open

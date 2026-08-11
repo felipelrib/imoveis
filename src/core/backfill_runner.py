@@ -363,6 +363,41 @@ class Heartbeat:
         self._redis.delete(self._key)
 
 
+class MigrationGate:
+    """Read-only view of the migration-held exclusion key ``<prefix>:migrating``.
+
+    ``migrate-primary.sh`` takes this key (``SET NX EX`` with a per-invocation
+    token) **before** it probes the advisory ``:active`` heartbeat, and the
+    runner beats ``:active`` **before** it reads this key. Set-then-check on
+    both sides is what makes them mutually exclusive: whichever wrote first, at
+    least one of the two sees the other's key, so a runner can never launch a
+    row into a schema that ``alembic upgrade`` is halfway through (DW-3/DW-4).
+
+    The runner only ever *reads*. The key belongs to the migration and expires
+    on its own TTL, so a runner that cleared it would hand itself a green light
+    while the upgrade is still running.
+    """
+
+    def __init__(self, redis: Any, *, prefix: str) -> None:
+        self._redis = redis
+        self._key = f"{prefix}:migrating"
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    def holder_token(self) -> Optional[str]:
+        """Token of the migration holding the key, or None when it is free."""
+        return _decode(self._redis.get(self._key)) or None
+
+    def is_migrating(self) -> bool:
+        # ``get``, not ``exists``: the key always carries a non-empty token, so
+        # the two are equivalent here — but ``get`` is what every other reader
+        # in this module (and every Redis double the tests use) implements, and
+        # it is what lets a refusal name the holding token.
+        return bool(self.holder_token())
+
+
 class BackfillState(str, Enum):
     """Published control state of the backfill runner.
 
@@ -374,6 +409,12 @@ class BackfillState(str, Enum):
     RUNNING = "running"
     PAUSED = "paused"
     BACKING_OFF = "backing-off"
+    # A primary migration holds the DB (``migrate-primary.sh``). Distinct from
+    # ``BACKING_OFF``, which in this vocabulary means "the provider refused on
+    # quota": a runner waiting out a migration has hit no quota ceiling at all,
+    # and telling an operator (or stories 1.5/1.6) otherwise sends them to the
+    # Gemini dashboard for a problem that lives in their own terminal.
+    BLOCKED = "blocked"
 
 
 # Owner-token CAS scripts. Redis evaluates each atomically, so a runner whose
@@ -944,6 +985,10 @@ class BackfillResult:
     # another runner may already own the queue, so this one stopped launching
     # rather than become a second writer.
     lease_lost: bool = False
+    # A primary migration holds ``<prefix>:migrating``: this run stopped
+    # launching rather than write against a schema mid-upgrade. Distinct from
+    # ``stopped`` — nobody asked it to end, and the caller may simply wait.
+    migration_blocked: bool = False
     # Wall-clock seconds the launch loop spent held by a pause request.
     paused_seconds: float = 0.0
     last_property_id: Optional[str] = None
@@ -965,6 +1010,7 @@ class BackfillResult:
             "quota_exhausted": self.quota_exhausted,
             "stopped": self.stopped,
             "lease_lost": self.lease_lost,
+            "migration_blocked": self.migration_blocked,
             "paused_seconds": round(self.paused_seconds, 1),
             "last_property_id": self.last_property_id,
             "tpm_waits": self.tpm_waits,
@@ -1111,6 +1157,7 @@ async def run_backfill(
     control: Optional[BackfillControl] = None,
     lease: Optional[BackfillLease] = None,
     is_quota_error: Optional[Callable[[BaseException], bool]] = is_quota_exhausted,
+    is_migrating: Optional[Callable[[], bool]] = None,
     pause_poll_seconds: float = 2.0,
 ) -> BackfillResult:
     """Enrich candidate ``(property, metrics)`` rows, up to ``concurrency`` at once.
@@ -1154,6 +1201,14 @@ async def run_backfill(
     costs no error, no ledger attempt and no checkpoint advance — nothing was
     written for it — and the run stops launching so the caller can back off
     (v0.13-s1.3, AC-2). Pass ``is_quota_error=None`` to disable the distinction.
+
+    ``is_migrating`` is a plain predicate (usually
+    :meth:`MigrationGate.is_migrating`) answering "is a primary migration
+    holding the exclusion key right now?". It is polled at the head of the
+    launch loop and on every pause poll, and a ``True`` stops launching with
+    :attr:`BackfillResult.migration_blocked` — *not* ``stopped``: nobody asked
+    this run to end, the checkpoint is untouched, and the caller is free to wait
+    the migration out and come back.
     """
     if dry_run:
         return _run_dry(
@@ -1213,6 +1268,14 @@ async def run_backfill(
         result.lease_lost = True
         _log_lease_lost()
         return False
+
+    def _migration_holds() -> bool:
+        """True = a primary migration owns the DB; stop launching immediately."""
+        if is_migrating is None or not is_migrating():
+            return False
+        result.migration_blocked = True
+        _log_migration_blocked()
+        return True
 
     def _tick_lease() -> None:
         """Renew the lease and refresh the state from a worker's ``finally``.
@@ -1304,6 +1367,11 @@ async def run_backfill(
             while control.is_paused():
                 if control.should_stop():
                     return False
+                # A migration that starts while this run is held must not be
+                # resumed into: the pause could end at any poll, and the row it
+                # would launch next would write against a schema mid-upgrade.
+                if _migration_holds():
+                    return False
                 if not _lease_held():
                     return False
                 # The state key has a short TTL, so publishing ``paused`` once
@@ -1328,13 +1396,20 @@ async def run_backfill(
             # retry burns daily request quota. Stop launching immediately.
             if result.quota_exhausted:
                 break
+            # A primary migration holds the exclusion key. The caller beat its
+            # ``:active`` heartbeat before handing this predicate in, so the
+            # migration either sees that heartbeat and refuses, or it got here
+            # first and this run must not launch into its upgrade (DW-3/DW-4).
+            if _migration_holds():
+                break
             # Renewing here (not in ``on_progress``) means the lease is refreshed
             # even through rows that only ever fail.
             if not _lease_held():
                 break
             if not await _may_launch():
-                # A lost lease is not an operator stop — do not mislabel it.
-                if not result.lease_lost:
+                # A lost lease is not an operator stop — and neither is a
+                # migration holding the DB. Do not mislabel either.
+                if not result.lease_lost and not result.migration_blocked:
                     result.stopped = True
                 break
             _refresh_state()
@@ -1372,6 +1447,14 @@ async def run_backfill(
             # discovered the provider is out of quota. Re-check before spending
             # anything on this row: budget reserved here would never be used.
             if result.quota_exhausted:
+                sem.release()
+                break
+            # Same reason, different writer: the checks at the loop head ran
+            # before the launch interval, the TPM window and this ``acquire`` —
+            # minutes, on a busy pass — so a migration that started in between
+            # would otherwise get this row launched into its upgrade. Re-read
+            # before spending any budget on it.
+            if _migration_holds():
                 sem.release()
                 break
             if not budget.try_consume(requests_per_property):
@@ -1424,6 +1507,15 @@ def _log_lease_lost() -> None:
     get_logger(__name__).warning(
         "backfill_lease_lost",
         reason="renew refused — another runner may hold the lease; stopped launching",
+    )
+
+
+def _log_migration_blocked() -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_migration_blocked",
+        reason="a primary migration holds the exclusion key; stopped launching rows",
     )
 
 

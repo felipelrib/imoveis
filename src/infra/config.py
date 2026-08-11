@@ -182,6 +182,22 @@ class BackfillConfig(BaseModel, frozen=True):
     # all*, turning a provider refusal into a tight retry loop that re-spends
     # the client's retry budget against an account that is already throttled.
     quota_backoff_seconds: int = Field(default=900, ge=60)
+    # How long a ``--continuous`` runner waits for a primary migration holding
+    # ``<redis_prefix>:migrating`` before giving up (exit 8). A migration is
+    # minutes and a blocked pass wrote nothing, so waiting beats making an
+    # operator restart an unattended run. The bound covers one *stretch* of
+    # consecutive blocked cycles — they share the budget, so a key that never
+    # clears cannot be waited on forever — and any cycle that actually runs
+    # starts it over, because a run designed to stay up for days must not spend
+    # its only budget on its first migration and refuse to wait for the next.
+    # The default equals the migration lock's own default TTL
+    # (``MIGRATE_LOCK_TTL_SECONDS`` in ``scripts/agent/migrate-primary.sh``), so
+    # even a migration killed hard frees the key inside this window. The two are
+    # not coupled: raise the script's TTL (``MIGRATE_LOCK_TTL_SECONDS=7200``)
+    # without raising this and a long upgrade merely ends the runner with exit 8
+    # instead of resuming — the exclusion still holds, an operator just has to
+    # restart it. ``0`` = never wait.
+    migration_wait_seconds: int = Field(default=1800, ge=0)
 
     @model_validator(mode="after")
     def _poll_stays_under_lease_ttl(self) -> "BackfillConfig":

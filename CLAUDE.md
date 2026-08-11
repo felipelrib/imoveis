@@ -119,7 +119,7 @@ The lint stage's pre-commit fixer hooks (whitespace, end-of-file, isort) **modif
 
 - `validate.sh` and `finish-feature.sh` **never touch the primary compose project `imoveis`** — no container create/recreate/restart/stop, no `realestate` schema or data changes. Safe to run at any time, **including during a live backfill**.
 - Test DB/Redis come from the **ephemeral test stack**: `bash scripts/agent/test-stack.sh [up|env|down|status]` — compose project `<workspace>-test`, docker-assigned ports (never hardcoded), throwaway volumes, image parity with primary.
-- Migrating the **primary** `realestate` DB is an explicit operator step: `bash scripts/agent/migrate-primary.sh`. It refuses while the backfill runner's TTL'd heartbeat (`backfill:gemma:active`) is alive; the key self-clears — never delete it manually.
+- Migrating the **primary** `realestate` DB is an explicit operator step: `bash scripts/agent/migrate-primary.sh`. It takes `backfill:gemma:migrating` (held for the whole upgrade, released on exit) *before* refusing on the backfill runner's live heartbeat `backfill:gemma:active` — set-then-check on both sides, so a runner and a migration can never both proceed. Both keys self-clear on their TTLs — never delete either manually.
 - `teardown.sh` fails closed: it refuses when the compose project identity is ambiguous (no `COMPOSE_PROJECT_NAME` in `.env.local`) or resolves to the primary project (operator override: `--primary`; primary volumes are never wiped).
 - Never run any `docker compose` command against the primary project yourself. A stuck primary stack is the operator's call, not the agent's.
 

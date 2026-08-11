@@ -350,6 +350,15 @@ backfill:
   # would park the runner for a day over a minute-scale throttle. When the
   # local budget is genuinely spent the runner still sleeps to the reset.
   quota_backoff_seconds: 900
+  # Mutual exclusion with `scripts/agent/migrate-primary.sh`, which holds
+  # `<redis_prefix>:migrating` for the whole `alembic upgrade`. A runner that
+  # sees that key launches nothing; with `--continuous` it waits this long for
+  # the key to clear and resumes, instead of dying and needing an operator to
+  # restart an unattended run. The bound is per *blocked stretch*: consecutive
+  # blocked cycles share one budget (so a key that never clears cannot be waited
+  # on forever), and any cycle that actually runs starts it over.
+  # 0 = never wait (refuse immediately).
+  migration_wait_seconds: 1800
 
 # NOTE (v0.13-s1.3): the cloud backfill now derives its backend from
 # `ai.enrichment_routing` instead of hardcoding Gemma. With the shipped

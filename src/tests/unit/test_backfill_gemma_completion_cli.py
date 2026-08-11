@@ -91,6 +91,7 @@ def _cfg():
     cfg.backfill.lease_ttl_seconds = 900
     cfg.backfill.control_poll_seconds = 2.0
     cfg.backfill.quota_backoff_seconds = 900
+    cfg.backfill.migration_wait_seconds = 1800
     cfg.ai.gemini_api_key = "k"
     cfg.ai.backend = "ollama"
     cfg.ai.gemma_model = "gemma-4-31b-it"
@@ -110,10 +111,11 @@ def _cfg():
     return cfg
 
 
-def _wire(mod, monkeypatch):
+def _wire(mod, monkeypatch, *, redis=None):
     cfg = _cfg()
+    shared = redis if redis is not None else _FakeRedis()
     monkeypatch.setattr(mod, "get_config", lambda: cfg)
-    monkeypatch.setattr(mod, "get_redis", lambda: _FakeRedis())
+    monkeypatch.setattr(mod, "get_redis", lambda: shared)
     monkeypatch.setattr(mod, "SessionLocal", MagicMock())
     monkeypatch.setattr(mod.time, "sleep", MagicMock())
     return cfg
@@ -610,3 +612,265 @@ def test_a_completed_continuous_run_does_not_exit_backing_off(monkeypatch):
 
     assert rc == mod.EXIT_COMPLETE
     assert control.state() is mod.BackfillState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# v0.13-fu6 — --continuous waits out a primary migration (DW-3 / DW-4)
+# ---------------------------------------------------------------------------
+
+
+def test_continuous_waits_out_a_migration_then_resumes(monkeypatch, capsys):
+    """A migration is minutes: an unattended run waits, it does not die.
+
+    The blocked pass launched nothing and left the checkpoint alone, so the
+    honest continuation is a fresh pass once ``migrate-primary.sh`` hands the
+    key back — not an exit that needs an operator to restart the run.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, redis=redis)
+    redis.set("t:migrating", "migrate-primary:host-a:3:1754500000")
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                BackfillResult(migration_blocked=True),
+                BackfillResult(processed=3),
+            ]
+        ),
+    )
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    # The migration finishes while the runner is parked on the key.
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: redis.delete("t:migrating"))
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_COMPLETE
+    assert mod._run.call_count == 2  # resumed with a fresh pass
+    # The blocked cycle never censused: those SELECTs share the session with the
+    # pass and can block on the migration's ACCESS EXCLUSIVE lock.
+    assert mod._census.call_count == 1
+    out = capsys.readouterr().out
+    assert "waiting up to" in out
+    assert "BACKFILL COMPLETE" in out
+
+
+def test_continuous_gives_up_after_the_migration_wait_limit(monkeypatch, capsys):
+    """Past ``migration_wait_seconds`` the outcome is exit 8, never a stall.
+
+    ``0`` (= do not wait) keeps this deterministic. A blocked pass ends with the
+    budget *not* exhausted and nothing processed — exactly the shape the stall
+    detector reports as "every remaining row is failing", which is why the
+    migration branch has to come first.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, redis=redis)
+    cfg.backfill.migration_wait_seconds = 0
+    redis.set("t:migrating", "migrate-primary:host-b:4:1754500000")
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=BackfillResult(migration_blocked=True))
+    )
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=97, candidates=3))
+    )
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MIGRATION_ACTIVE == 8
+    assert mod._run.call_count == 1  # never retried past the limit
+    mod._census.assert_not_called()  # a blocked pass measures nothing
+    out = capsys.readouterr().out
+    assert "BLOCKED BY A PRIMARY MIGRATION" in out
+    assert "STALLED" not in out
+
+
+def test_the_migration_wait_budget_is_cumulative_across_cycles(monkeypatch, capsys):
+    """``migration_wait_seconds`` bounds the *run*, not each blocked cycle.
+
+    A per-call bound lets a runner that is blocked, resumes, and is blocked again
+    wait the full limit every time — unbounded in total, which is neither what
+    the config comment nor the AC says.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, redis=redis)
+    cfg.backfill.migration_wait_seconds = 10
+    cfg.backfill.control_poll_seconds = 1.0
+    passes = {"n": 0}
+
+    def _blocked_pass(*_a, **_kw):
+        # Each pass finds a migration holding the key — the second one is a new
+        # migration that starts right after the first hands it back.
+        passes["n"] += 1
+        redis.set("t:migrating", f"migrate-primary:host-c:{passes['n']}:1754500000")
+        return BackfillResult(migration_blocked=True)
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_blocked_pass))
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    # Fake clock: every polled sleep costs 6s, so the first wait spends 6 of the
+    # 10s budget before the key clears and the second has only 4 left.
+    now = {"t": 0.0}
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now["t"])
+
+    def _sleep(_seconds):
+        now["t"] += 6.0
+        if passes["n"] == 1:  # only the first migration finishes
+            redis.delete("t:migrating")
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MIGRATION_ACTIVE == 8
+    assert mod._run.call_count == 2  # it did resume once
+    assert now["t"] == 12.0  # ...and gave up 6s into a 4s remaining budget
+    assert "BLOCKED BY A PRIMARY MIGRATION" in capsys.readouterr().out
+
+
+def test_the_migration_wait_budget_starts_over_after_a_cycle_that_ran(
+    monkeypatch, capsys
+):
+    """The bound is one blocked *stretch*, not the runner's whole lifetime.
+
+    ``--continuous`` is designed to stay up for days. Spending the budget down
+    permanently meant the first migration used it all and every later one got
+    zero wait — an instant exit 8 on a key that was about to clear, needing the
+    operator this mode exists to not need.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, redis=redis)
+    cfg.backfill.migration_wait_seconds = 10
+    cfg.backfill.control_poll_seconds = 1.0
+    passes = {"n": 0}
+
+    def _pass(*_a, **_kw):
+        passes["n"] += 1
+        if passes["n"] in (1, 3):  # a migration, a real pass, then a *new* migration
+            redis.set("t:migrating", f"migrate-primary:host-f:{passes['n']}:175450000")
+            return BackfillResult(migration_blocked=True)
+        return BackfillResult(processed=2)
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_pass))
+    # Work still remains after the productive pass, so the loop reaches the
+    # third (blocked) one instead of exiting complete.
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=97, candidates=3))
+    )
+    now = {"t": 0.0}
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now["t"])
+
+    def _sleep(_seconds):
+        now["t"] += 6.0
+        if passes["n"] == 1:  # only the first migration finishes
+            redis.delete("t:migrating")
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MIGRATION_ACTIVE == 8
+    assert mod._run.call_count == 3
+    # 6s waiting out the first migration, then a *full* 10s budget for the third
+    # pass's — two 6s polls before it gives up (t=18). Carrying the first wait
+    # over would leave 4s, i.e. a single poll, and stop the clock at t=12.
+    assert now["t"] == 18.0
+    assert "BLOCKED BY A PRIMARY MIGRATION" in capsys.readouterr().out
+
+
+def test_a_migration_blocked_run_does_not_report_a_provider_quota_backoff(
+    monkeypatch, capsys
+):
+    """``backing-off`` means "the provider refused on quota" in this vocabulary.
+
+    A runner waiting out ``migrate-primary.sh`` has hit no quota ceiling, and
+    publishing ``backing-off`` sends the operator (and stories 1.5/1.6) to the
+    Gemini dashboard for a problem that lives in their own terminal.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, redis=redis)
+    cfg.backfill.control_poll_seconds = 1.0
+    redis.set("t:migrating", "migrate-primary:host-g:11:1754500000")
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=BackfillResult(migration_blocked=True))
+    )
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    control = mod.BackfillControl(redis, prefix="t")
+    monkeypatch.setattr(mod, "_control_for", lambda c, r: control)
+    seen: list[str] = []
+    now = {"t": 0.0}
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now["t"])
+
+    def _sleep(_seconds):
+        now["t"] += 40.0  # past the state-refresh interval
+        seen.append(control.state().value)
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MIGRATION_ACTIVE == 8
+    # Live and blocked while it waits — never "idle" (the wait publishes from
+    # its first poll, not one refresh interval in) and never "backing-off".
+    assert seen and set(seen) == {mod.BackfillState.BLOCKED.value}
+    # ...and the state it exits with is not a quota back-off either.
+    assert control.state() is mod.BackfillState.IDLE
+
+
+def test_a_stop_during_the_migration_wait_exits_stopped(monkeypatch, capsys):
+    """An operator stop is not a migration timeout — and clears its request."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, redis=redis)
+    redis.set("t:migrating", "migrate-primary:host-d:7:1754500000")
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=BackfillResult(migration_blocked=True))
+    )
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    control = mod.BackfillControl(redis, prefix="t")
+    monkeypatch.setattr(mod, "_control_for", lambda c, r: control)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: control.request_stop())
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_STOPPED == 6
+    assert control.should_stop() is False  # served, not left pending for 7 days
+    assert "BACKFILL STOPPED" in capsys.readouterr().out
+
+
+def test_a_lost_lease_during_the_migration_wait_exits_lease_lost(monkeypatch, capsys):
+    """The wait cannot report a lost lease as "resume".
+
+    ``_go`` short-circuits on the gate before ``run_backfill`` renews anything,
+    so the next pass would return ``migration_blocked`` again — forever — while
+    re-beating ``:active`` each cycle and blocking the next legitimate
+    ``migrate-primary.sh``.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, redis=redis)
+    cfg.backfill.lease_ttl_seconds = 3  # renew every 1s of wait
+    cfg.backfill.control_poll_seconds = 1.0
+    redis.set("t:migrating", "migrate-primary:host-e:8:1754500000")
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=BackfillResult(migration_blocked=True))
+    )
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    now = {"t": 0.0}
+    monkeypatch.setattr(mod.time, "monotonic", lambda: now["t"])
+
+    # The successor takes the lease while this run is parked on the migration.
+    def _sleep(_seconds):
+        now["t"] += 2.0
+        redis.kv["t:lease"] = "somebody-else"
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_LEASE_LOST == 7
+    assert mod._run.call_count == 1  # never resumed on a lease it no longer owns
+    assert "LEASE LOST" in capsys.readouterr().out
