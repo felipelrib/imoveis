@@ -1386,7 +1386,17 @@ async def run_backfill(
                 # case) is paced by the sleep at the top of the loop.
                 await asyncio.sleep(0)
 
-    _publish(BackfillState.RUNNING)
+    # Every other renewal is reached from inside the launch loop, so a pass
+    # whose row set is empty (or that breaks at its first check) never verifies
+    # ownership at all: a lease lost *between* passes — during the budget sleep,
+    # the candidate fetch, the census — read back as an ordinary empty pass with
+    # ``lease_lost`` False, and ``--continuous`` then reported the successor's
+    # drained queue as this run's own completion (exit 0) and cleared the
+    # control requests aimed at that live successor. Checked before publishing,
+    # because ``running`` from a displaced runner overwrites the key that now
+    # describes whoever owns the run.
+    if _lease_held():
+        _publish(BackfillState.RUNNING)
 
     async def _worker(prop: Any) -> None:
         pid = str(getattr(prop, "id", "?"))

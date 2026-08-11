@@ -871,8 +871,37 @@ def _finish(census: QueueCensus, report: dict[str, str], *, cycle: int, elapsed:
     return code
 
 
-def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
+def _publish_wait_state(control, waiting_state: BackfillState) -> None:
+    """Publish the control state from a sync wait loop — decoration, never fatal.
+
+    ``run_backfill`` guards every equivalent bookkeeping touch (``_tick_lease``,
+    the ``on_progress`` hook) and so does ``main``'s exit ``finally``, for the
+    same reason: a transient Redis blip must not destroy work that is otherwise
+    fine. The two sync wait loops were the asymmetry — they are where an
+    unattended multi-day run spends most of its wall clock, and a blip on this
+    purely decorative key ended the whole run with an undocumented traceback
+    (exit 1, colliding with none of the documented codes) despite an intact
+    checkpoint and a healthy provider. The stop poll and ``lease.renew()``
+    around it stay unguarded on purpose: those decide whether this process may
+    keep writing, and a blip there ends the pass by design.
+    """
+    try:
+        control.publish_state(
+            BackfillState.PAUSED if control.is_paused() else waiting_state
+        )
+    except Exception as exc:  # noqa: BLE001 - the state key is decoration
+        logger.warning("backfill_wait_state_publish_failed", error=str(exc))
+
+
+def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
     """Sleep out a budget window in small, interruptible steps.
+
+    Returns the outcome the caller maps to an exit code, exactly like
+    :func:`_wait_out_migration`: ``"elapsed"`` (resume), ``"stopped"``,
+    ``"lease_lost"``. A bare return cannot express those — a lost lease read as
+    "the window elapsed", and the next pass, finding the queue drained by the
+    successor that took the lease, reported *itself* as the run that completed
+    the backfill.
 
     Three cadences, deliberately different:
 
@@ -903,9 +932,9 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
     while True:
         elapsed = max(slept, time.monotonic() - started)
         if elapsed >= wait:
-            return
+            return "elapsed"
         if control is not None and control.should_stop():
-            return
+            return "stopped"
         if lease is not None and elapsed >= next_renew:
             # Losing the lease mid-wait used to go unnoticed for the rest of the
             # window — potentially hours asleep on a lease someone else now
@@ -914,7 +943,7 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
             # already describes the successor, and stamping ``backing-off`` over
             # their ``running`` is exactly the lie the exit path guards against.
             if not lease.renew():
-                return
+                return "lease_lost"
             # Fixed cadence (``+=``), not ``elapsed + every``: the latter folds
             # each check's own offset into the next deadline and drifts.
             next_renew += renew_every
@@ -926,11 +955,7 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> None:
             # (and story 1.5's API) got no acknowledgement the request had
             # been seen. The wait itself is unchanged — the launch loop is
             # what actually holds on a pause.
-            control.publish_state(
-                BackfillState.PAUSED
-                if control.is_paused()
-                else BackfillState.BACKING_OFF
-            )
+            _publish_wait_state(control, BackfillState.BACKING_OFF)
             next_state += state_every
             if next_state <= elapsed:
                 next_state = elapsed + state_every
@@ -1006,11 +1031,7 @@ def _wait_out_migration(
             # a pause issued during the wait must still read back as ``paused``.
             # ``BLOCKED``, never ``BACKING_OFF``: no provider refused anything
             # here, and "backing-off" points the operator at the wrong system.
-            control.publish_state(
-                BackfillState.PAUSED
-                if control.is_paused()
-                else BackfillState.BLOCKED
-            )
+            _publish_wait_state(control, BackfillState.BLOCKED)
             next_state = max(next_state + state_every, elapsed + state_every)
         if not announced:
             announced = True
@@ -1269,7 +1290,14 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
             f"(resuming ~{resume_at:%Y-%m-%d %H:%M %Z}). "
             f"Ctrl-C to stop; safe to resume."
         )
-        _sleep_for_reset(wait, cfg=cfg, control=control, lease=lease)
+        # A lease lost during the wait is terminal and must be reported as
+        # itself. Resuming into a fresh pass instead looked identical to an
+        # elapsed window: the successor that took the lease has been draining
+        # the queue, so that pass fetches nothing, never reaches a renewal, and
+        # the run below reported the successor's completion as its own.
+        if _sleep_for_reset(wait, cfg=cfg, control=control, lease=lease) == "lease_lost":
+            _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+            return EXIT_LEASE_LOST
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1466,8 +1494,16 @@ def main(argv: list[str] | None = None) -> int:
             # published on its way to draining the queue — publishing
             # ``backing-off`` for a completed run misreports it to --status and
             # story 1.5's API for the whole state TTL.
+            try:
+                ended_backing_off = control.state() is BackfillState.BACKING_OFF
+            except Exception as exc:  # noqa: BLE001 - never lose the exit code
+                # Same reason the release below is guarded: this read only picks
+                # which state to stamp on the way out, and letting it raise
+                # throws away the return code a multi-day run just computed.
+                logger.warning("backfill_final_state_read_failed", error=str(exc))
+                ended_backing_off = False
             quota_backoff = (
-                control.state() is BackfillState.BACKING_OFF
+                ended_backing_off
                 and rc
                 not in (
                     EXIT_COMPLETE,
@@ -1525,7 +1561,16 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except Exception as exc:  # noqa: BLE001 - never skip the release
                     logger.warning("backfill_final_state_publish_failed", error=str(exc))
-            lease.release()
+            try:
+                lease.release()
+            except Exception as exc:  # noqa: BLE001 - the lease self-heals on its TTL
+                # The publish above is guarded so a blip can never cost the
+                # release; the release itself was the last unguarded step of the
+                # same exit path. Raising here discards the return code this run
+                # spent days computing — a completed backfill becomes an exit-1
+                # traceback to whatever supervisor is watching — and the lease is
+                # freed by its own TTL anyway.
+                logger.warning("backfill_lease_release_failed", error=str(exc))
 
     logger.info("backfill_done", **result.to_dict())
     if result.migration_blocked:

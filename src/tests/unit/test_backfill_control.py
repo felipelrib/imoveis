@@ -2286,3 +2286,76 @@ def test_the_non_atomic_fallback_announces_itself(caplog):
     warned = [rec for rec in caplog.records
               if "backfill_non_atomic_redis_fallback" in rec.getMessage()]
     assert len(warned) == 1  # once per object, not once per reservation
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass 4 (v0.13-s1.3, DW-1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_pass_that_fetches_no_rows_still_verifies_the_lease():
+    """A lease lost *between* passes was invisible to a pass with nothing to do.
+
+    Every other renewal is reached from inside the launch loop, so an empty row
+    set never verified ownership: the successor that took the lease drains the
+    queue, this run's next pass fetches nothing, and ``lease_lost`` stayed
+    ``False`` — which let ``--continuous`` report the successor's completed
+    backfill as its own (exit 0) and clear the control requests aimed at it.
+    """
+    r = FakeRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60, owner="me:1")
+    assert lease.acquire() is True
+    control = BackfillControl(r, prefix="t")
+    r.kv["t:lease"] = "another-runners-token"  # taken over while we slept
+
+    async def enrich(_prop):  # pragma: no cover - must never be reached
+        raise AssertionError("a displaced runner must not enrich anything")
+
+    result = asyncio.run(
+        run_backfill(
+            [],
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            lease=lease,
+            control=control,
+        )
+    )
+
+    assert result.lease_lost is True
+    assert result.processed == 0
+    # Nothing was stamped over the successor's key — not ``running`` on the way
+    # in, not ``idle`` on the way out.
+    assert control.state() is BackfillState.IDLE
+    assert "t:state" not in r.kv
+    assert r.kv["t:lease"] == "another-runners-token"  # never stolen back
+
+
+def test_the_owner_of_an_empty_pass_still_publishes_running():
+    """The ownership check must not cost a legitimate empty pass its state."""
+    r = FakeRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60, owner="me:1")
+    assert lease.acquire() is True
+    control = BackfillControl(r, prefix="t")
+
+    async def enrich(_prop):  # pragma: no cover - no rows to enrich
+        raise AssertionError("no rows were supplied")
+
+    result = asyncio.run(
+        run_backfill(
+            [],
+            enrich_fn=enrich,
+            budget=_budget(r, 100),
+            checkpoint=_checkpoint(r),
+            requests_per_property=3,
+            sleep_fn=_noop_sleep,
+            lease=lease,
+            control=control,
+        )
+    )
+
+    assert result.lease_lost is False
+    assert control.state() is BackfillState.IDLE  # the closing publish
+    assert "t:state" in r.kv

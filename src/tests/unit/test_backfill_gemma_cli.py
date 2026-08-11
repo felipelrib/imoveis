@@ -1471,3 +1471,92 @@ def test_a_dry_run_is_not_gated_by_a_migration(monkeypatch):
 
     assert mod.main(["--dry-run", "--limit", "1"]) == 0
     assert captured["is_migrating"] is None
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review pass 4 (v0.13-s1.3, DW-1)
+# ---------------------------------------------------------------------------
+
+
+def test_sleep_for_reset_reports_why_it_returned(monkeypatch):
+    """A bare return could not tell "window elapsed" from "we lost the lease"."""
+    mod = _load_module()
+    cfg = MagicMock()
+    cfg.backfill.control_poll_seconds = 1.0
+    cfg.backfill.lease_ttl_seconds = 900
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+
+    lost = MagicMock()
+    lost.renew.return_value = False
+    stopping = MagicMock()
+    stopping.should_stop.return_value = True
+
+    assert mod._sleep_for_reset(0.0, cfg=cfg) == "elapsed"
+    assert mod._sleep_for_reset(3600.0, cfg=cfg, lease=lost) == "lease_lost"
+    assert mod._sleep_for_reset(3600.0, cfg=cfg, control=stopping) == "stopped"
+
+
+def test_a_lease_lost_during_the_budget_sleep_exits_lease_lost(monkeypatch):
+    """Resuming into a fresh pass hid the displacement as a clean completion.
+
+    The successor drains the queue while this run sleeps out its window, so the
+    pass that follows fetches nothing, reports ``complete`` and exits 0 — for a
+    backfill somebody else finished.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lease = MagicMock()
+    lease.acquire.return_value = True
+    lease.renew.return_value = False  # a successor holds it now
+    monkeypatch.setattr(mod, "_lease_for", lambda cfg, r: lease)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=1, budget_exhausted=True),
+                AssertionError("a displaced runner must not start another pass"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=1, candidates=5))
+    )
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_LEASE_LOST
+    assert mod._run.call_count == 1
+
+
+def test_a_state_publish_blip_during_the_budget_wait_never_kills_the_run(monkeypatch):
+    """The state key is decoration; the checkpoint and the provider are fine."""
+    mod = _load_module()
+    cfg = MagicMock()
+    cfg.backfill.control_poll_seconds = 1.0
+    cfg.backfill.lease_ttl_seconds = 900
+    control = MagicMock()
+    control.should_stop.return_value = False
+    control.is_paused.return_value = False
+    control.publish_state.side_effect = ConnectionError("redis went away")
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+
+    assert mod._sleep_for_reset(3.0, cfg=cfg, control=control) == "elapsed"
+    assert control.publish_state.called
+
+
+def test_a_failing_lease_release_does_not_replace_the_exit_code(monkeypatch):
+    """A completed run must not read as an exit-1 crash to a supervisor."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lease = MagicMock()
+    lease.acquire.return_value = True
+    lease.release.side_effect = ConnectionError("redis went away")
+    monkeypatch.setattr(mod, "_lease_for", lambda cfg, r: lease)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=3)))
+
+    assert mod.main(["--limit", "3"]) == 0
+    lease.release.assert_called_once()
