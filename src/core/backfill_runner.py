@@ -1159,6 +1159,8 @@ async def run_backfill(
     is_quota_error: Optional[Callable[[BaseException], bool]] = is_quota_exhausted,
     is_migrating: Optional[Callable[[], bool]] = None,
     pause_poll_seconds: float = 2.0,
+    lease_renew_interval: Optional[float] = None,
+    lease_sleep_fn: SleepFn = asyncio.sleep,
 ) -> BackfillResult:
     """Enrich candidate ``(property, metrics)`` rows, up to ``concurrency`` at once.
 
@@ -1187,14 +1189,34 @@ async def run_backfill(
     the launch loop (already-launched rows still finish) and a stop request ends
     it, both without losing the checkpoint.
 
-    An optional ``lease`` is renewed **here** — once per launch-loop iteration
-    and once per pause poll — rather than by the caller's ``on_progress`` hook.
-    That hook only fired on rows, so a storm of failing rows or a long pause
-    could let the lease lapse and a second runner start. When ``renew()`` returns
-    ``False`` this process no longer owns the lease: another runner may already
-    be working the same queue, so launching anything further would make this a
-    second writer. It stops launching immediately, flags
-    :attr:`BackfillResult.lease_lost`, and lets already-launched rows drain.
+    An optional ``lease`` is renewed **here**, never by the caller's
+    ``on_progress`` hook (that hook only fired on rows, so a storm of failing
+    rows or a long pause could let the lease lapse and a second runner start).
+    Four sites renew it, and all four stay:
+
+    * a background timer task, every ``lease_renew_interval`` seconds (default
+      ``lease.ttl_seconds / 3``, and never longer than that — a slower cadence
+      would reinstate the very lapse this exists to prevent — slept with
+      ``lease_sleep_fn``, which is deliberately *not* the loop's ``sleep_fn``
+      so injecting one does not perturb the launch loop's pacing). This
+      is the only renewal that is independent of what the loop is doing, so it
+      is what covers a *single row slower than the TTL*, the launch-interval
+      sleep, the TPM wait, ``sem.acquire()`` and the closing drain (DW-6). It
+      is created only when a ``lease`` was supplied and is cancelled after the
+      drain, so it can never outlive the run — nor swallow its exception.
+    * once per launch-loop iteration and once per pause poll: those calls are
+      also the loop's *stop* decision, not merely a renewal.
+    * once per finished row, from the worker's ``finally``, which also refreshes
+      the published control state (a tighter TTL than the lease's).
+
+    When ``renew()`` returns ``False`` this process no longer owns the lease:
+    another runner may already be working the same queue, so launching anything
+    further would make this a second writer. It stops launching immediately —
+    at the launch-loop head *and* again right after ``sem.acquire()``, since the
+    timer can lose the lease while the loop is parked there — flags
+    :attr:`BackfillResult.lease_lost`, and lets already-launched rows drain. A
+    ``renew()`` that *raises* inside the timer is logged and ignored: a Redis
+    blip is bookkeeping, not a lost lease, and must never abort a run.
 
     ``is_quota_error`` classifies a row
     failure as *provider quota spent* rather than *this row is bad*: such a row
@@ -1240,7 +1262,12 @@ async def run_backfill(
 
     def _publish(state: BackfillState) -> None:
         nonlocal last_state_publish, current_state
-        if control is not None:
+        # Once the lease is gone the state key describes whoever took it over.
+        # The background timer can flag that mid-row, so rows still draining
+        # (and a pause that ends right after) would otherwise stamp *our*
+        # liveness over the successor's — the same reason the closing publish
+        # below is guarded.
+        if control is not None and not result.lease_lost:
             control.publish_state(state)
             current_state = state
             last_state_publish = clock()
@@ -1263,6 +1290,12 @@ async def run_backfill(
         """Renew the lease. False = we lost it; stop launching immediately."""
         if lease is None:
             return True
+        # A lost lease is terminal — this run never re-acquires one. Re-running
+        # the CAS from every draining row (and from the timer) would only spend
+        # calls on a key someone else owns and repeat the loss warning once per
+        # drained row.
+        if result.lease_lost:
+            return False
         if lease.renew():
             return True
         result.lease_lost = True
@@ -1295,6 +1328,63 @@ async def run_backfill(
             _refresh_state()
         except Exception as exc:  # noqa: BLE001 - bookkeeping never aborts a run
             _log_lease_tick_failed(exc)
+
+    # A third of the TTL is the same cadence the migration watchdog and the
+    # CLI's sync sleep loops use: two consecutive misses still leave a margin.
+    # The ceiling is what keeps the knob from lying — an interval at or beyond
+    # the TTL would reinstate DW-6 silently — and the floor guards an explicitly
+    # passed non-positive value, which would turn the timer into a busy-spin.
+    _default_interval = lease.ttl_seconds / 3.0 if lease is not None else 0.0
+    renew_interval = (
+        _default_interval
+        if lease_renew_interval is None
+        else float(lease_renew_interval)
+    )
+    if lease is not None:
+        renew_interval = min(renew_interval, _default_interval)
+    renew_interval = max(0.05, renew_interval)
+
+    async def _renew_lease_periodically() -> None:
+        """Renew the lease on a timer, independent of the launch loop (DW-6).
+
+        Every other renewal is event-driven — per launch-loop iteration, per
+        pause poll, per finished row — so nothing refreshed the lease *while* a
+        row was in flight. One property whose enrichment outlives the TTL let
+        the lease lapse under a live writer and a second runner take over the
+        same queue.
+
+        It never calls ``clock()`` or ``_refresh_state()``: the published state
+        belongs to the loop's own cadence, and the injected clocks the unit
+        tests use are finite sequences a timer would exhaust. The extra
+        ``asyncio.sleep(0)`` is a real yield point even when the injected sleep
+        does not suspend, so this loop can never starve the run it protects.
+
+        It is a coroutine on the run's own event loop, so "independent of the
+        launch loop" means *not driven by it* — not preemptive: a blocking
+        section inside ``enrich_fn`` (or a slow Redis round-trip) delays the
+        tick exactly as it delays everything else. The TTL/3 cadence is the
+        margin that absorbs that. It cuts both ways: ``lease.renew()`` is a
+        *synchronous* client call, so every tick briefly blocks the loop —
+        including the rows it is protecting — for one Redis round trip.
+
+        The whole body is guarded: a caller-supplied ``lease_sleep_fn`` that
+        raises would otherwise kill the timer silently and reopen DW-6 for the
+        rest of the run, with nothing observing it until the run ended.
+        """
+        while True:
+            try:
+                await lease_sleep_fn(renew_interval)
+                await asyncio.sleep(0)
+                if not _lease_held():
+                    return  # lost it: the loop stops launching at its next check
+            except Exception as exc:  # noqa: BLE001 - a blip never aborts a run
+                _log_lease_renewer_failed(exc, phase="tick")
+                # A yield, not a back-off: it keeps a raising ``lease_sleep_fn``
+                # from starving the run it protects. Such a seam still retries at
+                # event-loop speed — acceptable because the production sleep is
+                # ``asyncio.sleep``, and a failing ``renew()`` (the reachable
+                # case) is paced by the sleep at the top of the loop.
+                await asyncio.sleep(0)
 
     _publish(BackfillState.RUNNING)
 
@@ -1390,96 +1480,134 @@ async def run_backfill(
     # on a transient blip, and letting that escape with tasks still pending left
     # in-flight rows to be cancelled at an arbitrary await point by
     # ``asyncio.run`` — mid-enrichment, mid-write. In-flight rows always drain.
+    renewer: Optional[asyncio.Task] = None
     try:
-        for prop, metrics in rows:
-            # A quota refusal means every further launch would 429 too — and each
-            # retry burns daily request quota. Stop launching immediately.
-            if result.quota_exhausted:
-                break
-            # A primary migration holds the exclusion key. The caller beat its
-            # ``:active`` heartbeat before handing this predicate in, so the
-            # migration either sees that heartbeat and refuses, or it got here
-            # first and this run must not launch into its upgrade (DW-3/DW-4).
-            if _migration_holds():
-                break
-            # Renewing here (not in ``on_progress``) means the lease is refreshed
-            # even through rows that only ever fail.
-            if not _lease_held():
-                break
-            if not await _may_launch():
-                # A lost lease is not an operator stop — and neither is a
-                # migration holding the DB. Do not mislabel either.
-                if not result.lease_lost and not result.migration_blocked:
-                    result.stopped = True
-                break
-            _refresh_state()
-            # Idempotency: skip rows a concurrent live worker already enriched,
-            # unless the operator forces a re-run.
-            if not force and not mode_is_missing_ai(metrics):
-                result.skipped_already_enriched += 1
-                continue
-            # Rows retired by the ledger cost nothing: no budget, no tokens, no call.
-            pid = str(getattr(prop, "id", ""))
-            if ledger is not None and ledger.is_quarantined(pid):
-                result.skipped_quarantined += 1
-                continue
-            if limit is not None and attempted >= limit:
-                break
+        if lease is not None:
+            renewer = asyncio.create_task(_renew_lease_periodically())
+        try:
+            for prop, metrics in rows:
+                # A quota refusal means every further launch would 429 too — and each
+                # retry burns daily request quota. Stop launching immediately.
+                if result.quota_exhausted:
+                    break
+                # A primary migration holds the exclusion key. The caller beat its
+                # ``:active`` heartbeat before handing this predicate in, so the
+                # migration either sees that heartbeat and refuses, or it got here
+                # first and this run must not launch into its upgrade (DW-3/DW-4).
+                if _migration_holds():
+                    break
+                # The background timer may already have lost it while this loop
+                # was in a sleep, a TPM wait or a drain. ``_lease_held()`` below
+                # would report the same thing (it short-circuits on the flag);
+                # naming the timer's verdict here is what keeps a lost lease from
+                # reading as an ordinary failed renew at this break.
+                if result.lease_lost:
+                    break
+                # Renewing here (not in ``on_progress``) means the lease is refreshed
+                # even through rows that only ever fail.
+                if not _lease_held():
+                    break
+                if not await _may_launch():
+                    # A lost lease is not an operator stop — and neither is a
+                    # migration holding the DB. Do not mislabel either.
+                    if not result.lease_lost and not result.migration_blocked:
+                        result.stopped = True
+                    break
+                _refresh_state()
+                # Idempotency: skip rows a concurrent live worker already enriched,
+                # unless the operator forces a re-run.
+                if not force and not mode_is_missing_ai(metrics):
+                    result.skipped_already_enriched += 1
+                    continue
+                # Rows retired by the ledger cost nothing: no budget, no tokens, no call.
+                pid = str(getattr(prop, "id", ""))
+                if ledger is not None and ledger.is_quarantined(pid):
+                    result.skipped_quarantined += 1
+                    continue
+                if limit is not None and attempted >= limit:
+                    break
 
-            # Rate-limit launches (RPM smoothing) before reserving budget.
-            if launch_interval > 0 and last_launch is not None:
-                wait = launch_interval - (clock() - last_launch)
-                if wait > 0:
-                    await sleep_fn(wait)
+                # Rate-limit launches (RPM smoothing) before reserving budget.
+                if launch_interval > 0 and last_launch is not None:
+                    wait = launch_interval - (clock() - last_launch)
+                    if wait > 0:
+                        await sleep_fn(wait)
 
-            # Proactively stay under the tokens-per-minute ceiling: wait until this
-            # property's estimated tokens fit the trailing 60s window, then reserve.
-            if token_budget is not None:
-                tpm_wait = token_budget.seconds_until_room()
-                if tpm_wait > 0:
-                    result.tpm_waits += 1
-                    result.tpm_wait_seconds += tpm_wait
-                    await sleep_fn(tpm_wait)
-                token_budget.reserve()
+                # Proactively stay under the tokens-per-minute ceiling: wait until this
+                # property's estimated tokens fit the trailing 60s window, then reserve.
+                if token_budget is not None:
+                    tpm_wait = token_budget.seconds_until_room()
+                    if tpm_wait > 0:
+                        result.tpm_waits += 1
+                        result.tpm_wait_seconds += tpm_wait
+                        await sleep_fn(tpm_wait)
+                    token_budget.reserve()
 
-            await sem.acquire()  # bound in-flight properties to ``concurrency``
-            # Waiting for a slot is the point at which an in-flight worker can have
-            # discovered the provider is out of quota. Re-check before spending
-            # anything on this row: budget reserved here would never be used.
-            if result.quota_exhausted:
-                sem.release()
-                break
-            # Same reason, different writer: the checks at the loop head ran
-            # before the launch interval, the TPM window and this ``acquire`` —
-            # minutes, on a busy pass — so a migration that started in between
-            # would otherwise get this row launched into its upgrade. Re-read
-            # before spending any budget on it.
-            if _migration_holds():
-                sem.release()
-                break
-            if not budget.try_consume(requests_per_property):
-                sem.release()
-                result.budget_exhausted = True
-                break
+                await sem.acquire()  # bound in-flight properties to ``concurrency``
+                # Waiting for a slot is the point at which an in-flight worker can have
+                # discovered the provider is out of quota. Re-check before spending
+                # anything on this row: budget reserved here would never be used.
+                if result.quota_exhausted:
+                    sem.release()
+                    break
+                # Same window, third writer: the background renewer can have lost
+                # the lease while this loop waited for a slot. Launching now would
+                # make this a second writer against a queue someone else owns.
+                if result.lease_lost:
+                    sem.release()
+                    break
+                # Same reason, different writer: the checks at the loop head ran
+                # before the launch interval, the TPM window and this ``acquire`` —
+                # minutes, on a busy pass — so a migration that started in between
+                # would otherwise get this row launched into its upgrade. Re-read
+                # before spending any budget on it.
+                if _migration_holds():
+                    sem.release()
+                    break
+                if not budget.try_consume(requests_per_property):
+                    sem.release()
+                    result.budget_exhausted = True
+                    break
 
-            if ledger is not None:
-                # Count the attempt, not just failures: a row that enriches to a
-                # falsy ai_score stays a ``mode=missing`` candidate and would
-                # otherwise be re-fetched every cycle forever.
-                ledger.record_attempt(pid)
-            attempted += 1
-            result.requests_consumed += requests_per_property
-            last_launch = clock()
-            tasks.append(asyncio.create_task(_worker(prop)))
+                if ledger is not None:
+                    # Count the attempt, not just failures: a row that enriches to a
+                    # falsy ai_score stays a ``mode=missing`` candidate and would
+                    # otherwise be re-fetched every cycle forever.
+                    ledger.record_attempt(pid)
+                attempted += 1
+                result.requests_consumed += requests_per_property
+                last_launch = clock()
+                tasks.append(asyncio.create_task(_worker(prop)))
 
+        finally:
+            if tasks:
+                # ``return_exceptions``: ``checkpoint.advance()`` runs outside the
+                # worker's ``except``, so a Redis error there would otherwise abort
+                # the gather on the first failure and abandon the remaining rows.
+                for outcome in await asyncio.gather(*tasks, return_exceptions=True):
+                    if isinstance(outcome, BaseException):
+                        _log_row_error(None, outcome)
     finally:
-        if tasks:
-            # ``return_exceptions``: ``checkpoint.advance()`` runs outside the
-            # worker's ``except``, so a Redis error there would otherwise abort
-            # the gather on the first failure and abandon the remaining rows.
-            for outcome in await asyncio.gather(*tasks, return_exceptions=True):
-                if isinstance(outcome, BaseException):
-                    _log_row_error(None, outcome)
+        # Cancel *after* the drain: one slow row finishing alone is exactly a
+        # window the timer has to cover. Whatever the renewer ends with is
+        # logged, never raised, so this can never replace the exception the
+        # caller is about to see (or the result it is about to get).
+        if renewer is not None:
+            renewer.cancel()
+            # ``await renewer`` cannot be used here: it raises the renewer's own
+            # ``CancelledError``, which is indistinguishable from a cancellation
+            # delivered to *this* coroutine (Ctrl-C, a supervising ``wait_for``)
+            # while the renewer is finishing — and ``renewer.cancelled()`` is
+            # ``True`` either way, so filtering on it swallowed the caller's
+            # cancellation and returned a result as if nothing had happened.
+            # ``wait`` never re-raises what the awaited task raised, so a
+            # ``CancelledError`` out of this line is unambiguously ours to
+            # propagate.
+            await asyncio.wait({renewer})
+            if not renewer.cancelled():
+                renewer_exc = renewer.exception()
+                if renewer_exc is not None:
+                    _log_lease_renewer_failed(renewer_exc, phase="shutdown")
     # A quota-exhausted run stays "backing-off" for the operator/API to see;
     # anything else (including an operator stop) has genuinely gone idle. A run
     # that lost its lease publishes nothing: the state key now describes whoever
@@ -1533,6 +1661,19 @@ def _log_lease_meta_failed(exc: Exception) -> None:
 
     get_logger(__name__).warning(
         "backfill_lease_meta_write_failed",
+        error=str(exc),
+    )
+
+
+def _log_lease_renewer_failed(exc: Exception, *, phase: str) -> None:
+    from infra.logging import get_logger
+
+    # ``phase`` separates "one tick blipped, the timer is still running" from
+    # "the timer failed on the way out" — without it the two read identically
+    # in the log and only one of them means the run went unrenewed.
+    get_logger(__name__).warning(
+        "backfill_lease_renewer_failed",
+        renewer_phase=phase,
         error=str(exc),
     )
 

@@ -48,7 +48,9 @@ origin: migrated from legacy ledger (flat review-defer append, spec-1-3-backfill
 location: src/core/backfill_runner.py:1094 (`run_backfill` lease renewal)
 source_spec: `_bmad-output/implementation-artifacts/spec-1-3-backfill-runner-control-core.md`
 reason: `run_backfill` renews once per launch-loop iteration and (after the 1.3 review pass) once per finished row, so the final `gather` drain is covered — but nothing renews *during* a row. A row is ~3 cloud calls plus image downloads, each with client-side 429 retries, so exceeding the 900s default is unlikely yet reachable; the TTL floor was raised to 300s to keep the margin honest. The complete fix is an asyncio background renewer running for the whole `run_backfill` body, which changes the runner's task structure and deserves its own change rather than a review patch.
-status: open
+status: done 2026-08-11
+resolution: resolved by sweep bundle dw-backfill-lease-background-renewer
+resolution-undo: baddba93aa2ab5e3d643660f120354e4951031daf3cf7bcd0b773a8aead0d603 2026-08-11 7374617475733a206f70656e
 
 ### DW-7: A provider throttle that arrives as connection resets or timeouts (rather than an HTTP status) is still charged to the row, so a throttle window can permanently quarantine perfectly good properties
 origin: migrated from legacy ledger (flat review-defer append, spec-1-3-backfill-runner-control-core.md), 2026-08-10
@@ -69,4 +71,18 @@ origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-migration-bac
 location: scripts/dev/backfill_gemma.py (`_on_progress` → `heartbeat.beat()`), src/core/backfill_runner.py (`_worker`'s `finally`)
 source_spec: `_bmad-output/implementation-artifacts/spec-dw-migration-backfill-mutual-exclusion.md`
 reason: The runner-first half of the v0.13-fu6 exclusion proof assumes `:active` is visible when the script probes it, but the heartbeat has a 300s TTL and is refreshed only when a row *finishes* — nothing ticks it while a row is in flight. One enrichment slower than the TTL (three cloud calls, each with client-side 429 retries) lets `:active` expire under a live writer, so `migrate-primary.sh` sees an idle guard and migrates alongside it. This caps what the fu6 mutual exclusion can guarantee ("no *new* writer starts, provided the runner completed a row within the heartbeat TTL"). Same missing-background-timer root cause as DW-6 but a different key and a different consequence — DW-6 is the lease (two writers), this is the heartbeat (migration exclusion); a background ticker would close both. Not introduced by fu6.
+status: open
+
+### DW-10: A Redis outage lasting longer than the lease TTL is swallowed by the background renewer, so a run can keep writing on a lapsed lease while a successor takes the queue
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-backfill-lease-background-renewer.md), 2026-08-11
+location: src/core/backfill_runner.py (`_renew_lease_periodically`'s `except Exception` arm), src/infra/redis_client.py:26 (client built with no socket timeout)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-backfill-lease-background-renewer.md`
+reason: The renewer logs a failing `renew()` and keeps ticking — deliberate, and required by the v0.13-fu7 intent contract ("a Redis blip is logged, never propagated"). But nothing distinguishes a blip from an outage: after `ttl_seconds` of consecutive failures the lease has really expired, a successor can acquire it, and this run neither knows nor stops. The launch loop's own `_lease_held()` raises and ends the run at its next iteration, so the exposure needs the loop to be parked — a long row, a long drain, a TPM wait — which is exactly the window this change exists to cover. Same swallow pre-exists in `_tick_lease`'s `_log_lease_tick_failed`. The fix (track consecutive failure duration and flag `lease_lost` past the TTL) contradicts the fu7 contract's "never propagates, lease_lost is not set", so it needs its own deliberate decision about when repeated failure may be read as loss. A bounded socket timeout on the shared Redis client is the other half and is a multi-surface change.
+status: open
+
+### DW-11: After the lease is lost mid-run, still-draining rows advance the shared checkpoint hash, rewinding the successor runner's position and inflating processed_total
+origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-backfill-lease-background-renewer.md), 2026-08-11
+location: src/core/backfill_runner.py (`_worker`'s `else` branch → `checkpoint.advance`), `BackfillCheckpoint.advance` (hset `last_property_id` + hincrby `processed_total`)
+source_spec: `_bmad-output/implementation-artifacts/spec-dw-backfill-lease-background-renewer.md`
+reason: `advance()` is an unconditional `hset` on a key shared by every runner, and in-flight rows always drain (a deliberate constraint — cancelling mid-enrichment leaves half-written properties). So a runner that lost its lease still writes `last_property_id` for each row it finishes; if the successor has already moved past that id, the next resume rewinds to the older one and re-enriches the gap, while `processed_total` counts both runners' work. v0.13-fu7 guarded `_publish` against exactly this class of overwrite but left the checkpoint alone: the same call also records real completed work, so suppressing it loses progress that was genuinely made. Deciding between a monotonic `advance` (compare-and-set on the id's ordering) and a lease-gated one is a checkpoint-semantics change, not a review patch. Pre-existing — the drain-after-loss path is older than the background renewer, which only widened the window by making the loss observable mid-row.
 status: open

@@ -90,6 +90,12 @@ development_status:
   # cleared that heartbeat and resumed mid-migration. Added the migration-held
   # key `backfill:gemma:migrating` with set-then-check on both sides.
   v0.13-fu6-migration-backfill-mutual-exclusion: in-progress
+  # Follow-up (DW-6): run_backfill renewed its lease only from event sites (per
+  # launch-loop iteration, per pause poll, per finished row), so nothing renewed
+  # it while a row was in flight — one enrichment slower than the TTL let the
+  # lease lapse under a live writer. Added a background timer task renewing at
+  # ttl/3 for the whole run, cancelled after the in-flight drain.
+  v0.13-fu7-backfill-lease-background-renewer: in-progress
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

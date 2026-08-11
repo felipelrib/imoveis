@@ -1066,6 +1066,447 @@ def test_run_backfill_without_control_is_unchanged():
 
 
 # ---------------------------------------------------------------------------
+# run_backfill — background lease renewer (v0.13-fu7, DW-6)
+# ---------------------------------------------------------------------------
+
+
+def test_the_background_renewer_ticks_while_a_single_slow_row_is_in_flight():
+    """DW-6: nothing renewed the lease *while* one long row was being enriched.
+
+    Every renewal used to be event-driven — one per launch-loop iteration, one
+    per pause poll, one per finished row — so a single property whose ~3 cloud
+    calls outlived the TTL let the lease lapse under a live writer.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    gate = asyncio.Event()
+    renewals = {"n": 0}
+    at_row_start = {"n": -1}
+    during_the_row = {"renewals": -1, "ttl": -1}
+    polls = {"n": 0}
+
+    original_renew = lease.renew
+
+    def counting_renew():
+        renewals["n"] += 1
+        return original_renew()
+
+    lease.renew = counting_renew  # type: ignore[method-assign]
+
+    async def lease_sleeper(_seconds):
+        # The yield comes first *on purpose*: it is what lets the worker reach
+        # ``enrich`` and record ``at_row_start`` before this tick's renew, so
+        # the two counters below are captured in the right order. Swapping
+        # these two lines silently breaks the comparison, hence the sentinel
+        # assertion at the end of the test.
+        await asyncio.sleep(0)
+        polls["n"] += 1
+        if polls["n"] == 2:
+            # One renewer tick has fired since the row started; the row is still
+            # in flight (the gate opens only now).
+            during_the_row["renewals"] = renewals["n"]
+            during_the_row["ttl"] = r.expires["t:lease"]
+            gate.set()
+
+    async def enrich(_prop):
+        r.expires["t:lease"] = 1  # the TTL has all but run out under this row
+        at_row_start["n"] = renewals["n"]
+        await gate.wait()
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(1),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=lease_sleeper,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert at_row_start["n"] >= 0  # the row really was in flight when it ticked
+    assert during_the_row["renewals"] > at_row_start["n"]  # renewed mid-row
+    assert during_the_row["ttl"] == 60  # ... and the TTL was restored
+    assert result.processed == 1
+    assert result.lease_lost is False
+
+
+def test_the_renewer_losing_the_lease_mid_row_stops_further_launches():
+    """A lease taken over mid-row must stop launches at the next observation.
+
+    The launch loop can be parked in ``sem.acquire()`` for minutes, so the flag
+    is re-checked there as well — otherwise the row waiting for that slot is
+    launched against a queue another runner already owns.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60, owner="me:1")
+    assert lease.acquire() is True
+    gate = asyncio.Event()
+    seen: list[str] = []
+
+    async def lease_sleeper(_seconds):
+        await asyncio.sleep(0)
+        r.kv["t:lease"] = "another-runners-token"  # taken over mid-row
+        gate.set()
+
+    async def enrich(prop):
+        seen.append(prop.id)
+        await gate.wait()
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(6),
+                enrich_fn=enrich,
+                budget=_budget(r, 1000),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=1,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=lease_sleeper,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert result.lease_lost is True
+    assert result.stopped is False  # a lost lease is not an operator stop
+    # Row 1 was already waiting on the semaphore when the lease went: the
+    # re-check after ``sem.acquire()`` is what keeps it from being launched.
+    assert seen == ["prop-0"]
+    assert r.kv["t:lease"] == "another-runners-token"  # never stolen back
+
+
+def test_the_renewer_task_is_cancelled_when_the_run_returns():
+    """A leaked timer task would keep renewing a lease this run has finished with.
+
+    ``lease_sleep_fn`` here never suspends, which is also the regression the
+    renewer's own ``asyncio.sleep(0)`` guards: without that yield the timer
+    would spin and the run would never complete.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+
+    async def enrich(_prop):
+        return None
+
+    async def scenario():
+        await asyncio.wait_for(
+            run_backfill(
+                _rows(3),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=_noop_sleep,
+            ),
+            timeout=5,
+        )
+        return {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+
+    assert asyncio.run(scenario()) == set()
+
+
+def test_the_renewer_task_is_cancelled_when_the_launch_loop_raises():
+    """The original exception must reach the caller, with nothing left pending.
+
+    Cancelling the renewer happens after the in-flight drain and swallows only
+    its own ``CancelledError``, so it can never replace what the loop raised.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    gate = asyncio.Event()
+    drained: list[str] = []
+
+    def exploding_rows():
+        yield from _rows(1)
+        raise ConnectionError("redis went away mid-iteration")
+
+    async def lease_sleeper(_seconds):
+        # The gate opens only from the timer, so the row can finish *only*
+        # while the renewer is still alive — which is the drain window the
+        # cancellation must not close early.
+        await asyncio.sleep(0)
+        gate.set()
+
+    async def enrich(prop):
+        await gate.wait()
+        drained.append(prop.id)
+
+    async def scenario():
+        with pytest.raises(ConnectionError):
+            await asyncio.wait_for(
+                run_backfill(
+                    exploding_rows(),
+                    enrich_fn=enrich,
+                    budget=_budget(r, 100),
+                    checkpoint=_checkpoint(r),
+                    requests_per_property=3,
+                    sleep_fn=_noop_sleep,
+                    lease=lease,
+                    lease_sleep_fn=lease_sleeper,
+                ),
+                timeout=5,
+            )
+        return {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+
+    assert asyncio.run(scenario()) == set()
+    assert drained == ["prop-0"]  # the row in flight when it raised still drained
+
+
+def test_a_redis_blip_inside_the_renewer_never_aborts_the_run():
+    """Bookkeeping never fails a run — and a raise is not a lost lease.
+
+    The timer keeps ticking after a failed ``renew()``; propagating it out of
+    the background task would abandon rows that are still enriching.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    gate = asyncio.Event()
+    polls = {"n": 0}
+    raised = {"n": 0}
+
+    original_renew = lease.renew
+
+    def renew_that_blips():
+        # Only the renewer renews inside this window: the launch loop has
+        # already exhausted its single row and the worker is still gated.
+        if polls["n"] >= 1 and not gate.is_set():
+            raised["n"] += 1
+            raise ConnectionError("redis blip")
+        return original_renew()
+
+    lease.renew = renew_that_blips  # type: ignore[method-assign]
+
+    async def lease_sleeper(_seconds):
+        await asyncio.sleep(0)
+        polls["n"] += 1
+        if polls["n"] >= 3:
+            gate.set()
+
+    async def enrich(_prop):
+        await gate.wait()
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(1),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=lease_sleeper,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert raised["n"] >= 1  # the renewer really did hit the blip
+    assert result.processed == 1
+    assert result.lease_lost is False  # a raise is not a refusal
+
+
+def test_a_raising_sleep_does_not_kill_the_renewer():
+    """The reason the *whole* renewer body is guarded, not just ``renew()``.
+
+    A sleep seam that raises would otherwise end the timer silently and reopen
+    DW-6 for the rest of the run, with nothing observing it until the run
+    finished. The timer has to survive its own sleep failing.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    gate = asyncio.Event()
+    calls = {"n": 0}
+
+    async def lease_sleeper(_seconds):
+        calls["n"] += 1
+        await asyncio.sleep(0)
+        if calls["n"] == 1:
+            raise RuntimeError("the injected timer seam blew up")
+        # Only a *surviving* timer ever reaches this: the row is gated open
+        # from the tick after the raise, so the run cannot finish otherwise.
+        gate.set()
+
+    async def enrich(_prop):
+        await gate.wait()
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(1),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=lease_sleeper,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert calls["n"] >= 2  # it ticked again after its sleep raised
+    assert result.processed == 1
+    assert result.lease_lost is False
+
+
+def test_no_background_task_is_created_when_no_lease_is_supplied():
+    """``lease=None`` stays byte-identical to today: row workers only."""
+
+    async def scenario(lease, r):
+        # Names of the coroutines running while the single row is in flight —
+        # asserting on identity, not on a count, so this cannot pass because
+        # some *other* task happened to exist.
+        live: set[str] = set()
+
+        async def enrich(_prop):
+            live.update(
+                getattr(t.get_coro(), "__name__", "?") for t in asyncio.all_tasks()
+            )
+
+        await asyncio.wait_for(
+            run_backfill(
+                _rows(1),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=1,
+                sleep_fn=_noop_sleep,
+                lease=lease,
+                lease_sleep_fn=_noop_sleep,
+            ),
+            timeout=5,
+        )
+        return live
+
+    r = EvalRedis()
+    held = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert held.acquire() is True
+
+    without_lease = asyncio.run(scenario(None, EvalRedis()))
+    with_lease = asyncio.run(scenario(held, r))
+
+    assert "_renew_lease_periodically" in with_lease
+    assert "_renew_lease_periodically" not in without_lease
+
+
+def test_nothing_publishes_state_after_the_renewer_loses_the_lease():
+    """The state key belongs to whoever took the lease over.
+
+    The closing publish was already guarded, but the timer can lose the lease
+    with rows still draining — and each drained row's ``_tick_lease`` refreshes
+    the state, stamping this runner's liveness over its successor's.
+    """
+    r = EvalRedis()
+    lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+    assert lease.acquire() is True
+    control = _ScriptedControl()
+    gate = asyncio.Event()
+    at_loss = {"n": -1}
+    # Every read jumps ten minutes, so every ``_refresh_state`` is due.
+    ticks = iter([600.0 * i for i in range(200)])
+
+    async def lease_sleeper(_seconds):
+        await asyncio.sleep(0)
+        if not gate.is_set():
+            r.kv["t:lease"] = "another-runners-token"
+            at_loss["n"] = len(control.states)
+            gate.set()
+
+    async def enrich(_prop):
+        await gate.wait()
+
+    result = asyncio.run(
+        asyncio.wait_for(
+            run_backfill(
+                _rows(4),
+                enrich_fn=enrich,
+                budget=_budget(r, 100),
+                checkpoint=_checkpoint(r),
+                requests_per_property=3,
+                concurrency=1,
+                sleep_fn=_noop_sleep,
+                clock=lambda: next(ticks),
+                control=control,
+                lease=lease,
+                lease_sleep_fn=lease_sleeper,
+            ),
+            timeout=5,
+        )
+    )
+
+    assert result.lease_lost is True
+    assert at_loss["n"] >= 0  # the loss really happened mid-run
+    assert len(control.states) == at_loss["n"]  # nothing published after it
+
+
+def test_the_renewer_interval_defaults_to_a_third_of_the_ttl_and_is_clamped_both_ways():
+    """The cadence is the whole fix: a slower one silently reinstates DW-6.
+
+    Nothing else pins it — flip the default to ``ttl * 3`` and every other test
+    in this block still passes, because they drive the timer through an
+    injected sleep that ignores the interval it is handed.
+    """
+
+    def intervals_for(**kwargs):
+        r = EvalRedis()
+        lease = BackfillLease(r, prefix="t", ttl_seconds=60)
+        assert lease.acquire() is True
+        slept: list[float] = []
+
+        async def lease_sleeper(seconds):
+            slept.append(seconds)
+            await asyncio.sleep(0)
+
+        async def enrich(_prop):
+            await asyncio.sleep(0)
+
+        asyncio.run(
+            asyncio.wait_for(
+                run_backfill(
+                    _rows(2),
+                    enrich_fn=enrich,
+                    budget=_budget(r, 100),
+                    checkpoint=_checkpoint(r),
+                    requests_per_property=3,
+                    sleep_fn=_noop_sleep,
+                    lease=lease,
+                    lease_sleep_fn=lease_sleeper,
+                    **kwargs,
+                ),
+                timeout=5,
+            )
+        )
+        assert slept, "the timer never ticked"
+        return set(slept)
+
+    assert intervals_for() == {20.0}  # ttl / 3
+    assert intervals_for(lease_renew_interval=1.5) == {1.5}  # tighter is allowed
+    assert intervals_for(lease_renew_interval=99_999) == {20.0}  # slower is not
+    # A non-positive interval would make the timer a Redis busy-spin; the floor
+    # is the same defence ``pause_poll_seconds`` gets one screen above it.
+    assert intervals_for(lease_renew_interval=0) == {0.05}
+    assert intervals_for(lease_renew_interval=-5) == {0.05}
+
+
+# ---------------------------------------------------------------------------
 # MigrationGate — mutual exclusion with migrate-primary.sh (v0.13-fu6, DW-3/DW-4)
 # ---------------------------------------------------------------------------
 

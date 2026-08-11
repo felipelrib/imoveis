@@ -739,9 +739,11 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             ledger=None if args.dry_run else ledger,
             on_progress=_on_progress,
             control=control,
-            # The lease is renewed inside run_backfill: once per launch-loop
-            # iteration and once per pause poll, so neither a storm of failing
-            # rows nor a long pause can let it lapse under a second runner.
+            # The lease is renewed inside run_backfill: by a background timer
+            # every `lease_ttl_seconds / 3` for the whole pass, plus once per
+            # launch-loop iteration, pause poll and finished row. So neither a
+            # storm of failing rows, nor a long pause, nor a single property
+            # slower than the TTL can let it lapse under a second runner.
             lease=lease,
             # Re-read on every launch and every pause poll: a migration can
             # start at any point in a pass that runs for hours.
