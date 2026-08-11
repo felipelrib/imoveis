@@ -283,6 +283,13 @@ ai:
   gemini_model: gemini-2.5-flash
   gemma_model: gemma-4-31b-it # backend: gemma + the BIN-248 backfill runner
   gemini_api_key: ""          # env: GEMINI_API_KEY (leave blank in YAML)
+  # A throttled free-tier project sometimes stops answering instead of returning
+  # 429, so the refusal arrives as identical connection resets/timeouts (DW-7).
+  # Repeated identical transport failures count as quota (rolling the backfill
+  # attempt back) only when the provider actually refused on quota within this
+  # many seconds. 0 disables the inference — every reset is a hard row error;
+  # 3600 is the ceiling (a wider window would suppress row errors all day).
+  gemini_transport_quota_window_seconds: 300.0
   # Single generative VLM for photos + text JSON (sentiment, OLX location, verdict)
   visual_model: qwen2.5vl:7b
   text_model: qwen2.5vl:7b

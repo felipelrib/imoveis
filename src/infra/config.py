@@ -251,6 +251,20 @@ class AIConfig(BaseModel, frozen=True):
     # (BIN-248). ``gemma-*`` ids route to GemmaClient via ``_gemini_client_for``.
     gemma_model: str = "gemma-4-31b-it"
     gemini_api_key: str = ""
+    # Past the free-tier ceiling the endpoint sometimes stops answering instead
+    # of returning 429, so a throttle arrives as identical connection resets or
+    # timeouts (DW-7). ``GeminiClient`` reads such a storm as quota only when the
+    # provider itself refused on quota within this many seconds — recent enough
+    # that "the account is throttled right now" is the likeliest explanation,
+    # long enough to cover a multi-minute retry ladder. ``0`` disables the
+    # inference, and every transport failure counts as a hard row error again.
+    # Capped at an hour (and no inf/NaN): a very wide window would let one 429
+    # license the inference for the rest of the day, so a dead key or a firewall
+    # change would stop producing row errors entirely — the opposite of the
+    # visibility this knob exists to preserve.
+    gemini_transport_quota_window_seconds: float = Field(
+        default=300.0, ge=0.0, le=3600.0, allow_inf_nan=False
+    )
     visual_model: str = "qwen2.5vl:7b"
     text_model: str = "qwen2.5vl:7b"
     embedding_model: str = "bge-m3"

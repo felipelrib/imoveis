@@ -440,6 +440,10 @@ def _build_client(cfg, scope=DEFAULT_BACKFILL_SCOPE):
         api_key=api_key,
         base_url=cfg.ai.gemini_url,
         timeout=cfg.ai.timeout,
+        # DW-7: a throttle that arrives as connection resets instead of a 429
+        # must still roll the attempt back rather than burn one of the row's
+        # max_attempts. 0 in config disables that inference.
+        transport_quota_window_seconds=cfg.ai.gemini_transport_quota_window_seconds,
     )
 
 
@@ -701,17 +705,31 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
     # Last processed-count milestone already logged. The hook now fires on error
     # and quota rows too, so ``processed % 25`` alone would re-log the same
     # count on every failing row.
-    progress_logged = {"milestone": 0}
+    progress_logged = {"milestone": 0, "inferences": 0}
 
     def _on_progress(res: BackfillResult) -> None:
         # A multi-day run must not die on a transient Redis blip: this hook is
         # bookkeeping, never the run's correctness. The lease is renewed inside
         # ``run_backfill`` (which sees failing rows and pauses too), not here.
         try:
-            heartbeat.beat()
+            # Beat in its own arm: an inferred throttle stops the pass
+            # immediately, so this hook gets exactly one chance to emit the
+            # counter explaining the back-off. A Redis blip on the lease must
+            # not be what swallows it.
+            try:
+                heartbeat.beat()
+            except Exception as exc:  # noqa: BLE001 - the tick still matters
+                logger.warning("backfill_heartbeat_beat_failed", error=str(exc))
             milestone = res.processed - (res.processed % 25)
-            if milestone > progress_logged["milestone"]:
-                progress_logged["milestone"] = milestone
+            inferences = getattr(client, "transport_quota_inferences", 0)
+            # DW-7: an inferred throttle stops the pass immediately, so gating on
+            # the 25-row milestone alone means the run that inferred one never
+            # logs the counter explaining why it backed off — and a pass that
+            # infers inside its first 25 rows never crosses a milestone at all.
+            # A new inference is therefore its own reason to emit the tick.
+            if milestone > progress_logged["milestone"] or inferences > progress_logged["inferences"]:
+                progress_logged["milestone"] = max(milestone, progress_logged["milestone"])
+                progress_logged["inferences"] = inferences
                 logger.info(
                     "backfill_progress",
                     processed=res.processed,
@@ -719,6 +737,10 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
                     errors=res.errors,
                     rate_limit_hits=getattr(client, "rate_limit_hits", 0),
                     retry_count=getattr(client, "retry_count", 0),
+                    # DW-7: throttles inferred from a transport storm deliberately
+                    # do not bump rate_limit_hits, so without this an operator
+                    # would see a pass back off "on quota" with that counter flat.
+                    transport_quota_inferences=inferences,
                 )
         except Exception as exc:  # noqa: BLE001 - bookkeeping never aborts a run
             logger.warning("backfill_progress_tick_failed", error=str(exc))

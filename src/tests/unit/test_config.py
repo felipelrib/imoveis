@@ -514,6 +514,68 @@ def test_ai_stack_from_default_app_config_yaml():
     # BIN-248: Gemma backfill model + image downscaling defaults.
     assert cfg.ai.gemma_model == "gemma-4-31b-it"
     assert cfg.ai.image_max_dimension == 768
+    # DW-7: the transport-storm quota window ships enabled (0 would disable it).
+    assert cfg.ai.gemini_transport_quota_window_seconds == 300.0
+
+
+@pytest.mark.unit
+def test_ai_rejects_a_negative_transport_quota_window():
+    """A negative window is meaningless — ``0`` is the documented "off" value.
+
+    Silently accepting one would make the recency test always false, disabling
+    the DW-7 inference with no signal to the operator.
+    """
+    from src.infra.config import AIConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig(gemini_transport_quota_window_seconds=-1.0)
+
+    # ``0`` is legal and is how an operator turns the inference off.
+    off = AIConfig(gemini_transport_quota_window_seconds=0.0)
+    assert off.gemini_transport_quota_window_seconds == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [3600.1, float("inf"), float("nan")])
+def test_ai_rejects_an_unbounded_transport_quota_window(value):
+    """A day-wide (or infinite) window would suppress row errors indefinitely.
+
+    One observed 429 licenses the DW-7 inference for the whole window, so an
+    unbounded one turns a dead key or a firewall change into permanent silent
+    back-off instead of hard errors.
+    """
+    from src.infra.config import AIConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig(gemini_transport_quota_window_seconds=value)
+
+    at_ceiling = AIConfig(gemini_transport_quota_window_seconds=3600.0)
+    assert at_ceiling.gemini_transport_quota_window_seconds == 3600.0
+
+
+@pytest.mark.unit
+def test_gemini_client_default_window_mirrors_the_config_default():
+    """The client's fallback constant claims to mirror config — pin the claim.
+
+    Both are ``300.0`` in two files; without this, changing one silently makes a
+    hand-built client behave unlike every configured one.
+    """
+    from src.adapters.ai.client import GeminiClient
+    from src.infra.config import AIConfig
+
+    assert (
+        GeminiClient._DEFAULT_TRANSPORT_QUOTA_WINDOW_SECONDS
+        == AIConfig().gemini_transport_quota_window_seconds
+    )
+    # The client clamps a hand-built value to the same ceiling the schema
+    # enforces, so the two bounds must not drift apart either.
+    assert GeminiClient._MAX_TRANSPORT_QUOTA_WINDOW_SECONDS == 3600.0
+    with pytest.raises(ValidationError):
+        AIConfig(
+            gemini_transport_quota_window_seconds=(
+                GeminiClient._MAX_TRANSPORT_QUOTA_WINDOW_SECONDS + 1.0
+            )
+        )
 
 
 @pytest.mark.unit

@@ -96,6 +96,14 @@ development_status:
   # lease lapse under a live writer. Added a background timer task renewing at
   # ttl/3 for the whole run, cancelled after the in-flight drain.
   v0.13-fu7-backfill-lease-background-renewer: in-progress
+  # Follow-up (DW-7): GeminiClient classified quota only on the HTTP-status
+  # path, so a throttle arriving as identical connection resets/timeouts
+  # re-raised untagged, the runner took the hard-error branch, and the attempt
+  # charged before launch stood — burning backfill.max_attempts on good rows
+  # inside one throttle window. Repeated identical transport failures within a
+  # configurable recency window of an observed 429 now raise the distinguished
+  # quota error; everything else stays a hard error.
+  v0.13-fu8-gemini-transport-quota-classification: in-progress
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

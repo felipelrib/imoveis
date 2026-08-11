@@ -489,7 +489,11 @@ async def _amain(args: argparse.Namespace) -> int:
 
     for model in gemini_models:
         client = _gemini_client_for(
-            model, api_key=api_key, base_url=cfg.ai.gemini_url, timeout=cfg.ai.timeout
+            model,
+            api_key=api_key,
+            base_url=cfg.ai.gemini_url,
+            timeout=cfg.ai.timeout,
+            transport_quota_window_seconds=cfg.ai.gemini_transport_quota_window_seconds,
         )
         arms.append(await _run_arm(model, model, client, samples, args.language, args.concurrency))
         await client.close()

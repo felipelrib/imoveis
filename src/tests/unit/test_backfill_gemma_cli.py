@@ -8,6 +8,7 @@ calls), and (2) ``--limit`` must cap how many properties are touched.
 from __future__ import annotations
 
 import importlib.util
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -104,6 +105,11 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None, routing=No
     cfg.ai.backend = "ollama"
     cfg.ai.gemma_model = "gemma-4-31b-it"
     cfg.ai.gemini_model = "gemini-2.5-flash"
+    # Real float: ``float(MagicMock())`` is ``1.0``, so leaving this a mock
+    # would silently build every client with a 1-second DW-7 window instead of
+    # raising — which is why the value is asserted, not just set. Deliberately
+    # NOT the client's own 300.0 default, or a dropped kwarg would still assert.
+    cfg.ai.gemini_transport_quota_window_seconds = 120.0
     cfg.ai.enrichment_routing = dict(routing or _ALL_LOCAL_ROUTING)
     rows = [
         (
@@ -283,6 +289,126 @@ def test_second_runner_is_refused_while_the_lease_is_held(monkeypatch, capsys):
     assert holder.is_held_by_self()     # the refused start took nothing
 
 
+def test_a_transport_quota_inference_is_logged_before_the_first_milestone(monkeypatch):
+    """DW-7: the counter has to reach the operator in the run that inferred it.
+
+    An inferred throttle stops the pass immediately, so gating the progress tick
+    on the 25-row milestone alone means a pass that infers inside its first 25
+    rows — where ``milestone`` is ``0`` and never exceeds the stored ``0`` —
+    logs nothing at all. That leaves the operator with exactly the confusing
+    combination the counter exists to explain: a pass backing off "on quota"
+    with ``rate_limit_hits`` flat.
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    class _StubClient:
+        """Only the counters the progress hook reads, plus the run's session ctx."""
+
+        rate_limit_hits = 0
+        retry_count = 0
+        transport_quota_inferences = 0
+
+        @asynccontextmanager
+        async def session_context(self):
+            yield
+
+    client = _StubClient()
+    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None: client)
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+
+    captured = {}
+
+    async def _fake_run_backfill(rows, **kw):
+        captured["on_progress"] = kw["on_progress"]
+        return _br(mod, processed=0)
+
+    monkeypatch.setattr(mod, "run_backfill", _fake_run_backfill)
+    mod.main(["--limit", "3"])
+
+    on_progress = captured["on_progress"]
+    info_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+
+    def _progress_ticks():
+        return [c for c in info_spy.call_args_list if c[0] and c[0][0] == "backfill_progress"]
+
+    # Three rows in, nothing inferred: below the milestone, so still silent.
+    on_progress(_br(mod, processed=3))
+    assert _progress_ticks() == []
+
+    # The pass infers a throttle and is about to stop. This must be reported.
+    client.transport_quota_inferences = 1
+    on_progress(_br(mod, processed=3))
+    ticks = _progress_ticks()
+    assert len(ticks) == 1
+    assert ticks[0][1]["transport_quota_inferences"] == 1
+    # ...and it must not then re-log the same inference on every later row.
+    on_progress(_br(mod, processed=4))
+    assert len(_progress_ticks()) == 1
+
+
+def test_a_failed_lease_beat_does_not_swallow_the_inference_tick(monkeypatch):
+    """The hook's one chance to report an inference must survive a Redis blip.
+
+    ``heartbeat.beat()`` used to run inside the same ``try`` as the progress
+    log, so a transient Redis failure on the very row that inferred a throttle
+    took the counter down with it — and because an inferred throttle stops the
+    pass immediately, there is no later row to re-emit it. The lease itself is
+    renewed by ``run_backfill``'s background timer, so losing a bookkeeping
+    beat here costs nothing; losing the tick costs the operator the explanation.
+    """
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    beat_fails = {"now": False}
+
+    class _FlakyHeartbeat:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def beat(self):
+            if beat_fails["now"]:
+                raise RuntimeError("redis blip")
+
+        def clear(self):
+            pass
+
+    class _StubClient:
+        rate_limit_hits = 0
+        retry_count = 0
+        transport_quota_inferences = 0
+
+        @asynccontextmanager
+        async def session_context(self):
+            yield
+
+    client = _StubClient()
+    monkeypatch.setattr(mod, "Heartbeat", _FlakyHeartbeat)
+    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None: client)
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+
+    captured = {}
+
+    async def _fake_run_backfill(rows, **kw):
+        captured["on_progress"] = kw["on_progress"]
+        return _br(mod, processed=0)
+
+    monkeypatch.setattr(mod, "run_backfill", _fake_run_backfill)
+    mod.main(["--limit", "3"])
+
+    info_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+
+    beat_fails["now"] = True
+    client.transport_quota_inferences = 1
+    captured["on_progress"](_br(mod, processed=3))
+
+    ticks = [c for c in info_spy.call_args_list if c[0] and c[0][0] == "backfill_progress"]
+    assert len(ticks) == 1
+    assert ticks[0][1]["transport_quota_inferences"] == 1
+
+
 def test_a_successful_run_releases_the_lease(monkeypatch):
     mod = _load_module()
     redis = _FakeRedis()
@@ -433,12 +559,23 @@ def test_client_is_built_from_the_routing_map_not_a_hardcoded_gemma(monkeypatch)
         api_key="k",
         routing={**_ALL_LOCAL_ROUTING, "deal_verdict": "gemini"},
     )
+    from adapters.ai.client import GeminiClient
     from core.enrichment import EnrichmentTaskClass
 
     client = mod._build_client(cfg, {EnrichmentTaskClass.DEAL_VERDICT})
 
     # Routed to gemini → the gemini model, not cfg.ai.gemma_model.
     assert client.model == "gemini-2.5-flash"
+    # DW-7: this is the only production construction site, and dropping the
+    # kwarg here would leave the suite green while shipping a 1-second window
+    # (``float(MagicMock())`` is ``1.0``, not an error). The expected value
+    # differs from GeminiClient's own default so the assertion can tell the
+    # difference between "threaded through" and "fell back to the default".
+    assert client.transport_quota_window_seconds == 120.0
+    assert (
+        client.transport_quota_window_seconds
+        != GeminiClient._DEFAULT_TRANSPORT_QUOTA_WINDOW_SECONDS
+    )
 
 
 def test_task_classes_flag_drives_the_stages(monkeypatch):
