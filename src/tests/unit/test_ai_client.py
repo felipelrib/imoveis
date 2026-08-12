@@ -251,6 +251,9 @@ class TestLMStudioClient:
 
         result = asyncio.run(_run())
         assert result.sentiment_score == 0.5  # fallback
+        # v0.13-s3.2: the fabricated value is unchanged; the marker is what
+        # lets ``run_enrichment`` refuse to persist it (DW-17).
+        assert result.degraded is True
 
     def test_analyze_visuals_graceful_on_error(self):
         """analyze_visuals returns fallback on exception."""
@@ -269,6 +272,7 @@ class TestLMStudioClient:
 
         result = asyncio.run(_run())
         assert result.condition_score == 0.5  # fallback
+        assert result.degraded is True
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +506,7 @@ class TestAIClientErrors:
 
         assert result.sentiment_score == 0.5
         assert result.analysis == "Error"
+        assert result.degraded is True
         assert client.generate.call_count == 3
 
     def test_lmstudio_visual_invalid_json_after_retries_returns_fallback(self, tmp_path):
@@ -514,6 +519,7 @@ class TestAIClientErrors:
 
         assert result.condition_score == 0.5
         assert result.analysis == "Error"
+        assert result.degraded is True
         assert client.chat_completions.call_count == 3
 
     def test_ollama_generate_rejects_non_200_response(self):
@@ -659,6 +665,7 @@ class TestSummarizeAndSession:
                 result = asyncio.run(client.summarize_deal({"category": "Average"}, None, None, "Centro"))
         assert result.verdict == "ok"
         assert result.confidence == 0.9
+        assert result.degraded is False
 
     def test_summarize_deal_falls_back_on_error(self):
         from adapters.ai.client import OllamaClient
@@ -670,6 +677,9 @@ class TestSummarizeAndSession:
                 result = asyncio.run(client.summarize_deal(None, None, None, None))
         assert result.confidence == 0.0
         assert "Not enough data" in result.verdict
+        # The template text and confidence are byte-identical; only the marker
+        # is new, and a degraded verdict alone still persists (v0.13-s3.2).
+        assert result.degraded is True
 
     def test_summarize_deal_falls_back_to_en_when_locale_resolution_also_fails(self):
         """BIN-143: covers the nested except (locale resolution itself raising)."""
@@ -682,6 +692,9 @@ class TestSummarizeAndSession:
                 result = asyncio.run(client.summarize_deal(None, None, None, None))
         assert result.confidence == 0.0
         assert "Not enough data" in result.verdict
+        # The template text and confidence are byte-identical; only the marker
+        # is new, and a degraded verdict alone still persists (v0.13-s3.2).
+        assert result.degraded is True
 
     def test_session_context_sets_and_clears_session(self):
         client = OllamaClient()

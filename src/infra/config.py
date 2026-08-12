@@ -156,6 +156,18 @@ class BackfillConfig(BaseModel, frozen=True):
     # re-queues a row that enriched to a falsy score, so without a ceiling
     # ``--continuous`` re-attempts the same bad rows every cycle forever.
     max_attempts: int = 3
+    # Consecutive rows whose AI result came back fabricated (a revoked key, a
+    # retired model id, a transport outage — never a quota refusal, which has
+    # its own back-off) before the runner stops launching and exits 9
+    # (v0.13-s3.2). The write authority refuses such a result either way, so
+    # this knob only decides how long a broken account may keep charging rows an
+    # attempt each: ``<= 0`` disables the *breaker*, never the refusal — no
+    # setting brings back the fabricated 0.5, but a disabled breaker also never
+    # reaches the rollback that gives those attempts back, so the queue
+    # quarantines itself ``max_attempts`` passes later. Three is a compromise: high enough
+    # that a couple of unlucky per-row responses do not end a multi-day pass, low
+    # enough that a dead key cannot quarantine the queue.
+    max_consecutive_ai_failures: int = 3
     batch_size: int = 50
     # Redis key namespace for the daily budget counter, checkpoint, and heartbeat.
     redis_prefix: str = "backfill:gemma"

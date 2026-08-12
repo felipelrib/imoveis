@@ -97,6 +97,9 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None, routing=No
     cfg.backfill.tokens_per_property = 7000
     cfg.backfill.tpm_safety_margin = 0.9
     cfg.backfill.max_attempts = 3
+    # A real int: ``int(MagicMock())`` is 1, so leaving this a mock would build
+    # every run with a one-row circuit breaker instead of raising.
+    cfg.backfill.max_consecutive_ai_failures = 3
     cfg.backfill.lease_ttl_seconds = 900
     cfg.backfill.control_poll_seconds = 2.0
     cfg.backfill.quota_backoff_seconds = 900
@@ -2090,3 +2093,126 @@ def test_serve_announces_a_deferred_request_that_vanishes_as_the_blocker_clears(
     out = capsys.readouterr().out
     assert "keeping the request" in out
     assert "The pending start request is gone" in out
+
+
+# ---------------------------------------------------------------------------
+# A tripped AI circuit breaker is terminal and names itself (v0.13-s3.2)
+# ---------------------------------------------------------------------------
+
+
+def test_a_one_shot_pass_that_tripped_the_breaker_exits_nine(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            return_value=_br(mod, processed=0, errors=3, ai_fallbacks=3,
+                             ai_circuit_open=True)
+        ),
+    )
+
+    rc = mod.main(["--limit", "10"])
+
+    assert rc == mod.EXIT_AI_CIRCUIT_OPEN == 9
+    out = capsys.readouterr().out
+    assert "fabricated results" in out
+    assert "revoked/expired API key" in out
+    # Not the quota vocabulary: no provider refused on quota here.
+    assert redis.get("t:state") == "idle"
+
+
+def test_continuous_with_the_breaker_tripped_exits_nine_without_sleeping(
+    monkeypatch, capsys
+):
+    """Not a 24h RPD sleep, not EXIT_STALLED, not exit 0."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            return_value=_br(mod, processed=0, errors=3, ai_fallbacks=3,
+                             ai_circuit_open=True, budget_exhausted=True)
+        ),
+    )
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=2, candidates=8))
+    )
+    sleep_spy = MagicMock()
+    monkeypatch.setattr(mod.time, "sleep", sleep_spy)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_AI_CIRCUIT_OPEN
+    assert rc != mod.EXIT_STALLED
+    sleep_spy.assert_not_called()  # a revoked key is not fixed by waiting
+    assert "fabricated results" in capsys.readouterr().out
+
+
+def test_a_tripped_breaker_is_never_reported_as_a_completed_backfill(
+    monkeypatch, capsys
+):
+    """The census counts quarantined rows as no-longer-remaining, so a trip on
+    the last candidates could otherwise print BACKFILL COMPLETE and exit 0 —
+    the one sentence an unattended supervisor must never hear from a broken
+    account."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            return_value=_br(mod, processed=0, errors=3, ai_fallbacks=3,
+                             ai_circuit_open=True)
+        ),
+    )
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=10, candidates=0))
+    )
+
+    rc = mod.main(["--continuous"])
+
+    out = capsys.readouterr().out
+    assert rc == mod.EXIT_AI_CIRCUIT_OPEN
+    assert rc not in (mod.EXIT_COMPLETE, mod.EXIT_COMPLETE_WITH_QUARANTINE)
+    assert "BACKFILL COMPLETE" not in out
+    assert "fabricated results" in out
+
+
+def test_a_quota_refusal_still_wins_over_the_breaker_branch(monkeypatch):
+    """The breaker branch must not swallow the story-1.3 quota back-off."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.quota_backoff_seconds = 900
+    _open_budget_window(redis, consumed=30)
+
+    rc, slept = _continuous_after_quota(mod, monkeypatch, redis)
+
+    assert rc == mod.EXIT_COMPLETE
+    assert slept == pytest.approx(900.0)
+
+
+def test_the_breaker_threshold_comes_from_config_not_a_literal(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_consecutive_ai_failures = 7
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured.update(kwargs)
+        from core.backfill_runner import BackfillResult
+
+        return BackfillResult()
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+
+    assert captured["max_consecutive_ai_failures"] == 7

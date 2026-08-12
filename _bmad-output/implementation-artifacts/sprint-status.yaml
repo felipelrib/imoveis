@@ -183,7 +183,7 @@ development_status:
   # fallback result + a consecutive-fallback circuit breaker in run_backfill,
   # never the `analysis == "Error"` string. Local Ollama template fallback must
   # be preserved (story 1.3's intent contract fenced this deliberately).
-  3-2-non-quota-failure-circuit-breaker: backlog
+  3-2-non-quota-failure-circuit-breaker: awaiting-operator
   # DW-18: the budget charges a flat 3 requests/property while one property is
   # up to 3 stages x 3 JSON attempts x 5 HTTP retries = 45 real requests, and
   # 429s are retried — so AC-1's never-exceed guarantee measures the wrong

@@ -244,6 +244,27 @@ class AIQuotaExhaustedError(AIClientError):
     is_quota_exhausted = True
 
 
+class AIResultDegradedError(AIClientError):
+    """A consumer refused to use a result the client had to fabricate (DW-17).
+
+    The client itself still degrades exactly as it always has — that local
+    resilience contract is what keeps one bad response from aborting a whole
+    enrichment. What changed (v0.13-s3.2) is that the fallback now says so
+    (``degraded=True``), so a *consumer* whose write would be permanent can
+    refuse it: ``run_enrichment`` raises this instead of blending a fabricated
+    ``0.5`` into ``ai_score``, persisting it and committing — after which
+    ``mode_is_missing_ai`` (``not score``) would never re-queue the row again.
+
+    Raised by the consumer, never by the client. ``is_degraded_result`` is the
+    duck-typed contract ``src/core`` reads (AD-1), exactly like
+    ``is_quota_exhausted``; the message deliberately carries none of
+    ``backfill_runner._QUOTA_MARKERS``, or that predicate's text safety net
+    would misclassify this as a provider quota refusal and back off for a day.
+    """
+
+    is_degraded_result = True
+
+
 # Body markers that mean "quota/rate limit spent" on a status other than 429.
 # Google returns RESOURCE_EXHAUSTED with 429 on the OpenAI-compatible endpoint,
 # but quota refusals also surface as 403 (project/billing quota) and the
@@ -304,6 +325,16 @@ class VisualResult(BaseModel):
     reasoning: str = ""
     features_detected: List[str] = []
     issues_detected: List[str] = []
+    # Set only on the exception fallbacks below — "this score is a placeholder
+    # the client invented because the call failed", never "this score is low".
+    # A field rather than a sentinel value or the ``analysis == "Error"`` string
+    # because a consumer must be able to tell a fabricated 0.5 from an honest
+    # one: ``neutral_sentiment_no_description()`` is a legitimate 0.5 (BIN-243)
+    # and stays ``False``. Defaults ``False`` so every existing construction —
+    # including ``test_ai_quality.py``'s, which ``validate-ai.sh`` gates on —
+    # keeps working. ``SentimentResult`` and ``DealVerdictResult`` carry the
+    # same field under the same contract (v0.13-s3.2, DW-17).
+    degraded: bool = False
 
     @field_validator("condition_score")
     @classmethod
@@ -316,6 +347,11 @@ class DealVerdictResult(BaseModel):
 
     verdict: str = ""
     confidence: float = 0.0
+    # A template verdict is a *degraded* verdict, but never a blocking one: it
+    # does not feed ``ai_score``, so it cannot retire a row from the candidate
+    # set. Recorded in ``meta["deal_verdict"]`` so the corpus says which
+    # verdicts a model wrote and which the template did.
+    degraded: bool = False
 
 
 class SentimentResult(BaseModel):
@@ -325,6 +361,8 @@ class SentimentResult(BaseModel):
     reasoning: str = ""
     green_flags: List[str] = []
     red_flags: List[str] = []
+    # Same contract as ``VisualResult.degraded`` — see the note there.
+    degraded: bool = False
 
     @field_validator("sentiment_score")
     @classmethod
@@ -402,6 +440,7 @@ class LocalAIClient(ABC):
                     output_language=lang,
                 ),
                 confidence=0.0,
+                degraded=True,
             )
 
     async def _llm_verdict(self, prompt: str) -> DealVerdictResult:
@@ -572,6 +611,7 @@ class OllamaClient(LocalAIClient):
             return DealVerdictResult(
                 verdict=template_deal_verdict(),
                 confidence=0.0,
+                degraded=True,
             )
 
     async def close(self) -> None:
@@ -636,7 +676,11 @@ class OllamaClient(LocalAIClient):
         except Exception as exc:
             _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in analyze_visuals")
-            return VisualResult(condition_score=0.5, analysis="Error")
+            # Still a 0.5 — the local resilience contract is unchanged — but now
+            # it says it is one, so ``run_enrichment`` can refuse to persist it
+            # (DW-17). The value is what tests pin; the marker is what consumers
+            # read.
+            return VisualResult(condition_score=0.5, analysis="Error", degraded=True)
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         try:
@@ -664,7 +708,9 @@ class OllamaClient(LocalAIClient):
         except Exception as exc:
             _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in analyze_text")
-            return SentimentResult(sentiment_score=0.5, analysis="Error")
+            return SentimentResult(
+                sentiment_score=0.5, analysis="Error", degraded=True
+            )
 
     async def embed(self, text: str) -> List[float]:
         """Embed text via Ollama ``POST /api/embeddings``."""
@@ -743,6 +789,7 @@ class LMStudioClient(LocalAIClient):
             return DealVerdictResult(
                 verdict=template_deal_verdict(),
                 confidence=0.0,
+                degraded=True,
             )
 
     async def close(self) -> None:
@@ -820,7 +867,7 @@ class LMStudioClient(LocalAIClient):
         except Exception as exc:
             _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in LMStudioClient.analyze_visuals")
-            return VisualResult(condition_score=0.5, analysis="Error")
+            return VisualResult(condition_score=0.5, analysis="Error", degraded=True)
 
     async def analyze_text(self, description: str, prompt: str) -> SentimentResult:
         """Analyze property description text using LM Studio via chat completions."""
@@ -855,7 +902,9 @@ class LMStudioClient(LocalAIClient):
         except Exception as exc:
             _reraise_if_quota(exc)  # never persist a fabricated 0.5 on quota
             logger.exception("Error in LMStudioClient.analyze_text")
-            return SentimentResult(sentiment_score=0.5, analysis="Error")
+            return SentimentResult(
+                sentiment_score=0.5, analysis="Error", degraded=True
+            )
 
     async def embed(self, text: str) -> List[float]:
         """Embed text via LM Studio OpenAI-compatible ``POST /v1/embeddings``."""

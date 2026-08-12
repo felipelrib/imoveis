@@ -25,6 +25,7 @@ import pytest
 from adapters.ai.client import (
     AIClientError,
     AIQuotaExhaustedError,
+    AIResultDegradedError,
     GeminiClient,
     GemmaClient,
     LMStudioClient,
@@ -167,6 +168,9 @@ def test_non_quota_failure_still_returns_the_half_fallback():
 
     assert result.sentiment_score == 0.5
     assert result.analysis == "Error"
+    # v0.13-s3.2: the *value* is unchanged — what is new is that the result says
+    # it was fabricated, so ``run_enrichment`` can refuse to persist it (DW-17).
+    assert result.degraded is True
 
 
 def test_non_quota_failure_still_returns_the_template_verdict():
@@ -177,6 +181,7 @@ def test_non_quota_failure_still_returns_the_template_verdict():
 
     assert result.confidence == 0.0
     assert result.verdict  # deterministic template, not an exception
+    assert result.degraded is True
 
 
 def test_invalid_json_still_falls_back_not_raises():
@@ -186,6 +191,7 @@ def test_invalid_json_still_falls_back_not_raises():
     result = asyncio.run(client.analyze_text("description", "prompt"))
 
     assert result.sentiment_score == 0.5
+    assert result.degraded is True
 
 
 def test_happy_path_is_untouched():
@@ -197,6 +203,38 @@ def test_happy_path_is_untouched():
     result = asyncio.run(client.analyze_text("nice place", "prompt"))
 
     assert result.sentiment_score == 0.8
+    assert result.degraded is False
+
+
+# ---------------------------------------------------------------------------
+# The two markers never overlap: a quota refusal is not a degraded result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cls", [LMStudioClient, GeminiClient, GemmaClient])
+def test_a_quota_refusal_raises_instead_of_returning_a_degraded_result(cls):
+    """``_reraise_if_quota`` fires first, so the two paths can never both run:
+    a quota error must reach the runner as quota (back off, blame nobody), not
+    as a degraded row (charge an error, feed the breaker)."""
+    client = cls(api_key="k") if cls is not LMStudioClient else cls()
+    client.chat_completions = AsyncMock(side_effect=AIQuotaExhaustedError("429 quota"))
+
+    with pytest.raises(AIQuotaExhaustedError) as exc:
+        asyncio.run(client.analyze_text("description", "prompt"))
+
+    assert getattr(exc.value, "is_degraded_result", False) is False
+
+
+def test_the_degraded_error_is_recognised_by_the_core_predicate():
+    """Mirror of the quota contract: duck-typed, never an adapters import."""
+    from core.backfill_runner import is_degraded_result
+
+    assert AIResultDegradedError.is_degraded_result is True
+    assert is_degraded_result(AIResultDegradedError("visual fell back"))
+    assert not is_degraded_result(AIClientError("Gemini API error: 500"))
+    assert not is_degraded_result(AIQuotaExhaustedError("Gemini quota exhausted: 429"))
+    # …and it is not read as a quota refusal, which would trigger a 24h back-off.
+    assert not is_quota_exhausted(AIResultDegradedError("visual fell back"))
 
 
 # ---------------------------------------------------------------------------

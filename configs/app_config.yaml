@@ -353,6 +353,21 @@ backfill:
   # so stay `mode=missing` candidates — otherwise burn RPD/TPM forever.
   # Release them with `--reset-quarantine`.
   max_attempts: 3
+  # Circuit breaker for a systemic AI-client failure (v0.13-s3.2). A revoked
+  # key, a retired model id or a DNS/proxy outage makes the client fabricate a
+  # placeholder score; the enrichment write authority refuses to persist it, so
+  # the row errors and stays a candidate. This is how many such rows *in a row*
+  # (no successful row between them) end the pass: the runner stops launching,
+  # reports `ai_circuit_open` and exits 9 instead of spending a whole day's
+  # budget proving the account is broken. Tripping also rolls back the ledger
+  # attempts of the rows that proved it, so a systemic outage cannot march
+  # innocent properties towards quarantine across restarts. A quota refusal is
+  # NOT counted here — it has its own back-off. `<= 0` disables the breaker
+  # only; the refusal to persist a fabricated score is unconditional and cannot
+  # be turned off. Disabling it means a broken backend charges every candidate
+  # an attempt per pass with no rollback, so `max_attempts` passes later the
+  # whole queue is quarantined and needs `--reset-quarantine`.
+  max_consecutive_ai_failures: 3
   batch_size: 50
   redis_prefix: "backfill:gemma"
   # Single-instance lease (v0.13-s1.3). Only one runner may hold

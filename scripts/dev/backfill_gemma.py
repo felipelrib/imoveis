@@ -179,6 +179,7 @@ EXIT_LEASE_HELD = 5               # another runner already holds the lease
 EXIT_STOPPED = 6                  # an operator asked this run to stop
 EXIT_LEASE_LOST = 7               # the lease lapsed mid-run; someone else may own it
 EXIT_MIGRATION_ACTIVE = 8         # migrate-primary.sh holds the primary DB (DW-3/DW-4)
+EXIT_AI_CIRCUIT_OPEN = 9          # the AI client kept fabricating results (DW-17)
 
 _BANNER_WIDTH = 68
 
@@ -213,6 +214,24 @@ _MIGRATION_BLOCKED_LINES = [
     "No row was launched and the checkpoint is exactly where the last pass "
     "left it.",
     "Re-run the same command once migrate-primary.sh has finished.",
+]
+
+# The provider answered, but every answer was one the enrichment write authority
+# refused (DW-17). Deliberately not the quota vocabulary: sending an operator to
+# the Gemini quota dashboard for a revoked key wastes the one signal this exit
+# code exists to give, so the banner names the causes that actually produce it.
+_AI_CIRCUIT_OPEN_TITLE = (
+    "BACKFILL STOPPED — the AI backend kept returning fabricated results"
+)
+_AI_CIRCUIT_OPEN_LINES = [
+    "Likely causes: a revoked/expired API key, a retired model id, or blocked "
+    "network egress.",
+    "Nothing was persisted for those rows, the checkpoint is intact and their "
+    "attempts were rolled back — they are still candidates.",
+    "The cause is in the AI client, not the queue: check GEMINI_API_KEY, the "
+    "configured model id and egress (journalctl -u imoveis-backfill-serve).",
+    "Re-run the same command once it is fixed; "
+    "backfill.max_consecutive_ai_failures sets the threshold.",
 ]
 
 
@@ -800,6 +819,12 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             # start at any point in a pass that runs for hours.
             is_migrating=None if migration_gate is None else migration_gate.is_migrating,
             pause_poll_seconds=float(cfg.backfill.control_poll_seconds),
+            # How many consecutive rows may come back fabricated before the pass
+            # gives up (v0.13-s3.2). Config, not a literal, so an operator can
+            # widen it for a flaky link without touching code — and so a value of
+            # 0 means "drain the queue and let me read the errors", never "go
+            # back to persisting them".
+            max_consecutive_ai_failures=int(cfg.backfill.max_consecutive_ai_failures),
         )
 
     async def _go() -> BackfillResult:
@@ -1230,7 +1255,13 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # Completion is checked *before* the budget branch: a pass that spends the
         # last of its budget on the last of the queue must exit now, not sleep out
         # the remaining ~24h only to find an empty queue.
-        if census.is_complete:
+        # ``and not ...``: a pass whose every answer was fabricated has not
+        # completed anything, however empty the queue reads. The census counts
+        # quarantined rows as no-longer-remaining, so a trip that lands on the
+        # last few candidates could otherwise print BACKFILL COMPLETE and exit 0
+        # — the one sentence an unattended supervisor must never hear from a
+        # broken account. The breaker branch below is the honest outcome.
+        if census.is_complete and not result.ai_circuit_open:
             if control is not None:
                 # A pause/stop aimed at this run is moot now that the queue is
                 # drained, and leaving it set makes ``--status`` report a
@@ -1255,6 +1286,36 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                 # Served — see the matching note in ``main``.
                 control.clear_stop()
             return EXIT_STOPPED
+        # The AI backend answered every call with something the write authority
+        # refused, for `backfill.max_consecutive_ai_failures` rows running. This
+        # branch has to come before both branches below or the outcome is
+        # mislabelled: a breaker-tripped pass that spent budget first reads as
+        # "budget exhausted" and sleeps out a ~24h RPD window against a key that
+        # will still be revoked tomorrow, and one that spent none reads as a
+        # generic stall (exit 3) that says nothing about the cause. Terminal, not
+        # a retry: no amount of waiting fixes a revoked key or a retired model id.
+        if result.ai_circuit_open:
+            _print_banner(
+                _AI_CIRCUIT_OPEN_TITLE,
+                _AI_CIRCUIT_OPEN_LINES
+                + _terminal_summary(
+                    census,
+                    cycle=cycle,
+                    elapsed=time.monotonic() - started,
+                    processed=enriched_this_run,
+                    errors=errors_this_run,
+                ),
+            )
+            logger.warning(
+                "backfill_terminal",
+                outcome="ai_circuit_open",
+                exit_code=EXIT_AI_CIRCUIT_OPEN,
+                cycles=cycle,
+                elapsed_seconds=round(time.monotonic() - started),
+                ai_fallbacks=result.ai_fallbacks,
+                **census.to_dict(),
+            )
+            return EXIT_AI_CIRCUIT_OPEN
         if not result.budget_exhausted:
             # Budget left, work left, yet nothing moved → a real stall (every
             # remaining row is failing). Exiting non-zero makes that visible.
@@ -2006,6 +2067,15 @@ def main(argv: list[str] | None = None) -> int:
     # a silent "enriched 0" — is what tells the operator to re-run afterwards.
     if result.migration_blocked:
         return EXIT_MIGRATION_ACTIVE
+    # A one-shot pass that tripped the breaker has to say so too: exit 0 would
+    # tell a supervisor (and `--serve`, which relaunches on the next start
+    # request) that a pass with 0 enriched rows was a normal short pass. Ahead of
+    # ``stopped`` on purpose — a stop that lands during the trip is the ordinary
+    # outcome an operator already expects, while a backend fabricating every
+    # result is the news, and only one exit code survives.
+    if result.ai_circuit_open:
+        _print_banner(_AI_CIRCUIT_OPEN_TITLE, _AI_CIRCUIT_OPEN_LINES)
+        return EXIT_AI_CIRCUIT_OPEN
     # ``stopped`` was resolved (and the served request retired) inside the try /
     # finally above, while this process still held the lease.
     return EXIT_STOPPED if stopped else 0

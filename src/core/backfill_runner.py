@@ -995,6 +995,23 @@ def is_quota_exhausted(exc: BaseException) -> bool:
     return any(marker in text for marker in _QUOTA_MARKERS)
 
 
+def is_degraded_result(exc: BaseException) -> bool:
+    """True when ``exc`` means "the client fabricated this result" (v0.13-s3.2).
+
+    Duck-typed for the same reason as :func:`is_quota_exhausted` — ``src/core``
+    must not import ``adapters`` (AD-1), so the distinguished
+    ``AIResultDegradedError`` is recognised by its ``is_degraded_result``
+    attribute.
+
+    Deliberately *without* the text safety net that predicate carries: this
+    marker is set by our own persist gate, never by a transport we do not
+    control, so there is no untagged-error case to catch — and a message-matching
+    net here would let an ordinary row failure whose text happens to say
+    "degraded" stop a whole pass.
+    """
+    return bool(getattr(exc, "is_degraded_result", False))
+
+
 @dataclass(frozen=True)
 class QueueCensus:
     """Honest accounting of the backfill work queue (v0.13-fu3).
@@ -1240,6 +1257,15 @@ class BackfillResult:
     # launching rather than write against a schema mid-upgrade. Distinct from
     # ``stopped`` — nobody asked it to end, and the caller may simply wait.
     migration_blocked: bool = False
+    # Rows whose enrichment refused to persist a fabricated result (DW-17).
+    # Counted as errors too — this is the *reason* breakdown, not a second total.
+    ai_fallbacks: int = 0
+    # ``max_consecutive_ai_failures`` rows in a row came back degraded, so this
+    # run stopped launching. Not a quota refusal and deliberately not a new
+    # ``BackfillState``: a revoked key, a retired model id or a transport outage
+    # would send an operator to the provider's quota dashboard for a problem
+    # that is not there. The caller reads this flag (and the CLI's exit code 9).
+    ai_circuit_open: bool = False
     # Wall-clock seconds the launch loop spent held by a pause request.
     paused_seconds: float = 0.0
     last_property_id: Optional[str] = None
@@ -1259,6 +1285,8 @@ class BackfillResult:
             "requests_consumed": self.requests_consumed,
             "budget_exhausted": self.budget_exhausted,
             "quota_exhausted": self.quota_exhausted,
+            "ai_fallbacks": self.ai_fallbacks,
+            "ai_circuit_open": self.ai_circuit_open,
             "stopped": self.stopped,
             "lease_lost": self.lease_lost,
             "migration_blocked": self.migration_blocked,
@@ -1408,6 +1436,8 @@ async def run_backfill(
     control: Optional[BackfillControl] = None,
     lease: Optional[BackfillLease] = None,
     is_quota_error: Optional[Callable[[BaseException], bool]] = is_quota_exhausted,
+    is_degraded_error: Optional[Callable[[BaseException], bool]] = is_degraded_result,
+    max_consecutive_ai_failures: int = 3,
     is_migrating: Optional[Callable[[], bool]] = None,
     pause_poll_seconds: float = 2.0,
     lease_renew_interval: Optional[float] = None,
@@ -1475,6 +1505,22 @@ async def run_backfill(
     written for it — and the run stops launching so the caller can back off
     (v0.13-s1.3, AC-2). Pass ``is_quota_error=None`` to disable the distinction.
 
+    ``is_degraded_error`` classifies a row failure as *the AI client fabricated
+    this result and the write authority refused it* — a revoked key, a retired
+    model id, a DNS/proxy outage (v0.13-s3.2, DW-17). Unlike a quota refusal the
+    row **is** charged an error and a ledger attempt: the cause is ambiguous
+    between "one property's response was unusable" (which is exactly what the
+    ledger's quarantine is for) and "the account is broken" (which is what the
+    breaker below is for). ``max_consecutive_ai_failures`` such rows *in a row*
+    — completions with no success between them — set
+    :attr:`BackfillResult.ai_circuit_open` and stop launching, so a systemic
+    outage costs at most that many rows one attempt each per pass instead of
+    burning a whole day's budget on an account that is refusing every call. Any
+    success resets the counter; a quota refusal never feeds it. ``<= 0`` disables
+    the breaker (the run keeps going) but never the refusal itself — a degraded
+    row persists nothing either way. Pass ``is_degraded_error=None`` to treat
+    such failures as ordinary row errors.
+
     ``is_migrating`` is a plain predicate (usually
     :meth:`MigrationGate.is_migrating`) answering "is a primary migration
     holding the exclusion key right now?". It is polled at the head of the
@@ -1495,6 +1541,16 @@ async def run_backfill(
 
     result = BackfillResult()
     attempted = 0
+    # Consecutive *completions* that came back degraded with no success between
+    # them. Not a field on ``result``: it rewinds, and a caller reading a
+    # rewinding counter as "how many rows degraded this pass" would be misled —
+    # ``result.ai_fallbacks`` is that total.
+    consecutive_degraded = 0
+    # The rows making up that unbroken run. Held because a *systemic* failure is
+    # only provable in hindsight: each of these was charged a ledger attempt on
+    # launch, and once the breaker confirms the backend — not the row — was at
+    # fault, that charge has to come back off (see the rollback in ``_worker``).
+    degraded_run_ids: list[str] = []
     last_launch: Optional[float] = None
     sem = asyncio.Semaphore(max(1, concurrency))
     tasks: list[asyncio.Task] = []
@@ -1650,6 +1706,7 @@ async def run_backfill(
         _publish(BackfillState.RUNNING)
 
     async def _worker(prop: Any) -> None:
+        nonlocal consecutive_degraded
         pid = str(getattr(prop, "id", "?"))
         try:
             await enrich_fn(prop)
@@ -1665,6 +1722,49 @@ async def run_backfill(
                     ledger.rollback_attempt(pid)
                 _publish(BackfillState.BACKING_OFF)
                 _log_quota_backoff(prop, exc)
+            elif is_degraded_error is not None and is_degraded_error(exc):
+                # The write authority refused a fabricated result, so this row
+                # persisted nothing and stayed a ``mode=missing`` candidate. It
+                # IS charged an error and a ledger attempt — unlike a quota
+                # refusal, the cause may well be this one property (an
+                # unparseable response), which is precisely what the quarantine
+                # exists for. What the ledger cannot see is the *systemic* case
+                # (a revoked key, a retired model id, a dead route): every row
+                # would fail identically, so the pass would spend the whole
+                # day's budget proving it. Consecutive failures are that signal.
+                result.errors += 1
+                result.error_ids.append(pid)
+                result.ai_fallbacks += 1
+                consecutive_degraded += 1
+                degraded_run_ids.append(pid)
+                if ledger is not None:
+                    ledger.record_error(pid, str(exc))
+                _log_ai_fallback(prop, consecutive_degraded, max_consecutive_ai_failures)
+                # ``0 <`` first: a non-positive threshold disables the breaker
+                # (an operator who would rather drain the queue and read the
+                # errors), and it must never read as "trip on the first row".
+                if 0 < max_consecutive_ai_failures <= consecutive_degraded:
+                    if not result.ai_circuit_open:
+                        result.ai_circuit_open = True
+                        _log_ai_circuit_open(
+                            consecutive_degraded, max_consecutive_ai_failures
+                        )
+                    # The unbroken run IS the proof these rows were never at
+                    # fault, so give their attempts back — the same reasoning
+                    # ``rollback_attempt`` was written for on the quota branch.
+                    # Without this the charge survives the pass while the
+                    # checkpoint does not: the next start re-fetches exactly the
+                    # same oldest-first rows, charges them again, and three
+                    # restarts against a key nobody has fixed yet quarantine
+                    # three perfectly good properties out of the work queue —
+                    # while the banner promises they are still candidates.
+                    # Sporadic degradation *below* the threshold keeps its
+                    # charge: one property whose response is simply unusable is
+                    # exactly what the quarantine exists to retire.
+                    if ledger is not None:
+                        for rolled_back in degraded_run_ids:
+                            ledger.rollback_attempt(rolled_back)
+                    degraded_run_ids.clear()
             else:
                 result.errors += 1
                 result.error_ids.append(pid)
@@ -1675,6 +1775,16 @@ async def run_backfill(
             result.processed += 1
             result.last_property_id = str(getattr(prop, "id", ""))
             checkpoint.advance(result.last_property_id)
+            # A real score came back, so whatever was failing is serving again:
+            # the breaker only fires on an *unbroken* run of degraded rows. An
+            # ordinary error deliberately neither counts nor clears — it is
+            # evidence about the row, not about the provider.
+            consecutive_degraded = 0
+            # The run that did not reach the threshold is not evidence of a
+            # systemic failure, so those rows keep the attempt they were
+            # charged: a property nobody can enrich must still march towards
+            # quarantine, or --continuous pays for it every cycle forever.
+            degraded_run_ids.clear()
         finally:
             # Every finished row ticks progress — success, hard error *and*
             # quota refusal. Ticking only on success meant a storm of failing
@@ -1751,6 +1861,13 @@ async def run_backfill(
                 # retry burns daily request quota. Stop launching immediately.
                 if result.quota_exhausted:
                     break
+                # The provider is answering, but every answer it gives is one the
+                # write authority refuses. Launching more rows would charge each
+                # one an attempt (toward quarantining a perfectly good property)
+                # and spend real budget to persist nothing — for the whole queue,
+                # unattended, behind a healthy-looking progress banner (DW-17).
+                if result.ai_circuit_open:
+                    break
                 # A primary migration holds the exclusion key. The caller beat its
                 # ``:active`` heartbeat before handing this predicate in, so the
                 # migration either sees that heartbeat and refuses, or it got here
@@ -1809,6 +1926,14 @@ async def run_backfill(
                 # discovered the provider is out of quota. Re-check before spending
                 # anything on this row: budget reserved here would never be used.
                 if result.quota_exhausted:
+                    sem.release()
+                    break
+                # Same window, same reason as the loop-head check: waiting for a
+                # slot is exactly when the in-flight rows complete, so the
+                # threshold is usually crossed *here* rather than at the head —
+                # with ``concurrency > 1`` this is what stops the very next row
+                # from being launched into a provider that is plainly broken.
+                if result.ai_circuit_open:
                     sem.release()
                     break
                 # Same window, third writer: the background renewer can have lost
@@ -1955,4 +2080,34 @@ def _log_quota_backoff(prop: Any, exc: Exception) -> None:
         "backfill_quota_exhausted",
         property_id=str(getattr(prop, "id", "?")),
         error=str(exc),
+    )
+
+
+def _log_ai_fallback(prop: Any, consecutive: int, threshold: int) -> None:
+    from infra.logging import get_logger
+
+    # Its own event name, not ``backfill_row_error``: this row failed because the
+    # AI client fabricated a result, which is an operator problem (a key, a model
+    # id, a route) rather than a data problem — and the running count is what
+    # makes "one bad response" distinguishable from "the account is dead" in the
+    # log alone, before the breaker trips.
+    get_logger(__name__).warning(
+        "backfill_ai_result_degraded",
+        property_id=str(getattr(prop, "id", "?")),
+        consecutive=consecutive,
+        threshold=threshold,
+    )
+
+
+def _log_ai_circuit_open(consecutive: int, threshold: int) -> None:
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_ai_circuit_open",
+        consecutive=consecutive,
+        threshold=threshold,
+        reason=(
+            "consecutive fabricated AI results — check the API key, the model id "
+            "and network egress; nothing was persisted for these rows"
+        ),
     )

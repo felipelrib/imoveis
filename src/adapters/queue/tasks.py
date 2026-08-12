@@ -23,7 +23,11 @@ from pydantic import ValidationError
 import adapters.scrapers.olx  # noqa: F401
 import adapters.scrapers.quintoandar  # Force registry registration  # noqa: F401 — triggers registry
 import adapters.scrapers.zapimoveis  # noqa: F401 — triggers registry
-from adapters.ai.client import create_ai_client, create_enrichment_client
+from adapters.ai.client import (
+    AIResultDegradedError,
+    create_ai_client,
+    create_enrichment_client,
+)
 from adapters.ai.enrich_pipeline import analyze_visual_and_sentiment
 from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
@@ -645,6 +649,11 @@ async def _write_deal_verdict(client, session, property_id: str, meta: dict) -> 
     updated_meta["deal_verdict"] = {
         "verdict": verdict_res.verdict,
         "confidence": verdict_res.confidence,
+        # A template fallback is recorded, not refused: the verdict never feeds
+        # ``ai_score``, so it cannot make the row look scored and retire it from
+        # the ``mode=missing`` candidate set. Marking it is what keeps the corpus
+        # honest about which verdicts a model actually wrote (v0.13-s3.2).
+        "degraded": verdict_res.degraded,
     }
     updated_meta["enriched_at"] = _enriched_at_now()
     ms.meta = updated_meta
@@ -738,6 +747,22 @@ async def run_enrichment(
         visual_prompt,
         sentiment_prompt,
     )
+    # The client degraded to a fabricated score (a revoked key, a retired model
+    # id, a dead route — none of which is a quota refusal, so nothing re-raised
+    # upstream). Blending it into ``ai_score`` would persist a truthy 0.5, and
+    # ``mode_is_missing_ai`` is ``not score``: the row would leave the candidate
+    # set permanently and no later pass would ever look at it again (DW-17).
+    #
+    # Raised *here*, before ``SessionLocal()``: nothing is written, nothing is
+    # committed, and the backfill's ``_worker`` therefore skips the ``else:``
+    # that advances the checkpoint. On the live Celery path it reaches
+    # ``ai_enrich``'s existing ``except`` → ``self.retry`` (max_retries=5).
+    if v_res.degraded or s_res.degraded:
+        raise AIResultDegradedError(
+            f"AI enrichment degraded for {property_id} "
+            f"(visual={v_res.degraded}, sentiment={s_res.degraded}): "
+            f"the client fabricated a placeholder score, refusing to persist it"
+        )
     a_score = (
         v_res.condition_score * cfg.ai.visual_weight
         + s_res.sentiment_score * cfg.ai.text_weight
