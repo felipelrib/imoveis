@@ -356,6 +356,207 @@ class TestPreflight:
 
 
 @pytest.mark.unit
+class TestEffectiveRoutingPreflight:
+    """Preflight resolves the EFFECTIVE routing map — YAML *and* env override (DW-31).
+
+    ``--serve`` reads routing through ``AppConfig``: the YAML map first, then the
+    generic ``IMOVEIS_<SECTION>__<KEY>`` overrides on top (env wins). The env file
+    IS the unit's ``EnvironmentFile=``, so a preflight that greps only the YAML
+    lies in both directions — it told a host correctly enabled through the env
+    override that the unit "would exit at startup and restart forever".
+
+    The verdict is the one ``--serve`` itself computes
+    (``backfill_gemma.py::_resolve_backfill_backend``): **every** class in the
+    runner's default scope (``visual``, ``sentiment``, ``deal_verdict``) must
+    resolve to a cloud backend, and they must all name the **same** one — one run
+    drives one client and has no local mode. "At least one class is cloud" was the
+    earlier reading and it certifies a host that crash-loops.
+
+    The committed YAML stays all-local (NFR-1, pinned by
+    ``test_config.py::test_enrichment_routing_default_all_local``), so the env
+    override is the *only* enablement surface the operator may be pointed at.
+    """
+
+    #: Distinctive fragment of the partial-scope warning (some class stayed local).
+    LOCAL_SCOPE_MARKER = "do not resolve to a cloud backend"
+    #: Distinctive fragment of the same-backend warning (all cloud, two backends).
+    MIXED_BACKEND_MARKER = "mixes cloud backends"
+    #: The positive line: routing resolved, the run can start.
+    READY_MARKER = "Effective backfill routing:"
+    OVERRIDE_PREFIX = "IMOVEIS_AI__ENRICHMENT_ROUTING__"
+    #: src/core/backfill_runner.py::DEFAULT_BACKFILL_SCOPE, in the installer's order.
+    SCOPE_CLASSES = ("visual", "sentiment", "deal_verdict")
+
+    @staticmethod
+    def _env(tmp_path: Path, *extra: str) -> Path:
+        """A complete runner env contract plus any routing override lines."""
+        return _write_env(
+            tmp_path,
+            f"GEMINI_API_KEY={_SECRET}\n"
+            "DATABASE_URL=postgresql://u:p@localhost:5432/realestate\n" + "".join(f"{line}\n" for line in extra),
+        )
+
+    @classmethod
+    def _cloud_env(cls, tmp_path: Path, backend: str, *extra: str) -> Path:
+        """The sanctioned enablement: every scoped class overridden to *backend*."""
+        return cls._env(
+            tmp_path,
+            *(f"{cls.OVERRIDE_PREFIX}{name.upper()}={backend}" for name in cls.SCOPE_CLASSES),
+            *extra,
+        )
+
+    @staticmethod
+    def _repo_root_routing(tmp_path: Path, visual: str, *, whole_scope: bool = False) -> Path:
+        """A stand-in checkout whose committed YAML routes cloud.
+
+        ``whole_scope`` routes every class of the backfill scope to *visual* —
+        the only shape a legacy host could have run on, since ``--serve`` needs
+        all three. Otherwise only ``visual`` is routed there.
+        """
+        scoped = visual if whole_scope else "ollama"
+        root = tmp_path / "legacy-checkout"
+        (root / "configs").mkdir(parents=True)
+        (root / "configs" / "app_config.yaml").write_text(
+            "ai:\n"
+            "  enrichment_routing:\n"
+            f"    visual: {visual}\n"
+            f"    sentiment: {scoped}\n"
+            f"    deal_verdict: {scoped}\n"
+            "    valuation: ollama\n"
+            "    embedding: ollama\n",
+            encoding="utf-8",
+        )
+        return root
+
+    @classmethod
+    def _classes_reported_local(cls, stderr: str) -> list[str]:
+        """The task classes named on the line under the partial-scope warning."""
+        lines = stderr.splitlines()
+        index = next((i for i, line in enumerate(lines) if cls.LOCAL_SCOPE_MARKER in line), None)
+        assert index is not None, f"no partial-scope warning in:\n{stderr}"
+        return [word for word in lines[index + 1].split() if word in cls.SCOPE_CLASSES]
+
+    @classmethod
+    def _ready_line(cls, stderr: str) -> str:
+        found = [line for line in stderr.splitlines() if cls.READY_MARKER in line]
+        assert len(found) == 1, f"expected exactly one routing verdict line, got {found}\n{stderr}"
+        return found[0]
+
+    @pytest.mark.parametrize("backend", ["gemma", "gemini"])
+    def test_env_override_to_cloud_reports_ready_without_a_routing_warning(self, tmp_path, backend):
+        """The sanctioned enablement: shipped all-local YAML + the per-host overrides."""
+        env_file = self._cloud_env(tmp_path, backend)
+        result = _run("--check", "--force", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert result.returncode == 0, result.stderr
+        assert self.LOCAL_SCOPE_MARKER not in result.stderr, "a correctly enabled host was told it would crash-loop"
+        assert self.MIXED_BACKEND_MARKER not in result.stderr
+        ready = self._ready_line(result.stderr)
+        assert backend in ready, f"the verdict must name the resolved backend: {ready}"
+        for task_class in self.SCOPE_CLASSES:
+            assert task_class in ready
+
+    def test_partial_scope_override_warns_naming_the_classes_still_local(self, tmp_path):
+        """One class cloud is NOT enablement — ``--serve`` needs the whole scope.
+
+        The regression for the false OK: under the earlier "at least one class is
+        cloud" reading this host was certified ready and then crash-looped.
+        """
+        env_file = self._env(tmp_path, f"{self.OVERRIDE_PREFIX}VISUAL=gemma")
+        result = _run("--check", "--force", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert self.LOCAL_SCOPE_MARKER in result.stderr, "a partially-routed host was certified ready"
+        assert self._classes_reported_local(result.stderr) == ["sentiment", "deal_verdict"]
+        assert self.READY_MARKER not in result.stderr
+
+    def test_scope_split_across_two_cloud_backends_warns(self, tmp_path):
+        """All three cloud but not the SAME cloud: one run drives one client."""
+        env_file = self._env(
+            tmp_path,
+            f"{self.OVERRIDE_PREFIX}VISUAL=gemma",
+            f"{self.OVERRIDE_PREFIX}SENTIMENT=gemini",
+            f"{self.OVERRIDE_PREFIX}DEAL_VERDICT=gemma",
+        )
+        result = _run("--check", "--force", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert self.MIXED_BACKEND_MARKER in result.stderr
+        assert self.LOCAL_SCOPE_MARKER not in result.stderr, "every class IS cloud-routed here"
+        assert self.READY_MARKER not in result.stderr
+        for named in ("gemma", "gemini"):
+            assert named in result.stderr, "the warning must show which class went where"
+
+    def test_all_local_host_warns_and_prescribes_the_env_override(self, tmp_path):
+        """The warning must still fire — and must never send the operator to the YAML."""
+        env_file = self._env(tmp_path)
+        result = _run("--check", "--force", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert self.LOCAL_SCOPE_MARKER in result.stderr
+        assert self._classes_reported_local(result.stderr) == list(self.SCOPE_CLASSES)
+        for task_class in self.SCOPE_CLASSES:
+            assert f"{self.OVERRIDE_PREFIX}{task_class.upper()}=gemma" in result.stderr
+        assert "Do NOT edit" in result.stderr, "the warning must warn the operator off the committed YAML"
+        assert "configs/app_config.yaml" in result.stderr
+
+    def test_yaml_routed_host_still_does_not_warn(self, tmp_path):
+        """A legacy host whose checked-out YAML routes the whole scope cloud is unchanged."""
+        root = self._repo_root_routing(tmp_path, "gemma", whole_scope=True)
+        env_file = self._env(tmp_path)
+        result = _run("--check", "--force", "--repo-root", str(root), "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert result.returncode == 0, result.stderr
+        assert self.LOCAL_SCOPE_MARKER not in result.stderr
+        assert self.MIXED_BACKEND_MARKER not in result.stderr
+        assert "gemma" in self._ready_line(result.stderr)
+
+    def test_override_sending_a_scoped_class_local_warns(self, tmp_path):
+        """Env wins over YAML: an override to a local backend takes that class away."""
+        root = self._repo_root_routing(tmp_path, "gemma", whole_scope=True)
+        env_file = self._env(tmp_path, f"{self.OVERRIDE_PREFIX}SENTIMENT=ollama")
+        result = _run("--check", "--force", "--repo-root", str(root), "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert self.LOCAL_SCOPE_MARKER in result.stderr
+        assert self._classes_reported_local(result.stderr) == ["sentiment"]
+
+    def test_exported_routing_override_fails_because_systemd_is_not_a_shell(self, tmp_path):
+        """`EnvironmentFile=` keeps the literal `export `, so the override never reaches the unit."""
+        env_file = self._env(tmp_path, f"export {self.OVERRIDE_PREFIX}VISUAL=gemma")
+        result = _run("--check", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert result.returncode != 0
+        assert f"{self.OVERRIDE_PREFIX}VISUAL" in result.stderr
+        assert "export" in result.stderr
+
+    @pytest.mark.parametrize(
+        "line, variable, reason",
+        [
+            # AppConfig validates backend names EXACTLY: `GEMMA` is a ConfigError
+            # at startup, i.e. a crash loop behind a certified-OK install.
+            (f"{OVERRIDE_PREFIX}VISUAL=GEMMA", f"{OVERRIDE_PREFIX}VISUAL", "not a known backend"),
+            # A misspelled class is syntactically fine for systemd and fatal for AppConfig.
+            (f"{OVERRIDE_PREFIX}VISUALS=gemma", f"{OVERRIDE_PREFIX}VISUALS", "not an enrichment task class"),
+            # An empty override still REPLACES the YAML value with ''.
+            (f"{OVERRIDE_PREFIX}VISUAL=", f"{OVERRIDE_PREFIX}VISUAL", "is empty"),
+        ],
+        ids=["wrong-case-backend", "unknown-task-class", "empty-value"],
+    )
+    def test_unusable_routing_override_fails_preflight(self, tmp_path, line, variable, reason):
+        """Syntactically fine for systemd, fatal for AppConfig — preflight must refuse."""
+        env_file = self._env(tmp_path, line)
+        result = _run("--check", "--python", "/bin/sh", "--env-file", str(env_file))
+
+        assert result.returncode != 0, result.stderr
+        offending = [text for text in result.stderr.splitlines() if variable in text and reason in text]
+        assert offending, f"no failure naming {variable} ({reason}) in:\n{result.stderr}"
+        assert all("[FAIL]" in text for text in offending), f"reported as advisory, not fatal: {offending}"
+        assert _SECRET not in result.stderr
+
+    def test_shipped_config_stays_all_local(self):
+        """NFR-1: the committed YAML routes every class local — enablement is per-host env."""
+        routing = (yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8")) or {})["ai"]["enrichment_routing"]
+        assert set(routing.values()) == {"ollama"}, "the committed config must stay all-local (NFR-1)"
+
+
+@pytest.mark.unit
 class TestInstallGuards:
     @staticmethod
     def _privileged_stubs(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:

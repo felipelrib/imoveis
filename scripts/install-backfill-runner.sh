@@ -241,21 +241,121 @@ env_db_is_config_default() {
   [ "$dbname" = "$DEFAULT_DB_NAME" ]
 }
 
-# True when ai.enrichment_routing routes at least one task class to a cloud
-# backend. `--serve` validates routing BEFORE its poll loop and exits when no
-# scope is cloud, so an all-local host would crash-loop under Restart=always.
-routing_has_cloud_backend() {
+# --- Effective enrichment routing (DW-31) -----------------------------------
+# `--serve` resolves routing through AppConfig, which reads the YAML map and
+# THEN lays the generic `IMOVEIS_<SECTION>__<KEY>` env overrides on top — the
+# env wins (src/infra/config.py::_apply_env_overrides). The env file IS the
+# unit's `EnvironmentFile=`, so both inputs reach the service and a preflight
+# that reads only the YAML lies in both directions: it warned that a host
+# correctly enabled through the env override "would exit at startup and restart
+# forever" (DW-31). The committed YAML is deliberately all-local and pinned
+# there by the suite (NFR-1), so the env override is the sanctioned surface.
+#
+# The precedence rule is expressed a second time here, in bash, on purpose:
+# preflight must work on a host whose venv cannot import the app — that is one
+# of the failures it exists to catch. Both directions are unit-tested so the
+# mirror cannot drift silently.
+ROUTING_ENV_PREFIX="IMOVEIS_AI__ENRICHMENT_ROUTING__"
+
+# The runner's default scope (src/core/backfill_runner.py::DEFAULT_BACKFILL_SCOPE).
+# `--serve` refuses unless EVERY class here resolves to a cloud backend AND they
+# all name the SAME one (scripts/dev/backfill_gemma.py::_resolve_backfill_backend)
+# — it drives one client and has no local execution mode. A preflight that
+# accepted "at least one class is cloud" would certify a host that crash-loops.
+BACKFILL_SCOPE_CLASSES="visual sentiment deal_verdict"
+# src/core/enrichment.py: EnrichmentTaskClass / EnrichmentBackend. AppConfig
+# validates against these EXACTLY (case-sensitive), so `GEMMA` or `visuals` is a
+# config error at startup, not a routing choice.
+KNOWN_TASK_CLASSES="visual sentiment deal_verdict valuation embedding"
+CLOUD_BACKENDS="gemma gemini"
+LOCAL_BACKENDS="ollama lmstudio"
+
+_in_list() {
+  case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+is_cloud_backend() { _in_list "$1" "$CLOUD_BACKENDS"; }
+is_known_backend() { _in_list "$1" "$CLOUD_BACKENDS $LOCAL_BACKENDS"; }
+
+# Names of the enrichment-routing override variables assigned in an env file
+# (one per line, deduplicated). `export`-prefixed lines are listed too — the
+# preflight fails them separately, because systemd would drop them.
+routing_env_keys() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  grep -Eo "^[[:space:]]*(export[[:space:]]+)?${ROUTING_ENV_PREFIX}[A-Za-z0-9_]+=" "$file" 2>/dev/null \
+    | sed -E "s/^[[:space:]]*(export[[:space:]]+)?//; s/=$//" \
+    | sort -u || true
+}
+
+# `class backend` per entry of the YAML ai.enrichment_routing block.
+routing_yaml_pairs() {
   local cfg="$1"
-  [ -f "$cfg" ] || return 1
+  [ -f "$cfg" ] || return 0
   awk '
     /^[[:space:]]*enrichment_routing:[[:space:]]*$/ { inblock = 1; next }
     inblock {
       if ($0 ~ /^[[:space:]]*(#|$)/) next
       if ($0 !~ /^[[:space:]][[:space:]][[:space:]][[:space:]]/) { inblock = 0; next }
-      if ($0 ~ /:[[:space:]]*(gemma|gemini)([[:space:]]|#|$)/) found = 1
+      line = $0
+      sub(/[[:space:]]#.*$/, "", line)
+      if (line !~ /:/) next
+      key = line; sub(/:.*$/, "", key)
+      val = line; sub(/^[^:]*:/, "", val)
+      gsub(/[[:space:]"'"'"']/, "", key)
+      gsub(/[[:space:]"'"'"']/, "", val)
+      if (key != "" && val != "") print tolower(key), val
     }
-    END { exit(found ? 0 : 1) }
-  ' "$cfg"
+  ' "$cfg" || true
+}
+
+# The backend one task class effectively resolves to: the env-file override when
+# it sets one (the env layer is applied last and wins), else the YAML value.
+# Empty output = the class is routed nowhere.
+routing_effective_value() {
+  local cfg="$1" file="${2-}" want="$3" key value pair_class pair_value
+  for key in $(routing_env_keys "$file"); do
+    if [ "$(printf '%s' "${key#"$ROUTING_ENV_PREFIX"}" | tr '[:upper:]' '[:lower:]')" = "$want" ]; then
+      value="$(env_value_of "$file" "$key" || true)"
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  while read -r pair_class pair_value; do
+    [ "$pair_class" = "$want" ] || continue
+    printf '%s' "$pair_value"
+    return 0
+  done <<EOF
+$(routing_yaml_pairs "$cfg")
+EOF
+  return 0
+}
+
+# Verdict on the EFFECTIVE routing map (YAML overlaid with the env file's
+# overrides), expressed the way `--serve` expresses it: every scoped class cloud,
+# all on the same backend. Prints `ok <backend>`, `local <classes>` or
+# `mixed <class>=<backend>,…`; exit status is 0 only for `ok`.
+routing_scope_verdict() {
+  local cfg="$1" file="${2-}" class value local_classes="" detail="" backends=""
+  for class in $BACKFILL_SCOPE_CLASSES; do
+    value="$(routing_effective_value "$cfg" "$file" "$class")"
+    detail="${detail}${detail:+,}${class}=${value:-<unset>}"
+    if is_cloud_backend "$value"; then
+      _in_list "$value" "$backends" || backends="${backends}${backends:+ }${value}"
+    else
+      local_classes="${local_classes}${local_classes:+ }${class}"
+    fi
+  done
+  if [ -n "$local_classes" ]; then
+    printf 'local %s' "$local_classes"
+    return 1
+  fi
+  if [ "$(printf '%s' "$backends" | wc -w)" -gt 1 ]; then
+    printf 'mixed %s' "$detail"
+    return 1
+  fi
+  printf 'ok %s' "$backends"
+  return 0
 }
 
 # TimeoutStopSec must be >= backfill.lease_ttl_seconds so a stop never SIGKILLs
@@ -333,6 +433,33 @@ preflight() {
         fatal "$ENV_FILE does not set a non-empty $key — the supervisor would exit at startup."
       fi
     done
+    # Routing overrides: the same `export` trap one layer down, plus the two
+    # ways an override is syntactically fine for systemd and still fatal for
+    # AppConfig. Its validators are case-SENSITIVE and reject unknown names, so
+    # `GEMMA`, `gemma1` or a misspelled class is a ConfigError at startup — a
+    # crash loop a preflight that only asked "does it look cloud?" would miss.
+    local rvalue rclass
+    for key in $(routing_env_keys "$ENV_FILE"); do
+      if env_key_uses_export "$ENV_FILE" "$key"; then
+        fatal "$ENV_FILE sets $key with 'export'. systemd's EnvironmentFile= is not a shell:"
+        fatal "it does not strip 'export', so this routing override would be unset in the"
+        fatal "service, the runner would fall back to the all-local $CONFIG_REL map and exit"
+        fatal "at startup. Drop the 'export '."
+      fi
+      rclass="$(printf '%s' "${key#"$ROUTING_ENV_PREFIX"}" | tr '[:upper:]' '[:lower:]')"
+      if ! _in_list "$rclass" "$KNOWN_TASK_CLASSES"; then
+        fatal "$key names '$rclass', which is not an enrichment task class. AppConfig would"
+        fatal "reject the map at startup. Known classes: $KNOWN_TASK_CLASSES."
+      fi
+      rvalue="$(env_value_of "$ENV_FILE" "$key" || true)"
+      if [ -z "$rvalue" ]; then
+        fatal "$key is empty. An empty override still replaces the $CONFIG_REL value, and"
+        fatal "AppConfig rejects '' as a backend — the supervisor would exit at startup."
+      elif ! is_known_backend "$rvalue"; then
+        fatal "$key is '$rvalue', which is not a known backend (case-sensitive)."
+        fatal "Valid: $CLOUD_BACKENDS (cloud) or $LOCAL_BACKENDS (local)."
+      fi
+    done
     if env_db_is_config_default "$ENV_FILE"; then
       warn "$ENV_FILE points DATABASE_URL at database '$DEFAULT_DB_NAME' — that is the config"
       warn "default, not the primary stack's 'realestate'. The runner would enrich a"
@@ -347,10 +474,34 @@ preflight() {
     fi
   fi
 
-  if ! routing_has_cloud_backend "$CONFIG_FILE"; then
-    warn "ai.enrichment_routing in $CONFIG_REL routes no task class to gemma/gemini."
-    warn "--serve validates routing before polling, so the unit would exit at startup and"
-    warn "restart forever. Set visual/sentiment/deal_verdict to gemma (or gemini) first."
+  if [ ! -f "$CONFIG_FILE" ]; then
+    fatal "Config not found: $CONFIG_FILE — routing cannot be resolved (wrong --repo-root?)."
+  else
+    local verdict
+    verdict="$(routing_scope_verdict "$CONFIG_FILE" "$ENV_FILE")" || true
+    case "$verdict" in
+      ok\ *)
+        log "Effective backfill routing: ${verdict#ok } for $BACKFILL_SCOPE_CLASSES ($CONFIG_REL + $ENV_FILE)"
+        ;;
+      mixed\ *)
+        warn "The backfill scope mixes cloud backends (${verdict#mixed }). One run drives one"
+        warn "client, so --serve refuses and the unit would restart forever. Route every class"
+        warn "in '$BACKFILL_SCOPE_CLASSES' to the SAME backend."
+        ;;
+      *)
+        warn "These scoped task classes do not resolve to a cloud backend on this host:"
+        warn "  ${verdict#local }"
+        warn "--serve needs EVERY class in '$BACKFILL_SCOPE_CLASSES' cloud-routed (it drives one"
+        warn "client and has no local mode); it validates that before polling, so the unit"
+        warn "would exit at startup and restart forever. $CONFIG_REL is all-local by design —"
+        warn "enable the cloud backfill PER HOST, in $ENV_FILE:"
+        warn "  ${ROUTING_ENV_PREFIX}VISUAL=gemma"
+        warn "  ${ROUTING_ENV_PREFIX}SENTIMENT=gemma"
+        warn "  ${ROUTING_ENV_PREFIX}DEAL_VERDICT=gemma"
+        warn "Do NOT edit ai.enrichment_routing in the committed $CONFIG_REL: it is pinned"
+        warn "all-local by the test suite (NFR-1), so that edit turns the merge gate red."
+        ;;
+    esac
   fi
 
   if [ "$PREFLIGHT_FAILED" -ne 0 ]; then
@@ -446,8 +597,9 @@ do_install() {
     ok "$UNIT_NAME is active"
   else
     warn "$UNIT_NAME is NOT active a few seconds after start — it is probably crash-looping."
-    warn "Usual causes: ai.enrichment_routing is all-local, or GEMINI_API_KEY/DATABASE_URL"
-    warn "are wrong for this host. Last journal lines:"
+    warn "Usual causes: no ${ROUTING_ENV_PREFIX}* override in $ENV_FILE (routing"
+    warn "resolves all-local), or GEMINI_API_KEY/DATABASE_URL are wrong for this host."
+    warn "Last journal lines:"
     $SUDO journalctl -u "$UNIT_NAME" -n 20 --no-pager >&2 || true
   fi
 

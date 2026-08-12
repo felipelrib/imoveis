@@ -42,13 +42,12 @@ source "$HERE/lib.sh"
 # Conflict-class failures exit 2 (die() is the generic exit-1 path).
 die2() { printf '\033[31m  [FAIL] %s\033[0m\n' "$*" >&2; exit 2; }
 
-# Worktree ports / PLAYWRIGHT_PORT (validate.sh also sources this).
-if [ -f "$REPO_ROOT/.env.local" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$REPO_ROOT/.env.local"
-  set +a
-fi
+# Worktree ports / PLAYWRIGHT_PORT — through lib.sh's default-deny allowlist,
+# never a wholesale source: `.env.local` is also the backfill runner's systemd
+# EnvironmentFile, and this process spawns validate.sh, so the operator's
+# GEMINI_API_KEY / DATABASE_URL / IMOVEIS_* would be inherited straight into
+# pytest (DW-33). Narrowing only one of the two scripts leaves the bleed.
+load_workspace_env
 
 # --- Parse flags -------------------------------------------------------------
 DRY_RUN=false

@@ -90,6 +90,13 @@ def _clear_config_env(monkeypatch):
 
     We also clear ``get_config()``'s lru_cache so the singleton picks up
     the clean environment.
+
+    This coexists with the suite-wide ``IMOVEIS_*`` guard in
+    ``src/tests/conftest.py`` (DW-33) rather than duplicating it: only this
+    fixture clears the *dedicated* config keys (``DATABASE_URL``, ``API_KEY``,
+    … — see ``_CONFIG_ENV_KEYS``, none of which carry the prefix) and
+    ``get_config()``'s cache, both of which this module needs and the suite-wide
+    guard deliberately does not touch.
     """
     for key in _CONFIG_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)

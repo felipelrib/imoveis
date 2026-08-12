@@ -117,3 +117,50 @@ enters an image or a compose environment.
    status quo DW-27 filed. It survives neither a reboot nor an OOM kill, and it
    makes the dashboard's Start button silently do nothing whenever someone
    forgets.
+
+## Amendment — 2026-08-12 (story `v0.13-s3.5`, ledger `DW-31` / `DW-33`)
+
+The decision above stands unchanged; the operator handoff exposed two gaps in
+how it is *enabled* and *checked*.
+
+**The enablement surface is the per-host env override, not the committed YAML.**
+The original consequence "set `ai.enrichment_routing` to `gemma`" was
+unfollowable: the shipped `configs/app_config.yaml` must route every task class
+local (NFR-1) and `test_config.py::test_enrichment_routing_default_all_local`
+pins it, so committing that edit reddens the merge gate for every later story
+and leaving it uncommitted dirties the worktree. Cloud opt-in is therefore a
+per-host decision expressed in the git-ignored `.env.local` the unit already
+reads via `EnvironmentFile=`:
+
+```env
+IMOVEIS_AI__ENRICHMENT_ROUTING__VISUAL=gemma
+IMOVEIS_AI__ENRICHMENT_ROUTING__SENTIMENT=gemma
+IMOVEIS_AI__ENRICHMENT_ROUTING__DEAL_VERDICT=gemma
+```
+
+`_apply_env_overrides` sets those leaves over the YAML-loaded map, so the map
+stays total for the startup validator, the scalar `ai.backend` stays local (the
+live Celery path is unaffected, AD-13), `embedding` still degrades local even
+for backfill (DW-5), and nothing enters git. No unit change was needed.
+
+**Preflight resolves both inputs.** `routing_has_cloud_backend()` awk-grepped
+the YAML only, so a correctly enabled host was told the unit "would exit at
+startup and restart forever". It is replaced by an effective-map resolver over
+(YAML block, env-file overrides) mirroring the loader's precedence — env wins,
+an override naming a local backend takes that class away from the YAML — and the
+`export`-prefix failure now covers routing overrides too, since
+`EnvironmentFile=` keeps the literal `export ` and the override would silently
+never reach the unit. The resolution stays in bash on purpose: preflight must
+work on a host whose venv cannot import the app, which is one of the failures it
+exists to catch. Both directions are unit-tested so the duplicated precedence
+rule cannot drift silently.
+
+**The gate no longer inherits the runner's env.** Making `.env.local` the unit's
+`EnvironmentFile` also made every operator variable ambient pytest env, because
+`validate.sh` / `finish-feature.sh` sourced the file wholesale (DW-33). They now
+read it through a default-deny allowlist of workspace-identity keys
+(`scripts/agent/lib.sh::load_workspace_env`), with a suite-wide guard in
+`src/tests/conftest.py` as the invocation-independent second layer. A second
+`EnvironmentFile` for the unit was rejected: it would double the operator's env
+contract and still not stop `IMOVEIS_*` landing in `.env.local`. Details:
+[`v0.13-s3.5`](../features/v0.13-s3.5-runner-env-contract.md).

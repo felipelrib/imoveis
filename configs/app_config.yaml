@@ -279,6 +279,9 @@ ai:
   # The live/incremental path is always LOCAL (never reads this map). Cloud
   # values (gemini/gemma) are allowed HERE (backfill-eligibility) but FORBIDDEN
   # on ai.backend above, which is the live-path selector and must stay local.
+  # The SHIPPED map stays all-local: opt a host into cloud backfill through
+  # IMOVEIS_AI__ENRICHMENT_ROUTING__<CLASS> in .env.local, not by editing this
+  # block (v0.13-s3.5).
   enrichment_routing:
     visual: ollama            # visual condition assessment (VLM)
     sentiment: ollama         # neighbourhood sentiment
@@ -377,11 +380,14 @@ backfill:
   # 0 = never wait (refuse immediately).
   migration_wait_seconds: 1800
 
-# NOTE (v0.13-s1.3): the cloud backfill now derives its backend from
-# `ai.enrichment_routing` instead of hardcoding Gemma. With the shipped
-# all-local default it refuses to start; set
-# `ai.enrichment_routing.{visual,sentiment,deal_verdict}: gemma` (or `gemini`)
-# and export GEMINI_API_KEY to run it.
+# NOTE (v0.13-s1.3, corrected by v0.13-s3.5): the cloud backfill derives its
+# backend from `ai.enrichment_routing` instead of hardcoding Gemma. With the
+# shipped all-local default it refuses to start. Enable it PER HOST in the
+# git-ignored `.env.local` (the systemd unit's own EnvironmentFile) — never by
+# editing this file, which must stay all-local (NFR-1, pinned by
+# test_enrichment_routing_default_all_local):
+#   IMOVEIS_AI__ENRICHMENT_ROUTING__{VISUAL,SENTIMENT,DEAL_VERDICT}=gemma
+#   GEMINI_API_KEY=…
 
 # ---------------------------------------------------------------------------
 # Proxy Configuration (scraper HTTP layer — FR-20 / AD-5)

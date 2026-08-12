@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -301,9 +300,8 @@ def test_api_key_loaded_via_appconfig_env_channel(tmp_path, monkeypatch: pytest.
     cfg_file = tmp_path / "app_config.yaml"
     cfg_file.write_text("auth:\n  api_key: ''\n  principal_id: from-env\n")
     monkeypatch.setenv("API_KEY", "env-wired-key")
-    for key in list(os.environ):
-        if key.startswith("IMOVEIS_"):
-            monkeypatch.delenv(key, raising=False)
+    # No IMOVEIS_* strip here: the suite-wide autouse guard in
+    # src/tests/conftest.py removes that channel for every test (DW-33).
 
     cfg = load_config(cfg_file)
     assert cfg.auth.api_key == "env-wired-key"

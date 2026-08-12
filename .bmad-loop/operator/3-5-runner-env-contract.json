@@ -1,0 +1,12 @@
+{
+  "actions": [
+    "Restart the supervisor so it re-reads the env file: `sudo systemctl restart imoveis-backfill-serve`. systemd reads `EnvironmentFile=` only at unit start, so a unit that started before the three `IMOVEIS_AI__ENRICHMENT_ROUTING__*` lines were added to .env.local is still resolving the all-local map and crash-looping.",
+    "Confirm the restart took: `systemctl status imoveis-backfill-serve` shows active (running) and `journalctl -u imoveis-backfill-serve -n 50` shows no startup refusal about routing or GEMINI_API_KEY.",
+    "From the primary checkout on main after this merges, run `bash scripts/install-backfill-runner.sh --check` and confirm it prints \"Effective backfill routing: gemma for visual sentiment deal_verdict\" with no routing warning. (Verified during this run against your current .env.local \u2014 it passed, where the pre-fix installer warned the unit \"would exit at startup and restart forever\".)",
+    "Press Start on the Opera\u00e7\u00f5es backfill card with no run in flight and confirm a run begins and the status endpoint reports runner_present true \u2014 the end-to-end check no agent can perform."
+  ],
+  "parked_at": "2026-08-12",
+  "run_id": "20260812-032639-2aec",
+  "spec_file": "_bmad-output/implementation-artifacts/spec-3-5-runner-env-contract.md",
+  "story_key": "3-5-runner-env-contract"
+}

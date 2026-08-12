@@ -356,11 +356,43 @@ Preconditions:
 - `.env.local` must set `GEMINI_API_KEY` and `DATABASE_URL` (the config default
   DB name is *not* the primary `realestate`), plus `REDIS_URL` whenever
   `REDIS_PORT` is not 6379. See `.env.local.example`.
-- `ai.enrichment_routing` must route at least one task class to `gemma`/`gemini`
-  — with the all-local default, `--serve` exits at startup and the unit
-  restarts every 10 s.
+- **Cloud routing is enabled per host, in that same `.env.local`** — the unit
+  reads it via `EnvironmentFile=`:
+
+  ```env
+  IMOVEIS_AI__ENRICHMENT_ROUTING__VISUAL=gemma
+  IMOVEIS_AI__ENRICHMENT_ROUTING__SENTIMENT=gemma
+  IMOVEIS_AI__ENRICHMENT_ROUTING__DEAL_VERDICT=gemma
+  ```
+
+  **All three, on the same backend.** `--serve` drives one cloud client and has
+  no local mode, so it validates that *every* class in the backfill scope
+  (`visual`, `sentiment`, `deal_verdict`) resolves to the **same** cloud backend
+  before its poll loop. Route only some of them — or split them between `gemma`
+  and `gemini` — and it exits at startup and the unit restarts every 10 s. Do
+  **not** enable it by editing
+  `ai.enrichment_routing` in the committed `configs/app_config.yaml`: that file
+  must stay all-local (NFR-1) and a unit test pins it, so the edit turns the
+  merge gate red. These overrides go through the same config loader, keep the
+  routing map total, leave `ai.backend` (the live Celery path) local, and never
+  enter git. No `export ` prefix — `EnvironmentFile=` is not a shell and would
+  keep it literally, leaving the variable unset in the service.
+- `bash scripts/install-backfill-runner.sh --check` resolves the *effective*
+  routing (YAML overlaid with these overrides), so a correctly enabled host
+  passes without a routing warning.
 - Run the installer from the **primary checkout**; it refuses from a linked git
   worktree (that path is disposable).
+
+`.env.local` is also read by the local gates, but only through an allowlist of
+workspace-identity keys (ports, `COMPOSE_PROJECT_NAME`, the DB credentials and
+test-DB selectors, `API_KEY`/`JWT_SECRET`) —
+`scripts/agent/lib.sh::load_workspace_env`. Nothing else **in that file** — the
+cloud key, the primary `DATABASE_URL`, the `IMOVEIS_*` overrides — reaches
+`validate.sh` / `finish-feature.sh`, so an enabled host still runs a green gate.
+The loader filters what it *reads*; it cannot unset a variable you exported in
+your own shell before running the gate, so for the `IMOVEIS_*` config-override
+channel specifically the suite has a second, origin-independent guard
+(`src/tests/conftest.py`, DW-33).
 
 Re-run the installer after moving the repo, rebuilding `.venv`, or upgrading —
 it rewrites the same unit name in place. `--uninstall` removes it.

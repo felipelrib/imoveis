@@ -57,7 +57,11 @@ done
 [ -z "$SCOPE" ] && SCOPE="all"
 # .env.local supplies workspace identity + PLAYWRIGHT_PORT; DB/Redis URLs for
 # tests are derived from the ephemeral test stack below, never from here.
-[ -f "$REPO_ROOT/.env.local" ] && { set -a; source "$REPO_ROOT/.env.local"; set +a; }
+# It is ALSO the backfill runner's systemd EnvironmentFile (ADR 0006), so it is
+# read through lib.sh's default-deny allowlist instead of `set -a; source`:
+# GEMINI_API_KEY, the primary DATABASE_URL and any IMOVEIS_<SECTION>__<KEY>
+# override must never become ambient pytest env (DW-33).
+load_workspace_env
 cd "$REPO_ROOT"
 
 # Set API_KEY / JWT_SECRET for admin endpoint tests (via AppConfig env channel)
