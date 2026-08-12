@@ -61,7 +61,7 @@
 # - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short description)
 
 generated: 2026-08-05T06:51:14-03:00
-last_updated: 2026-08-06
+last_updated: 2026-08-12
 project: imoveis
 project_key: NOKEY
 tracking_system: file-system
@@ -89,13 +89,13 @@ development_status:
   # with nothing holding the window, and a runner sleeping out an RPD window
   # cleared that heartbeat and resumed mid-migration. Added the migration-held
   # key `backfill:gemma:migrating` with set-then-check on both sides.
-  v0.13-fu6-migration-backfill-mutual-exclusion: in-progress
+  v0.13-fu6-migration-backfill-mutual-exclusion: done
   # Follow-up (DW-6): run_backfill renewed its lease only from event sites (per
   # launch-loop iteration, per pause poll, per finished row), so nothing renewed
   # it while a row was in flight — one enrichment slower than the TTL let the
   # lease lapse under a live writer. Added a background timer task renewing at
   # ttl/3 for the whole run, cancelled after the in-flight drain.
-  v0.13-fu7-backfill-lease-background-renewer: in-progress
+  v0.13-fu7-backfill-lease-background-renewer: done
   # Follow-up (DW-7): GeminiClient classified quota only on the HTTP-status
   # path, so a throttle arriving as identical connection resets/timeouts
   # re-raised untagged, the runner took the hard-error branch, and the attempt
@@ -103,20 +103,57 @@ development_status:
   # inside one throttle window. Repeated identical transport failures within a
   # configurable recency window of an observed 429 now raise the distinguished
   # quota error; everything else stays a hard error.
-  v0.13-fu8-gemini-transport-quota-classification: in-progress
+  v0.13-fu8-gemini-transport-quota-classification: done
   # Follow-up (DW-2): CI retirement deleted the Trivy scan and the nightly
   # pip-audit/npm audit jobs on the premise that local gates covered them, but
   # no local gate audited anything and Dependabot has no checks on bot PRs.
   # Added scripts/agent/audit-deps.sh (pip-audit + npm audit, JSON-parsed) as an
   # advisory stage of `validate.sh all` — reports findings, never mutates rc,
   # degrades to a visible skip offline.
-  v0.13-fu9-dependency-audit-gate: in-progress
+  v0.13-fu9-dependency-audit-gate: done
+
+  # ---- Post-epic-1-retrospective follow-ups (2026-08-12) ----
+  # Sequencing (retro §8): fu10 first (serial) -> fu11 ∥ fu12 then fu13
+  # (fu12/fu13 share backfill_runner.py) -> fu14 (frontend-only, parallel with
+  # any of them) -> Epic 2 Wave 1 (2-1) only after fu10-fu14 are done.
+  #
+  # DW-27: FR-28's "graduates from scripts/dev" is unmet at the consumer — the
+  # admin Start button only works while a hand-started `backfill_gemma.py
+  # --serve` supervisor stays alive; no unit is committed or wired into the
+  # stack. Topology decision (systemd unit / compose service / supported
+  # entrypoint) with cloud-key placement and residential-IP invariants in play.
+  v0.13-fu10-backfill-runner-hosting: backlog
+  # DW-17 (correctness wave): non-quota AI failures (401 revoked key, 404
+  # retired model, DNS outage) still persist a fabricated 0.5 score, commit,
+  # advance the checkpoint and permanently retire the row — ~4,600 properties/
+  # day behind a healthy banner. Needs a typed marker on the fallback result +
+  # a consecutive-fallback circuit breaker in run_backfill; the local Ollama
+  # template fallback must be preserved.
+  v0.13-fu11-non-quota-failure-circuit-breaker: backlog
+  # DW-18 (correctness wave): the daily budget charges a flat 3 requests per
+  # property while one property is up to 45 real HTTP calls (3 stages x 3 JSON
+  # attempts x 5 retries), and 429s are retried — so AC-1's never-exceed
+  # guarantee measures the wrong quantity, worst when already throttled.
+  v0.13-fu12-budget-counts-requests: backlog
+  # DW-11 (correctness wave): after a lost lease, still-draining rows advance
+  # the shared checkpoint, rewinding the successor's position and inflating
+  # processed_total. Decide monotonic vs lease-gated `advance()`.
+  v0.13-fu13-checkpoint-advance-semantics: backlog
+  # Epic 2 prep (1.6 ledger entries): re-anchor ToastProvider to DESIGN.md's
+  # bottom-anchored/max-two spec (UX-DR3 binds every Epic 2 toast surface) and
+  # sweep the pt-BR plural-agreement catalog ("1 selecionados", "1 imóveis")
+  # that the locale flip promoted to everyone's default and that 1.6's e2e
+  # repairs pinned verbatim in three compare specs.
+  v0.13-fu14-ui-contract-debt: backlog
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
-  # All six epic-1 stories delivered; the epic closes on the per-epic gate once
-  # this branch is merged (retrospective remains optional).
-  epic-1: in-progress
+  # CLOSED 2026-08-12 at the epic-1 retrospective. All six stories done, merged
+  # and pushed; no untracked leftovers remain — DW-27 (FR-28's unmet
+  # "graduates from scripts/dev") is tracked as v0.13-fu10 and runs immediately
+  # next, by explicit decision (Felipe, 2026-08-12; retro §5). Full record:
+  # epic-1-retro-2026-08-12.md.
+  epic-1: done
   1-1-canonical-enrichment-task-classes-routing-config: done
   1-2-live-pipeline-routes-by-task-class-local-fallback: done
   1-3-backfill-runner-control-core: done
@@ -127,7 +164,7 @@ development_status:
   1-4-enrichment-coverage-telemetry: done
   1-5-admin-backfill-control-api: done
   1-6-operacoes-backfill-card-coverage-visibility: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
@@ -137,3 +174,27 @@ development_status:
   2-4-saved-search-alert-management-ui: backlog
   2-5-detail-side-panel-migration: backlog
   epic-2-retrospective: optional
+
+# Committed at the epic-1 retrospective (2026-08-12).
+# Full record: epic-1-retro-2026-08-12.md
+action_items:
+  - epic: 1
+    action: "Escalation re-verification: re-check an escalated story's stated blocker against the current tree before the loop advances past it; if the cause has cleared, re-drive rather than absorb into a sibling branch."
+    owner: "Felipe / bmad-loop harness"
+    status: open
+  - epic: 1
+    action: "Third-pass rule: when a review pass finds the same defect shape a prior pass already fixed through a different field, promote it to a spec-level invariant in the I/O matrix instead of running another pass."
+    owner: "Felipe / review skills"
+    status: open
+  - epic: 1
+    action: "Feature-doc gate on absorption: a story marked done inside another story's branch gets its own docs/features/<story-key>-*.md in that same branch, not in a later review pass."
+    owner: "Felipe / finish gate"
+    status: open
+  - epic: 1
+    action: "Push is part of finishing: verify `git rev-list --count origin/main..main == 0` at the end of every loop run, not only per-merge."
+    owner: "Felipe / bmad-loop harness"
+    status: open
+  - epic: 1
+    action: "Ledger budget: track deferred-work opened vs closed per epic; a net-positive epic ends with a scheduled drain wave rather than an open ledger."
+    owner: "Felipe"
+    status: open

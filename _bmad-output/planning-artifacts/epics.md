@@ -333,6 +333,17 @@ So that I can kick off, monitor, and pause the multi-day run and watch coverage 
 **Then** new components use the Meia-noite tokens (UX-DR1, dark-only), all new strings land in both `en` and `pt-BR` catalogs, and the UI default locale flips to **pt-BR** (NFR-7 as amended; `ui.locale` preference still switches)
 **And** a Playwright e2e covers the card's happy path (status render + a control action against a mocked/stubbed API) and asserts honest absence (no ETA/throughput text with no active run)
 
+### Epic 1 close + post-epic sequencing gate (retrospective, 2026-08-12)
+
+Epic 1 closed with all six stories delivered, merged and pushed. The retrospective (`_bmad-output/implementation-artifacts/epic-1-retro-2026-08-12.md`) scheduled five follow-ups that **gate Epic 2's start**, recorded here so future sessions do not re-derive them:
+
+- **Wave A (serial, first):** `v0.13-fu10` — backfill runner hosting (DW-27). FR-28's ACs were met while its stated outcome — graduating the runner out of `scripts/dev` — was not: the admin Start button only works while a hand-started `--serve` supervisor stays alive.
+- **Wave B (correctness wave):** `v0.13-fu11` ∥ `v0.13-fu12`, then `v0.13-fu13`. DW-17 (non-quota failures persist fabricated 0.5 scores and permanently retire rows), DW-18 (budget counts properties, not requests), DW-11 (drain-after-lease-loss rewinds the shared checkpoint). `fu12` and `fu13` share `src/core/backfill_runner.py` and must stay serial.
+- **Wave C (parallel, frontend-only):** `v0.13-fu14` — ToastProvider re-anchor to DESIGN.md's bottom-anchored spec (UX-DR3 binds every Epic 2 toast surface) + the pt-BR plural-agreement catalog sweep the 1.6 locale flip promoted to everyone's default and pinned in three e2e specs.
+- **Gate on Epic 2 Wave 1 (s2.1):** Waves A and B done — Epic 2 computes percentiles over a corpus that must not be accruing fabricated scores — and Wave C done, since stories 2.2/2.4/2.5 all add pt-BR strings and e2e assertions on top of the current (wrong) ones.
+
+**Do not parallelize:** `fu12` with `fu13` (shared runner file); `fu10` with `fu11`/`fu12` (a hosting change that moves the runner's entrypoint while its internals are rewritten); Epic 2 UI stories before `fu14`.
+
 ## Epic 2: Deal-Intelligence Deepening (Theme B cut)
 
 Ana and Bruno (users) get sharper deal signals than one combined score: price/m² percentile within the neighbourhood × listing-type cohort on every card and in the detail side panel, with filtering (FR-30), and saved searches that notify by email when a new matching Property appears — already enriched, so the alert lands decidable (FR-32, email-only v1). The modal→side-panel migration is this epic's UX foundation piece (s2.5). Both FRs consume shipped foundations (polygons, dual-type scoring, saved searches, notifier registry) — no new geo or channel work.
