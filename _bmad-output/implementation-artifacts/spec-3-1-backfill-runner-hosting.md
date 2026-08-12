@@ -2,7 +2,7 @@
 title: 'Backfill runner hosting — a committed, supervised home for the consumer'
 type: 'feature'
 created: '2026-08-12'
-status: 'awaiting-operator'
+status: done
 baseline_revision: 'd1fd2e5f5e578d6cb52bbb9c775d7d86f9f73801'
 final_revision: 'cb690fbad3476330702313bf4754f5d756f793d9'
 review_loop_iteration: 1
@@ -185,3 +185,17 @@ TimeoutStopSec=900
 - The privileged half is unexecuted by construction: the actual install, `runner_present` going true from a real Start press, and reboot recovery are operator-verified, not agent-verified.
 - A stock `configs/app_config.yaml` still routes everything to Ollama, so an install before the routing change yields a 10s crash loop — warned at install time, stated in the ADR and the feature doc, and tracked as a deferred item together with DW-28.
 - The installed unit is rendered once and does not track later config or path changes.
+
+## Operator Confirmation
+
+Confirmed 2026-08-12: the external actions this story owed were carried out.
+
+- Add GEMINI_API_KEY and DATABASE_URL to .env.local in the primary checkout (/home/felipe/workfolder/imoveis), plus REDIS_URL whenever REDIS_PORT is not 6379; point DATABASE_URL at the primary realestate database on the published POSTGRES_PORT, use plain KEY=value lines with no export prefix and LF endings, and never commit the file.
+- Set the backfill task classes in configs/app_config.yaml ai.enrichment_routing (visual, sentiment, deal_verdict) to gemma before installing — with the shipped all-ollama default the supervisor exits at startup and the unit restarts every 10 seconds.
+- Stop any hand-started `scripts/dev/backfill_gemma.py --serve` process (tmux/nohup) and remove any previously hand-installed imoveis-backfill-serve.service, so exactly one supervisor beats backfill:gemma:supervisor:active.
+- From the primary checkout (never a linked worktree) run `bash scripts/install-backfill-runner.sh --check`, resolve anything it reports, then run `bash scripts/install-backfill-runner.sh` and approve the sudo prompt — it writes /etc/systemd/system/imoveis-backfill-serve.service, enables it and restarts it.
+- Verify the supervisor is alive with `systemctl status imoveis-backfill-serve` and `journalctl -u imoveis-backfill-serve -n 50`, then press Start on the Operações backfill card and confirm a run begins and the status endpoint reports runner_present true.
+- Verify unattended recovery: reboot the host (or run `sudo systemctl restart imoveis-backfill-serve`) and confirm the unit returns active with no manual step and without starting a second run under the shared lease.
+- Re-run `bash scripts/install-backfill-runner.sh` after moving the repo, rebuilding .venv, or raising backfill.lease_ttl_seconds — the installed unit is rendered once and does not track those changes.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
