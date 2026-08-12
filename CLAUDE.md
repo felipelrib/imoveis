@@ -51,6 +51,7 @@ Use **Plan Mode** for non-trivial work, then implement in the same session. An o
 - `configs/app_config.yaml` — single source of truth for all settings.
 - `alembic/` — DB migrations.
 - `scripts/agent/` — agent workflow tooling (branch setup, validation, finishing) — shared/committed, tool-agnostic. **This is the enforcement layer.**
+- `deploy/systemd/` — host-side systemd unit templates (cloud backfill supervisor); installed by `scripts/install-backfill-runner.sh`, never a compose service (ADR 0006).
 - `docs/` — MkDocs Material site. `docs/features/` for feature implementation notes.
 - `.agents/skills/` — committed BMad Method skills (framework-native, shared across tools).
 - `_bmad/custom/` — committed per-skill BMad overrides (gate bindings).

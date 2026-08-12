@@ -23,9 +23,24 @@ Volumes: `postgres_data`, `redis_data`, `image_store` (never deleted by cleanup 
 
 A second, **ephemeral** compose file (`docker-compose.test.yml`, project `<workspace>-test`) carries validation's Postgres + Redis: docker-assigned ports, no named volumes, managed exclusively by `scripts/agent/test-stack.sh`.
 
+## Host-side units (not compose)
+
+| Unit | Where it lives | Install |
+|---|---|---|
+| `imoveis-backfill-serve.service` | systemd system unit rendered from `deploy/systemd/imoveis-backfill-serve.service.in`; runs `scripts/dev/backfill_gemma.py --serve` as the operator's user, out of the repo `.venv` | `bash scripts/install-backfill-runner.sh` (sudo; `--print` / `--check` / `--status` / `--uninstall`) |
+
+The cloud backfill supervisor is deliberately **not** a compose service: the
+`GEMINI_API_KEY` it needs exists in no container, `scripts/` is not in
+`Dockerfile.worker`, and the runner must stay on the residential host (ADR 0006).
+Without the unit installed, `POST /admin/backfill/start` only records a request
+that nothing consumes. Re-run the installer after a repo move, a rebuilt `.venv`
+or an upgrade; run it from the **primary checkout** (it refuses from a linked
+worktree).
+
 ## Environment
 
 - `.env.local` — ports and credentials; always `docker compose --env-file .env.local` (bare `up` drifts ports and breaks `API_KEY` auth). `COMPOSE_PROJECT_NAME` in this file is the workspace's compose identity — teardown reads it from the file and fails closed without it.
+- `.env.local` is also the backfill unit's `EnvironmentFile`: `GEMINI_API_KEY` and `DATABASE_URL` are required for a host-side run (the config default DB name is not the primary `realestate`), `REDIS_URL` whenever `REDIS_PORT` is not 6379. Keys are env-only — never committed, never in a container.
 - Ollama runs on the host (Windows side in WSL setups), not in compose; `OLLAMA_NUM_PARALLEL` must equal `gpu.semaphore_limit`.
 
 ## Merge gate & automation

@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# imoveis-backfill-serve.service — TEMPLATE (see ADR 0006).
+#
+# This is NOT a systemd unit yet: the double-at-sign tokens below (USER,
+# REPO_ROOT, PYTHON, ENV_FILE, TIMEOUT_STOP) are rendered for the local host by
+#   bash scripts/install-backfill-runner.sh
+# which also preflights the env contract and installs/enables the result.
+# Never copy this into /etc/systemd/system by hand — the installer is the one
+# supported path, so a re-install upgrades in place instead of leaving a second
+# supervisor running against the same Redis namespace.
+# ---------------------------------------------------------------------------
+[Unit]
+Description=Imoveis cloud backfill supervisor (consumes POST /admin/backfill/start)
+Documentation=file://@@REPO_ROOT@@/docs/adr/0006-backfill-runner-hosting.md
+# `After=` orders boot behind the network and the container stack WITHOUT
+# `Requires=`: Docker Desktop hosts have no `docker.service` unit at all, and a
+# hard requirement on a unit that does not exist would refuse to start the
+# supervisor. Ordering-only is safe because the supervisor's poll loop already
+# retries Redis/DB failures instead of dying on the first one.
+After=network-online.target docker.service
+Wants=network-online.target
+# No restart rate limit: a burst of early exits (rotated key, Redis not up yet
+# at boot) must never park the unit in `failed`, where the dashboard's Start
+# button silently does nothing again — the exact DW-27 failure this unit ends.
+# (`StartLimitIntervalSec` belongs to [Unit] in modern systemd.)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@@USER@@
+WorkingDirectory=@@REPO_ROOT@@
+# The runner is invoked as a repo script, not an installed package (ADR 0006).
+Environment=PYTHONPATH=src
+# The supervisor's progress output reaches journald through a pipe, so Python
+# would block-buffer it: without this, `journalctl -f` shows nothing for long
+# stretches of a live run and a healthy runner looks wedged.
+Environment=PYTHONUNBUFFERED=1
+# Secrets are env-only (NFR-3): GEMINI_API_KEY / DATABASE_URL / REDIS_URL come
+# from the git-ignored .env.local — never from this file, never from a container.
+EnvironmentFile=@@ENV_FILE@@
+# Absolute script path: WorkingDirectory is set, but systemd resolves ExecStart
+# arguments as given and a relative one is only ever a trap for the next editor.
+ExecStart=@@PYTHON@@ @@REPO_ROOT@@/scripts/dev/backfill_gemma.py --serve
+Restart=always
+RestartSec=10
+# Drain-safe stop: SIGTERM is the run's own clean-stop signal, and the stop
+# timeout is >= the backfill lease TTL (`backfill.lease_ttl_seconds`, 900s), so
+# a stop can never SIGKILL a live run half-written mid-property.
+KillSignal=SIGTERM
+TimeoutStopSec=@@TIMEOUT_STOP@@
+SyslogIdentifier=imoveis-backfill-serve
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

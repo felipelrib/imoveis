@@ -76,6 +76,7 @@ nav:
       - BMad Planning Bridge: adr/0003-bmad-planning-bridge.md
       - Parallel Agent Workspaces: adr/0004-parallel-agent-workspaces.md
       - Drop Linear — BMad Artifacts Sole Tracker: adr/0005-drop-linear-bmad-artifacts-sole-tracker.md
+      - Backfill Runner Hosting: adr/0006-backfill-runner-hosting.md
 
 plugins:
   - search

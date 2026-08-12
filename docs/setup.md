@@ -330,6 +330,41 @@ REDIS_URL=redis://redis-host:6379/0
 OLLAMA_BASE_URL=http://gpu-host:11434
 ```
 
+### Cloud Backfill Runner (host-side, systemd)
+
+The cloud backfill supervisor is **not** a compose service. It runs on the host,
+as your own user, out of the repo `.venv` — see
+[ADR 0006](adr/0006-backfill-runner-hosting.md). Without it, the Operações
+dashboard's Start button only records a request that nothing consumes.
+
+```bash
+# Inspect what would be installed (no privilege needed)
+bash scripts/install-backfill-runner.sh --print
+
+# Preflight the host + env contract only
+bash scripts/install-backfill-runner.sh --check
+
+# Install, enable and start (asks for sudo; writes /etc/systemd/system)
+bash scripts/install-backfill-runner.sh
+
+bash scripts/install-backfill-runner.sh --status      # unit state
+bash scripts/install-backfill-runner.sh --uninstall   # disable + remove
+```
+
+Preconditions:
+
+- `.env.local` must set `GEMINI_API_KEY` and `DATABASE_URL` (the config default
+  DB name is *not* the primary `realestate`), plus `REDIS_URL` whenever
+  `REDIS_PORT` is not 6379. See `.env.local.example`.
+- `ai.enrichment_routing` must route at least one task class to `gemma`/`gemini`
+  — with the all-local default, `--serve` exits at startup and the unit
+  restarts every 10 s.
+- Run the installer from the **primary checkout**; it refuses from a linked git
+  worktree (that path is disposable).
+
+Re-run the installer after moving the repo, rebuilding `.venv`, or upgrading —
+it rewrites the same unit name in place. `--uninstall` removes it.
+
 ### Scaling Considerations
 
 - **Scraper workers**: Scale horizontally (more replicas)

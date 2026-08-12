@@ -173,7 +173,7 @@ development_status:
   # wired into the stack. Topology decision (systemd unit / compose service /
   # supported entrypoint) with cloud-key placement and the local-first /
   # residential-IP invariants in play. Ships with an ADR.
-  3-1-backfill-runner-hosting: backlog
+  3-1-backfill-runner-hosting: awaiting-operator
   # DW-17: non-quota AI failures (401 revoked key, 404 retired model, DNS
   # outage) still persist a fabricated 0.5, commit, advance the checkpoint and
   # — because mode=missing keys on `not score` — permanently retire the row, at
@@ -207,4 +207,3 @@ development_status:
   2-4-saved-search-alert-management-ui: backlog
   2-5-detail-side-panel-migration: backlog
   epic-2-retrospective: optional
-
