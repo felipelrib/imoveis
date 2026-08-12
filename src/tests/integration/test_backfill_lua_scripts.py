@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.backfill_runner import BackfillLease, DailyBudget
+from core.backfill_runner import BackfillLease, Checkpoint, DailyBudget
 from tests.env_helpers import get_redis_url
 from tests.redis_isolation import assert_wipe_safe_redis_url
 
@@ -109,6 +109,85 @@ def test_lease_renew_refusal_decodes_as_false_against_real_redis(redis_client):
     lease = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
 
     assert lease.renew() is False  # never acquired — must not read as owned
+
+
+def _checkpoint(client, *, lease=None):
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
+    return Checkpoint(client, prefix=_PREFIX, now_fn=lambda: now, lease=lease)
+
+
+def test_checkpoint_advance_lua_records_for_the_lease_owner(redis_client):
+    owner = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    assert owner.acquire() is True
+    cp = _checkpoint(redis_client, lease=owner)
+
+    assert cp.advance("prop-1") is True
+    assert cp.advance("prop-2") is True
+
+    loaded = cp.load()
+    assert loaded["last_property_id"] == "prop-2"
+    assert loaded["last_run_date"] == "2026-08-12"
+    assert cp.processed_total() == 2
+
+
+def test_checkpoint_advance_lua_writes_nothing_for_a_foreign_token(redis_client):
+    """DW-11: a displaced runner's drained rows must not touch the hash."""
+    displaced = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    successor = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    assert successor.acquire() is True  # the lease is someone else's
+
+    assert _checkpoint(redis_client, lease=displaced).advance("drained-row") is False
+
+    # Not "written and rolled back" — never written at all.
+    assert redis_client.exists(f"{_PREFIX}:checkpoint") == 0
+
+
+def test_checkpoint_advance_never_rewinds_the_successors_marker(redis_client):
+    displaced = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    assert displaced.acquire() is True
+    assert _checkpoint(redis_client, lease=displaced).advance("prop-1") is True
+    # The TTL lapsed and a successor took over.
+    redis_client.delete(displaced.key)
+    successor = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    assert successor.acquire() is True
+    assert _checkpoint(redis_client, lease=successor).advance("successor-row") is True
+
+    # The displaced runner's in-flight row drains and tries to record itself.
+    assert _checkpoint(redis_client, lease=displaced).advance("prop-2") is False
+
+    loaded = _checkpoint(redis_client).load()
+    assert loaded["last_property_id"] == "successor-row"  # no rewind
+    assert _checkpoint(redis_client).processed_total() == 2  # no double count
+
+
+def test_checkpoint_advance_refusal_decodes_as_false_against_real_redis(redis_client):
+    """The same ``bool(b"0")`` trap, on the script that gates the checkpoint."""
+    lease = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+
+    # Never acquired: the lease key does not exist, so the CAS must refuse.
+    assert _checkpoint(redis_client, lease=lease).advance("prop-1") is False
+    assert redis_client.exists(f"{_PREFIX}:checkpoint") == 0
+
+
+def test_checkpoint_advance_never_touches_the_lease_key(redis_client):
+    """It reads the lease to decide; writing it would extend or steal a lease."""
+    owner = BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300)
+    assert owner.acquire() is True
+    redis_client.expire(owner.key, 42)  # a TTL an accidental write would reset
+
+    assert _checkpoint(redis_client, lease=owner).advance("prop-1") is True
+
+    assert redis_client.get(owner.key).decode() == owner.token
+    assert redis_client.ttl(owner.key) <= 42
+
+
+def test_a_checkpoint_written_without_a_lease_stays_unconditional(redis_client):
+    """``--status`` and the admin API build it this way and must keep working."""
+    BackfillLease(redis_client, prefix=_PREFIX, ttl_seconds=300).acquire()
+
+    assert _checkpoint(redis_client).advance("prop-1") is True
+
+    assert _checkpoint(redis_client).processed_total() == 1
 
 
 def test_settle_lua_never_opens_a_window(redis_client):

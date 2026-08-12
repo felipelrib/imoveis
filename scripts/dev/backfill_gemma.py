@@ -768,7 +768,13 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
         prefix=cfg.backfill.redis_prefix,
         daily_limit=args.daily_budget or cfg.backfill.daily_request_budget,
     )
-    checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix)
+    # Lease-gated: ``<prefix>:checkpoint`` is one hash every runner writes, and
+    # in-flight rows always drain after a lease loss — so a displaced pass would
+    # otherwise stamp its own drained rows over the successor's marker and
+    # inflate the all-time counter (v0.13-s3.4, DW-11). ``lease`` is ``None``
+    # only for ``--dry-run``, which writes nothing anyway; ``--status`` builds
+    # its own read-only checkpoint and stays lease-less by construction.
+    checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix, lease=lease)
     heartbeat = Heartbeat(redis, prefix=cfg.backfill.redis_prefix)
     # A dry run takes no lease and writes nothing, so it takes no control keys
     # either — the migration gate follows the same rule.
@@ -935,6 +941,35 @@ def _print_banner(title: str, lines: list[str]) -> None:
     for line in lines:
         print(f"  {line}")
     print(f"{rule}\n")
+
+
+def _unrecorded_completion_lines(result) -> list[str]:
+    """Name the completions the shared checkpoint declined, if any (DW-11).
+
+    A displaced pass drains its in-flight rows by design, and those rows are
+    enriched and committed — but the checkpoint belongs to whoever holds the
+    lease, so their bookkeeping is refused. Saying nothing left the operator
+    reading "the checkpoint is intact" while ``processed`` and
+    ``processed_total`` disagreed by exactly this many rows.
+    """
+    # ``getattr``: ``_lease_lost_lines()`` is also called with no result at all
+    # (the migration-wait path knows the outcome, not a BackfillResult).
+    count = getattr(result, "unrecorded_completions", 0) or 0
+    if not count:
+        return []
+    return [
+        # "in this pass", not "this run": --continuous prints these lines under
+        # a summary whose enriched/errors figures are cumulative across cycles,
+        # and only the final pass's declined rows are in this count.
+        f"{count} row(s) finished after the lease was lost in this pass: "
+        "enriched and committed, but NOT counted on the shared checkpoint "
+        "(it is the lease holder's). They are simply no longer candidates.",
+    ]
+
+
+def _lease_lost_lines(result=None) -> list[str]:
+    """Lease-lost banner body, told against what this pass actually did."""
+    return _unrecorded_completion_lines(result) + _LEASE_LOST_LINES
 
 
 def _terminal_summary(census: QueueCensus, *, cycle: int, elapsed: float,
@@ -1237,7 +1272,7 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                 # Both flags set (a worker's renew failed while the pass was
                 # breaking on the gate): there is nothing to wait for, a
                 # successor owns the run.
-                _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+                _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines(result))
                 return EXIT_LEASE_LOST
             waited_from = time.monotonic()
             outcome = _wait_out_migration(
@@ -1253,7 +1288,9 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
             if outcome == "cleared":
                 continue  # the migration released the key → fresh pass now
             if outcome == "lease_lost":
-                _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+                # Lost during the *wait*, so this pass launched nothing and has
+                # no completions of its own to report.
+                _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines())
                 return EXIT_LEASE_LOST
             if outcome == "stopped":
                 _print_banner(
@@ -1302,7 +1339,11 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                     elapsed=time.monotonic() - started,
                     processed=enriched_this_run,
                     errors=errors_this_run,
-                ),
+                )
+                # "enriched this run N" above counts rows the shared checkpoint
+                # declined, so the discrepancy an operator would otherwise find
+                # in `--status` is named right here (DW-11).
+                + _unrecorded_completion_lines(result),
             )
             return EXIT_LEASE_LOST
         # Completion is checked *before* the budget branch: a pass that spends the
@@ -1463,7 +1504,8 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # the queue, so that pass fetches nothing, never reaches a renewal, and
         # the run below reported the successor's completion as its own.
         if _sleep_for_reset(wait, cfg=cfg, control=control, lease=lease) == "lease_lost":
-            _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+            # Lost while sleeping out the budget window: nothing was in flight.
+            _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines())
             return EXIT_LEASE_LOST
 
 
@@ -2137,7 +2179,7 @@ def main(argv: list[str] | None = None) -> int:
             f"budget_exhausted={result.budget_exhausted})"
         )
     if result.lease_lost:
-        _print_banner(_LEASE_LOST_TITLE, _LEASE_LOST_LINES)
+        _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines(result))
         return EXIT_LEASE_LOST
     # A migration took the primary DB between the startup check and pass entry:
     # nothing was launched and the checkpoint is intact, so the exit code — not

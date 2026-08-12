@@ -18,6 +18,7 @@ import pytest
 from core.backfill_runner import (
     _BUDGET_RESERVE_LUA,
     _BUDGET_SETTLE_LUA,
+    _CHECKPOINT_ADVANCE_LUA,
     _LEASE_RELEASE_LUA,
     _LEASE_RENEW_LUA,
     _STATE_REFRESH_SECONDS,
@@ -110,9 +111,17 @@ class EvalRedis(FakeRedis):
         super().__init__()
         self.eval_calls = 0
 
-    def eval(self, script, numkeys, key, *args):
+    def eval(self, script, numkeys, *keys_and_args):
         self.eval_calls += 1
+        # The checkpoint CAS is the one two-key script: it reads the lease key
+        # and writes the checkpoint hash in the same atomic step. Asserted per
+        # script rather than once for all of them, so the guard keeps saying
+        # something — a script called with the wrong key count still fails here.
+        if script is _CHECKPOINT_ADVANCE_LUA:
+            assert numkeys == 2
+            return self._checkpoint_advance(*keys_and_args)
         assert numkeys == 1
+        key, *args = keys_and_args
         if script is _BUDGET_RESERVE_LUA:
             return self._budget_reserve(key, *args)
         if script is _BUDGET_SETTLE_LUA:
@@ -127,6 +136,18 @@ class EvalRedis(FakeRedis):
             self.expires[key] = int(args[1])
             return 1
         raise AssertionError("unknown lease script")
+
+    def _checkpoint_advance(self, cp_key, lease_key, token, property_id, run_date):
+        # ``self.kv``, not ``self.get``: the bytes-answering subclass overrides
+        # the reader, and real Redis compares raw values inside the script.
+        if self.kv.get(lease_key) != token:
+            return 0
+        self.hset(
+            cp_key,
+            mapping={"last_property_id": property_id, "last_run_date": run_date},
+        )
+        self.hincrby(cp_key, "processed_total", 1)
+        return 1
 
     def _budget_reserve(self, key, n, now, window, limit, ttl, now_iso):
         n, now, window, limit = int(n), float(now), float(window), int(limit)

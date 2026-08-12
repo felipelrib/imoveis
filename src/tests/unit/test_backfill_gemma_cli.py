@@ -974,6 +974,119 @@ def test_continuous_that_lost_its_lease_exits_seven(monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
+# The run's checkpoint is lease-gated; the read-only ones are not (v0.13-s3.4)
+# ---------------------------------------------------------------------------
+
+
+def _checkpoint_spy(mod, monkeypatch):
+    """Spy that still builds the real ``Checkpoint`` it is standing in for."""
+    from core.backfill_runner import Checkpoint as _RealCheckpoint
+
+    spy = MagicMock(side_effect=_RealCheckpoint)
+    monkeypatch.setattr(mod, "Checkpoint", spy)
+    return spy
+
+
+def _stub_run_backfill(mod, monkeypatch):
+    async def fake_run_backfill(rows, **kwargs):
+        from core.backfill_runner import BackfillResult
+
+        return BackfillResult()
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+
+def test_the_runs_checkpoint_is_gated_on_the_lease_it_holds(monkeypatch):
+    """DW-11: the run writes the *shared* hash, so it must prove ownership."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    _stub_run_backfill(mod, monkeypatch)
+    spy = _checkpoint_spy(mod, monkeypatch)
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1), lease=lease)
+
+    spy.assert_called_once()
+    assert spy.call_args.kwargs["lease"] is lease
+
+
+def test_a_dry_runs_checkpoint_carries_no_lease(monkeypatch):
+    """A dry run takes no lease and writes nothing — gating it would refuse it."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _stub_run_backfill(mod, monkeypatch)
+    spy = _checkpoint_spy(mod, monkeypatch)
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1, dry_run=True), lease=None)
+
+    assert spy.call_args.kwargs.get("lease") is None
+
+
+def test_the_status_checkpoint_is_never_lease_gated(monkeypatch):
+    """It only reads. Gating it on a lease it never holds would gate a read."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    monkeypatch.setattr(mod, "_observed_rate_per_day", lambda s: None)
+    spy = _checkpoint_spy(mod, monkeypatch)
+    # Someone else is mid-run and holds the lease.
+    mod._lease_for(cfg, redis).acquire()
+
+    mod._print_status(cfg, MagicMock(), redis)
+
+    spy.assert_called_once()
+    assert spy.call_args.kwargs.get("lease") is None
+
+
+def test_the_lease_lost_banner_names_the_completions_it_could_not_record(
+    monkeypatch, capsys
+):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            return_value=_br(
+                mod, processed=3, lease_lost=True, unrecorded_completions=3
+            )
+        ),
+    )
+
+    rc = mod.main(["--limit", "5"])
+
+    out = capsys.readouterr().out
+    assert rc == mod.EXIT_LEASE_LOST
+    # "The checkpoint is intact" alone would leave an operator hunting for the
+    # gap between "enriched 3" and a checkpoint that moved by none of them.
+    assert "3 row(s) finished after the lease was lost" in out
+    assert "NOT counted on the shared checkpoint" in out
+    assert "The checkpoint is intact" in out  # still the successor's, and true
+
+
+def test_a_lease_lost_with_nothing_draining_says_nothing_about_unrecorded_rows(
+    monkeypatch, capsys
+):
+    """A pass that lost the lease before launching has no such rows to report."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(
+        mod, "_run", MagicMock(return_value=_br(mod, processed=0, lease_lost=True))
+    )
+
+    assert mod.main(["--limit", "5"]) == mod.EXIT_LEASE_LOST
+
+    assert "finished after the lease was lost" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # Late stop / state on the way out
 # ---------------------------------------------------------------------------
 

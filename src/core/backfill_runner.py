@@ -416,8 +416,42 @@ class DailyBudget:
         return max(0.0, _WINDOW_SECONDS - (now - start).total_seconds())
 
 
+# Owner-token CAS over the *shared* checkpoint hash. Every runner writes this
+# one key, and in-flight rows always drain after a lease loss by design — so a
+# displaced runner's late completions would otherwise stamp their own row id and
+# run date over the successor's marker and inflate the all-time counter for rows
+# the successor is enriching too. The gate is the lease key, read and compared
+# inside the same atomic step as the write: an in-process flag alone would leave
+# the whole renew interval (``lease_ttl/3`` — 300s at the shipped 900s TTL) of
+# drained rows writing on a lease somebody else already owns.
+#
+# ``last_run_date`` is Python-computed (Lua cannot format a date in the run's own
+# timezone rules), exactly as the non-atomic branch computes it.
+#
+# The only multi-key script in this module: both keys are ``<prefix>:``-derived
+# and therefore co-located on the single Redis this stack runs (``redis:7-alpine``,
+# one node). On a clustered deployment they would need a shared hash tag —
+# without one, every advance would fail ``CROSSSLOT`` and fall through to the
+# guarded fallback below.
+_CHECKPOINT_ADVANCE_LUA = """
+if redis.call('get', KEYS[2]) ~= ARGV[1] then
+  return 0
+end
+redis.call('hset', KEYS[1], 'last_property_id', ARGV[2], 'last_run_date', ARGV[3])
+redis.call('hincrby', KEYS[1], 'processed_total', 1)
+return 1
+"""
+
+
 class Checkpoint:
-    """Resume marker: last property processed + running total + last run date."""
+    """Resume marker: last property processed + running total + last run date.
+
+    The hash is **shared by every runner**, so a run that writes it must still
+    own the backfill lease. Pass the run's :class:`BackfillLease` as ``lease``
+    and :meth:`advance` becomes a compare-and-set against the lease token;
+    without one it keeps the unconditional legacy write, which is what the
+    read-only surfaces (``--status``, the admin API) and ``--dry-run`` want.
+    """
 
     def __init__(
         self,
@@ -425,10 +459,25 @@ class Checkpoint:
         *,
         prefix: str,
         now_fn: Callable[[], datetime] = _now_utc,
+        lease: Any = None,
     ) -> None:
         self._redis = redis
         self._key = f"{prefix}:checkpoint"
         self._now_fn = now_fn
+        # Duck-typed on ``.key``/``.token`` — a :class:`BackfillLease` in every
+        # real caller, but ``core`` must not depend on more than that (AD-1).
+        self._lease = lease
+        self._eval_failed_logged = False
+
+    @property
+    def lease_gated(self) -> bool:
+        """Whether writes are compare-and-set against a lease token.
+
+        Public because the guarantee depends on the *caller* having wired the
+        lease in: ``run_backfill`` reads this to warn when it holds a lease and
+        was handed an ungated checkpoint, which would silently reinstate DW-11.
+        """
+        return self._lease is not None
 
     def load(self) -> dict[str, str]:
         raw = self._redis.hgetall(self._key) or {}
@@ -443,15 +492,65 @@ class Checkpoint:
     def processed_total(self) -> int:
         return int(self.load().get("processed_total", 0) or 0)
 
-    def advance(self, property_id: str) -> None:
+    def _write(self, property_id: str, run_date: str) -> None:
         self._redis.hset(
             self._key,
             mapping={
                 "last_property_id": str(property_id),
-                "last_run_date": _utc_today(self._now_fn).isoformat(),
+                "last_run_date": run_date,
             },
         )
         self._redis.hincrby(self._key, "processed_total", 1)
+
+    def advance(self, property_id: str) -> bool:
+        """Record a finished row. ``False`` = refused: we do not hold the lease.
+
+        Keeps its single positional argument on purpose — the duck-typed
+        checkpoint doubles in the suite define exactly that signature, and a
+        caller must read only an explicit ``False`` as a refusal (a double
+        returning ``None`` has recorded the row, not lost a lease).
+        """
+        # Computed here for both branches: Lua cannot format a date, and the
+        # atomic path must stamp exactly what the fallback path would.
+        run_date = _utc_today(self._now_fn).isoformat()
+        if self._lease is None:
+            # Read-only surfaces and ``--dry-run``: nobody else is writing, and
+            # gating on a lease this object never holds would refuse forever.
+            self._write(property_id, run_date)
+            return True
+        eval_fn = getattr(self._redis, "eval", None)
+        if callable(eval_fn):
+            try:
+                return _reply_is_true(
+                    eval_fn(
+                        _CHECKPOINT_ADVANCE_LUA,
+                        2,
+                        self._key,
+                        self._lease.key,
+                        self._lease.token,
+                        str(property_id),
+                        run_date,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade, never per-row raise
+                # Scripting disabled, a rejected script body, a CROSSSLOT on a
+                # clustered client: raising would surface once per finished row
+                # through the drain's ``return_exceptions`` and the checkpoint
+                # would never move again for the whole run. The fallback below
+                # still refuses to write on a lease we no longer hold — the
+                # property this story exists for — so degrading keeps DW-11
+                # closed. A genuine connection failure re-raises from it, as
+                # before. Said once per checkpoint object, not once per row.
+                if not self._eval_failed_logged:
+                    self._eval_failed_logged = True
+                    _log_checkpoint_eval_failed(exc)
+        # Fallback: guarded check-then-act, same shape (and same caveat) as the
+        # lease's own CAS. Not atomic, but still token-guarded.
+        _warn_non_atomic_fallback(self, "checkpoint advance")
+        if _decode(self._redis.get(self._lease.key)) != self._lease.token:
+            return False
+        self._write(property_id, run_date)
+        return True
 
 
 class Heartbeat:
@@ -1373,6 +1472,10 @@ class BackfillResult:
     # would send an operator to the provider's quota dashboard for a problem
     # that is not there. The caller reads this flag (and the CLI's exit code 9).
     ai_circuit_open: bool = False
+    # Rows this run enriched but did not record on the shared checkpoint,
+    # because it no longer owned the lease when they finished (v0.13-s3.4). The
+    # work itself is committed — this is the bookkeeping the successor owns.
+    unrecorded_completions: int = 0
     # Wall-clock seconds the launch loop spent held by a pause request.
     paused_seconds: float = 0.0
     last_property_id: Optional[str] = None
@@ -1397,6 +1500,7 @@ class BackfillResult:
             "ai_circuit_open": self.ai_circuit_open,
             "stopped": self.stopped,
             "lease_lost": self.lease_lost,
+            "unrecorded_completions": self.unrecorded_completions,
             "migration_blocked": self.migration_blocked,
             "paused_seconds": round(self.paused_seconds, 1),
             "last_property_id": self.last_property_id,
@@ -1700,6 +1804,16 @@ async def run_backfill(
         else _STATE_REFRESH_SECONDS
     )
 
+    def _owns_shared_state() -> bool:
+        """May this run still write the keys every runner shares?
+
+        One predicate, deliberately, for the published state key *and* the
+        checkpoint hash: both describe whoever holds the lease, so two separate
+        handover rules would be two things to keep in step (v0.13-fu7 guarded
+        the first, DW-11 is the second).
+        """
+        return not result.lease_lost
+
     def _publish(state: BackfillState) -> None:
         nonlocal last_state_publish, current_state
         # Once the lease is gone the state key describes whoever took it over.
@@ -1707,7 +1821,7 @@ async def run_backfill(
         # (and a pause that ends right after) would otherwise stamp *our*
         # liveness over the successor's — the same reason the closing publish
         # below is guarded.
-        if control is not None and not result.lease_lost:
+        if control is not None and _owns_shared_state():
             control.publish_state(state)
             current_state = state
             last_state_publish = clock()
@@ -1726,6 +1840,18 @@ async def run_backfill(
         if control is not None and clock() - last_state_publish >= state_refresh_seconds:
             _publish(current_state)
 
+    def _note_lease_lost(reason: str) -> None:
+        """Latch the loss and say so once, whichever detector found it.
+
+        Two things can discover a takeover — a refused renew and a refused
+        checkpoint write — and both must land on the *same* flag, because that
+        flag is what ``_owns_shared_state`` and every launch-loop check read.
+        """
+        if result.lease_lost:
+            return
+        result.lease_lost = True
+        _log_lease_lost(reason)
+
     def _lease_held() -> bool:
         """Renew the lease. False = we lost it; stop launching immediately."""
         if lease is None:
@@ -1738,9 +1864,47 @@ async def run_backfill(
             return False
         if lease.renew():
             return True
-        result.lease_lost = True
-        _log_lease_lost()
+        _note_lease_lost("renew refused — another runner may hold the lease")
         return False
+
+    def _record_completion(property_id: str) -> None:
+        """Record a finished row on the checkpoint every runner shares.
+
+        In-flight rows always drain after a lease loss (cancelling
+        mid-enrichment leaves half-written properties), so this is the call
+        that would otherwise stamp a displaced runner's row id over its
+        successor's marker and count rows the successor is enriching too. The
+        enrichment itself is already committed and still reported in
+        ``result.processed``; only the shared bookkeeping is declined, and
+        ``unrecorded_completions`` is what keeps that visible.
+        """
+        if not _owns_shared_state():
+            result.unrecorded_completions += 1
+            return
+        try:
+            recorded = checkpoint.advance(property_id)
+        except Exception:  # noqa: BLE001 - counted, then propagated unchanged
+            # The row is enriched and committed but the shared checkpoint did
+            # not take it. Count it *before* the drain's ``return_exceptions``
+            # absorbs this, or the banner under-reports exactly the
+            # processed-vs-processed_total gap it exists to explain. Still
+            # propagates: containment stays where it was.
+            result.unrecorded_completions += 1
+            raise
+        # ``is False`` and not falsiness: the duck-typed checkpoints in the
+        # suite return ``None``, and reading that as a refusal would have every
+        # one of them fabricate a lease loss.
+        if recorded is False:
+            # A *detector*, not a second policy: the renewer looks only every
+            # ``lease_ttl/3`` (300s at the shipped 900s TTL), so the write is
+            # where a fresh takeover is usually first observed. The refusal
+            # proves *we* no longer hold the lease — not that anyone else does
+            # (the key may simply have lapsed), which is why the wording here
+            # and in ``_lease_held`` both stop short of naming a successor.
+            _note_lease_lost(
+                "checkpoint advance refused — this run no longer holds the backfill lease"
+            )
+            result.unrecorded_completions += 1
 
     def _migration_holds() -> bool:
         """True = a primary migration owns the DB; stop launching immediately."""
@@ -1837,6 +2001,16 @@ async def run_backfill(
     # describes whoever owns the run.
     if _lease_held():
         _publish(BackfillState.RUNNING)
+
+    # The whole no-rewind guarantee lives on the checkpoint object the *caller*
+    # constructed: a run holding a lease but handed an ungated ``Checkpoint``
+    # writes the shared hash unconditionally again, silently reinstating DW-11
+    # for a whole pass. Nothing here can fix that wiring — the lease belongs to
+    # this run and the checkpoint may be someone else's object — but it must
+    # never be invisible. ``is False`` so the duck-typed checkpoints in the
+    # suite (no such attribute) stay silent.
+    if lease is not None and getattr(checkpoint, "lease_gated", None) is False:
+        _log_checkpoint_ungated()
 
     def _reconcile_requests() -> None:
         """Charge the window what the provider counted, not what was forecast.
@@ -1972,8 +2146,12 @@ async def run_backfill(
                 _log_row_error(prop, exc)
         else:
             result.processed += 1
+            # This run's *own* last row, not the shared marker: after a
+            # handover the checkpoint hash holds the successor's id while this
+            # field still names what this process finished. ``to_dict`` reports
+            # both, and ``unrecorded_completions`` is what says whether they
+            # can be expected to agree.
             result.last_property_id = str(getattr(prop, "id", ""))
-            checkpoint.advance(result.last_property_id)
             # A real score came back, so whatever was failing is serving again:
             # the breaker only fires on an *unbroken* run of degraded rows. An
             # ordinary error deliberately neither counts nor clears — it is
@@ -1984,6 +2162,12 @@ async def run_backfill(
             # charged: a property nobody can enrich must still march towards
             # quarantine, or --continuous pays for it every cycle forever.
             degraded_run_ids.clear()
+            # Last, and deliberately after both resets: this is the only line
+            # in the branch that can raise (it talks to Redis, and it
+            # propagates by design). Ahead of them, one blip would leave a
+            # *successful* row counted as consecutive degradation and walk the
+            # AI breaker towards a trip it has no evidence for.
+            _record_completion(result.last_property_id)
         finally:
             # Every finished row ticks progress — success, hard error *and*
             # quota refusal. Ticking only on success meant a storm of failing
@@ -2182,7 +2366,7 @@ async def run_backfill(
 
         finally:
             if tasks:
-                # ``return_exceptions``: ``checkpoint.advance()`` runs outside the
+                # ``return_exceptions``: ``_record_completion()`` runs outside the
                 # worker's ``except``, so a Redis error there would otherwise abort
                 # the gather on the first failure and abandon the remaining rows.
                 for outcome in await asyncio.gather(*tasks, return_exceptions=True):
@@ -2213,10 +2397,14 @@ async def run_backfill(
     # anything else (including an operator stop) has genuinely gone idle. A run
     # that lost its lease publishes nothing: the state key now describes whoever
     # took the lease over, and stamping ``idle`` on it would erase their liveness.
-    if not result.lease_lost:
+    if _owns_shared_state():
         _publish(
             BackfillState.BACKING_OFF if result.quota_exhausted else BackfillState.IDLE
         )
+    # Once, at the end: the count is only meaningful whole, and one line per
+    # drained row would bury the handover it is reporting.
+    if result.unrecorded_completions:
+        _log_checkpoint_declined(result.unrecorded_completions)
     return result
 
 
@@ -2230,12 +2418,70 @@ def _log_row_error(prop: Any, exc: Exception) -> None:
     )
 
 
-def _log_lease_lost() -> None:
+def _log_lease_lost(reason: str) -> None:
+    """One line per run, whichever detector found the takeover.
+
+    The reason is a parameter because there are now two: a refused renew (the
+    timer) and a refused checkpoint write (the row that finished first). Naming
+    only the renew would send an operator looking at a renewal that never ran.
+    """
     from infra.logging import get_logger
 
     get_logger(__name__).warning(
         "backfill_lease_lost",
-        reason="renew refused — another runner may hold the lease; stopped launching",
+        reason=f"{reason}; stopped launching",
+    )
+
+
+def _log_checkpoint_eval_failed(exc: Exception) -> None:
+    """The atomic checkpoint CAS is unavailable; the guarded fallback took over.
+
+    Not fatal — the fallback is still token-guarded, so a displaced runner
+    still cannot write — but it is check-then-act, so say so rather than let a
+    scripting-less Redis quietly downgrade the guarantee.
+    """
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_checkpoint_eval_failed",
+        error=str(exc),
+        impact=(
+            "checkpoint advance fell back to a non-atomic, still token-guarded "
+            "write for the rest of this run"
+        ),
+    )
+
+
+def _log_checkpoint_ungated() -> None:
+    """This run holds a lease but its checkpoint writes are not gated on it."""
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_checkpoint_ungated",
+        reason=(
+            "the Checkpoint was constructed without the run's lease, so rows "
+            "finishing after a lease loss would overwrite the successor's "
+            "marker and inflate processed_total (DW-11)"
+        ),
+    )
+
+
+def _log_checkpoint_declined(count: int) -> None:
+    """Say what the shared checkpoint did not record, and why (DW-11).
+
+    The rows are enriched and committed — this is bookkeeping the successor now
+    owns. Dropping it silently is what made the handover invisible.
+    """
+    from infra.logging import get_logger
+
+    get_logger(__name__).warning(
+        "backfill_checkpoint_declined",
+        unrecorded_completions=count,
+        reason=(
+            "rows finished after this run lost the backfill lease; their "
+            "enrichment is committed, but the shared checkpoint belongs to the "
+            "runner that holds the lease"
+        ),
     )
 
 
