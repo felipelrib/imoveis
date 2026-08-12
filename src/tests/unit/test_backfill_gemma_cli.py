@@ -804,6 +804,138 @@ def test_provider_429_with_the_local_budget_spent_still_sleeps_to_the_reset(
     assert "local daily budget is spent" in capsys.readouterr().out
 
 
+def test_a_window_the_real_requests_overshot_sleeps_instead_of_stalling(
+    monkeypatch, capsys
+):
+    """A retry storm spends the day early; the loop must wait, not give up.
+
+    This locks the *loop's* branching over a state only reconciliation can
+    produce — a window sitting **above** ``daily_request_budget`` — not the
+    reconciliation itself (``run_backfill`` is stubbed here as in every other
+    continuous-branch test; the arithmetic is covered by
+    ``test_backfill_request_reconciliation.py``). The pass that follows an
+    overshoot processes nothing because its first reservation is refused, and
+    that pair (``processed == 0`` with ``budget_exhausted``) has to route to the
+    sleep-to-reset branch. The stall detector is the wrong answer: nothing is
+    stuck, the day is simply spent, and exiting non-zero would take a supervised
+    runner down for the night.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    # 14,010 sent against a 14,000 cap: the overshoot the reconciliation records
+    # rather than hides.
+    _open_budget_window(redis, consumed=14_010)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=0, budget_exhausted=True),
+                _br(mod, processed=3),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=2, candidates=3), _census()]),
+    )
+    slept: list[float] = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.append(s))
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_COMPLETE
+    assert mod._run.call_count == 2  # it resumed after the window, not exited
+    # ``remaining()`` floors at 0, so ``rpd_spent`` is True and the wait is the
+    # whole window — not the short per-minute back-off.
+    assert sum(slept) > 3600.0
+    assert "Daily budget spent" in capsys.readouterr().out
+
+
+def test_a_refusal_whose_drain_gave_headroom_back_runs_on_instead_of_sleeping(
+    monkeypatch, capsys
+):
+    """Refunds can un-exhaust a window that a refusal already latched.
+
+    Before v0.13-s3.3 a refused reservation was final for the window, so
+    ``budget_exhausted`` and "no headroom left" were the same fact and nothing
+    checked twice. Reconciliation breaks that: rows still draining settle down
+    to what they really sent, and one that cost less than its 3-request forecast
+    hands the difference back — so a pass can end refused and still fund more
+    properties. Sleeping ~24h on that throws away most of a day's quota for a
+    window that is not actually spent.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    # 13,000 of 14,000: the refusal happened, then the drain refunded — 1,000
+    # requests of headroom are left, far more than one property's forecast.
+    _open_budget_window(redis, consumed=13_000)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=5, budget_exhausted=True),
+                _br(mod, processed=3),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=2, candidates=3), _census()]),
+    )
+    slept: list[float] = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.append(s))
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_COMPLETE
+    assert mod._run.call_count == 2  # it went straight into the next pass
+    assert slept == []  # and never waited on a window it can still spend
+    assert "Daily budget spent" not in capsys.readouterr().out
+
+
+def test_a_refusal_with_headroom_but_no_progress_still_sleeps(monkeypatch, capsys):
+    """The headroom shortcut must not become a spin.
+
+    A pass that enriched nothing proves the headroom is not usable — every
+    remaining row is failing, quarantined or skipped — so it falls through to
+    the wait exactly as before. Only a pass that really moved rows is allowed to
+    go straight round again.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=13_000)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=0, budget_exhausted=True),
+                _br(mod, processed=3),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=2, candidates=3), _census()]),
+    )
+    slept: list[float] = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.append(s))
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_COMPLETE
+    assert sum(slept) > 3600.0  # the full window wait, not a spin
+    assert "Daily budget spent" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # Losing the lease mid-run is terminal
 # ---------------------------------------------------------------------------

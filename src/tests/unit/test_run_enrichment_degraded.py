@@ -130,8 +130,8 @@ def test_the_raised_error_carries_the_duck_typed_marker_the_runner_reads():
     """``src/core`` must not import adapters (AD-1), so the runner keys on the
     attribute — and the message must stay clear of the quota markers, or the
     quota predicate's text safety net would misread it as a 429."""
-    from core.backfill_runner import _QUOTA_MARKERS, is_degraded_result, is_quota_exhausted
     from adapters.queue import tasks as tasks_mod
+    from core.backfill_runner import _QUOTA_MARKERS, is_degraded_result, is_quota_exhausted
 
     with pytest.raises(AIResultDegradedError) as exc:
         _run(

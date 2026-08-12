@@ -17,6 +17,7 @@ import pytest
 
 from core.backfill_runner import (
     _BUDGET_RESERVE_LUA,
+    _BUDGET_SETTLE_LUA,
     _LEASE_RELEASE_LUA,
     _LEASE_RENEW_LUA,
     _STATE_REFRESH_SECONDS,
@@ -114,6 +115,8 @@ class EvalRedis(FakeRedis):
         assert numkeys == 1
         if script is _BUDGET_RESERVE_LUA:
             return self._budget_reserve(key, *args)
+        if script is _BUDGET_SETTLE_LUA:
+            return self._budget_settle(key, *args)
         token = args[0]
         if self.kv.get(key) != token:
             return 0
@@ -144,6 +147,31 @@ class EvalRedis(FakeRedis):
             else:
                 self.hincrby(key, "count", -n)
             return 0
+        self.expires[key] = int(ttl)
+        return 1
+
+    def _budget_settle(self, key, delta, now, window, ttl):
+        delta, now, window = int(delta), float(now), float(window)
+        # Read without creating: the shipped Lua's ``hget`` on a missing key
+        # writes nothing, and a ``setdefault`` here materialised an empty hash
+        # on exactly the path the tests use to prove a settle never opens a
+        # window — making "no window" and "empty window" indistinguishable in
+        # the fake while real Redis keeps them apart.
+        h = self.hashes.get(key, {})
+        try:
+            start_epoch = float(h["start_epoch"])
+        except (KeyError, TypeError, ValueError):
+            start_epoch = None
+        # A settle never opens and never rolls a window: requests that belong to
+        # a window which has already reset have nowhere to land.
+        if start_epoch is None or (now - start_epoch) >= window:
+            return 0
+        count = self.hincrby(key, "count", delta)
+        if count < 0:
+            # Through ``self.hashes``, not the ``h`` read above: past the
+            # no-window check the hash certainly exists, and going through the
+            # store cannot miss if ``hincrby`` ever rebinds it.
+            self.hashes[key]["count"] = "0"  # a refund never goes negative
         self.expires[key] = int(ttl)
         return 1
 

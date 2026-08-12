@@ -653,7 +653,11 @@ class TestAdminBackfillControlContract:
         assert body.lease is None
         assert body.budget.limit >= 0
         # Arithmetically consistent, because it comes from one ``consumed`` read.
-        assert body.budget.consumed + body.budget.remaining == body.budget.limit
+        # Not ``consumed + remaining == limit``: since v0.13-s3.3 the counter is
+        # reconciled against the requests really sent, so a retry storm can push
+        # ``consumed`` past the cap — ``remaining`` floors at 0 and the sum stops
+        # being the limit, which is the honest reading of an overshoot.
+        assert body.budget.remaining == max(0, body.budget.limit - body.budget.consumed)
         # Null on purpose: counting quarantined rows is an O(attempted-rows)
         # scan and this endpoint is polled. The CLI's --status still reports it.
         assert body.quarantined is None

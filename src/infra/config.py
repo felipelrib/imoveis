@@ -131,8 +131,14 @@ class BackfillConfig(BaseModel, frozen=True):
     expected ~6 days without tripping rate limits.
     """
 
-    # Daily request cap. 3 requests/property (visual + sentiment + verdict) →
-    # ~4,600 properties/day at the default 14,000. Below the 14,400 free-tier RPD.
+    # Cap on requests **actually sent** to the provider in a rolling 24h window
+    # — client retries included. The runner reserves ``requests_per_property``
+    # before a row runs and reconciles that forecast against the client's real
+    # request counter afterwards, so this is the provider's RPD quantity rather
+    # than a property count (v0.13-s3.3, DW-18). Below the 14,400 free-tier RPD.
+    # ~4,600 properties/day at the default 14,000 is therefore a **best case**:
+    # it assumes every property costs exactly ``requests_per_property``, and a
+    # pass whose rows retry buys fewer properties with the same budget.
     daily_request_budget: int = 14000
     tpm_limit: int = 16000
     # Estimated tokens one property costs across its three calls. Measured on
@@ -146,6 +152,12 @@ class BackfillConfig(BaseModel, frozen=True):
     # Requests/min ceiling (free-tier Gemma ~30 RPM). Bounds the launch rate so
     # concurrency can't exceed the per-minute cap (BIN-269).
     rpm_limit: int = 30
+    # Launch-time **forecast** of one property's cost (visual + sentiment +
+    # verdict), reserved before the row runs and settled against reality after
+    # it. It is not the real cost: each stage retries invalid JSON up to 3 times
+    # over an HTTP client that retries up to 5 attempts, so one property is
+    # anywhere from 2 to ~45 requests. Also the RPM pacing basis
+    # (``launch_interval_for_rpm``) and the dry-run projection.
     requests_per_property: int = 3
     # Properties enriched in parallel (BIN-269). 1 = sequential. Each property is
     # ~3 sequential Gemma calls, so wall-clock latency (not RPD) is the backfill

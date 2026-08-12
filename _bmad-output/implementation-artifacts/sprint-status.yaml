@@ -169,7 +169,7 @@ development_status:
   # Wave order: 3-1 (serial) -> 3-2 ∥ 3-3 -> 3-4. Gate: 3-4←3-3 (both touch
   # src/core/backfill_runner.py). Epic 3 GATES Epic 2's 2-1: percentiles must
   # not be computed over a corpus still accruing fabricated scores.
-  epic-3: backlog
+  epic-3: in-progress
   # DW-27: the admin Start button only works while a hand-started
   # `backfill_gemma.py --serve` supervisor stays alive; no unit is committed or
   # wired into the stack. Topology decision (systemd unit / compose service /
@@ -188,7 +188,7 @@ development_status:
   # up to 3 stages x 3 JSON attempts x 5 HTTP retries = 45 real requests, and
   # 429s are retried — so AC-1's never-exceed guarantee measures the wrong
   # quantity, worst exactly when the account is already throttled.
-  3-3-budget-counts-requests: backlog
+  3-3-budget-counts-requests: awaiting-operator
   # DW-11: after a lost lease, still-draining rows advance the SHARED
   # checkpoint hash, rewinding the successor's position and inflating
   # processed_total. Decide monotonic compare-and-set vs lease-gated advance.

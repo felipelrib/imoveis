@@ -118,6 +118,7 @@ import time
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
+from typing import Callable
 
 # Bootstrap sys.path so both `import adapters...` and config's `from src....`
 # resolve regardless of how the script is invoked.
@@ -574,10 +575,16 @@ def _print_status(cfg, session, redis) -> None:
         rate_str = f"~{observed:.0f}/day (last hour ×24)"
         eta_str = f"{estimate_eta_days(census.remaining, observed):.1f} (observed)"
     else:
-        # No recent activity — fall back to the request-budget ceiling.
+        # No recent activity — fall back to the request-budget ceiling. That
+        # conversion divides by the *forecast* 3 requests/property, so it is a
+        # best case: the budget counts requests actually sent, and a pass whose
+        # rows retry costs more than 3 each (v0.13-s3.3).
         budget_rate = cfg.backfill.daily_request_budget / cfg.backfill.requests_per_property
         rate_str = "idle"
-        eta_str = f"{estimate_eta_days(census.remaining, budget_rate):.1f} (budget ceiling; not running)"
+        eta_str = (
+            f"{estimate_eta_days(census.remaining, budget_rate):.1f} "
+            f"(best case at {cfg.backfill.requests_per_property} req/property; not running)"
+        )
     cp = checkpoint.load()
 
     print("Gemma backfill status (BIN-248)")
@@ -589,7 +596,11 @@ def _print_status(cfg, session, redis) -> None:
     print(f"  non-enrichable       : {census.non_enrichable} of {census.total_properties} total"
           f" (inactive/unfetched {census.non_enrichable - census.blocked_total},"
           f" photo-blocked {census.blocked_no_photos}, quarantined {census.quarantined})")
-    print(f"  budget today         : {consumed} / {cfg.backfill.daily_request_budget} requests")
+    # "requests sent", not "properties × 3": the counter is reconciled against
+    # the client's real request count after every row, so a retry storm shows up
+    # here as budget disappearing faster than properties complete (DW-18).
+    print(f"  budget today         : {consumed} / {cfg.backfill.daily_request_budget}"
+          f" requests sent (retries included)")
     print(f"  observed rate        : {rate_str}")
     print(f"  processed (all-time) : {checkpoint.processed_total()}")
     print(f"  last property        : {cp.get('last_property_id', '—')}")
@@ -659,6 +670,37 @@ def _format_age(seconds: float) -> str:
     if seconds < 90:
         return f"{seconds:.0f}s"
     return _format_elapsed(seconds)
+
+
+def _request_counter_for(client) -> Callable[[], int] | None:
+    """The client's real HTTP-request count, or ``None`` if it keeps none.
+
+    ``GeminiClient.request_count`` is bumped once per attempt at the top of its
+    retry loop, so retries are already inside it — which is exactly the quantity
+    the daily budget is supposed to be about (DW-18). ``retry_count`` is a
+    diagnostic *subset* of it and adding the two would double-count.
+
+    Handed over as a callable because ``src/core`` must not import an adapter
+    (AD-1), and gated on the attribute rather than the backend name because the
+    local clients (``OllamaClient``, ``LMStudioClient``, ``RoutingAIClient``)
+    expose no such counter: for them the flat forecast stays the only charge.
+    A dry run builds no client at all.
+    """
+    if client is None or not isinstance(getattr(client, "request_count", None), int):
+        # Never silently: without a counter the run reverts to the pre-DW-18
+        # flat charge, and the operator's only clue would be ``consumed`` and
+        # ``reserved`` agreeing exactly — which reads as "no retries today"
+        # rather than "the budget stopped measuring requests".
+        logger.warning(
+            "backfill_request_counter_unavailable",
+            client=type(client).__name__ if client is not None else "none",
+            impact=(
+                "daily budget falls back to the flat requests_per_property "
+                "charge; retries will not be counted against it"
+            ),
+        )
+        return None
+    return lambda: client.request_count
 
 
 def _build_ledger(cfg, redis, max_attempts: int | None = None) -> AttemptLedger:
@@ -781,7 +823,14 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
                 logger.info(
                     "backfill_progress",
                     processed=res.processed,
+                    # Both numbers, because the gap between them IS the story:
+                    # ``consumed`` is what the provider counted (retries
+                    # included, reconciled after every row), ``reserved`` the
+                    # flat 3/property the launch loop forecast. Consistently
+                    # consumed >> reserved means retries are eating the day
+                    # (v0.13-s3.3, DW-18).
                     requests_consumed=res.requests_consumed,
+                    requests_reserved=res.requests_reserved,
                     errors=res.errors,
                     rate_limit_hits=getattr(client, "rate_limit_hits", 0),
                     retry_count=getattr(client, "retry_count", 0),
@@ -825,6 +874,10 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             # 0 means "drain the queue and let me read the errors", never "go
             # back to persisting them".
             max_consecutive_ai_failures=int(cfg.backfill.max_consecutive_ai_failures),
+            # Reconcile the flat per-row reservation against what the provider
+            # really counted (v0.13-s3.3, DW-18). Only the cloud client keeps
+            # this counter; a local backend has none and keeps the flat charge.
+            request_counter=_request_counter_for(client),
         )
 
     async def _go() -> BackfillResult:
@@ -1346,6 +1399,30 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
             quota_zero_cycles += 1
         else:
             quota_zero_cycles = 0
+        # Reconciliation can hand headroom *back* after the refusal that ended
+        # the pass: rows still draining settle down to what they really sent,
+        # and one that cost less than its 3-request forecast refunds the
+        # difference (v0.13-s3.3). Before this story a refusal was final for the
+        # window — "budget_exhausted" and "no headroom left" were one fact — so
+        # nothing checked. Now a pass can end refused and still fund more
+        # properties, and parking ~24h on that throws away most of a day's
+        # quota. Three conditions, each load-bearing:
+        #
+        # * the provider did not refuse (a 429 has its own branches below);
+        # * the pass really made progress — one that enriched nothing proves the
+        #   headroom is not usable, so it falls through to the wait rather than
+        #   spinning;
+        # * a live window is what would be waited out. With no window the wait
+        #   below is already just ``reset_margin``, and that short sleep is
+        #   where a displaced runner discovers its lost lease — skipping it
+        #   would trade a ~0s saving for a late displacement signal.
+        if (
+            not result.quota_exhausted
+            and not rpd_spent
+            and result.processed > 0
+            and budget.seconds_until_reset() > 0
+        ):
+            continue
         throttle_ruled_out = quota_zero_cycles >= _MAX_QUOTA_BACKOFF_CYCLES
         if result.quota_exhausted and not rpd_spent and not throttle_ruled_out:
             wait = min(wait, float(cfg.backfill.quota_backoff_seconds))

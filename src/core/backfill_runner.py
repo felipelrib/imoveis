@@ -71,9 +71,15 @@ def _warn_non_atomic_fallback(owner: Any, surface: str) -> None:
     stop enforcing mutual exclusion and the RPD ceiling with nothing in the log
     to say so. A guarantee this load-bearing does not get downgraded in silence.
     """
-    if getattr(owner, "_fallback_warned", False):
+    # Latched per *surface*, not per object: one ``DailyBudget`` now downgrades
+    # on two different writes (reserve and settle), and a single flag let the
+    # reservation's warning silence the settle's — the quieter half, since a
+    # non-atomic settle loses updates against the very counter the reservation
+    # is being trusted to bound.
+    flag = f"_fallback_warned_{surface.replace(' ', '_')}"
+    if getattr(owner, flag, False):
         return
-    setattr(owner, "_fallback_warned", True)
+    setattr(owner, flag, True)
     from infra.logging import get_logger
 
     get_logger(__name__).warning(
@@ -166,6 +172,35 @@ if count > limit then
     redis.call('hincrby', KEYS[1], 'count', -n)
   end
   return 0
+end
+redis.call('expire', KEYS[1], ttl)
+return 1
+"""
+
+# Reconciliation, and deliberately NOT a mode flag on the reserve above. A
+# settle must be able to do what a reserve must never do (push the count *past*
+# ``daily_limit``, because the provider has already counted those requests) and
+# must never do what a reserve must always do (open or roll a window). Branching
+# one script on a flag would put both policies one ``if`` apart in the file where
+# a mistake overspends a real account; twelve separate lines keep the never-
+# exceed proof in ``_BUDGET_RESERVE_LUA`` — and the integration test that locks
+# it — untouched.
+#
+# No live window means the requests being reconciled belong to a window that has
+# already reset: they land nowhere and the caller re-anchors. Opening one here
+# would restart the 24h clock from a *reconciliation* rather than a reservation.
+_BUDGET_SETTLE_LUA = """
+local delta = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+local start_epoch = tonumber(redis.call('hget', KEYS[1], 'start_epoch'))
+if (start_epoch == nil) or ((now - start_epoch) >= window) then
+  return 0
+end
+local count = redis.call('hincrby', KEYS[1], 'count', delta)
+if count < 0 then
+  redis.call('hset', KEYS[1], 'count', 0)
 end
 redis.call('expire', KEYS[1], ttl)
 return 1
@@ -306,6 +341,69 @@ class DailyBudget:
                 self._redis.hincrby(self._key, "count", -n)  # give it back
             return False
         # Expire well after the window so a stale window can't linger forever.
+        self._redis.expire(self._key, _BUDGET_TTL_SECONDS)
+        return True
+
+    def settle(self, delta: int) -> bool:
+        """Adjust the live window by ``delta``; ``False`` = nothing was written.
+
+        A ``delta`` of 0 is a no-op returning ``True`` without a round trip —
+        there is nothing to write and no window to look for, so it is not a
+        refusal. Every other ``False`` means no live window took the write.
+
+        The counter's unit is **provider HTTP requests**, but the launch loop can
+        only *forecast* them: it reserves a flat ``requests_per_property`` before
+        the row runs, while one property is three stages, each retrying invalid
+        JSON up to three times over an HTTP client that retries up to five times
+        — between 2 and ~45 real requests, with ``429`` among the retried
+        statuses, so the undercount was worst exactly when the account was
+        already throttled (DW-18). This is how the run puts reality back on top
+        of the forecast.
+
+        It is deliberately weaker *and* stronger than :meth:`try_consume`:
+
+        * it never opens a window, never rolls one, and never writes ``start`` /
+          ``start_epoch`` — no live window is a no-op returning ``False``, and
+          the caller re-anchors its accounting rather than charging a window
+          that has already reset;
+        * it may push ``count`` **past** ``daily_limit``, because an overshoot
+          has already happened at the provider and hiding it would re-create
+          DW-18 one layer up. It can never *grant* anything: ``try_consume``
+          still refuses on ``count > limit`` and :meth:`remaining` still floors
+          at 0.
+
+        A refund can never drive the counter negative (that would hand the run
+        budget it never had), and ``delta == 0`` costs no round trip.
+        """
+        delta = int(delta)
+        if delta == 0:
+            return True
+        now = self._now_fn()
+        eval_fn = getattr(self._redis, "eval", None)
+        if callable(eval_fn):
+            # Same reason as the reservation: a window written before v0.13-s1.3
+            # carries only the ISO ``start``, which Lua cannot read — unmigrated
+            # it would look like *no* window and this settle would silently
+            # vanish instead of landing on the count it belongs to.
+            self._migrate_start_epoch()
+            raw = eval_fn(
+                _BUDGET_SETTLE_LUA,
+                1,
+                self._key,
+                delta,
+                now.timestamp(),
+                _WINDOW_SECONDS,
+                _BUDGET_TTL_SECONDS,
+            )
+            return _reply_is_true(raw)
+
+        _warn_non_atomic_fallback(self, "daily budget settle")
+        _, start = self._active_window(now)
+        if start is None:
+            return False
+        count = int(self._redis.hincrby(self._key, "count", delta) or 0)
+        if count < 0:
+            self._redis.hset(self._key, mapping={"count": 0})
         self._redis.expire(self._key, _BUDGET_TTL_SECONDS)
         return True
 
@@ -1243,7 +1341,16 @@ class BackfillResult:
     # Rows the attempt ledger has retired — re-attempting them only burns budget.
     skipped_quarantined: int = 0
     errors: int = 0
+    # Requests the provider really counted for this run — reconciled against the
+    # client's monotonic counter after every finished row (v0.13-s3.3). Without
+    # an injected ``request_counter`` (every local backend) there is nothing to
+    # reconcile against and this stays the flat forecast, as it always was.
     requests_consumed: int = 0
+    # What the launch loop *reserved*: ``requests_per_property`` per attempted
+    # row, monotonic. Kept beside the reconciled figure rather than replaced by
+    # it, because the gap between the two is the operator's read on how much the
+    # pass is spending on retries.
+    requests_reserved: int = 0
     budget_exhausted: bool = False
     # The provider refused on quota: back off, do not treat rows as failed.
     quota_exhausted: bool = False
@@ -1283,6 +1390,7 @@ class BackfillResult:
             "skipped_quarantined": self.skipped_quarantined,
             "errors": self.errors,
             "requests_consumed": self.requests_consumed,
+            "requests_reserved": self.requests_reserved,
             "budget_exhausted": self.budget_exhausted,
             "quota_exhausted": self.quota_exhausted,
             "ai_fallbacks": self.ai_fallbacks,
@@ -1413,6 +1521,10 @@ def _run_dry(
             result.budget_exhausted = True
             break
         result.would_process += 1
+    # A dry run's whole output *is* the forecast, so the field that names it
+    # must not read 0 beside a non-zero ``would_process``. Nothing is reserved
+    # and nothing is settled — this is the projection, not a charge.
+    result.requests_reserved = result.would_process * requests_per_property
     return result
 
 
@@ -1439,6 +1551,7 @@ async def run_backfill(
     is_degraded_error: Optional[Callable[[BaseException], bool]] = is_degraded_result,
     max_consecutive_ai_failures: int = 3,
     is_migrating: Optional[Callable[[], bool]] = None,
+    request_counter: Optional[Callable[[], int]] = None,
     pause_poll_seconds: float = 2.0,
     lease_renew_interval: Optional[float] = None,
     lease_sleep_fn: SleepFn = asyncio.sleep,
@@ -1521,6 +1634,15 @@ async def run_backfill(
     row persists nothing either way. Pass ``is_degraded_error=None`` to treat
     such failures as ordinary row errors.
 
+    ``request_counter`` reads the AI client's monotonic count of HTTP requests
+    actually sent (``GeminiClient.request_count``), injected as a callable for
+    the same reason ``is_quota_error`` is: ``core`` must not import an adapter
+    (AD-1). Supplying it turns the per-row ``requests_per_property`` charge into
+    a *forecast* that :func:`DailyBudget.settle` reconciles against reality after
+    every finished row (see ``_reconcile_requests``). ``None`` — the default, and
+    every local backend, which exposes no such counter — keeps the flat charge
+    and settles nothing, exactly as before.
+
     ``is_migrating`` is a plain predicate (usually
     :meth:`MigrationGate.is_migrating`) answering "is a primary migration
     holding the exclusion key right now?". It is polled at the head of the
@@ -1551,6 +1673,17 @@ async def run_backfill(
     # launch, and once the breaker confirms the backend — not the row — was at
     # fault, that charge has to come back off (see the rollback in ``_worker``).
     degraded_run_ids: list[str] = []
+    # Request-budget reconciliation state (v0.13-s3.3). ``run_base`` never moves
+    # — ``requests_consumed`` is the whole run's real spend, and a window that
+    # rolls mid-run must not make it rewind — while ``observed_base`` is
+    # re-anchored whenever a settle finds the window it was charging gone.
+    # ``charged`` is what this run has put into the *live* window (reservations
+    # plus settles), and ``inflight`` is the rows whose real cost is not known
+    # yet, each of which keeps its flat forecast reserved.
+    run_base = observed_base = 0 if request_counter is None else request_counter()
+    charged = 0
+    inflight = 0
+    window_roll_logged = False
     last_launch: Optional[float] = None
     sem = asyncio.Semaphore(max(1, concurrency))
     tasks: list[asyncio.Task] = []
@@ -1705,6 +1838,72 @@ async def run_backfill(
     if _lease_held():
         _publish(BackfillState.RUNNING)
 
+    def _reconcile_requests() -> None:
+        """Charge the window what the provider counted, not what was forecast.
+
+        The launch loop reserves a flat ``requests_per_property``. That is a
+        guess: one property is three stages, each retrying invalid JSON up to
+        three times over a client that retries up to five HTTP attempts, so a
+        row costs anywhere from 2 to ~45 requests — and because ``429`` is a
+        retried status, the flat charge undercounted worst exactly when the
+        account was already throttled (DW-18).
+
+        Reconciliation is on the **aggregate**, never per row: one client is
+        shared by all ``concurrency`` tasks and its counter is a single
+        monotonic int, so ``after - before`` around one row attributes other
+        rows' retries to whichever row finished first. Instead every finished
+        row re-computes what this run *should* have charged — everything
+        observed so far, plus a flat forecast still held for each row in flight
+        — and settles the difference. That is attribution-free, keeps the charge
+        from ever dipping below reality mid-flight, and is exact once the last
+        row drains (with ``concurrency: 1`` the in-flight term is always 0, so
+        it is exact at every settle).
+
+        Never raises: a Redis blip here must not abort a row, skip its progress
+        tick or leak the semaphore slot the caller releases next.
+        """
+        # ``observed_base`` is read but never rebound: it is the anchor a window
+        # roll deliberately leaves in place so the spend it could not settle
+        # stays pending for the next window.
+        nonlocal charged, inflight, window_roll_logged
+        inflight -= 1
+        if request_counter is None:
+            return
+        try:
+            sent = request_counter()
+            # Assigned *above* the settle, never below it: this number needs no
+            # Redis at all, and under the fallible call one blip would report a
+            # pass that really sent hundreds of requests as having sent none —
+            # DW-18's own lie, one layer up, in the field an operator reads.
+            result.requests_consumed = sent - run_base
+            observed = sent - observed_base
+            target = observed + inflight * requests_per_property
+            delta = target - charged
+            if delta and not budget.settle(delta):
+                # No live window took the settle: the 24h window this run was
+                # charging has rolled, or the key was cleared under it. Only
+                # ``charged`` is re-anchored — ``observed_base`` deliberately
+                # stays put, so this spend is still pending and the next settle
+                # carries it onto the window the next reservation opens. That
+                # over-charges the new window by at most the rows in flight at
+                # the boundary; dropping it instead would under-charge by the
+                # same amount, and under-charging is the one direction that can
+                # push a real account past its RPD.
+                charged = 0
+                if not window_roll_logged:
+                    # Rate-limited to one line per roll, not one per draining
+                    # row: the whole in-flight set discovers the same boundary.
+                    window_roll_logged = True
+                    _log_budget_window_rolled()
+            elif delta:
+                charged = target
+                # A settle that landed proves a window is live again, so a
+                # *second* roll later in the same pass gets its own line rather
+                # than being swallowed by the first one's latch.
+                window_roll_logged = False
+        except Exception as exc:  # noqa: BLE001 - a settle blip never aborts a row
+            _log_budget_settle_failed(exc)
+
     async def _worker(prop: Any) -> None:
         nonlocal consecutive_degraded
         pid = str(getattr(prop, "id", "?"))
@@ -1796,7 +1995,16 @@ async def run_backfill(
             # a hang, not an error. Renewing here as well is what keeps the
             # lease alive through the final ``gather`` drain, which the launch
             # loop has by then stopped covering.
+            #
+            # Reconciliation runs *inside* that same guard, ahead of the hook so
+            # the hook reads this row's real spend rather than its forecast. It
+            # swallows its own failures, but its handler logs — and a raise out
+            # of an ``except`` (BIN-87's LogRecord collision is exactly that
+            # shape) would otherwise skip the release and hang the run holding
+            # the lease. Nothing between here and ``sem.release()`` may be
+            # unguarded.
             try:
+                _reconcile_requests()
                 if on_progress is not None:
                     on_progress(result)
             except Exception as exc:  # noqa: BLE001 - a hook never aborts a run
@@ -1961,7 +2169,14 @@ async def run_backfill(
                     # otherwise be re-fetched every cycle forever.
                     ledger.record_attempt(pid)
                 attempted += 1
-                result.requests_consumed += requests_per_property
+                result.requests_reserved += requests_per_property
+                charged += requests_per_property
+                inflight += 1
+                if request_counter is None:
+                    # No counter to reconcile against (every local backend), so
+                    # the forecast is the only number this run has: report it as
+                    # consumed exactly as before.
+                    result.requests_consumed += requests_per_property
                 last_launch = clock()
                 tasks.append(asyncio.create_task(_worker(prop)))
 
@@ -2070,6 +2285,37 @@ def _log_lease_tick_failed(exc: Exception) -> None:
     get_logger(__name__).warning(
         "backfill_lease_tick_failed",
         error=str(exc),
+    )
+
+
+def _log_budget_settle_failed(exc: Exception) -> None:
+    from infra.logging import get_logger
+
+    # Its own event, not ``backfill_row_error``: the row is fine, the *budget
+    # accounting* missed one reconciliation. The run keeps its flat forecast for
+    # that row, so the counter under-reports (never over-grants) until the next
+    # settle catches up.
+    get_logger(__name__).warning(
+        "backfill_budget_settle_failed",
+        error=str(exc),
+    )
+
+
+def _log_budget_window_rolled() -> None:
+    from infra.logging import get_logger
+
+    # Deliberately not phrased as "the window rolled": a settle reports only
+    # that *no live window took it*, which a rolled window, a cleared key and a
+    # reply this client could not read as success all produce alike. Say what
+    # was observed and what the run did about it, never an invariant the code
+    # did not check.
+    get_logger(__name__).info(
+        "backfill_budget_window_rolled",
+        reason=(
+            "a budget settle found no live 24h window (rolled, cleared, or an "
+            "unreadable reply); request accounting was re-anchored and the "
+            "pending spend carries onto the next window this run opens"
+        ),
     )
 
 

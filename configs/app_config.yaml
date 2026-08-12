@@ -339,14 +339,22 @@ gpu:
 # remote provider's daily request budget instead of the GPU semaphore. Defaults
 # stay under Gemma's free-tier 14,400 RPD / 16K TPM (~6-day full pass).
 backfill:
-  daily_request_budget: 14000  # < 14,400 free-tier RPD; ~4,600 props/day
+  # Requests actually SENT to the provider in a rolling 24h — retries included,
+  # reconciled against the client's own counter after every row (v0.13-s3.3).
+  # < 14,400 free-tier RPD. ~4,600 props/day is a BEST CASE: it assumes every
+  # property costs exactly requests_per_property, and a retrying pass costs more.
+  daily_request_budget: 14000
   tpm_limit: 16000             # free-tier TPM — the binding limit in practice
   # Measured per-property token cost (gemma-4-31b-it, 8×768px images):
   # visual ~3,538 + sentiment ~1,706 + verdict ~1,706. 16K TPM → ~2.3 props/min.
   tokens_per_property: 7000
   tpm_safety_margin: 0.9       # use 90% of tpm_limit for headroom
   rpm_limit: 30                # free-tier Gemma ~30 RPM; bounds the launch rate
-  requests_per_property: 3     # visual + sentiment + verdict
+  # Launch-time FORECAST for one property (visual + sentiment + verdict), used
+  # to reserve budget before the row runs and reconciled away afterwards. Real
+  # cost is 2..~45 requests: each stage retries invalid JSON up to 3× over a
+  # client that retries up to 5 HTTP attempts (429 among them).
+  requests_per_property: 3
   concurrency: 1               # parallel properties (BIN-269); 1 = sequential
   # Attempts one property gets before it is quarantined out of the work queue
   # (v0.13-fu3). Rows that error every cycle — or enrich to a falsy ai_score and

@@ -22,12 +22,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.backfill_runner import (
+    _STATE_REFRESH_SECONDS,
     AttemptLedger,
     BackfillResult,
     BackfillState,
     Checkpoint,
     DailyBudget,
-    _STATE_REFRESH_SECONDS,
     is_degraded_result,
     is_quota_exhausted,
     run_backfill,

@@ -111,6 +111,74 @@ def test_lease_renew_refusal_decodes_as_false_against_real_redis(redis_client):
     assert lease.renew() is False  # never acquired — must not read as owned
 
 
+def test_settle_lua_never_opens_a_window(redis_client):
+    """A reconciliation must not restart the 24h clock.
+
+    ``settle`` is the one budget write allowed to push the counter past the cap,
+    so letting it also *create* a window would give a run a fresh day whose
+    count starts at whatever its last rows overspent.
+    """
+    now = datetime.now(timezone.utc)
+
+    assert _budget(redis_client, 10, now=now).settle(4) is False
+    assert redis_client.exists(f"{_PREFIX}:budget") == 0
+
+
+def test_settle_lua_never_rolls_an_expired_window(redis_client):
+    opened = datetime.now(timezone.utc) - timedelta(hours=25)
+    assert _budget(redis_client, 100, now=opened).try_consume(10) is True
+
+    later = datetime.now(timezone.utc)
+    assert _budget(redis_client, 100, now=later).settle(5) is False
+    # The stale window is left exactly as it was — no roll, no new start stamp.
+    assert int(redis_client.hget(f"{_PREFIX}:budget", "count")) == 10
+
+
+def test_settle_lua_adjusts_the_live_window_and_floors_at_zero(redis_client):
+    now = datetime.now(timezone.utc)
+    budget = _budget(redis_client, 100, now=now)
+    assert budget.try_consume(9) is True
+
+    assert budget.settle(12) is True
+    assert budget.consumed() == 21
+    assert budget.settle(-99) is True
+    assert budget.consumed() == 0  # a refund never drives the counter negative
+
+
+def test_a_recorded_overshoot_blocks_the_next_reservation(redis_client):
+    """The point of the whole story: an overshoot must bind, not be hidden."""
+    now = datetime.now(timezone.utc)
+    budget = _budget(redis_client, 10, now=now)
+    assert budget.try_consume(3) is True
+
+    assert budget.settle(18) is True  # the row really sent 21, not 3
+    assert budget.consumed() == 21
+    assert budget.remaining() == 0
+    assert budget.try_consume(3) is False
+
+
+def test_concurrent_settles_lose_no_update(redis_client):
+    """Reconciliation is a read-modify-write per row; only the Lua makes it safe."""
+    import threading
+
+    now = datetime.now(timezone.utc)
+    budget = _budget(redis_client, 10_000, now=now)
+    assert budget.try_consume(1) is True  # open the window the settles land in
+
+    def _worker():
+        settler = _budget(redis_client, 10_000, now=now)
+        for _ in range(25):
+            assert settler.settle(2) is True
+
+    threads = [threading.Thread(target=_worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert budget.consumed() == 1 + 4 * 25 * 2
+
+
 def test_concurrent_reservations_never_overshoot_the_cap(redis_client):
     """AC-1's never-exceed guarantee, asserted under real contention.
 
@@ -144,3 +212,48 @@ def test_concurrent_reservations_never_overshoot_the_cap(redis_client):
     # The counter agrees with what was handed out — no reservation was wiped by
     # an interleaved window roll.
     assert _budget(redis_client, limit, now=now).consumed() == accepted * 3
+
+
+def test_never_exceed_holds_against_the_reconciled_quantity(redis_client):
+    """The same guarantee, re-derived once settles race the reservations.
+
+    Every granted row reserves its 3-request forecast and then settles the 2
+    extra requests it really sent, so the counter is racing two different write
+    shapes at once. What must survive: no update is lost (the recorded count is
+    exactly what was really spent), no reservation is granted once the *recorded*
+    count can no longer fund one, and the counter only ever passes the cap
+    through a settle — never through a reservation.
+    """
+    import threading
+
+    now = datetime.now(timezone.utc)
+    limit = 60
+    granted: list[bool] = []
+    lock = threading.Lock()
+
+    def _worker():
+        budget = _budget(redis_client, limit, now=now)
+        for _ in range(20):
+            ok = budget.try_consume(3)
+            if ok:
+                assert budget.settle(2) is True  # the row really sent 5
+            with lock:
+                granted.append(ok)
+
+    threads = [threading.Thread(target=_worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    accepted = sum(1 for ok in granted if ok)
+    final = _budget(redis_client, limit, now=now).consumed()
+    assert final == accepted * 5  # reserves and settles all landed, none lost
+    # The loop really was stopped by the cap rather than by running out of
+    # attempts …
+    assert accepted < len(granted)
+    # … and no reservation was granted once the *recorded* count could no longer
+    # fund one: the settles pushed the counter to a point where another 3-request
+    # forecast would not fit, and from there every remaining try_consume refused.
+    assert final + 3 > limit
+    assert _budget(redis_client, limit, now=now).remaining() == 0
