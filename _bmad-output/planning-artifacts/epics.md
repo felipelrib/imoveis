@@ -33,6 +33,13 @@ tracking: >
   s2.6 parallel with any of them; Epic 2 proper last. Retrospective action
   items are tracked as `epic-1-retro-item-N-<slug>` keys in sprint-status
   (bmad-loop's RETRO_ITEM_RE shape) — see _bmad/custom/bmad-retrospective.toml.
+  AMENDED again 2026-08-12 (story 3.1 operator handoff): s3.5 minted —
+  DW-31 + DW-33, two defects in s3.1's own delivery (its operator instructions
+  prescribe a config edit that reddens the merge gate, and `.env.local` is both
+  the systemd unit's EnvironmentFile and the file validate.sh sources into
+  pytest). It shares no files with s3.2–s3.4, so it carries no gate and runs
+  parallel to all of Wave B. Epic 2's s2.1 gate is unchanged — s3.5 touches no
+  enrichment-write path, so it does not block Epic 2.
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
@@ -202,7 +209,7 @@ Ana and Bruno (users) get sharper deal signals than one combined score: every pr
 **FRs covered:** FR-28 (stated outcome), FR-27/FR-29 (hardening)
 **NFRs in play:** NFR-1, NFR-3, NFR-4, NFR-6
 **Governed by:** AD-13, AD-4, AD-10, AD-1, AD-6; local-first / residential-IP topology invariants
-**Ledger drained:** DW-27, DW-17, DW-18, DW-11
+**Ledger drained:** DW-27, DW-17, DW-18, DW-11, DW-31, DW-33
 
 **Epic dependencies:** Epic 1 (closed) and Epic 2 touch disjoint surfaces — metrics/alerts/UI vs AI-routing/backfill/telemetry — and shared no core files. **Epic 3 gates Epic 2**: stories 3.2/3.3/3.4 govern what the enrichment pipeline writes, and Epic 2 computes price/m² percentiles over that corpus, so s2.1 must not run while fabricated scores are still accruing. Within Epic 1, the canonical task-class enum story was the foundation. Within Epic 3, 3.1 is independent of 3.2–3.4 (hosting vs runner internals) but must not run concurrently with them; 3.4←3.3 (shared `backfill_runner.py`). Within Epic 2, s2.6 is the UX foundation piece and s2.1 the data foundation; the side-panel migration (s2.5) consumes s2.2's projection and s2.3's enrichment gating consumes s2.1's percentile capability (gates: s2.2←s2.1+s2.6, s2.3←s2.1, s2.4←s2.3+s2.6, s2.5←s2.2+s2.6, s2.1←s3.2+s3.3+s3.4).
 
@@ -359,11 +366,11 @@ That remediation is **Epic 3** (below), not a set of follow-up keys: each item n
 **Wave order (recorded here so future sessions do not re-derive it):**
 
 - **Wave A:** `3.1` (runner hosting) — serial, first.
-- **Wave B:** `3.2` ∥ `3.3`, then `3.4`.
+- **Wave B:** `3.2` ∥ `3.3` ∥ `3.5`, then `3.4`. (`3.5` corrects story 3.1's own env contract and shares no files with the others.)
 - **Wave C:** `2.6` — frontend-only, parallel with A or B.
 - **Wave D:** Epic 2 Wave 1 (`2.1`), then the rest of Epic 2.
 
-**Gates:** `3.4←3.3` (shared `src/core/backfill_runner.py`); `2.2←2.6`, `2.4←2.6`, `2.5←2.6`; `2.1←3.2+3.3+3.4` (Epic 2 computes percentiles over a corpus that must not be accruing fabricated scores while it does so).
+**Gates:** `3.4←3.3` (shared `src/core/backfill_runner.py`); `3.5` has no gate — it is parallel to all of Wave B; `2.2←2.6`, `2.4←2.6`, `2.5←2.6`; `2.1←3.2+3.3+3.4` (Epic 2 computes percentiles over a corpus that must not be accruing fabricated scores while it does so).
 
 **Do not parallelize:** `3.3` with `3.4` (same runner file); `3.1` with `3.2`/`3.3` (a hosting change that moves the runner's entrypoint while its internals are being rewritten); any Epic 2 UI story before `2.6` (they would pin further e2e assertions on top of the wrong pt-BR strings).
 
@@ -522,7 +529,7 @@ Felipe (operator) can actually run the cloud backfill from the product surface E
 **FRs covered:** FR-28 (completing the stated outcome), FR-27/FR-29 (hardening the delivered surface)
 **NFRs in play:** NFR-1, NFR-3, NFR-4, NFR-6
 **Governed by:** AD-13 (single pacer, one lease, cloud bounded), AD-4/AD-10 (second driver never second writer, no GPU work), AD-1 (no `core` → `adapters` leak), AD-6 (admin surface audited); local-first/residential-IP topology invariants (runner placement)
-**Ledger drained:** DW-27, DW-17, DW-18, DW-11
+**Ledger drained:** DW-27, DW-17, DW-18, DW-11, DW-31, DW-33
 
 ### Story 3.1: Backfill runner hosting — a committed home for the consumer
 
@@ -613,3 +620,29 @@ So that a lease handover does not cause re-enrichment of a gap already covered a
 **Given** TDD on `src/core/`
 **When** the story completes
 **Then** unit coverage drives a real handover (owner loses lease mid-drain, successor has advanced past, rows finish) and asserts neither rewind nor double-count, with a regression that fails before the fix
+
+### Story 3.5: Runner env contract — correct enablement surface, honest preflight, no test-gate collision
+
+*(Minted 2026-08-12. Two defects in story 3.1's own delivery, found while performing its operator handoff. Shares no files with 3.2–3.4, so it runs in parallel with them.)*
+
+As the operator,
+I want the documented way to enable the cloud backfill to be the way that actually works, and the preflight to tell me the truth about it,
+So that following the runbook does not turn the merge gate red or report a working host as broken (DW-31, DW-33).
+
+**Acceptance Criteria:**
+
+**Given** story 3.1's operator instructions say to set `ai.enrichment_routing.{visual,sentiment,deal_verdict}` to `gemma` in the **committed** `configs/app_config.yaml`, which fails `src/tests/unit/test_config.py::test_enrichment_routing_default_all_local` (story 1.1's AC that the shipped config routes every task class local — NFR-1)
+**When** this story lands
+**Then** every operator-facing surface — `docs/setup.md`, `docs/deployment-guide.md`, `.env.local.example`, the installer's own messages and the story 3.1 feature doc — names the per-host env override as the sanctioned enablement, never an edit to the committed YAML
+**And** the shipped `configs/app_config.yaml` remains all-local and that invariant stays pinned by its existing test (DW-31)
+
+**Given** `routing_has_cloud_backend()` awk-greps `configs/app_config.yaml` only (`scripts/install-backfill-runner.sh:247`) and knows nothing about `IMOVEIS_AI__ENRICHMENT_ROUTING__*`
+**When** an operator has configured cloud routing correctly via env and runs `--check`
+**Then** the preflight reports the host as ready rather than warning that the unit "would exit at startup and restart forever" — the check reflects what `--serve` will actually resolve, not one of its two inputs
+**And** a genuinely all-local host (no YAML cloud entry **and** no env override) still gets the warning it needs
+
+**Given** `.env.local` is simultaneously the systemd unit's `EnvironmentFile=` and the file `scripts/agent/validate.sh:60` sources into the pytest environment, so operator env for the runner becomes ambient env for the whole suite — observed 2026-08-12 when the routing override made `test_celery_app.py` fail on a partial routing map, for an unrelated reason, with a confusing message
+**When** this story lands
+**Then** the collision is closed structurally, not one test module at a time: either the unit gets its own `EnvironmentFile` distinct from the validate-sourced file, or `validate.sh` sources only the workspace-identity keys it needs, or `IMOVEIS_*` is stripped suite-wide in a root conftest — the choice recorded with its rationale (DW-33)
+**And** a regression proves the suite is green with a fully-populated operator `.env.local` present, including the cloud routing override, so the next operator variable cannot silently redden the gate
+**And** the local guard added to `test_celery_app.py` on 2026-08-12 is folded into whichever mechanism wins, not left as a second, divergent copy

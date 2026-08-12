@@ -193,6 +193,18 @@ development_status:
   # checkpoint hash, rewinding the successor's position and inflating
   # processed_total. Decide monotonic compare-and-set vs lease-gated advance.
   3-4-checkpoint-advance-semantics: backlog
+  # DW-31 + DW-33: two defects in story 3-1's OWN delivery, found while doing
+  # its operator handoff (2026-08-12). (a) 3-1's instructions tell the operator
+  # to set ai.enrichment_routing to gemma in the COMMITTED configs/app_config.yaml,
+  # which fails test_enrichment_routing_default_all_local (story 1.1's NFR-1 AC)
+  # — the sanctioned surface is the per-host env override the unit already reads;
+  # and install-backfill-runner.sh's routing_has_cloud_backend() greps the YAML
+  # only, so a correctly-configured host gets a false WARN. (b) .env.local is
+  # BOTH the unit's EnvironmentFile= and the file validate.sh:60 sources into
+  # pytest, so operator env silently reddens the gate (observed: test_celery_app
+  # failed on a partial routing map; patched locally, needs a structural fix).
+  # NO GATE — shares zero files with 3-2/3-3/3-4, runs parallel to all of Wave B.
+  3-5-runner-env-contract: backlog
   epic-3-retrospective: optional
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
