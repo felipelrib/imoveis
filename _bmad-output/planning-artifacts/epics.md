@@ -25,6 +25,14 @@ tracking: >
   sprint-status-archive-pre-v0.13.yaml, never resurrected into the live tracker.
   Sequencing gates: s1.2←s1.1, s1.3←s1.1, s1.4←s1.1, s1.5←s1.3,
   s1.6←s1.4+s1.5, s2.2←s2.1, s2.3←s2.1, s2.4←s2.3, s2.5←s2.2.
+  RETROSPECTIVE AMENDMENT (2026-08-12, epic-1 retro): Epic 3 minted
+  (s3.1…s3.4 — FR-28's unmet stated outcome + the corpus-integrity ledger
+  items Epic 1's reviews fenced out of their own stories), and s2.6 minted as
+  Epic 2's UX foundation piece. Added gates: s3.4←s3.3, s2.2←s2.6, s2.4←s2.6,
+  s2.5←s2.6, s2.1←s3.2+s3.3+s3.4. Wave order: s3.1 → (s3.2 ∥ s3.3) → s3.4;
+  s2.6 parallel with any of them; Epic 2 proper last. Retrospective action
+  items are tracked as `epic-1-retro-item-N-<slug>` keys in sprint-status
+  (bmad-loop's RETRO_ITEM_RE shape) — see _bmad/custom/bmad-retrospective.toml.
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
@@ -187,7 +195,16 @@ Ana and Bruno (users) get sharper deal signals than one combined score: every pr
 **NFRs in play:** NFR-6, NFR-7, NFR-8
 **Governed by:** AD-10 (cohort stats in pipeline stage), AD-12 (read-only projection), AD-3, AD-8, AD-9 (one notifier registry), AD-11 (principal model); UX-DR1–4 (tokens, pt-BR, honest absence, side-panel posture), UX-DR8–13 (percentile copy/badge/filter, enrichment-gated email alerts, saved-search row)
 
-**Epic dependencies:** None between the two — Epic 2 touches the metrics/alerts/UI surfaces, Epic 1 the AI-routing/backfill/telemetry surfaces; they share no core files and can run in parallel after the harness-track gate. Within Epic 1, the canonical task-class enum story is the foundation for everything else. Within Epic 2, s2.1 is the foundation; the side-panel migration (s2.5) consumes s2.2's projection, and s2.3's enrichment gating consumes s2.1's percentile capability (gates: s2.2←s2.1, s2.3←s2.1, s2.4←s2.3, s2.5←s2.2).
+### Epic 3: Enrichment Hardening & Operability
+
+*(Minted 2026-08-12 at the Epic 1 retrospective.)* Felipe (operator) can actually run the cloud backfill from the surface Epic 1 built for it, and trust what it wrote: the runner gets a committed, supervised home so the admin Start button stops depending on a hand-started dev script; a systemic AI-client failure stops fabricating a `0.5` score and permanently retiring the row; the daily budget counts the requests the provider counts; and a displaced runner stops rewinding its successor's checkpoint. Not new scope — FR-28's unmet stated outcome plus the corpus-integrity items Epic 1's review passes found and correctly fenced out of their own stories' intent contracts.
+
+**FRs covered:** FR-28 (stated outcome), FR-27/FR-29 (hardening)
+**NFRs in play:** NFR-1, NFR-3, NFR-4, NFR-6
+**Governed by:** AD-13, AD-4, AD-10, AD-1, AD-6; local-first / residential-IP topology invariants
+**Ledger drained:** DW-27, DW-17, DW-18, DW-11
+
+**Epic dependencies:** Epic 1 (closed) and Epic 2 touch disjoint surfaces — metrics/alerts/UI vs AI-routing/backfill/telemetry — and shared no core files. **Epic 3 gates Epic 2**: stories 3.2/3.3/3.4 govern what the enrichment pipeline writes, and Epic 2 computes price/m² percentiles over that corpus, so s2.1 must not run while fabricated scores are still accruing. Within Epic 1, the canonical task-class enum story was the foundation. Within Epic 3, 3.1 is independent of 3.2–3.4 (hosting vs runner internals) but must not run concurrently with them; 3.4←3.3 (shared `backfill_runner.py`). Within Epic 2, s2.6 is the UX foundation piece and s2.1 the data foundation; the side-panel migration (s2.5) consumes s2.2's projection and s2.3's enrichment gating consumes s2.1's percentile capability (gates: s2.2←s2.1+s2.6, s2.3←s2.1, s2.4←s2.3+s2.6, s2.5←s2.2+s2.6, s2.1←s3.2+s3.3+s3.4).
 
 ## Epic 1: Hybrid Enrichment, Productized (Theme A)
 
@@ -333,16 +350,22 @@ So that I can kick off, monitor, and pause the multi-day run and watch coverage 
 **Then** new components use the Meia-noite tokens (UX-DR1, dark-only), all new strings land in both `en` and `pt-BR` catalogs, and the UI default locale flips to **pt-BR** (NFR-7 as amended; `ui.locale` preference still switches)
 **And** a Playwright e2e covers the card's happy path (status render + a control action against a mocked/stubbed API) and asserts honest absence (no ETA/throughput text with no active run)
 
-### Epic 1 close + post-epic sequencing gate (retrospective, 2026-08-12)
+### Epic 1 close + post-epic sequencing (retrospective, 2026-08-12)
 
-Epic 1 closed with all six stories delivered, merged and pushed. The retrospective (`_bmad-output/implementation-artifacts/epic-1-retro-2026-08-12.md`) scheduled five follow-ups that **gate Epic 2's start**, recorded here so future sessions do not re-derive them:
+Epic 1 closed with all six stories delivered, merged and pushed. Its retrospective (`_bmad-output/implementation-artifacts/epic-1-retro-2026-08-12.md`) found that FR-28's acceptance criteria were all met while its **stated outcome** — graduating the runner out of `scripts/dev` — was not, and that the deferred-work ledger closed 7 items while opening 32, three of them with corpus-integrity consequences.
 
-- **Wave A (serial, first):** `v0.13-fu10` — backfill runner hosting (DW-27). FR-28's ACs were met while its stated outcome — graduating the runner out of `scripts/dev` — was not: the admin Start button only works while a hand-started `--serve` supervisor stays alive.
-- **Wave B (correctness wave):** `v0.13-fu11` ∥ `v0.13-fu12`, then `v0.13-fu13`. DW-17 (non-quota failures persist fabricated 0.5 scores and permanently retire rows), DW-18 (budget counts properties, not requests), DW-11 (drain-after-lease-loss rewinds the shared checkpoint). `fu12` and `fu13` share `src/core/backfill_runner.py` and must stay serial.
-- **Wave C (parallel, frontend-only):** `v0.13-fu14` — ToastProvider re-anchor to DESIGN.md's bottom-anchored spec (UX-DR3 binds every Epic 2 toast surface) + the pt-BR plural-agreement catalog sweep the 1.6 locale flip promoted to everyone's default and pinned in three e2e specs.
-- **Gate on Epic 2 Wave 1 (s2.1):** Waves A and B done — Epic 2 computes percentiles over a corpus that must not be accruing fabricated scores — and Wave C done, since stories 2.2/2.4/2.5 all add pt-BR strings and e2e assertions on top of the current (wrong) ones.
+That remediation is **Epic 3** (below), not a set of follow-up keys: each item needs its own spec, acceptance criteria and review pass, which is what a story is for. The one frontend item is **Story 2.6**, owned by the epic that consumes it.
 
-**Do not parallelize:** `fu12` with `fu13` (shared runner file); `fu10` with `fu11`/`fu12` (a hosting change that moves the runner's entrypoint while its internals are rewritten); Epic 2 UI stories before `fu14`.
+**Wave order (recorded here so future sessions do not re-derive it):**
+
+- **Wave A:** `3.1` (runner hosting) — serial, first.
+- **Wave B:** `3.2` ∥ `3.3`, then `3.4`.
+- **Wave C:** `2.6` — frontend-only, parallel with A or B.
+- **Wave D:** Epic 2 Wave 1 (`2.1`), then the rest of Epic 2.
+
+**Gates:** `3.4←3.3` (shared `src/core/backfill_runner.py`); `2.2←2.6`, `2.4←2.6`, `2.5←2.6`; `2.1←3.2+3.3+3.4` (Epic 2 computes percentiles over a corpus that must not be accruing fabricated scores while it does so).
+
+**Do not parallelize:** `3.3` with `3.4` (same runner file); `3.1` with `3.2`/`3.3` (a hosting change that moves the runner's entrypoint while its internals are being rewritten); any Epic 2 UI story before `2.6` (they would pin further e2e assertions on top of the wrong pt-BR strings).
 
 ## Epic 2: Deal-Intelligence Deepening (Theme B cut)
 
@@ -465,3 +488,128 @@ So that I can judge a property with the map still in view and never lose my plac
 **When** the story completes
 **Then** new strings land in `en` + `pt-BR` catalogs (NFR-7) and existing modal-dependent e2e specs are migrated to the panel, not deleted
 **And** a Playwright e2e covers open → `Esc`-close → grid scroll preserved, plus the percentile sentence on a dual-type Property
+
+### Story 2.6: UI contract debt — toast anchoring + pt-BR plural agreement
+
+*(Minted 2026-08-12 at the Epic 1 retrospective. Epic 2's UX foundation piece — it gates 2.2, 2.4 and 2.5, which all add pt-BR strings and toast surfaces on top of it. Numbered last, sequenced first.)*
+
+As a user of any surface in the product,
+I want toasts to appear where the design contract says and Portuguese counts to agree with their nouns,
+So that Epic 2's new surfaces build on a correct foundation instead of inheriting and re-pinning defects (UX-DR1, UX-DR3).
+
+**Acceptance Criteria:**
+
+**Given** `frontend/src/components/ToastProvider.tsx` is anchored top-right while DESIGN.md's toast spec is bottom-anchored, max two stacked
+**When** this story lands
+**Then** the shared provider matches the contract (bottom-anchored, max two stacked, per the DESIGN.md toast spec — UX-DR3) and every existing flow that raises a toast is re-verified, not just the new ones
+**And** the e2e specs asserting toast position are updated to the contract, and the story-1.6 lease-conflict toast still passes
+
+**Given** the v0.13-s1.6 locale flip promoted pre-existing single-form pt-BR catalog keys from an opt-in preference to **every** user's default
+**When** the catalog is swept
+**Then** `compareSelected`, `properties.countProperties`, `properties.countFavourited` and `common.bedsShort` model the singular/plural split the catalog already uses elsewhere (`modal.listingCountOne` / `listingCountMany`) — no more `1 selecionados`, `1 imóveis`, `1 favoritos`, `1 quartos`
+**And** `compare-select.spec.js`, `compare-map-select.spec.js` and `compare-view.spec.js`, which currently assert the defective strings **verbatim**, are corrected rather than neutralized — the assertions must still pin exact copy
+
+**Given** this is a shared-surface change every later story inherits
+**When** the story completes
+**Then** `bash scripts/agent/validate.sh all` is green including the full Playwright suite, no new string exists in only one catalog (NFR-7), and no Epic 2 UI story has been started against the old strings
+
+## Epic 3: Enrichment Hardening & Operability
+
+*(Minted 2026-08-12 at the Epic 1 retrospective. Not new scope: this is FR-28's unmet stated outcome plus the corpus-integrity holes Epic 1's review passes found and deliberately fenced out of their own stories' intent contracts.)*
+
+Felipe (operator) can actually run the cloud backfill from the product surface Epic 1 built for it, and trust what it wrote. Story 1.5 shipped a correct control plane whose Start button only works while a hand-started dev script stays alive; stories 1.3–1.6 closed the fabricated-score corruption for provider *quota* refusals only, left the daily budget measuring properties instead of requests, and left a displaced runner able to rewind its successor's checkpoint. Each was correctly deferred — every one is fenced by its origin story's own "Never" clause — and each needs a deliberate design decision rather than a review patch.
+
+**FRs covered:** FR-28 (completing the stated outcome), FR-27/FR-29 (hardening the delivered surface)
+**NFRs in play:** NFR-1, NFR-3, NFR-4, NFR-6
+**Governed by:** AD-13 (single pacer, one lease, cloud bounded), AD-4/AD-10 (second driver never second writer, no GPU work), AD-1 (no `core` → `adapters` leak), AD-6 (admin surface audited); local-first/residential-IP topology invariants (runner placement)
+**Ledger drained:** DW-27, DW-17, DW-18, DW-11
+
+### Story 3.1: Backfill runner hosting — a committed home for the consumer
+
+As the operator,
+I want the thing that executes a requested backfill to have a committed, supervised home,
+So that the admin Start button is a product surface rather than a request queued into the void (FR-28's stated outcome; DW-27).
+
+**Acceptance Criteria:**
+
+**Given** `POST /admin/backfill/start` only records a request, and nothing consumes it unless a hand-started `scripts/dev/backfill_gemma.py --serve` is alive
+**When** this story lands
+**Then** the runner has a committed home — a committed systemd unit, a dedicated compose service, or promotion out of `scripts/dev` to a supported entrypoint — and the choice is recorded as an ADR with its rationale
+**And** the cloud key placement respects NFR-3 (env-only, never committed) and the local-first / residential-IP invariants are preserved: the runner does not move off-box, and nothing about this change routes scraping or enrichment through a datacenter ASN
+
+**Given** the supervisor is installed
+**When** the operator presses Start with no run in flight
+**Then** a run begins without any manual host-side step, and `runner_present` reflects reality rather than whether someone remembered to start a script
+**And** a supervisor restart (host reboot, `systemctl restart`, container recreate) recovers without operator action and without double-starting under the shared lease (AD-13)
+
+**Given** the primary docker stack is inviolable
+**When** the change is delivered
+**Then** it introduces no compose action against the primary project in any gate or script, and `validate.sh` / `finish-feature.sh` remain primary-safe
+**And** the feature doc records the operator-visible install/upgrade step
+
+### Story 3.2: Non-quota AI failures must not fabricate a score
+
+As the operator,
+I want a revoked key, a retired model id or a transport outage to stop the run instead of writing a fabricated score,
+So that an unattended multi-day pass cannot silently stamp ~4,600 properties/day with `0.5` and retire them from the candidate set forever (DW-17).
+
+**Acceptance Criteria:**
+
+**Given** `analyze_visuals` / `analyze_text` / `summarize_deal` return `0.5` fallbacks on every exception except a quota error, `run_enrichment` persists and commits that score, and `mode_is_missing_ai` keys on `not score` — so `0.5` is truthy and the row leaves the candidate set permanently
+**When** this story lands
+**Then** a systemic client failure (401 revoked key, 404 retired model, DNS/proxy outage) no longer results in a persisted score, an advanced checkpoint, or a retired row
+**And** the mechanism is a **typed marker on the fallback result** plus a consecutive-fallback circuit breaker in `run_backfill` — never the `analysis == "Error"` string
+
+**Given** the local Ollama path depends on the template fallback (story 1.3's intent contract fenced this deliberately)
+**When** a *local* backend fails transiently
+**Then** its existing template-fallback behaviour is preserved unchanged — this story changes what happens to the *result*, not the local resilience contract
+**And** the quota path delivered by story 1.3 keeps working exactly as it does today
+
+**Given** TDD obligations on `src/core/`
+**When** the story completes
+**Then** the circuit-breaker state machine has unit coverage (below threshold / at threshold / recovery / interleaved with quota back-off) with no new `core` → `adapters` import, and `bash scripts/agent/validate-ai.sh` passes (AI client surface changed)
+**And** a regression test proves a non-quota failure writes no score — failing before the fix
+
+### Story 3.3: The daily budget must count requests, not properties
+
+As the operator,
+I want the daily budget to measure what the provider actually counts,
+So that AC-1's never-exceed guarantee is about the provider's RPD rather than a proxy that can undercount by an order of magnitude (DW-18).
+
+**Acceptance Criteria:**
+
+**Given** `budget.try_consume(requests_per_property)` charges a flat 3 at launch while one property is up to 3 stages × 3 JSON attempts × 5 HTTP retries — and 429s are in `_RETRY_STATUS`, so the undercount is worst exactly when the account is already throttled
+**When** this story lands
+**Then** the budget is reconciled against the client's real `request_count` / `retry_count` after each row (a `settle(n)` built on the existing atomic Lua reserve), so the counter tracks requests actually sent
+**And** the reservation remains atomic and the rollback path is preserved — story 1.3's `test_backfill_lua_scripts.py` contention guarantees must still hold, re-derived against the new quantity
+
+**Given** `--continuous` decides "RPD spent" from this counter
+**When** the meaning of the budget changes
+**Then** the back-off / window-roll / stall-detector branches are re-verified against the new semantics, and `backfill.daily_request_budget`'s documented meaning in `configs/app_config.yaml` is updated to say requests, not properties
+**And** an existing budget hash written under the old semantics migrates or rolls without handing a run a second day's spend (the hazard `_migrate_start_epoch` was added for)
+
+**Given** TDD on `src/core/`
+**When** the story completes
+**Then** reconciliation has unit coverage (under, at, and over the cap; a row that retries heavily; a row that fails before sending) and the integration test asserting never-exceed runs against the reconciled counter
+
+### Story 3.4: Checkpoint advance semantics under lease loss
+
+As the operator,
+I want a displaced runner's draining rows to stop rewinding its successor's position,
+So that a lease handover does not cause re-enrichment of a gap already covered and does not inflate `processed_total` (DW-11).
+
+**Acceptance Criteria:**
+
+**Given** `checkpoint.advance()` is an unconditional `hset` on a key shared by every runner, and in-flight rows always drain by design (cancelling mid-enrichment leaves half-written properties)
+**When** this story lands
+**Then** a runner that has lost its lease can no longer move `last_property_id` backwards for the successor, and `processed_total` counts each row once
+**And** the chosen mechanism — monotonic compare-and-set on the id's ordering, or lease-gated advance — is recorded with its trade-off, because the same call also records genuinely completed work that must not be lost
+
+**Given** story 1.3's drain-after-loss constraint and v0.13-fu7's `_publish` guard
+**When** the change lands
+**Then** the drain still completes (no cancelled mid-enrichment), and the guard fu7 added for the state key and this story's checkpoint rule express the same handover policy rather than two divergent ones
+**And** `src/core/backfill_runner.py` gains no `adapters`/`api` import (AD-1)
+
+**Given** TDD on `src/core/`
+**When** the story completes
+**Then** unit coverage drives a real handover (owner loses lease mid-drain, successor has advanced past, rows finish) and asserts neither rewind nor double-count, with a regression that fails before the fix

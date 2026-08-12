@@ -1,0 +1,27 @@
+# Imoveis project overrides for bmad-retrospective.
+# Merges over the skill's customize.toml (arrays append).
+#
+# WHY THIS EXISTS: the base skill's step 12 appends retrospective commitments to
+# a free-form `action_items:` block that sits OUTSIDE `development_status`.
+# bmad-loop parses ONLY `development_status`, and only these key shapes
+# (src/bmad_loop/sprintstatus.py):
+#
+#   EPIC_RE       ^epic-(\d+)$
+#   RETRO_RE      ^epic-(\d+)-retrospective$
+#   RETRO_ITEM_RE ^epic-(\d+)-retro-item-(\d+)-(.+)$
+#   STORY_RE      ^(\d+)-(\d+)([a-z]?)-(.+)$
+#
+# Everything else lands in `unknown_keys` and is invisible to the loop. An
+# `action_items:` block is therefore untracked by construction — which is how
+# the epic-1 retrospective (2026-08-12) first shipped it. RETRO_ITEM_RE is the
+# loop-native shape and this project uses it.
+
+[workflow]
+
+persistent_facts = [
+  "TRACKER KEY SHAPES (non-negotiable): sprint-status.yaml `development_status` uses BMad-STANDARD keys ONLY, because bmad-loop parses nothing else — `epic-N`, `epic-N-retrospective`, `epic-N-retro-item-M-<slug>`, `N-M[a-z]-<slug>`. A key that matches none of these is invisible to the sanctioned executor. Before minting ANY new key, confirm it matches one of those four patterns.",
+  "RETROSPECTIVE ACTION ITEMS: emit each committed action item as its own `epic-N-retro-item-M-<kebab-slug>: open` entry inside `development_status` — NOT as an `action_items:` block (the base skill's step 12 prescribes that block; this project overrides it, because bmad-loop cannot see it). Owner, rationale and success criteria belong in the retrospective document and as a YAML comment above the key; the key itself carries only the status.",
+  "STORY-SIZED WORK GETS A STORY KEY: `v<milestone>-fu<N>` keys are reserved for genuinely small follow-ups with no story of their own (a one-file regression fix, a lingering review pass). Work that needs its own spec, its own acceptance criteria, or a design decision is a STORY — mint it as `N-M-<slug>` under a real epic in epics.md, so `bmad-create-story` / `bmad-dev-story` / `bmad-code-review` can drive it. Do not stretch the `fu` convention to carry an epic's worth of remediation.",
+  "EPIC CLOSE: never downgrade a status. Close `epic-N` only on a FRESH re-read of sprint-status.yaml + epics.md after the last sibling story's merge is pushed, and only when no untracked leftovers remain (open ledger items must be minted as tracked keys first, not left as prose).",
+  "When a retrospective schedules follow-on work, record the resulting sequencing gates in epics.md itself (epic-level note or frontmatter `tracking:`), not only in the retrospective document — future sessions read epics.md as the plan of record and must not re-derive them.",
+]

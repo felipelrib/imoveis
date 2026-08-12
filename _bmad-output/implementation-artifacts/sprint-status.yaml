@@ -112,40 +112,6 @@ development_status:
   # degrades to a visible skip offline.
   v0.13-fu9-dependency-audit-gate: done
 
-  # ---- Post-epic-1-retrospective follow-ups (2026-08-12) ----
-  # Sequencing (retro §8): fu10 first (serial) -> fu11 ∥ fu12 then fu13
-  # (fu12/fu13 share backfill_runner.py) -> fu14 (frontend-only, parallel with
-  # any of them) -> Epic 2 Wave 1 (2-1) only after fu10-fu14 are done.
-  #
-  # DW-27: FR-28's "graduates from scripts/dev" is unmet at the consumer — the
-  # admin Start button only works while a hand-started `backfill_gemma.py
-  # --serve` supervisor stays alive; no unit is committed or wired into the
-  # stack. Topology decision (systemd unit / compose service / supported
-  # entrypoint) with cloud-key placement and residential-IP invariants in play.
-  v0.13-fu10-backfill-runner-hosting: backlog
-  # DW-17 (correctness wave): non-quota AI failures (401 revoked key, 404
-  # retired model, DNS outage) still persist a fabricated 0.5 score, commit,
-  # advance the checkpoint and permanently retire the row — ~4,600 properties/
-  # day behind a healthy banner. Needs a typed marker on the fallback result +
-  # a consecutive-fallback circuit breaker in run_backfill; the local Ollama
-  # template fallback must be preserved.
-  v0.13-fu11-non-quota-failure-circuit-breaker: backlog
-  # DW-18 (correctness wave): the daily budget charges a flat 3 requests per
-  # property while one property is up to 45 real HTTP calls (3 stages x 3 JSON
-  # attempts x 5 retries), and 429s are retried — so AC-1's never-exceed
-  # guarantee measures the wrong quantity, worst when already throttled.
-  v0.13-fu12-budget-counts-requests: backlog
-  # DW-11 (correctness wave): after a lost lease, still-draining rows advance
-  # the shared checkpoint, rewinding the successor's position and inflating
-  # processed_total. Decide monotonic vs lease-gated `advance()`.
-  v0.13-fu13-checkpoint-advance-semantics: backlog
-  # Epic 2 prep (1.6 ledger entries): re-anchor ToastProvider to DESIGN.md's
-  # bottom-anchored/max-two spec (UX-DR3 binds every Epic 2 toast surface) and
-  # sweep the pt-BR plural-agreement catalog ("1 selecionados", "1 imóveis")
-  # that the locale flip promoted to everyone's default and that 1.6's e2e
-  # repairs pinned verbatim in three compare specs.
-  v0.13-fu14-ui-contract-debt: backlog
-
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
   # CLOSED 2026-08-12 at the epic-1 retrospective. All six stories done, merged
@@ -166,8 +132,75 @@ development_status:
   1-6-operacoes-backfill-card-coverage-visibility: done
   epic-1-retrospective: done
 
+  # Epic 1 retrospective action items (2026-08-12). These use bmad-loop's
+  # RETRO_ITEM_RE shape (^epic-N-retro-item-M-slug$) so the loop can see them —
+  # the base bmad-retrospective skill writes an `action_items:` block outside
+  # development_status, which parses as nothing. Overridden project-wide in
+  # _bmad/custom/bmad-retrospective.toml. Owners/criteria: epic-1-retro-2026-08-12.md §6.
+  #
+  # A1 — re-check an escalated story's stated blocker against the current tree
+  # before the loop advances past it; re-drive if the cause has cleared, rather
+  # than absorbing the scope into a sibling branch (story 1.4's failure mode).
+  epic-1-retro-item-1-escalation-reverification: open
+  # A2 — when a review pass finds the same defect SHAPE a prior pass already
+  # fixed through a different field, promote it to a spec I/O-matrix invariant
+  # instead of running another pass (1.6 pass 3: "the third door into the same
+  # defect"; 1.3 spent 4 passes / 64 patches).
+  epic-1-retro-item-2-third-pass-invariant-rule: open
+  # A3 — a story marked done inside another story's branch gets its own
+  # docs/features/<story-key>-*.md in that same branch, not in a later review
+  # pass (1.4 sat `done` with no doc until 1.6's third pass caught it).
+  epic-1-retro-item-3-feature-doc-on-absorption: open
+  # A4 — verify `git rev-list --count origin/main..main == 0` at the END of a
+  # loop run, not only per-merge (the loop left origin 9 merges behind).
+  epic-1-retro-item-4-push-verification-at-loop-end: open
+  # A5 — track deferred-work opened vs closed per epic; a net-positive epic
+  # ends with a scheduled drain wave rather than an open ledger (epic 1 closed
+  # 7 and opened 32).
+  epic-1-retro-item-5-ledger-budget-per-epic: open
+
+  # ---- Epic 3: Enrichment Hardening & Operability ----
+  # Minted 2026-08-12 at the epic-1 retrospective. NOT new scope: FR-28's unmet
+  # stated outcome (the runner never graduated out of scripts/dev) plus the
+  # corpus-integrity ledger items Epic 1's review passes found and correctly
+  # fenced out of their own stories' intent contracts.
+  # Wave order: 3-1 (serial) -> 3-2 ∥ 3-3 -> 3-4. Gate: 3-4←3-3 (both touch
+  # src/core/backfill_runner.py). Epic 3 GATES Epic 2's 2-1: percentiles must
+  # not be computed over a corpus still accruing fabricated scores.
+  epic-3: backlog
+  # DW-27: the admin Start button only works while a hand-started
+  # `backfill_gemma.py --serve` supervisor stays alive; no unit is committed or
+  # wired into the stack. Topology decision (systemd unit / compose service /
+  # supported entrypoint) with cloud-key placement and the local-first /
+  # residential-IP invariants in play. Ships with an ADR.
+  3-1-backfill-runner-hosting: backlog
+  # DW-17: non-quota AI failures (401 revoked key, 404 retired model, DNS
+  # outage) still persist a fabricated 0.5, commit, advance the checkpoint and
+  # — because mode=missing keys on `not score` — permanently retire the row, at
+  # ~4,600 properties/day behind a healthy banner. Needs a typed marker on the
+  # fallback result + a consecutive-fallback circuit breaker in run_backfill,
+  # never the `analysis == "Error"` string. Local Ollama template fallback must
+  # be preserved (story 1.3's intent contract fenced this deliberately).
+  3-2-non-quota-failure-circuit-breaker: backlog
+  # DW-18: the budget charges a flat 3 requests/property while one property is
+  # up to 3 stages x 3 JSON attempts x 5 HTTP retries = 45 real requests, and
+  # 429s are retried — so AC-1's never-exceed guarantee measures the wrong
+  # quantity, worst exactly when the account is already throttled.
+  3-3-budget-counts-requests: backlog
+  # DW-11: after a lost lease, still-draining rows advance the SHARED
+  # checkpoint hash, rewinding the successor's position and inflating
+  # processed_total. Decide monotonic compare-and-set vs lease-gated advance.
+  3-4-checkpoint-advance-semantics: backlog
+  epic-3-retrospective: optional
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
+  # Minted 2026-08-12 (epic-1 retro): Epic 2's UX foundation piece — numbered
+  # last, sequenced FIRST. Re-anchor ToastProvider to DESIGN.md's bottom-
+  # anchored/max-two spec (UX-DR3 binds every Epic 2 toast surface) and sweep
+  # the pt-BR plural-agreement catalog ("1 selecionados", "1 imóveis") that the
+  # 1.6 locale flip promoted to everyone's default and that 1.6's e2e repairs
+  # pinned verbatim in three compare specs. Gates: 2-2, 2-4 and 2-5 all ← 2-6.
+  2-6-ui-contract-debt: backlog
   2-1-cohort-price-m2-percentiles-pipeline: backlog
   2-2-percentile-badge-and-filter: backlog
   2-3-saved-search-new-match-detection: backlog
@@ -175,26 +208,3 @@ development_status:
   2-5-detail-side-panel-migration: backlog
   epic-2-retrospective: optional
 
-# Committed at the epic-1 retrospective (2026-08-12).
-# Full record: epic-1-retro-2026-08-12.md
-action_items:
-  - epic: 1
-    action: "Escalation re-verification: re-check an escalated story's stated blocker against the current tree before the loop advances past it; if the cause has cleared, re-drive rather than absorb into a sibling branch."
-    owner: "Felipe / bmad-loop harness"
-    status: open
-  - epic: 1
-    action: "Third-pass rule: when a review pass finds the same defect shape a prior pass already fixed through a different field, promote it to a spec-level invariant in the I/O matrix instead of running another pass."
-    owner: "Felipe / review skills"
-    status: open
-  - epic: 1
-    action: "Feature-doc gate on absorption: a story marked done inside another story's branch gets its own docs/features/<story-key>-*.md in that same branch, not in a later review pass."
-    owner: "Felipe / finish gate"
-    status: open
-  - epic: 1
-    action: "Push is part of finishing: verify `git rev-list --count origin/main..main == 0` at the end of every loop run, not only per-merge."
-    owner: "Felipe / bmad-loop harness"
-    status: open
-  - epic: 1
-    action: "Ledger budget: track deferred-work opened vs closed per epic; a net-positive epic ends with a scheduled drain wave rather than an open ledger."
-    owner: "Felipe"
-    status: open
