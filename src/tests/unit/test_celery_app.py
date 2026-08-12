@@ -9,6 +9,7 @@ silently point at a different Redis instance than the rest of the app.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -73,6 +74,15 @@ class TestMakeCeleryRedisResolution:
         # Guard: prove this test's environment has no REDIS_URL that could
         # mask a regression back to os.environ.get.
         monkeypatch.delenv("REDIS_URL", raising=False)
+        # validate.sh sources .env.local into the test environment, so any
+        # generic IMOVEIS_<SECTION>__<KEY> override an operator set for the
+        # host-side backfill runner lands here too. This fixture YAML is
+        # minimal, so e.g. IMOVEIS_AI__ENRICHMENT_ROUTING__VISUAL would inject
+        # a *partial* routing map and fail AIConfig's totality validator —
+        # failing this Redis test for an unrelated reason. Same reasoning as
+        # test_config.py::_clear_config_env.
+        for key in [k for k in os.environ if k.startswith("IMOVEIS_")]:
+            monkeypatch.delenv(key, raising=False)
 
         cfg_file = tmp_path / "app_config.yaml"
         cfg_file.write_text(YAML_WITH_CUSTOM_REDIS)

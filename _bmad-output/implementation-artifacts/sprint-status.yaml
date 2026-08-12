@@ -24,8 +24,7 @@
 #   Epic 1 and Epic 2 chains are independent and can run in parallel.
 
 # STATUS DEFINITIONS:
-# ==================
-# Epic Status:
+# ===========# Epic Status:
 #   - backlog: Epic not yet started
 #   - in-progress: Epic actively being worked on
 #   - done: All stories in epic completed
@@ -51,8 +50,7 @@
 #   - done: Completed
 #
 # WORKFLOW NOTES:
-# ===============
-# - Epic transitions to 'in-progress' automatically when first story is created
+# ========# - Epic transitions to 'in-progress' automatically when first story is created
 # - Stories can be worked in parallel if team capacity allows (respect the gates above)
 # - Developer typically creates next story after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
@@ -84,6 +82,10 @@ development_status:
   # followup_review_recommended). RoutingAIClient lifecycle hardening +
   # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
   v0.13-fu4-s1.2-followup-review: done
+  # Safety: stop.sh --volumes / clean.sh --volumes ran `down -v` on the PRIMARY
+  # project with no confirmation, wiping postgres_data + image_store + redis_data
+  # (whole corpus + multi-day enrichment). Capability removed; regression-locked.
+  v0.13-fu5-remove-data-destroying-paths: done
   # Follow-up (DW-3/DW-4): migrate-primary.sh's backfill guard was
   # check-then-act — it probed the `:active` heartbeat once and then ran alembic
   # with nothing holding the window, and a runner sleeping out an RPD window

@@ -124,7 +124,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/restart.sh`| Stop + start (`--build` to rebuild images)           |
 | `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`)    |
 | `./scripts/dev.sh`   | Same stack, Vite in the foreground (Ctrl+C = UI only) |
-| `./scripts/clean.sh` | Stop stack; keeps volumes by default (`--volumes` / `--all` wipe data) |
+| `./scripts/clean.sh` | Stop stack; **never** deletes volumes (`--all` also drops rebuildable images/cache) |
 | `bash scripts/agent/docker-cleanup.sh` | Prune stopped containers + dangling/unused feat|wt images + build cache (keeps `imoveis-*` + bases; never volumes) |
 
 Backend-only (no Vite): `./scripts/start.sh --no-frontend`. Stop everything: `./scripts/stop.sh`.
