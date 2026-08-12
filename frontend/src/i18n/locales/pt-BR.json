@@ -2,7 +2,7 @@
   "nav": {
     "label": "Navegação",
     "dashboard": "Painel",
-    "scraper": "Controle de Scrapers",
+    "scraper": "Operações",
     "properties": "Imóveis"
   },
   "chrome": {
@@ -301,7 +301,61 @@
     "toastRerunOk": "{verb} {n} para enriquecimento de IA",
     "toastRerunFailed": "Não foi possível reprocessar o enriquecimento",
     "verbQueued": "Enfileirados",
-    "verbWouldQueue": "Enfileiraria"
+    "verbWouldQueue": "Enfileiraria",
+    "health": {
+      "coverageLabel": "Cobertura de IA",
+      "coverageTitle": "a menor cobertura entre os tipos de sinal: {pct}%",
+      "coverageTitleSignal": "a menor cobertura entre os tipos de sinal é {signal}: {pct}%",
+      "backfillLabel": "Backfill",
+      "backfillRunning": "em execução"
+    }
+  },
+  "operations": {
+    "backfillTitle": "Backfill de enriquecimento",
+    "stateIdle": "inativo",
+    "stateRunning": "em execução",
+    "statePaused": "pausado",
+    "stateBackingOff": "em espera (limite da API)",
+    "stateBlocked": "bloqueado",
+    "budgetLine": "cota de hoje: {pct}% usada",
+    "throughputLine": "ritmo: ~{n} imóveis/dia",
+    "throughputOne": "ritmo: ~1 imóvel/dia",
+    "throughputBelowOne": "ritmo: menos de 1 imóvel/dia",
+    "etaLine": "ETA: ~{n} dias",
+    "etaOneDay": "ETA: ~1 dia",
+    "etaUnderOneDay": "ETA: menos de 1 dia",
+    "pendingPause": "pausa solicitada — aguardando o runner aplicar",
+    "pendingStop": "parada solicitada — aguardando o runner aplicar",
+    "pendingStart": "início solicitado — aguardando o runner assumir",
+    "pendingStartNoRunner": "início solicitado, mas nenhum runner está escutando — o pedido vai expirar sem resposta",
+    "startBlockedMigration": "início indisponível — uma migração do banco primário está com o portão",
+    "startBlockedPlane": "início indisponível — o plano de controle está bloqueado",
+    "start": "Iniciar",
+    "pause": "Pausar",
+    "resume": "Retomar",
+    "runningWarning": "imóveis sendo enriquecidos agora — o migrate-primary.sh vai recusar enquanto o heartbeat estiver ativo",
+    "credentialHint": "cole uma credencial de API para controlar o backfill",
+    "statusUnavailable": "estado do backfill indisponível — não foi possível ler o plano de controle",
+    "statusUnauthorized": "estado do backfill indisponível — a credencial de API armazenada foi recusada",
+    "toastStartRequested": "Execução do backfill solicitada",
+    "toastStartNoRunner": "Início registrado, mas nenhum runner está escutando — rode scripts/dev/backfill_gemma.py --serve no host",
+    "toastStartAlreadyRequested": "Já havia um pedido de início pendente — aguardando o runner",
+    "toastStartConflict": "Já existe um backfill em execução — {detail}",
+    "toastActionFailed": "Ação do backfill falhou: {message}",
+    "toastPaused": "Backfill pausado",
+    "toastResumed": "Backfill retomado",
+    "coverageTitle": "Cobertura de IA por tipo de sinal",
+    "coverageFootnote": "o painel mostra o mínimo entre os sinais: {pct}%",
+    "coverageUnavailable": "cobertura indisponível",
+    "coverageFailed": "cobertura indisponível — não foi possível ler os números",
+    "coverageUnauthorized": "cobertura indisponível — a credencial de API armazenada foi recusada",
+    "signal": {
+      "visual": "visual",
+      "sentiment": "sentimento",
+      "deal_verdict": "veredito do negócio",
+      "valuation": "avaliação estatística",
+      "embedding": "embeddings"
+    }
   },
   "scraper": {
     "title": "Controle de Scrapers",

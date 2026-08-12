@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import UUID
@@ -20,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
+from adapters.db.enrichment_coverage_queries import fetch_coverage_inputs
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_admin_access
@@ -28,6 +29,7 @@ from api.schemas import (
     BackfillControlResponse,
     BackfillStartResponse,
     BackfillStatusResponse,
+    EnrichmentCoverageResponse,
 )
 from core.backfill_runner import (
     BackfillControl,
@@ -41,6 +43,7 @@ from core.backfill_runner import (
     pending_control_requests,
     supervisor_prefix,
 )
+from core.enrichment_coverage import build_coverage_report
 from core.enrichment_rerun import (
     MODE_MISSING,
     MODE_STALE_BEFORE,
@@ -1036,6 +1039,92 @@ def backfill_resume(request: Request):
         cleared_stop=had_stop,
         status=_snapshot_after_mutation(prims, action="resume"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Enrichment coverage (v0.13-s1.6, absorbing story 1.4 — FR-29)
+#
+# The control plane above says what the runner is *doing*; this says what the
+# database actually *has*. The two must never swap roles: coverage, remaining
+# work and throughput are measured by SQL over ``properties`` /
+# ``metrics_scoring`` / ``pipeline_metric_snapshots``, and the only thing Redis
+# contributes is the lease answer to "is a pass live right now" — a checkpoint
+# is a resume marker, not a progress metric, and a run started outside the API
+# (or crashed mid-pass) would make it lie.
+# ---------------------------------------------------------------------------
+
+
+def _lease_acquired_at(holder: Optional[dict]) -> Optional[datetime]:
+    """When the live run took the lease, as an aware UTC datetime.
+
+    ``None`` whenever it cannot be trusted (no run, missing or unparseable
+    stamp): the meta hash behind it is advisory decoration on the lease, so a
+    bad value must degrade to "no clamp" — a plain 24h throughput window — and
+    never propagate into the SQL.
+    """
+    if not holder:
+        return None
+    raw = holder.get("acquired_at")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # The runner writes an aware stamp; a naive one is either hand-written
+        # or from an older build, and UTC is the only defensible reading.
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+@router.get(
+    "/enrichment/coverage",
+    response_model=EnrichmentCoverageResponse,
+    responses=_RESP_500,
+)
+@limiter.limit("30/minute")
+def enrichment_coverage(request: Request):
+    """Per-signal enrichment coverage, outstanding work and a live-run ETA.
+
+    Read-only and DB-derived. ``backfill.active`` is the runner's lease and
+    nothing else; every number comes from the database, so the figures are
+    correct with no runner present and identical across repeated calls over an
+    unchanged corpus.
+
+    Rate-limited like the control routes, generously: the UI polls this about
+    once a minute, while a single call runs four aggregates plus a per-row
+    ``jsonb_array_elements_text`` expansion over ``properties``. The credential
+    gate on the router runs first either way, so the limit is a cap on an
+    authenticated operator's own tab count, not an auth surface.
+    """
+    try:
+        # Read the lease *before* the queries: it decides both ``active`` and
+        # where the throughput window starts, and the window bound has to be
+        # known before the rate is measured. Liveness only — no budget,
+        # checkpoint or state read: none of them may influence a progress
+        # figure (FR-29). The acquisition stamp is a window bound, not a
+        # measurement.
+        holder = _backfill_primitives().lease.holder()
+        with SessionLocal() as session:
+            inputs = fetch_coverage_inputs(
+                session, run_started_at=_lease_acquired_at(holder)
+            )
+        report = build_coverage_report(
+            enriched_by_task_class=inputs.enriched_by_task_class,
+            total_properties=inputs.total_properties,
+            active=holder is not None,
+            remaining=inputs.remaining,
+            throughput_per_day=inputs.throughput_per_day,
+            today=datetime.now(timezone.utc).date(),
+        )
+        # Inside the guard on purpose: a response-model mismatch raises here
+        # (the BIN-56 ``ResponseValidationError`` class), and outside it that
+        # escapes as an unlogged 500 with a leaky body instead of the generic,
+        # server-logged one every other failure on this route produces.
+        return EnrichmentCoverageResponse.model_validate(asdict(report))
+    except Exception as exc:
+        raise_api_error(logger, "enrichment_coverage_failed", exc)
 
 
 @router.get("/audit")

@@ -19,13 +19,13 @@ test.describe("Frontend credential gate", () => {
 
     await page.goto("/");
     await expect(page.getByTestId("credential-gate")).toBeVisible();
-    await expect(page.getByTestId("credential-status")).toHaveText("missing");
+    await expect(page.getByTestId("credential-status")).toHaveText("ausente");
 
     await page.getByTestId("credential-input").fill(VALID_KEY);
     await page.getByTestId("credential-save").click();
 
-    await expect(page.getByTestId("credential-status")).toHaveText("set");
-    await expect(page.getByText("API credential saved for this session")).toBeVisible();
+    await expect(page.getByTestId("credential-status")).toHaveText("definida");
+    await expect(page.getByText("Credencial de API salva nesta sessão")).toBeVisible();
     await expect
       .poll(() => capturedKeys.some((k) => k === VALID_KEY))
       .toBeTruthy();
@@ -41,10 +41,10 @@ test.describe("Frontend credential gate", () => {
     await page.getByTestId("credential-input").fill("wrong-key");
     await page.getByTestId("credential-save").click();
 
-    await expect(page.getByText("Invalid or missing API credential")).toBeVisible();
-    await expect(page.getByTestId("credential-status")).toHaveText("missing");
+    await expect(page.getByText("Credencial de API inválida ou ausente")).toBeVisible();
+    await expect(page.getByTestId("credential-status")).toHaveText("ausente");
     // Page remains usable (dashboard still rendered)
-    await expect(page.locator("text=Service Status")).toBeVisible();
+    await expect(page.locator("text=Status dos serviços")).toBeVisible();
   });
 
   test("error toast is announced and keyboard-dismissible (BIN-157)", async ({ page }) => {
@@ -55,10 +55,10 @@ test.describe("Frontend credential gate", () => {
     await page.getByTestId("credential-input").fill("wrong-key");
     await page.getByTestId("credential-save").click();
 
-    const toast = page.getByText("Invalid or missing API credential");
+    const toast = page.getByText("Credencial de API inválida ou ausente");
     await expect(toast).toBeVisible();
 
-    const toastContainer = page.locator('[role="status"]', { hasText: "Invalid or missing API credential" });
+    const toastContainer = page.locator('[role="status"]', { hasText: "Credencial de API inválida ou ausente" });
     await expect(toastContainer).toHaveAttribute("aria-live", "polite");
 
     await toastContainer.focus();
@@ -73,10 +73,10 @@ test.describe("Frontend credential gate", () => {
     await page.goto("/");
     await page.getByTestId("credential-input").fill(VALID_KEY);
     await page.getByTestId("credential-save").click();
-    await expect(page.getByTestId("credential-status")).toHaveText("set");
+    await expect(page.getByTestId("credential-status")).toHaveText("definida");
 
     await page.getByTestId("credential-clear").click();
-    await expect(page.getByTestId("credential-status")).toHaveText("missing");
-    await expect(page.getByText("API credential cleared")).toBeVisible();
+    await expect(page.getByTestId("credential-status")).toHaveText("ausente");
+    await expect(page.getByText("Credencial de API removida")).toBeVisible();
   });
 });

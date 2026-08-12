@@ -168,6 +168,49 @@ line, so `--serve` refuses `--daily-budget`, `--concurrency`, `--tpm-limit` and
 `--min-interval` — the supervisor cannot report an override, so a run the API
 asked for always paces to the figures shown here.
 
+### Enrichment Coverage
+
+```
+GET /admin/enrichment/coverage   # per-signal AI coverage + the live run's ETA
+```
+
+Admin `X-API-Key` (same router gate), rate-limited to `30/minute`. How much of
+the corpus carries each AI signal, measured **from the database** — never from
+the backfill runner's Redis checkpoints (FR-29), so the figures are correct with
+no runner present and identical across repeated calls over an unchanged corpus.
+The lease contributes exactly two things: `backfill.active`, and the window bound
+the throughput is measured over.
+
+```json
+{
+  "signals": [{"task_class": "visual", "enriched": 1234, "total": 2000, "fraction": 0.617}],
+  "minimum_fraction": 0.6,
+  "total_properties": 2000,
+  "backfill": {"active": true, "remaining": 640, "throughput_per_day": 4600.0,
+               "eta_days": 3.2, "projected_completion_date": "2026-08-14"}
+}
+```
+
+- **`null` means "not measurable", never "zero".** `fraction` is null when the
+  denominator is zero (an empty or fully delisted corpus has *undefined*
+  coverage), and `throughput_per_day` / `eta_days` /
+  `projected_completion_date` are all null unless a run holds the lease **and**
+  the snapshot history supports a rate: at least two `pipeline_metric_snapshots`
+  points spanning ≥15 minutes inside the window, with a positive delta. Render
+  absence, not `0%` — a client that substitutes zero reports a failed enrichment
+  on a healthy database.
+- **One entry per `EnrichmentTaskClass`**, always, in declaration order, English
+  on the wire (`visual`, `sentiment`, `deal_verdict`, `valuation`, `embedding`).
+  The list grows when the enum does; it is deliberately not fixed-length.
+- **The denominator is `active` properties.** Delisted rows are never enriched,
+  so counting them would depress coverage permanently.
+- **`eta_days` is an order-of-magnitude figure, not a delivery date.** Its
+  numerator (active, photo-gated rows with no `ai_score`) and its denominator
+  (the corpus-wide enrichment rate, which also moves for live-pipeline work) are
+  measured over different populations, and `remaining` does not subtract
+  quarantined rows. `src/adapters/db/enrichment_coverage_queries.py` states both
+  limits in full.
+
 ### Schedule Management
 
 ```

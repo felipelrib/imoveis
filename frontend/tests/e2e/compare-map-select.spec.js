@@ -64,12 +64,12 @@ test.describe("Map-view multi-select for comparison", () => {
 
     await page.getByTestId("map-compare-select-1").click();
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("1 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionados");
     await expect(page.getByTestId("compare-open")).toBeDisabled();
     await expect(page.getByTestId("map-compare-select-1")).toHaveAttribute("aria-pressed", "true");
 
     await page.getByTestId("map-compare-select-2").click();
-    await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("2 selecionados");
     await expect(page.getByTestId("compare-open")).toBeEnabled();
   });
 
@@ -81,12 +81,12 @@ test.describe("Map-view multi-select for comparison", () => {
     for (const id of ["1", "2", "3", "4"]) {
       await page.getByTestId(`map-compare-select-${id}`).click();
     }
-    await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("4 selecionados");
     await expect(page.getByTestId("compare-open")).toBeEnabled();
 
     await page.getByTestId("map-compare-select-5").click();
-    await expect(page.getByText("You can compare up to 4 properties")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
+    await expect(page.getByText("Você pode comparar até 4 imóveis")).toBeVisible();
+    await expect(page.getByTestId("compare-count")).toHaveText("4 selecionados");
     await expect(page.getByTestId("map-compare-select-5")).toHaveAttribute("aria-pressed", "false");
   });
 

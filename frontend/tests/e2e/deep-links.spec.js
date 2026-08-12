@@ -22,7 +22,7 @@ test.describe("Shareable deep links (BIN-82)", () => {
 
     await page.locator("text=2BR Apartment Savassi").click();
     await expect(page).toHaveURL(/\/properties\/1$/);
-    await expect(page.getByRole("button", { name: "Close modal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
   });
 
   test("loading /properties/:id opens the property modal", async ({ page }) => {
@@ -31,12 +31,12 @@ test.describe("Shareable deep links (BIN-82)", () => {
     await mockPropertyDetail(page, SAMPLE_PROPERTY);
     await page.goto("/properties/1");
 
-    await expect(page.getByRole("button", { name: "Close modal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
     await expect(page).toHaveURL(/\/properties\/1$/);
 
-    await page.getByRole("button", { name: "Close modal" }).click();
+    await page.getByRole("button", { name: "Fechar modal" }).click();
     await expect(page).toHaveURL(/\/properties$/);
-    await expect(page.getByRole("button", { name: "Close modal" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Fechar modal" })).toHaveCount(0);
   });
 
   test("favourites has its own URL and restores the favourites view", async ({ page }) => {
@@ -64,11 +64,11 @@ test.describe("Shareable deep links (BIN-82)", () => {
     await page.goto("/properties");
     await page.getByTestId("favourites-nav").click();
     await expect(page).toHaveURL(/\/favourites$/);
-    await expect(page.getByRole("heading", { name: /Favourites/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Favoritos/ })).toBeVisible();
     await expect(page.locator("text=2BR Apartment Savassi")).toBeVisible();
 
     await page.goto("/favourites");
-    await expect(page.getByRole("heading", { name: /Favourites/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Favoritos/ })).toBeVisible();
     await expect(page.locator("text=2BR Apartment Savassi")).toBeVisible();
 
     await page.getByTestId("favourites-back").click();

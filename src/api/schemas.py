@@ -369,3 +369,97 @@ class BackfillStartResponse(BaseModel):
     requested_at: Optional[str] = None
     runner_present: bool
     discarded_requests: List[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Enrichment coverage (v0.13-s1.6, absorbing story 1.4 — FR-29)
+#
+# The counterpart to the control plane above: how much of the corpus actually
+# carries each enrichment signal, measured from ``properties`` /
+# ``metrics_scoring`` and never from the runner's Redis checkpoints. The only
+# thing Redis contributes here is ``backfill.active`` (does anyone hold the
+# lease). Signal identity is the ``EnrichmentTaskClass`` vocabulary, English on
+# the wire; pt-BR exists only as a rendered label.
+#
+# Every optional field means "not measurable", never "zero" — the UI omits the
+# line rather than printing 0% or an invented ETA (UX-DR3/DR5/DR6).
+# ---------------------------------------------------------------------------
+
+
+class SignalCoverageModel(BaseModel):
+    """Coverage of one ``EnrichmentTaskClass`` over the active corpus.
+
+    ``fraction`` is ``null`` — not ``0.0`` — when ``total`` is 0: an empty
+    denominator makes coverage undefined, and 0% would read as a total
+    enrichment failure on a database that simply has no active properties.
+    """
+
+    task_class: str
+    enriched: int
+    total: int
+    fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
+class BackfillProgressModel(BaseModel):
+    """Live-run progress: one Redis-sourced flag, everything else from the DB.
+
+    ``active`` is the runner's single-instance lease (the same liveness signal
+    ``GET /admin/backfill/status`` exposes) and is the *only* field Redis feeds.
+    ``remaining`` counts the runner's own queue — active rows with no AI score,
+    minus the rows its photo gate would refuse — so it stays reachable.
+
+    The three projection fields are ``null`` together whenever they cannot be
+    stated honestly: no run holds the lease, fewer than two usable snapshots sit
+    in the throughput window (which starts at the current run's lease
+    acquisition when that is inside the trailing 24h, so a young run is not
+    averaged across idle hours), or the delta is non-positive. ``eta_days`` is
+    never ``inf``/NaN on the wire (JSON cannot carry either); an unreachable
+    completion is ``null``, and ``remaining == 0`` under a live run is ``0.0``
+    with today's date.
+
+    ``throughput_per_day``, ``eta_days`` and ``projected_completion_date`` are
+    **approximations, not schedule commitments**, for two reasons a consumer of
+    this schema has to know (both are argued at length in
+    ``adapters.db.enrichment_coverage_queries``):
+
+    * *The numerator and the denominator measure different populations.* The
+      rate comes from ``pipeline_metric_snapshots.enriched_properties``, which
+      is ``COUNT(*) FROM metrics_scoring WHERE ai_score > 0`` over the whole
+      corpus — no ``active`` filter, no photo gate, and it also moves when the
+      live pipeline enriches a row that the backfill never touched. Dividing
+      the backfill's ``remaining`` by total enrichment velocity runs optimistic
+      whenever the live pipeline is busy.
+    * *``remaining`` does not subtract quarantined candidates.* Rows that have
+      exhausted their retry budget stop being work for the runner but keep
+      counting here, because excluding them means an O(rows-ever-attempted)
+      Redis scan on a polled route (the same cost that keeps ``quarantined``
+      null on ``GET /admin/backfill/status``). A pass whose tail is permanently
+      failing rows therefore shows an ETA that does not converge to zero.
+
+    Render them as an order of magnitude for an operator watching a multi-day
+    pass — never as a delivery date.
+    """
+
+    active: bool
+    remaining: int
+    throughput_per_day: Optional[float] = Field(None, ge=0.0)
+    eta_days: Optional[float] = Field(None, ge=0.0)
+    # ISO ``YYYY-MM-DD``; a string, so a client renders it without re-deriving a
+    # timezone the server never meant.
+    projected_completion_date: Optional[str] = None
+
+
+class EnrichmentCoverageResponse(BaseModel):
+    """``GET /admin/enrichment/coverage``.
+
+    ``signals`` always carries one entry per ``EnrichmentTaskClass``, in enum
+    declaration order — an omitted signal would read as "not applicable" rather
+    than "not enriched". ``minimum_fraction`` is the smallest measurable
+    fraction (the figure the Painel health strip renders as ``Cobertura de IA
+    N%``) and is ``null`` when nothing is measurable.
+    """
+
+    signals: List[SignalCoverageModel]
+    minimum_fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
+    total_properties: int
+    backfill: BackfillProgressModel

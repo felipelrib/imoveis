@@ -73,12 +73,12 @@ test.describe("Property modal listings (BIN-65/66/67)", () => {
     await page.locator("text=Furnished Savassi Flat").click();
     await expect(page.getByTestId("listings-by-platform")).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Base" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Condo" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Furnished" })).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Condomínio" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Mobiliado" })).toHaveCount(0);
     await expect(page.getByTestId("attr-chip-furnished")).toBeVisible();
     await expect(page.getByTestId("attr-chip-pets-ok")).toBeVisible();
-    await expect(page.getByText("R$ 3,000")).toBeVisible();
-    await expect(page.getByText("Deal verdict")).toBeVisible();
+    await expect(page.getByText("R$ 3.000")).toBeVisible();
+    await expect(page.getByText("Veredito do negócio")).toBeVisible();
   });
 });
 
@@ -99,17 +99,17 @@ test.describe("Property modal bundled fees (BIN-114)", () => {
     await page.locator("text=Bundled Fees Alvorada Flat").click();
     const listings = page.getByTestId("listings-by-platform");
     await expect(listings).toBeVisible();
-    await expect(listings.getByText("Bundled fees")).toBeVisible();
+    await expect(listings.getByText("Taxas inclusas")).toBeVisible();
     const condoCell = page.getByTestId("fee-condo-bundled");
     await expect(condoCell).toBeVisible();
     await expect(condoCell).toContainText("R$ 179");
-    await expect(condoCell).toContainText("Condo+IPTU");
+    await expect(condoCell).toContainText("Cond.+IPTU");
     const iptuCell = page.getByTestId("fee-iptu-bundled");
     await expect(iptuCell).toBeVisible();
     await expect(iptuCell).toHaveText("—");
     await expect(iptuCell).toHaveAttribute(
       "title",
-      "IPTU included in the Condo+IPTU amount — platform did not publish a separate value",
+      "IPTU incluído no valor Cond.+IPTU — a plataforma não publicou valores separados",
     );
   });
 });

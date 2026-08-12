@@ -739,3 +739,70 @@ class TestAdminBackfillControlContract:
         assert body.cleared_start is True
         prefix = get_config().backfill.redis_prefix
         assert f"{prefix}:control:start" not in backfill_redis.kv
+
+
+class TestAdminEnrichmentCoverageContract:
+    """``/admin/enrichment/coverage``: auth gate first, then the DB-derived wire
+    shape the Operações coverage card and the Painel health chip read.
+
+    The runner's Redis is faked (no lease held), so this locks the contract for
+    the "no run in progress" case — which is also the case where every
+    projection field must be absent rather than zero."""
+
+    _PATH = "/admin/enrichment/coverage"
+
+    @pytest.fixture
+    def backfill_redis(self, monkeypatch):
+        fake = _FakeBackfillRedis()
+        monkeypatch.setattr("api.admin.get_redis", lambda: fake)
+        return fake
+
+    def test_requires_admin_credentials(self, client):
+        response = client.get(self._PATH)
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+    def test_rejects_an_invalid_credential(self, client):
+        response = client.get(self._PATH, headers={"X-API-Key": "wrong-key"})
+        assert response.status_code == 403
+
+    def test_matches_the_response_model(self, client, admin_headers, backfill_redis):
+        from api.schemas import EnrichmentCoverageResponse
+        from core.enrichment import EnrichmentTaskClass
+
+        response = client.get(self._PATH, headers=admin_headers)
+        _assert_ok_or_skip_infra(response, endpoint=f"GET {self._PATH}")
+        body = EnrichmentCoverageResponse.model_validate(response.json())
+
+        # One entry per task class, in enum order: a missing signal would read
+        # as "not applicable" instead of "not enriched".
+        assert [s.task_class for s in body.signals] == [
+            tc.value for tc in EnrichmentTaskClass
+        ]
+        measured = []
+        for signal in body.signals:
+            assert signal.enriched >= 0
+            assert signal.total == body.total_properties
+            if signal.total == 0:
+                # Absence over zero — undefined coverage is null on the wire.
+                assert signal.fraction is None
+            else:
+                assert signal.fraction is not None
+                assert 0.0 <= signal.fraction <= 1.0
+                measured.append(signal.fraction)
+        assert body.minimum_fraction == (min(measured) if measured else None)
+
+        # No lease is held in the fake, so no projection may be stated.
+        assert body.backfill.active is False
+        assert body.backfill.remaining >= 0
+        assert body.backfill.throughput_per_day is None
+        assert body.backfill.eta_days is None
+        assert body.backfill.projected_completion_date is None
+
+    def test_repeated_calls_agree(self, client, admin_headers, backfill_redis):
+        """AC: the figures are DB-derived, so an unchanged corpus reads the same."""
+        first = client.get(self._PATH, headers=admin_headers)
+        _assert_ok_or_skip_infra(first, endpoint=f"GET {self._PATH}")
+        second = client.get(self._PATH, headers=admin_headers)
+        assert second.status_code == 200
+        assert first.json()["signals"] == second.json()["signals"]

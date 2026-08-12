@@ -57,8 +57,8 @@ test.describe("Dual listing-type scores (BIN-83)", () => {
     await page.goto("/properties");
     const card = page.locator(".property-card").filter({ hasText: "Dual-listed Loft Centro" });
     await expect(card).toBeVisible();
-    await expect(card.getByText("Score Rent")).toBeVisible();
-    await expect(card.getByText("Score Sale")).toBeVisible();
+    await expect(card.getByText("Score Aluguel")).toBeVisible();
+    await expect(card.getByText("Score Venda")).toBeVisible();
     await expect(card.getByText("82")).toBeVisible();
     await expect(card.getByText("48")).toBeVisible();
   });
@@ -78,13 +78,13 @@ test.describe("Dual listing-type scores (BIN-83)", () => {
     await expect(card).toBeVisible();
 
     await page
-      .locator("label", { hasText: "Transaction" })
+      .locator("label", { hasText: "Transação" })
       .locator("..")
       .locator("select")
       .selectOption("sale");
 
-    await expect(card.getByText("Score Rent")).not.toBeVisible();
-    await expect(card.getByText("Score Sale")).not.toBeVisible();
+    await expect(card.getByText("Score Aluguel")).not.toBeVisible();
+    await expect(card.getByText("Score Venda")).not.toBeVisible();
     await expect(card.getByText("Score", { exact: true })).toBeVisible();
     await expect(card.getByText("48")).toBeVisible();
   });

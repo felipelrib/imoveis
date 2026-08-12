@@ -897,9 +897,9 @@ def test_proxy_imoveis_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.unit
 def test_ui_locale_defaults(tmp_path: Path):
-    """Absent ui: section yields en default and supported list."""
+    """Absent ui: section yields the pt-BR default and supported list."""
     cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
-    assert cfg.ui.locale == "en"
+    assert cfg.ui.locale == "pt-BR"
     assert list(cfg.ui.supported_locales) == ["en", "pt-BR"]
 
 

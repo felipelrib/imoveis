@@ -34,11 +34,21 @@ api:
     - http://127.0.0.1:5173
 
 # ---------------------------------------------------------------------------
-# UI locale (BIN-98) — chrome default; independent of ai.output_language
+# UI locale (BIN-98) — chrome default AND the language new AI free text is
+# written in. Not independent of ai.output_language: BIN-101 made
+# resolve_ai_output_language() prefer the active UI locale (Redis ui:locale →
+# this key) so chrome and new enrichments never disagree. Flipping this to pt-BR
+# (v0.13-s1.6) therefore also flips new verdicts/reasonings to Portuguese on any
+# deployment with no ui:locale override — already-enriched rows keep the language
+# they were written in until re-enriched.
+# This key is the whole chain: with Redis unreachable the resolver still falls
+# back to *this* value, and only reaches ai.output_language when it is empty —
+# which a Literal["en", "pt-BR"] field never is. Editing ai.output_language alone
+# therefore changes nothing; change this key, or set the Redis override.
 # Runtime override: Redis key ui:locale via GET/POST /admin/locale
 # ---------------------------------------------------------------------------
 ui:
-  locale: en
+  locale: pt-BR
   supported_locales:
     - en
     - pt-BR

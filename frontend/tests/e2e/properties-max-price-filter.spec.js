@@ -23,7 +23,7 @@ test.describe("Max price rent/sale filter (BIN-77/BIN-79)", () => {
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
 
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
 
     const maxPrice = page.getByTestId("max-price-input");
     await expect(maxPrice).toBeVisible();
@@ -64,8 +64,8 @@ test.describe("Max price rent/sale filter (BIN-77/BIN-79)", () => {
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
 
-    await page.locator("label", { hasText: "Transaction" }).locator("..").locator("select").selectOption("sale");
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.locator("label", { hasText: "Transação" }).locator("..").locator("select").selectOption("sale");
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
     await expect(page.getByTestId("price-type-filter")).toHaveValue("sale");
 
     await page.getByTestId("max-price-input").fill("900000");

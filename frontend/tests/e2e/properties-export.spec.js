@@ -19,7 +19,7 @@ test.describe("Properties export (BIN-51)", () => {
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
 
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
     await page.getByTestId("max-price-input").fill("5000");
     await expect(page.getByTestId("max-price-input")).toHaveValue("5000");
 
@@ -63,7 +63,7 @@ test.describe("Properties export (BIN-51)", () => {
 
     await page.getByTestId("export-csv").click();
 
-    await expect(page.getByText(/Export failed: Export backend error/i)).toBeVisible();
+    await expect(page.getByText(/Falha na exportação: Export backend error/i)).toBeVisible();
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
     await expect(page.getByTestId("export-csv")).toBeEnabled();
   });

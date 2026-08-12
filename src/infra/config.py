@@ -531,7 +531,7 @@ class UiConfig(BaseModel, frozen=True):
     the install default.
     """
 
-    locale: Literal["en", "pt-BR"] = "en"
+    locale: Literal["en", "pt-BR"] = "pt-BR"
     supported_locales: list[str] = Field(default_factory=lambda: ["en", "pt-BR"])
 
 

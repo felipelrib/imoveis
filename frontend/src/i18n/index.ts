@@ -4,8 +4,9 @@
  */
 import en from './locales/en.json'
 import ptBR from './locales/pt-BR.json'
+import { DEFAULT_LOCALE } from './defaultLocale.js'
 
-export const DEFAULT_LOCALE = 'en'
+export { DEFAULT_LOCALE }
 
 /** A catalog node: either a leaf string or a nested subtree of more nodes. */
 export type MessageNode = string | { [key: string]: MessageNode }
@@ -59,12 +60,18 @@ function interpolate(template: string, params?: TranslateParams): string {
 /**
  * Translate a catalog key for the given locale.
  * Falls back to English, then to the key itself.
+ *
+ * The fallback catalog is pinned to `en` rather than to `DEFAULT_LOCALE`: the
+ * product default is now pt-BR (v0.13-s1.6), and following it here would render
+ * Portuguese inside an English session for any key added to one catalog only —
+ * a missing translation that reads as a translation. English in a pt-BR session
+ * is the visible failure the "both catalogs, always" rule wants.
  */
 export function t(locale: string, key: string, params?: TranslateParams): string {
   const primary = CATALOGS[locale] || CATALOGS[DEFAULT_LOCALE]
   const raw =
     lookup(primary, key) ??
-    lookup(CATALOGS[DEFAULT_LOCALE], key) ??
+    lookup(CATALOGS.en, key) ??
     key
   return interpolate(raw, params)
 }

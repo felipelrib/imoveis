@@ -238,6 +238,175 @@ export const PLATFORMS = [
   { name: "quintoandar", enabled: true },
 ];
 
+/** `GET /admin/backfill/status` with no run in flight (v0.13-s1.5 wire shape). */
+export const BACKFILL_STATUS_IDLE = {
+  state: "idle",
+  active: false,
+  runner_present: false,
+  heartbeat_active: false,
+  migration_active: false,
+  pending_requests: [],
+  start_requested_at: null,
+  lease: null,
+  budget: {
+    limit: 14400,
+    consumed: 0,
+    remaining: 14400,
+    seconds_until_reset: 86400,
+  },
+  checkpoint: {
+    last_property_id: null,
+    last_run_date: null,
+    processed_total: 0,
+  },
+  quarantined: null,
+  pacing: {
+    requests_per_property: 3,
+    rpm_limit: 60,
+    concurrency: 4,
+    tpm_limit: 100000,
+  },
+};
+
+/** A live run: the lease is held (`active`), the runner is beating, 61% of today's quota spent. */
+export const BACKFILL_STATUS_RUNNING = {
+  ...BACKFILL_STATUS_IDLE,
+  state: "running",
+  active: true,
+  runner_present: true,
+  heartbeat_active: true,
+  lease: {
+    owner: "gemma-runner@wsl-felipe",
+    acquired_at: "2026-08-09T12:00:00Z",
+    last_seen: "2026-08-11T09:00:00Z",
+    seconds_since_last_seen: 4.2,
+  },
+  budget: {
+    limit: 14400,
+    consumed: 8784,
+    remaining: 5616,
+    seconds_until_reset: 43200,
+  },
+};
+
+/** `GET /admin/enrichment/coverage` with no live run — throughput/ETA honestly null. */
+export const ENRICHMENT_COVERAGE = {
+  signals: [
+    { task_class: "visual", enriched: 1234, total: 2000, fraction: 0.617 },
+    { task_class: "sentiment", enriched: 1800, total: 2000, fraction: 0.9 },
+    { task_class: "deal_verdict", enriched: 1200, total: 2000, fraction: 0.6 },
+    { task_class: "valuation", enriched: 1900, total: 2000, fraction: 0.95 },
+    { task_class: "embedding", enriched: 1950, total: 2000, fraction: 0.975 },
+  ],
+  minimum_fraction: 0.6,
+  total_properties: 2000,
+  backfill: {
+    active: false,
+    remaining: 766,
+    throughput_per_day: null,
+    eta_days: null,
+    projected_completion_date: null,
+  },
+};
+
+/** Same coverage under a live run: throughput/ETA/date are available. */
+export const ENRICHMENT_COVERAGE_RUNNING = {
+  ...ENRICHMENT_COVERAGE,
+  backfill: {
+    active: true,
+    remaining: 766,
+    throughput_per_day: 4600.0,
+    eta_days: 3.2,
+    projected_completion_date: "2026-08-14",
+  },
+};
+
+/**
+ * Mock the backfill control plane (`/admin/backfill/{status,start,pause,resume}`).
+ * @param {Page} page
+ * @param {object} [opts]
+ * @param {object} [opts.status] — body for GET /status
+ * @param {number} [opts.statusCode] — HTTP status for GET /status (500 to simulate a Redis-side failure)
+ * @param {object} [opts.statusAfterStart] — body GET /status returns once a start has been attempted
+ *   (the server-real sequence behind a 409: the lease was taken while the card held a stale idle read)
+ * @param {number} [opts.startStatus] — HTTP status for POST /start (409 to simulate a held lease)
+ * @param {string} [opts.startDetail] — `detail` returned with a non-2xx start
+ * @param {object} [opts.startBody] — body merged into a 2xx POST /start response
+ *   (`runner_present: false` / `already_requested: true` are honest 202 outcomes)
+ * @param {{method: string, url: string}[]} [opts.calls] — every intercepted request
+ */
+export async function mockAdminBackfill(page, opts = {}) {
+  let status = opts.status ?? BACKFILL_STATUS_IDLE;
+  const statusCode = opts.statusCode ?? 200;
+  const startStatus = opts.startStatus ?? 202;
+  const startDetail =
+    opts.startDetail ??
+    "A backfill run already holds the lease (gemma-runner@wsl-felipe, held for 2 days).";
+  const calls = opts.calls;
+
+  await page.route("**/api/admin/backfill/**", (route) => {
+    const request = route.request();
+    const url = request.url();
+    if (calls) calls.push({ method: request.method(), url });
+
+    const json = (code, body) =>
+      route.fulfill({
+        status: code,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+
+    if (url.includes("/backfill/status")) {
+      if (statusCode >= 400) return json(statusCode, { detail: "Internal server error" });
+      return json(200, status);
+    }
+    if (url.includes("/backfill/start")) {
+      if (opts.statusAfterStart) status = opts.statusAfterStart;
+      if (startStatus >= 400) return json(startStatus, { detail: startDetail });
+      return json(startStatus, {
+        requested: true,
+        already_requested: false,
+        requested_at: "2026-08-11T09:00:00Z",
+        runner_present: status.runner_present,
+        discarded_requests: [],
+        ...(opts.startBody ?? {}),
+      });
+    }
+    if (url.includes("/backfill/pause")) {
+      return json(200, { action: "pause", cleared_stop: false, cleared_start: false, status: null });
+    }
+    if (url.includes("/backfill/resume")) {
+      return json(200, { action: "resume", cleared_stop: true, cleared_start: false, status: null });
+    }
+    return json(404, { detail: "not mocked" });
+  });
+}
+
+/**
+ * Mock `GET /admin/enrichment/coverage` (must not swallow /enrichment/missing|rerun).
+ * @param {Page} page
+ * @param {object} [body]
+ * @param {object} [opts]
+ * @param {number} [opts.statusCode] — HTTP status to answer with (500 to simulate a DB failure)
+ * @param {{method: string, url: string}[]} [opts.calls] — every intercepted request
+ */
+export async function mockAdminCoverage(page, body = ENRICHMENT_COVERAGE, opts = {}) {
+  const statusCode = opts.statusCode ?? 200;
+  const calls = opts.calls;
+
+  await page.route("**/api/admin/enrichment/coverage**", (route) => {
+    const request = route.request();
+    if (calls) calls.push({ method: request.method(), url: request.url() });
+    return route.fulfill({
+      status: statusCode,
+      contentType: "application/json",
+      body: JSON.stringify(
+        statusCode >= 400 ? { detail: "Internal server error" } : body
+      ),
+    });
+  });
+}
+
 /**
  * Install baseline routes used by most pages (status + empty secondary APIs).
  * @param {Page} page
@@ -357,6 +526,17 @@ export async function installCommonMocks(page, opts = {}) {
       ]),
     })
   );
+
+  // Backfill control plane + coverage default to "nothing running" so suites that
+  // seed an API key do not 404-spam the Operações card / Painel health strip.
+  // The whole `backfill` bag is forwarded — picking out `status` silently dropped
+  // a caller's request recorder and its 409/500 simulation.
+  if (opts.backfill !== false) {
+    await mockAdminBackfill(page, opts.backfill ?? {});
+  }
+  if (opts.coverage !== false) {
+    await mockAdminCoverage(page, opts.coverage ?? ENRICHMENT_COVERAGE);
+  }
 
   // Default locale mock so suites that seed API keys do not hit the real admin API.
   if (opts.locale !== false) {

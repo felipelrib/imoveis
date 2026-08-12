@@ -219,3 +219,47 @@ location: src/api/admin.py (`log_audit_action`), adapters/db/models.py (`AdminAu
 source_spec: `_bmad-output/implementation-artifacts/spec-1-5-admin-backfill-control-api.md`
 reason: `log_audit_action(action, payload)` takes no actor: no API-key identity, no source IP, no principal of any kind, and `AdminAudit` has no column for one. Story 1.5's payloads (`backfill_start`, `backfill_start_refused`, `backfill_pause`, `backfill_resume`) inherit that gap and hardcode `source="admin-api"`, so for a surface whose stated justification is AD-6 auditing of a multi-day cloud spend, the trail cannot answer "who started this run" — it answers only "something behind the admin key did". Pre-existing and shared by every admin mutation in the file (GPU scaling, scoring weights, worker pause), so fixing it is a change to the audit helper, its schema (a migration, nullable `actor` per the single-user convention) and every call site — not a story-1.5 patch. Related: the existing `BUG (Low)` note that the helper swallows its own failure, so a mutation can be applied with no audit row at all.
 status: open
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The backfill candidate count double-counts a property that carries several unscored `metrics_scoring` rows, in the coverage endpoint AND in the runner's own census.
+  evidence: `_CANDIDATES_SUBQUERY` LEFT JOINs `metrics_scoring` without DISTINCT, so a property with two unscored metrics rows contributes twice to `remaining` (and to the runner's queue view). The expression is identical in `src/adapters/db/enrichment_coverage_queries.py` and `scripts/dev/backfill_gemma.py::_census`, and story 1.6 added a drift-lock test pinning them together — so the fix must change both at once, which is outside a review patch.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The coverage endpoint's `remaining` never subtracts quarantined candidates, so a run whose tail is permanently failing shows an ETA that cannot converge.
+  evidence: `scripts/dev/backfill_gemma.py::_census` subtracts `_count_quarantined_candidates`, and `BackfillStatusResponse` already carries a `quarantined` field the new endpoint leaves null. The count comes from the Redis attempt ledger, whose scan is O(rows ever attempted) — story 1.5 deliberately kept it off polled routes — so honouring it needs a cheap published counter, not a per-request scan. Same shape as the v0.13-fu3 dead-completion-branch bug, one layer up.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: A Redis outage 500s `GET /admin/enrichment/coverage` even though every figure it serves is DB-derived.
+  evidence: The route reads the backfill lease for the `active` bit and for the throughput-window clamp inside the same guarded block as the queries, so an unrelated Redis blip blanks the whole coverage card and both Painel chips. Degrading to "liveness unknown" (null `active`, unclamped window) instead of failing is a deliberate wire-contract choice — `active` would need to become nullable — rather than a patch.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The shared ToastProvider is anchored top-right while DESIGN.md's toast spec is bottom-anchored, max two stacked.
+  evidence: Story 1.6's lease-conflict toast is specified by UX-DR5 to use that spec, but `frontend/src/components/ToastProvider.tsx` is a surface every page inherits; re-anchoring it restyles unrelated flows and needs its own e2e sweep.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The Operações nav label and the page heading disagree — nav reads "Operações", the `<h1>` still reads "Controle de Scrapers".
+  evidence: UX-DR2 renames the admin surface to Operações; story 1.6 changed `nav.scraper` only, leaving the `scraper.*` catalog namespace, the `/scraper` route and the page title as they were. Aligning them touches copy, route and the specs asserting the old heading.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The lease-conflict toast splices English server prose into the pt-BR card, and the remedy that prose recommends is CLI-only advice the card itself contradicts.
+  evidence: `_start_refusal_detail` in `src/api/admin.py` returns full English sentences ("A backfill run already holds the lease (…). Pause it, or stop it from the host CLI (scripts/dev/backfill_gemma.py --stop), before starting another."), and `BackfillCard` interpolates that `detail` verbatim into `operations.toastStartConflict`. Fixing it properly means adding a machine-readable `owner` to story 1.5's 409 body so the UI can build the sentence from its own catalogs — a wire-contract change to a route this story's intent contract puts out of scope, not a copy edit.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: `projected_completion_date` is computed from the UTC date, so between 21:00 and 24:00 America/Sao_Paulo it names a day later than the operator's own.
+  evidence: The route passes `today=datetime.now(timezone.utc).date()` into `build_coverage_report`, and `_projected_completion` adds whole days to it; for the last three hours of every local day the UTC date has already rolled over. No consumer renders the field yet (the card shows `eta_days` only), so nothing is visibly wrong today. The honest fix is a first-class operator timezone in `AppConfig` — the only `timezone` key in the config belongs to `CeleryConfig`, and borrowing the beat scheduler's setting for an operator-facing projection is the kind of coupling that outlives the reason for it.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: The remaining-candidate query casts `image_urls` to `jsonb`, which raises on a NUL unicode escape and would 500 the whole coverage route -- the exact hazard the same module's signal predicates deliberately avoid a cast to dodge.
+  evidence: `_CANDIDATES_SUBQUERY` in `src/adapters/db/enrichment_coverage_queries.py` runs `p.image_urls::jsonb` (the column is SQLAlchemy `JSON`, i.e. Postgres `json`), and Postgres rejects a `\u0000` escape on conversion to `jsonb`. Two comment blocks above, the `meta` predicates document that exact reasoning as the reason they stay on `json`. The cast is deliberate mirroring of the runner's own predicate and is drift-locked to it by `test_coverage_sql_drift.py`, so diverging here alone would break the lock and stop the count matching the runner's queue -- the fix has to change both and re-derive the lock.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+  summary: Pre-existing pt-BR plural-agreement defects became every user's default when this story flipped the locale, and its e2e repairs pinned them as expected strings.
+  evidence: `pt-BR.json` carries single-form keys where the catalog elsewhere models the split (`modal.listingCountOne`/`listingCountMany`): `compareSelected` renders "1 selecionados", and `properties.countProperties` / `properties.countFavourited` / `common.bedsShort` render "1 imóveis" / "1 favoritos" / "1 quartos". Review pass 1 fixed exactly this class for the story's own new keys (`etaOneDay`, `throughputOne`). The strings pre-date this story, but the locale flip promoted them from an opt-in preference to the default, and `compare-select.spec.js`, `compare-map-select.spec.js` and `compare-view.spec.js` now assert "1 selecionados" verbatim -- so the fix is a catalog sweep plus the specs that lock it, not a single-key patch.
+
+### DW-30: Follow-up review still recommended for 1-6-operacoes-backfill-card-coverage-visibility after the damping cap was spent
+origin: review-budget-followup
+location: n/a
+source_spec: `spec-1-6-operacoes-backfill-card-coverage-visibility.md`
+severity: low
+reason: The follow-up-review damping cap (limits.max_followup_reviews = 1) was spent with the story finalized (status: done, verify green) while the review pass still recommended an independent follow-up. The work was committed by bmad-loop run 20260806-010958-6ecb; this entry preserves the lingering recommendation for a deliberate later review.
+status: open

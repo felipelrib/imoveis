@@ -48,7 +48,7 @@ test.describe("Property modal fallback link (BIN-158)", () => {
     await page.locator("text=OLX No-Listings Flat").first().click();
 
     // Modal is open but the wrong-platform fallback is suppressed.
-    await expect(page.getByRole("button", { name: "Close modal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
     await expect(page.getByTestId("modal-fallback-link")).toHaveCount(0);
     await expect(page.locator('a[href*="quintoandar.com.br"]')).toHaveCount(0);
   });

@@ -1376,3 +1376,171 @@ body {
 .map-container .maplibregl-ctrl-attrib a {
   color: var(--text-muted, #9ca3af);
 }
+
+/* ============================================================
+   MEIA-NOITE TOKENS + OPERAÇÕES SURFACES (v0.13-s1.6)
+   DESIGN.md `ux-imoveis-2026-08-05`. Dark-only; no light theme.
+
+   The palette roles whose DESIGN.md names collide with the legacy
+   glassmorphic palette above (`--text-primary`, `--text-secondary`,
+   `--text-muted`, `--accent`) are redefined ONLY inside `.meia`, so new
+   surfaces opt in by carrying that class and no existing page is restyled.
+   Non-colliding roles live on :root under their DESIGN.md names. Radii are
+   namespaced `--radius-meia-*` so the existing `--radius-*` scale is untouched.
+   ============================================================ */
+
+:root {
+  --surface-card:        #151a2b;
+  --surface-health-chip: #121626;
+  --border-hairline:     #2b3350;
+  --health-warn:         #d98d3f;
+
+  --radius-meia-md: 9px;
+  --radius-meia-lg: 12px;
+}
+
+.meia {
+  --text-primary:   #e9e9e2;
+  --text-secondary: #a3a5ad;
+  --text-muted:     #82859a;
+  --accent:         #4da3ff;
+}
+
+/* ── Operações cards (UX-DR5 / UX-DR6) ─────────────────────────
+   Self-contained on purpose: these sections deliberately do NOT carry the
+   legacy `.card` class. `.card:hover` (0,2,0) outranks `.ops-card` (0,1,0), so
+   a shared card would keep the legacy accent glow that DESIGN.md rules out
+   ("no glow, no coloured shadows"), and `.card`'s `backdrop-filter: blur(20px)`
+   would survive untouched. Owning padding/depth here is what makes the
+   "tokens without a restyle" claim true in both directions — no existing card
+   changes, and the new ones actually render per DESIGN.md.
+   ──────────────────────────────────────────────────────────── */
+.ops-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-lg);
+  padding: 24px;
+  color: var(--text-primary);
+  /* DESIGN.md depth: tonal layering + one soft true shadow, plus the 1px inset
+     top highlight that reads as workshop light. No glow on hover. */
+  box-shadow: 0 8px 20px #00000055, inset 0 1px 0 #ffffff08;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+
+.ops-state {
+  font-size: 15px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 10px;
+}
+
+.ops-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.ops-line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ops-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-hairline);
+  font-size: 12.5px;
+  color: var(--health-warn);
+}
+
+.ops-warn .glyph { font-size: 13px; }
+
+/* A read that failed, said in one line — never a frozen figure. */
+.ops-fail {
+  font-size: 13px;
+  color: var(--health-warn);
+  margin-bottom: 10px;
+}
+
+/* Levels the runner has accepted but not applied yet. */
+.ops-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.ops-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Coverage rows: text + right-aligned percentage, no bars ── */
+.cov-rows { display: flex; flex-direction: column; }
+
+.cov-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cov-row:last-child { border-bottom: none; }
+.cov-label { color: var(--text-secondary); }
+.cov-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.cov-foot {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Health strip (UX-DR7) ─────────────────────────────────── */
+.health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health .h {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-health-chip);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-md);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.health .glyph { color: var(--health-warn); }
+.health .v { color: var(--text-primary); font-variant-numeric: tabular-nums; }

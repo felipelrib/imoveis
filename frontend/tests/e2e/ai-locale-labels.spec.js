@@ -78,6 +78,12 @@ test.describe("AI tags & score copy locale (BIN-101)", () => {
   });
 
   test("EN locale keeps catalog labels for closed vocab", async ({ page }) => {
+    // The default locale is pt-BR, so an `en` preference only applies to a
+    // credentialed session — without a key the app never reads /admin/locale and
+    // this test would silently assert the default instead of the EN catalog.
+    await page.addInitScript((key) => {
+      sessionStorage.setItem("api_key", key);
+    }, VALID_KEY);
     await installCommonMocks(page);
     await mockAdminLocale(page, { initial: "en" });
     await mockPropertiesList(page, {

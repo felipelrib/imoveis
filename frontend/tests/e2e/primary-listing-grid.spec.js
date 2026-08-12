@@ -90,15 +90,15 @@ test.describe("Grid/modal prefer primary_listing (BIN-125)", () => {
 
   test("card and modal show primary price, not stale top-level price", async ({ page }) => {
     const card = page.locator(".property-card").filter({ hasText: "Primary Listing Prefer Flat" });
-    await expect(card.getByTestId("card-price-rows")).toContainText("R$ 3,500");
-    await expect(card.getByTestId("card-price-rows")).not.toContainText("9,999");
+    await expect(card.getByTestId("card-price-rows")).toContainText("R$ 3.500");
+    await expect(card.getByTestId("card-price-rows")).not.toContainText("9.999");
 
     await card.click();
     const modal = page.locator(".modal");
     await expect(modal).toBeVisible();
-    await expect(modal.locator(".modal-header")).toContainText("R$ 3,500");
-    await expect(modal.locator(".modal-header")).not.toContainText("9,999");
+    await expect(modal.locator(".modal-header")).toContainText("R$ 3.500");
+    await expect(modal.locator(".modal-header")).not.toContainText("9.999");
     await expect(page.getByTestId("listings-by-platform")).toBeVisible();
-    await expect(page.getByTestId("listings-by-platform")).toContainText("R$ 3,500");
+    await expect(page.getByTestId("listings-by-platform")).toContainText("R$ 3.500");
   });
 });

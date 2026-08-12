@@ -253,6 +253,106 @@ export interface PipelineHistory {
   points: PipelineHistoryPoint[]
 }
 
+// ---------------------------------------------------------------------------
+// Backfill control plane (v0.13-s1.5) + enrichment coverage (v0.13-s1.4/1.6).
+// Mirrors api.schemas.BackfillStatusResponse / EnrichmentCoverageResponse.
+// The state vocabulary stays English on the wire — pt-BR is a rendered label.
+// ---------------------------------------------------------------------------
+
+export type BackfillState = 'idle' | 'running' | 'paused' | 'backing-off' | 'blocked'
+
+export interface BackfillLease {
+  owner: string
+  acquired_at?: string | null
+  last_seen?: string | null
+  seconds_since_last_seen?: number | null
+}
+
+export interface BackfillBudget {
+  limit: number
+  consumed: number
+  remaining: number
+  seconds_until_reset: number
+}
+
+export interface BackfillCheckpoint {
+  last_property_id?: string | null
+  last_run_date?: string | null
+  processed_total: number
+}
+
+export interface BackfillPacing {
+  requests_per_property: number
+  rpm_limit: number
+  concurrency: number
+  tpm_limit: number
+}
+
+export interface BackfillStatus {
+  /** What the runner last *published*; decays on a TTL — says what, never whether. */
+  state: BackfillState
+  /** THE liveness signal: someone holds the single-instance runner lease. */
+  active: boolean
+  runner_present: boolean
+  /** "rows are being enriched right now" — a healthy paused run is false here. */
+  heartbeat_active: boolean
+  migration_active: boolean
+  pending_requests: string[]
+  start_requested_at?: string | null
+  lease?: BackfillLease | null
+  budget: BackfillBudget
+  checkpoint: BackfillCheckpoint
+  quarantined?: number | null
+  pacing: BackfillPacing
+}
+
+export interface BackfillStartResult {
+  requested: boolean
+  already_requested: boolean
+  requested_at?: string | null
+  runner_present: boolean
+  discarded_requests: string[]
+}
+
+export interface BackfillControlResult {
+  action: string
+  cleared_stop: boolean
+  cleared_start: boolean
+  status?: BackfillStatus | null
+}
+
+/** `EnrichmentTaskClass` on the wire (English identity, pt-BR only as a label). */
+export type EnrichmentSignalClass =
+  | 'visual'
+  | 'sentiment'
+  | 'deal_verdict'
+  | 'valuation'
+  | 'embedding'
+
+export interface SignalCoverage {
+  task_class: EnrichmentSignalClass | string
+  enriched: number
+  total: number
+  /** null when `total == 0` — undefined coverage, never 0.0. */
+  fraction: number | null
+}
+
+export interface BackfillProgress {
+  active: boolean
+  remaining?: number | null
+  /** null whenever there is no live run or the history cannot support a rate. */
+  throughput_per_day?: number | null
+  eta_days?: number | null
+  projected_completion_date?: string | null
+}
+
+export interface EnrichmentCoverage {
+  signals: SignalCoverage[]
+  minimum_fraction: number | null
+  total_properties: number
+  backfill: BackfillProgress
+}
+
 export type PlatformInfo = Record<string, unknown>
 export type ScrapeCheckpoint = Record<string, unknown>
 export type ScrapeTriggerResult = Record<string, unknown>
@@ -351,6 +451,30 @@ interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
   body?: BodyInit | Record<string, unknown> | null
 }
 
+/**
+ * Error thrown by `apiFetch` — same `message` as before (so existing callers that
+ * only read `.message` are unaffected), plus the HTTP status and the raw `detail`.
+ * Callers that must *branch* on a status (the backfill start 409 naming the live
+ * run) read `status`/`detail` instead of pattern-matching a message string.
+ */
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: unknown
+
+  constructor(message: string, status: number, detail?: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+/** The `detail` string when the server sent one, else null (never a stringified object). */
+export function apiErrorDetail(e: unknown): string | null {
+  if (e instanceof ApiError && typeof e.detail === 'string' && e.detail) return e.detail
+  return null
+}
+
 async function apiFetch<T = unknown>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string>) }
 
@@ -374,10 +498,10 @@ async function apiFetch<T = unknown>(endpoint: string, options: ApiFetchOptions 
   })
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) {
-      throw new Error(authErrorMessage())
+      throw new ApiError(authErrorMessage(), r.status)
     }
     const err = await r.json().catch(() => ({}))
-    throw new Error(apiError('errors.apiRequestFailed', err.detail))
+    throw new ApiError(apiError('errors.apiRequestFailed', err.detail), r.status, err.detail)
   }
   return r.json()
 }
@@ -628,6 +752,40 @@ export async function enrichmentRerun(opts: EnrichmentRerunOptions = {}): Promis
     method: 'POST',
     body,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Backfill control plane + coverage (admin-gated; apiFetch attaches X-API-Key)
+// ---------------------------------------------------------------------------
+
+/** `GET /admin/backfill/status` — control state, lease, budget, checkpoint. */
+export async function fetchBackfillStatus(): Promise<BackfillStatus> {
+  return apiFetch<BackfillStatus>('/admin/backfill/status')
+}
+
+/**
+ * `POST /admin/backfill/start` — records a *request*; a host-side supervisor runs it.
+ * Refused with 409 when a run already holds the lease: the thrown `ApiError`
+ * carries `status: 409` and the operator-readable `detail` naming that run, so the
+ * caller can surface it verbatim (see `apiErrorDetail`).
+ */
+export async function startBackfill(): Promise<BackfillStartResult> {
+  return apiFetch<BackfillStartResult>('/admin/backfill/start', { method: 'POST' })
+}
+
+/** `POST /admin/backfill/pause`. `status` may be null even on success (Redis blip). */
+export async function pauseBackfill(): Promise<BackfillControlResult> {
+  return apiFetch<BackfillControlResult>('/admin/backfill/pause', { method: 'POST' })
+}
+
+/** `POST /admin/backfill/resume` — releases the pause and any pending stop. */
+export async function resumeBackfill(): Promise<BackfillControlResult> {
+  return apiFetch<BackfillControlResult>('/admin/backfill/resume', { method: 'POST' })
+}
+
+/** `GET /admin/enrichment/coverage` — DB-derived per-signal coverage + run progress. */
+export async function fetchEnrichmentCoverage(): Promise<EnrichmentCoverage> {
+  return apiFetch<EnrichmentCoverage>('/admin/enrichment/coverage')
 }
 
 export async function scaleGPU(limit: number): Promise<AdminActionResult> {

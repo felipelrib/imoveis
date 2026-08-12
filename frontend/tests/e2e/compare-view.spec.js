@@ -82,7 +82,7 @@ test.describe("Side-by-side compare view", () => {
     await expect(page.getByTestId("compare-view")).toHaveCount(0);
     await expect(page).toHaveURL(/\/properties$/);
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("2 selecionados");
 
     await page.getByTestId("compare-open").click();
     await expect(page.getByTestId("compare-view")).toBeVisible();
@@ -98,8 +98,8 @@ test.describe("Side-by-side compare view", () => {
     await selectAndOpenCompare(page, ["1", "3"]);
 
     await expect(page.getByTestId("compare-view")).toBeVisible();
-    await expect(page.getByTestId("compare-history-empty-1")).toHaveText("No price history");
-    await expect(page.getByTestId("compare-history-empty-3")).toHaveText("No price history");
+    await expect(page.getByTestId("compare-history-empty-1")).toHaveText("Nenhum histórico de preços");
+    await expect(page.getByTestId("compare-history-empty-3")).toHaveText("Nenhum histórico de preços");
   });
 
   test("Escape closes the compare dialog and keeps selection (BIN-157)", async ({ page }) => {
@@ -111,7 +111,7 @@ test.describe("Side-by-side compare view", () => {
     await expect(page.getByTestId("compare-view")).toHaveCount(0);
     await expect(page).toHaveURL(/\/properties$/);
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("2 selecionados");
   });
 
   test("opening the compare dialog moves focus inside it and traps Tab (BIN-157)", async ({ page }) => {

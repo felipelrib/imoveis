@@ -25,7 +25,7 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
 
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
 
     // Dropdown closed until trigger clicked
     await expect(page.getByTestId("neighborhood-filter-dropdown")).toHaveCount(0);
@@ -77,7 +77,7 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
 
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
 
     await page.getByTestId("neighborhood-filter-trigger").click();
     await expect(page.getByTestId("neighborhood-filter-dropdown")).toBeVisible();
@@ -105,7 +105,7 @@ test.describe("City and neighborhood searchable multi-select (BIN-70)", () => {
 
     await page.goto("/properties");
     await expect(page.getByText("2BR Apartment Savassi")).toBeVisible();
-    await page.getByRole("button", { name: /Advanced Filters/i }).click();
+    await page.getByRole("button", { name: /Filtros avançados/i }).click();
 
     await page.getByTestId("neighborhood-filter-trigger").click();
     await expect(page.getByTestId("neighborhood-filter-dropdown")).toBeVisible();

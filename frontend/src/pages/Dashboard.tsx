@@ -4,15 +4,18 @@ import {
   ensureOllama, recalculateScores, enrichMissing, enrichmentRerun,
   fetchPipeline, fetchPipelineHistory,
   type SystemStatus, type PipelineStatus, type EnrichmentMode, type EnrichmentStages,
+  type BackfillState, type EnrichmentCoverage,
 } from '../api.js'
 import { useToast } from '../components/ToastProvider.jsx'
+import { useBackfill } from '../hooks/useBackfill.js'
+import { lowestSignal, signalLabel, stateLabel } from '../components/operations/lines.js'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   BarChart, Bar, Legend
 } from 'recharts'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
-import { formatTime, formatCurrencyBRL, formatNumber } from '../i18n/format.js'
+import { formatTime, formatCurrencyBRL, formatNumber, wholePercent } from '../i18n/format.js'
 import type { TFunction } from '../i18n/LocaleContext.jsx'
 
 const HISTORY_MAX_POINTS = 120
@@ -160,6 +163,15 @@ export default function Dashboard({ status, loading }: DashboardProps) {
   const [throughputHistory, setThroughputHistory] = useState<HistoryPoint[]>([])
   const { alerts, loading: alertsLoading, setAlerts } = useAlerts()
   const showToast = useToast()
+  // Front-door operator visibility (UX-DR7): credential-gated, so with no key the
+  // hook fires nothing and both chips stay absent rather than showing zeros.
+  //
+  // A minute, not the Operações ten seconds. The strip reads two things that move
+  // on a multi-day scale — "is a pass live" and a coverage percentage — and the
+  // landing page is the tab left open all day, so the 10s default would put six
+  // ~10-round-trip status reads per minute on the same Redis the runner uses for
+  // its lease and budget, indefinitely, for a chip that changes twice a week.
+  const backfill = useBackfill(60000)
 
   const sv = status as unknown as StatusView | null
   const stats: DashboardStats = sv?.stats || {}
@@ -310,6 +322,16 @@ export default function Dashboard({ status, loading }: DashboardProps) {
         <h1 className="page-title">{t('dashboard.title')}</h1>
         <p className="page-subtitle">{t('dashboard.subtitle')}</p>
       </div>
+
+      {/* A failed read takes its chip with it: the front door either shows a
+          figure someone just measured, or nothing at all — never a frozen one. */}
+      <HealthStrip
+        coverage={backfill.coverageError ? null : backfill.coverage}
+        backfillState={
+          !backfill.statusError && backfill.status?.active ? backfill.status.state : null
+        }
+        t={t}
+      />
 
       {/* Charts row */}
       {throughputHistory.length >= 2 && (
@@ -640,6 +662,59 @@ function formatPropertyCount(loading: boolean, dbOk: boolean, value: number | nu
   if (loading) return t('common.ellipsis')
   if (!dbOk || value == null) return t('common.emDash')
   return formatNumber(value, locale)
+}
+
+interface HealthStripProps {
+  coverage: EnrichmentCoverage | null
+  /** The live run's published state, or null when no run holds the lease. */
+  backfillState: BackfillState | null
+  t: TFunction
+}
+
+/**
+ * Operator health strip (UX-DR7 front-door slice). Text chips only: the coverage
+ * chip carries the *minimum* across signal types and names which one it came
+ * from, and the backfill chip exists only while a run holds the lease. Nothing
+ * renders when neither figure is available — an absent chip, never `0%`.
+ */
+function HealthStrip({ coverage, backfillState, t }: HealthStripProps) {
+  const pct = wholePercent(coverage?.minimum_fraction ?? null)
+  if (pct == null && backfillState == null) return null
+  const lowest = lowestSignal(coverage?.signals)
+  return (
+    <div className="health meia" data-testid="dashboard-health-strip">
+      {pct != null && (
+        <span
+          className="h"
+          data-testid="health-coverage-chip"
+          // Its own key, not the Operações footnote: that copy says "the panel
+          // shows the minimum", which is self-referential read *on* the panel.
+          // Naming the signal is what makes the number checkable — the minimum is
+          // routinely one the backfill's own scope cannot move (`embedding` is
+          // never cloud-eligible), and unnamed it reads as a verdict on the run
+          // the chip sits next to.
+          title={lowest
+            ? t('dashboard.health.coverageTitleSignal', { pct, signal: signalLabel(lowest.task_class, t) })
+            : t('dashboard.health.coverageTitle', { pct })}
+        >
+          {t('dashboard.health.coverageLabel')} <span className="v">{pct}%</span>
+        </span>
+      )}
+      {backfillState != null && (
+        <span className="h" data-testid="health-backfill-chip">
+          <span className="glyph" aria-hidden="true">⚠</span>
+          {/* The state word, not a fixed "running": a paused, backing-off or
+              blocked run holds the lease just as hard, and the front door
+              claiming it is running contradicts the Operações card one click
+              away. */}
+          {t('dashboard.health.backfillLabel')}{' '}
+          <span className="v">
+            {stateLabel(backfillState, t) || t('dashboard.health.backfillRunning')}
+          </span>
+        </span>
+      )}
+    </div>
+  )
 }
 
 interface StatCardProps {

@@ -48,10 +48,10 @@ test.describe("Property modal fetch failure (BIN-153)", () => {
     await page.locator(`text=${SAMPLE_PROPERTY.title}`).click();
 
     await expect(page.getByTestId("property-modal-error")).toBeVisible();
-    await expect(page.getByText("Couldn't load this property")).toBeVisible();
+    await expect(page.getByText("Não foi possível carregar este imóvel")).toBeVisible();
 
     // The rest of the page must stay intact — no top-level ErrorBoundary blank-out.
-    await page.getByLabel("Close modal").click();
+    await page.getByLabel("Fechar modal").click();
     await expect(page.locator(`text=${SAMPLE_PROPERTY.title}`)).toBeVisible();
   });
 
@@ -62,7 +62,7 @@ test.describe("Property modal fetch failure (BIN-153)", () => {
     await page.locator(`text=${SAMPLE_PROPERTY.title}`).click();
 
     await expect(page.getByTestId("property-modal-error")).toBeVisible();
-    await expect(page.getByText("Couldn't load this property")).toBeVisible();
+    await expect(page.getByText("Não foi possível carregar este imóvel")).toBeVisible();
     await expect(page.locator(`text=${SAMPLE_PROPERTY.title}`)).toBeVisible();
   });
 });

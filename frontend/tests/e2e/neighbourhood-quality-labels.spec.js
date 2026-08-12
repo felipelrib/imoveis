@@ -51,7 +51,7 @@ test.describe("Neighbourhood quality vs ad claims labels (BIN-94)", () => {
 
   test("card shows nhood score and ad claims framing", async ({ page }) => {
     await expect(page.getByTestId("card-nhood-score")).toBeVisible();
-    await expect(page.getByTestId("card-ad-claims")).toContainText("Ad claims");
+    await expect(page.getByTestId("card-ad-claims")).toContainText("Claims do anúncio");
     await expect(page.getByTestId("card-ad-claims")).toContainText("near metro");
   });
 
@@ -59,13 +59,13 @@ test.describe("Neighbourhood quality vs ad claims labels (BIN-94)", () => {
     await page.locator("text=Nhood Quality Flat").click();
     await expect(page.getByTestId("neighbourhood-quality-section")).toBeVisible();
     await expect(page.getByTestId("neighbourhood-quality-section")).toContainText(
-      "Neighbourhood quality"
+      "Qualidade do bairro"
     );
-    await expect(page.getByTestId("neighbourhood-quality-section")).toContainText("Flood");
+    await expect(page.getByTestId("neighbourhood-quality-section")).toContainText("Inundação");
     await expect(page.getByTestId("ad-claims-section")).toBeVisible();
-    await expect(page.getByTestId("ad-claims-section")).toContainText("Ad claims (listing)");
+    await expect(page.getByTestId("ad-claims-section")).toContainText("Claims do anúncio");
     await expect(page.getByText("Location Sentiment")).toHaveCount(0);
-    await expect(page.getByText("Claims from listing (positives)")).toBeVisible();
-    await expect(page.getByText("Claims from listing (concerns)")).toBeVisible();
+    await expect(page.getByText("Alegações do anúncio (pontos positivos)")).toBeVisible();
+    await expect(page.getByText("Alegações do anúncio (pontos de atenção)")).toBeVisible();
   });
 });

@@ -42,11 +42,11 @@ test.describe("Properties multi-select for comparison", () => {
 
     await page.getByTestId("compare-select-1").check();
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("1 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionados");
     await expect(page.getByTestId("compare-open")).toBeDisabled();
 
     await page.getByTestId("compare-select-2").check();
-    await expect(page.getByTestId("compare-count")).toHaveText("2 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("2 selecionados");
     await expect(page.getByTestId("compare-open")).toBeEnabled();
   });
 
@@ -70,12 +70,12 @@ test.describe("Properties multi-select for comparison", () => {
     for (const id of ["1", "2", "3", "4"]) {
       await page.getByTestId(`compare-select-${id}`).check();
     }
-    await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
+    await expect(page.getByTestId("compare-count")).toHaveText("4 selecionados");
     await expect(page.getByTestId("compare-open")).toBeEnabled();
 
     await page.getByTestId("compare-select-5").click();
-    await expect(page.getByText("You can compare up to 4 properties")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("4 selected");
+    await expect(page.getByText("Você pode comparar até 4 imóveis")).toBeVisible();
+    await expect(page.getByTestId("compare-count")).toHaveText("4 selecionados");
     await expect(page.getByTestId("compare-select-5")).not.toBeChecked();
   });
 
@@ -108,7 +108,7 @@ test.describe("Properties multi-select for comparison", () => {
     const watch = page.getByTestId("watchlist-toggle-1");
     await expect(fav.locator("svg")).toBeVisible();
     await expect(watch.locator("svg")).toBeVisible();
-    await expect(fav).toHaveAttribute("aria-label", /Favourites/i);
-    await expect(watch).toHaveAttribute("aria-label", /price drops|Watchlist/i);
+    await expect(fav).toHaveAttribute("aria-label", /Favoritos/i);
+    await expect(watch).toHaveAttribute("aria-label", /quedas de preço|monitoramento/i);
   });
 });

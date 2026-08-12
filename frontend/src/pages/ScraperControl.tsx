@@ -4,6 +4,9 @@ import {
   fetchSchedule, updateSchedule, hasApiKey, triggerAvailabilityRecheck,
 } from '../api.js'
 import { useSystemStatus } from '../hooks/useSystemStatus.js'
+import { useBackfill } from '../hooks/useBackfill.js'
+import BackfillCard from '../components/operations/BackfillCard.jsx'
+import CoverageCard from '../components/operations/CoverageCard.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import { formatPlatform } from '../labels.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
@@ -77,6 +80,8 @@ export default function ScraperControl() {
   useEffect(() => { localeRef.current = locale }, [locale])
   const ts = () => formatTime(new Date(), locale)
   const { status, loading: statusLoading } = useSystemStatus(5000)
+  // Backfill control plane + DB-derived coverage (v0.13-s1.6) — credential-gated.
+  const backfill = useBackfill()
   const [platforms, setPlatforms] = useState<PlatformRow[]>([])
   const [selectedPlatform, setSelectedPlatform] = useState('')
   const [scrapeType, setScrapeType] = useState('both')
@@ -358,6 +363,12 @@ export default function ScraperControl() {
       <div className="page-header">
         <h1 className="page-title">{t('scraper.title')}</h1>
         <p className="page-subtitle">{t('scraper.subtitle')}</p>
+      </div>
+
+      {/* ── Backfill control + AI coverage (UX-DR5 / UX-DR6) ── */}
+      <div className="control-panel">
+        <BackfillCard backfill={backfill} />
+        <CoverageCard backfill={backfill} />
       </div>
 
       <div className="control-panel">

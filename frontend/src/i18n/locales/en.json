@@ -2,7 +2,7 @@
   "nav": {
     "label": "Navigation",
     "dashboard": "Dashboard",
-    "scraper": "Scraper Control",
+    "scraper": "Operations",
     "properties": "Properties"
   },
   "chrome": {
@@ -301,7 +301,61 @@
     "toastRerunOk": "{verb} {n} for AI enrichment",
     "toastRerunFailed": "Could not re-run enrichment",
     "verbQueued": "Queued",
-    "verbWouldQueue": "Would queue"
+    "verbWouldQueue": "Would queue",
+    "health": {
+      "coverageLabel": "AI coverage",
+      "coverageTitle": "the lowest coverage across signal types: {pct}%",
+      "coverageTitleSignal": "the lowest coverage across signal types is {signal}: {pct}%",
+      "backfillLabel": "Backfill",
+      "backfillRunning": "running"
+    }
+  },
+  "operations": {
+    "backfillTitle": "Enrichment backfill",
+    "stateIdle": "idle",
+    "stateRunning": "running",
+    "statePaused": "paused",
+    "stateBackingOff": "backing off (API limit)",
+    "stateBlocked": "blocked",
+    "budgetLine": "today's quota: {pct}% used",
+    "throughputLine": "rate: ~{n} properties/day",
+    "throughputOne": "rate: ~1 property/day",
+    "throughputBelowOne": "rate: under 1 property/day",
+    "etaLine": "ETA: ~{n} days",
+    "etaOneDay": "ETA: ~1 day",
+    "etaUnderOneDay": "ETA: under 1 day",
+    "pendingPause": "pause requested — waiting for the runner to apply it",
+    "pendingStop": "stop requested — waiting for the runner to apply it",
+    "pendingStart": "start requested — waiting for the runner to pick it up",
+    "pendingStartNoRunner": "start requested, but no runner is listening — it will expire unheard",
+    "startBlockedMigration": "start unavailable — a primary migration holds the gate",
+    "startBlockedPlane": "start unavailable — the control plane is blocked",
+    "start": "Start",
+    "pause": "Pause",
+    "resume": "Resume",
+    "runningWarning": "rows are being enriched right now — migrate-primary.sh will refuse while the heartbeat is up",
+    "credentialHint": "paste an API credential to control the backfill",
+    "statusUnavailable": "backfill state unavailable — the control plane could not be read",
+    "statusUnauthorized": "backfill state unavailable — the stored API credential was rejected",
+    "toastStartRequested": "Backfill run requested",
+    "toastStartNoRunner": "Start recorded, but no runner is listening — launch scripts/dev/backfill_gemma.py --serve on the host",
+    "toastStartAlreadyRequested": "A start request was already pending — waiting for the runner",
+    "toastStartConflict": "A backfill run is already active — {detail}",
+    "toastActionFailed": "Backfill action failed: {message}",
+    "toastPaused": "Backfill paused",
+    "toastResumed": "Backfill resumed",
+    "coverageTitle": "AI coverage by signal type",
+    "coverageFootnote": "the dashboard shows the minimum across signals: {pct}%",
+    "coverageUnavailable": "coverage unavailable",
+    "coverageFailed": "coverage unavailable — the figures could not be read",
+    "coverageUnauthorized": "coverage unavailable — the stored API credential was rejected",
+    "signal": {
+      "visual": "visual",
+      "sentiment": "sentiment",
+      "deal_verdict": "deal verdict",
+      "valuation": "statistical valuation",
+      "embedding": "embeddings"
+    }
   },
   "scraper": {
     "title": "Scraper Control",

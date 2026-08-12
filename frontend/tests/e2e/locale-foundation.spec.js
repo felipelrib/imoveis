@@ -49,9 +49,11 @@ test.describe("Locale foundation (BIN-98)", () => {
     await mockAdminLocale(page, { posted });
 
     await page.goto("/");
-    await page.getByTestId("locale-select").selectOption("pt-BR");
+    // No credential: the app renders the pt-BR default, so switch to `en` to
+    // exercise the same "cannot persist" path.
+    await page.getByTestId("locale-select").selectOption("en");
     await expect(
-      page.getByText("Set an API credential to persist language")
+      page.getByText("Defina uma credencial de API para persistir o idioma")
     ).toBeVisible();
     expect(posted).toEqual([]);
   });
