@@ -200,7 +200,7 @@ development_status:
   # DW-11: after a lost lease, still-draining rows advance the SHARED
   # checkpoint hash, rewinding the successor's position and inflating
   # processed_total. Decide monotonic compare-and-set vs lease-gated advance.
-  3-4-checkpoint-advance-semantics: awaiting-operator
+  3-4-checkpoint-advance-semantics: done
   # DW-31 + DW-33: two defects in story 3-1's OWN delivery, found while doing
   # its operator handoff (2026-08-12). (a) 3-1's instructions tell the operator
   # to set ai.enrichment_routing to gemma in the COMMITTED configs/app_config.yaml,

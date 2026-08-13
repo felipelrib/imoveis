@@ -2,7 +2,7 @@
 title: 'Checkpoint advance semantics under lease loss'
 type: 'bugfix'
 created: '2026-08-12'
-status: 'awaiting-operator'
+status: done
 baseline_revision: '2651da0a1f309e760469fbbb514f5f8ad9748685'
 final_revision: '036a9fb'
 review_loop_iteration: 1
@@ -196,3 +196,15 @@ def _record_completion(property_id: str) -> None:
 **Verification.** `bash scripts/agent/validate.sh fast` — lint green (all pre-commit hooks + eslint, no fixer edits), unit `2 failed, 2110 passed`; both failures are `test_no_data_destroying_scripts.py::test_volumes_flag_is_refused_not_silently_ignored[stop.sh|clean.sh]`, which shell out to `stop.sh --volumes` and die on "docker is not running" before printing the refusal they assert — untouched by this diff and failing identically on the baseline. `git grep -n "from adapters\|from api" src/core/backfill_runner.py` → no matches (AD-1). The regression was observed failing on the pre-fix tree (`assert 'prop-2' == 'successor-row'` — the rewind itself — plus 21 others) before the fix made it pass.
 
 **Residual risks.** The real-Redis Lua tests have never executed (no Docker), so the shipped script body is proven only against the `EvalRedis` mirror — that is the first thing the merge gate exercises. The counter's semantics is at-most-once, not exactly-once, for drained rows the successor never re-fetches (documented). A displaced runner still clears the successor's `:active` heartbeat at the end of its drain (deferred, pre-existing).
+
+## Operator Confirmation
+
+Confirmed 2026-08-13: the external actions this story owed were carried out.
+
+- Start Docker Desktop on the Windows host and enable WSL integration for this distro. The daemon is down (`docker info` fails; `docker` is not a usable binary in this distro), which is the only reason the full gate could not run.
+- With Docker up, re-run `bash scripts/agent/validate.sh all` from this worktree and confirm it is green — this is the one acceptance criterion this run could not verify, and the first execution of the 5 new real-Redis tests in `src/tests/integration/test_backfill_lua_scripts.py` that prove the shipped Lua body itself (the unit suite only exercises a Python mirror of it). Expect the two `test_no_data_destroying_scripts.py::test_volumes_flag_is_refused_not_silently_ignored[stop.sh|clean.sh]` failures to disappear: they shell out to `stop.sh --volumes`, which aborts with "docker is not running" before printing the refusal they assert, and they fail identically on the untouched baseline.
+- Let the bmad-loop orchestrator merge this branch. `finish-feature.sh` refuses it ("branch does not have a valid conventional type prefix"), as it does every `bmad-loop/<run>/<story>` branch — do not merge by hand.
+- After the merge lands on `main` and is pushed, set `3-4-checkpoint-advance-semantics: done` in `_bmad-output/implementation-artifacts/sprint-status.yaml` (it is `in-progress` now).
+- Optionally prove the handover end to end, which no agent can do here: with a backfill running, take its lease from a second shell (`redis-cli SET backfill:gemma:lease other-token KEEPTTL`), then confirm the pass exits 7 with the BACKFILL LEASE LOST banner naming the rows it drained, that `redis-cli HGETALL backfill:gemma:checkpoint` still shows the marker and `processed_total` you set, and that the journal carries one `backfill_checkpoint_declined` line.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
