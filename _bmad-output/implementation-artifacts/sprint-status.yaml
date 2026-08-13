@@ -199,8 +199,10 @@ development_status:
   # anchored/max-two spec (UX-DR3 binds every Epic 2 toast surface) and sweep
   # the pt-BR plural-agreement catalog ("1 selecionados", "1 imóveis") that the
   # 1.6 locale flip promoted to everyone's default and that 1.6's e2e repairs
-  # pinned verbatim in three compare specs. Gates: 2-2, 2-4 and 2-5 all ← 2-6.
-  2-6-ui-contract-debt: backlog
+  # pinned verbatim in two compare specs (corrected at delivery 2026-08-13: the
+  # third, compare-view.spec.js, pins the already-correct "2 selecionados").
+  # Gates: 2-2, 2-4 and 2-5 all ← 2-6.
+  2-6-ui-contract-debt: done
   # Minted 2026-08-13 (epic-3 retro): one-off corpus repair for rows poisoned
   # with fabricated 0.5 scores before story 3-2 landed — mode=missing keys on
   # `not score`, so nothing re-queues them, and 2-1's percentiles would compute
@@ -278,3 +280,31 @@ followups:
   # (CLAUDE.md, Cursor mirror, harness-troubleshooting) + regression lock
   # (refusal fires; bmad-loop never enters VALID_BRANCH_TYPES).
   v0.13-fu11-bmad-loop-merge-ownership: done
+  # Follow-up (story 2-6 review): the pt-BR count-into-fixed-plural defect that
+  # 2-6 fixed for its four named keys still ships on the Painel/dashboard side —
+  # dashboard.enrichResultOk / enrichResultOkSkipped ("{n} enfileirados"),
+  # dashboard.rerunSkipPhotoGate ("{n} bloqueados"), and dashboard.rerunWouldQueue
+  # / rerunQueued ("{n} imóveis", currently unreferenced from frontend/src — check
+  # they are live before splitting). Split them into …One/…Many the same way and
+  # extend the pins in src/tests/unit/test_i18n_catalog_parity.py. NOT defective,
+  # already checked: properties.platformsBadge (guarded by platformCount > 1) and
+  # operations.throughputLine / etaLine (One-variants already selected in lines.ts).
+  v0.13-fu12-plural-agreement-sweep-dashboard-keys: backlog
+  # Follow-up (story 2-6 review): two bottom-anchored surfaces now share the
+  # bottom strip — the toast stack (fixed, bottom:16/right:16, maxWidth 380,
+  # z-index 9999, pointerEvents auto) and .compare-bar (fixed, bottom:24, centred,
+  # min-width 280). They clear each other at the suite's 1280x720 viewport, which
+  # is all toast-contract.spec.js proves; below ~1100px a wide toast can cover the
+  # compare bar and swallow its clicks for the 4s it is up. Decide how the strip is
+  # shared (width clamp, a page-set bottom offset, or moving the compare bar) and
+  # pin it with a narrow-viewport e2e case.
+  v0.13-fu13-toast-compare-bar-bottom-strip: backlog
+  # Follow-up (story 2-6 session): scripts/agent/setup-worktree.sh would RENAME a
+  # bmad-loop/<run>/<story> branch. Its already-isolated-session path runs
+  # `git branch -m` whenever the current branch is not Conventional-Branch
+  # compliant, and bmad-loop is deliberately absent from VALID_BRANCH_TYPES, so it
+  # never is — renaming the branch out from under the orchestrator's merge-back.
+  # A worktree with no .venv/.env.local is exactly when an agent reaches for that
+  # script. Make it refuse (or skip the rename) on orchestrator-owned branches,
+  # mirroring finish-feature.sh's v0.13-fu11 carve-out.
+  v0.13-fu14-setup-worktree-renames-bmad-loop-branches: backlog

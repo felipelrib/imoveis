@@ -19,6 +19,8 @@ test.describe("Shareable deep links (BIN-82)", () => {
     await mockPropertyDetail(page, SAMPLE_PROPERTY);
     await page.goto("/properties");
     await expect(page.locator("text=2BR Apartment Savassi")).toBeVisible();
+    // pt-BR agreement on a count of exactly one (v0.13-s2.6).
+    await expect(page.getByTestId("results-count")).toHaveText("1 imóvel");
 
     await page.locator("text=2BR Apartment Savassi").click();
     await expect(page).toHaveURL(/\/properties\/1$/);
@@ -70,6 +72,8 @@ test.describe("Shareable deep links (BIN-82)", () => {
     await page.goto("/favourites");
     await expect(page.getByRole("heading", { name: /Favoritos/ })).toBeVisible();
     await expect(page.locator("text=2BR Apartment Savassi")).toBeVisible();
+    // pt-BR agreement on a count of exactly one (v0.13-s2.6).
+    await expect(page.getByTestId("results-count")).toHaveText("1 favorito");
 
     await page.getByTestId("favourites-back").click();
     await expect(page).toHaveURL(/\/properties$/);

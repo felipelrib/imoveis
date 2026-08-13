@@ -64,7 +64,7 @@ test.describe("Map-view multi-select for comparison", () => {
 
     await page.getByTestId("map-compare-select-1").click();
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionados");
+    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionado");
     await expect(page.getByTestId("compare-open")).toBeDisabled();
     await expect(page.getByTestId("map-compare-select-1")).toHaveAttribute("aria-pressed", "true");
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info'
 
@@ -7,7 +7,14 @@ export interface ToastOptions {
   duration?: number
 }
 
-/** Imperative toast trigger returned by `useToast()`; resolves to the new toast id. */
+/**
+ * Imperative toast trigger returned by `useToast()`; resolves to the new toast id.
+ *
+ * The id is informational — there is no dismiss API to spend it on, and the
+ * stack is capped (see `MAX_VISIBLE_TOASTS`), so the toast it names may be
+ * evicted before it is ever read. No toast is durable under that cap: a
+ * `duration: 0` toast is sticky against the timer, not against eviction.
+ */
 export type ShowToast = (message: string, options?: ToastOptions) => number
 
 interface Toast {
@@ -54,6 +61,13 @@ const TOAST_STYLES: Record<ToastType, ToastStyle> = {
 
 let toastIdCounter = 0
 
+/**
+ * DESIGN.md toast contract (UX-DR3): the stack is bottom-anchored and holds at
+ * most two — newest wins, the oldest is evicted rather than growing a column
+ * that eventually reaches the filter bar.
+ */
+const MAX_VISIBLE_TOASTS = 2
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const timersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
@@ -66,9 +80,34 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
+  // Eviction (see MAX_VISIBLE_TOASTS) is the one path that drops a toast without
+  // going through removeToast, so this is where its auto-dismiss timer is
+  // reclaimed: any timer whose toast is no longer rendered is cleared.
+  useEffect(() => {
+    const live = new Set(toasts.map(t => t.id))
+    for (const key of Object.keys(timersRef.current)) {
+      const id = Number(key)
+      if (!live.has(id)) {
+        clearTimeout(timersRef.current[id])
+        delete timersRef.current[id]
+      }
+    }
+  }, [toasts])
+
+  // Mount-scoped, so its cleanup runs on unmount only: the reconcile effect
+  // above reclaims timers for toasts already dropped, but a provider that
+  // unmounts with toasts still on screen would leave their timers to fire
+  // `setToasts` against a dead tree.
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => {
+      Object.values(timers).forEach(clearTimeout)
+    }
+  }, [])
+
   const showToast = useCallback<ShowToast>((message, { type = 'info', duration = 4000 } = {}) => {
     const id = ++toastIdCounter
-    setToasts(prev => [...prev, { id, message, type }])
+    setToasts(prev => [...prev, { id, message, type }].slice(-MAX_VISIBLE_TOASTS))
     if (duration > 0) {
       timersRef.current[id] = setTimeout(() => removeToast(id), duration)
     }
@@ -78,23 +117,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={showToast}>
       {children}
-      {/* Toast container */}
-      <div style={{
-        position: 'fixed',
-        top: 16,
-        right: 16,
-        zIndex: 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        maxWidth: 380,
-        pointerEvents: 'none',
-      }}>
+      {/* Toast container — bottom-anchored, right-offset so it clears the
+          centred `.compare-bar` (fixed, bottom: 24px) without either surface
+          knowing about the other. */}
+      <div
+        data-testid="toast-container"
+        style={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          maxWidth: 380,
+          pointerEvents: 'none',
+        }}
+      >
         {toasts.map(t => {
           const s = TOAST_STYLES[t.type] || TOAST_STYLES.info
           return (
             <div
               key={t.id}
+              data-testid="toast"
               role="status"
               aria-live="polite"
               tabIndex={0}

@@ -42,7 +42,7 @@ test.describe("Properties multi-select for comparison", () => {
 
     await page.getByTestId("compare-select-1").check();
     await expect(page.getByTestId("compare-bar")).toBeVisible();
-    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionados");
+    await expect(page.getByTestId("compare-count")).toHaveText("1 selecionado");
     await expect(page.getByTestId("compare-open")).toBeDisabled();
 
     await page.getByTestId("compare-select-2").check();

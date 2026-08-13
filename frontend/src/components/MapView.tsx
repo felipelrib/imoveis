@@ -280,7 +280,15 @@ export default function MapView({
 
       const detailsDiv = document.createElement('div')
       detailsDiv.style.cssText = 'color: var(--text-muted, #9ca3af); font-size: 11px; margin-bottom: 6px;'
-      const beds = featProps.bedrooms ? `· ${translate('common.bedsShort', { n: featProps.bedrooms })}` : ''
+      // `featProps` is an untyped GeoJSON property bag round-tripped through the
+      // map worker, so the count is coerced once and the coerced value feeds both
+      // the agreement test and the copy: a string "1" would otherwise take the
+      // plural branch and render `1 quartos` again, and a raw "01" would agree
+      // correctly while rendering `01 quarto`.
+      const bedrooms = Number(featProps.bedrooms)
+      const beds = featProps.bedrooms
+        ? `· ${translate(bedrooms === 1 ? 'common.bedsShortOne' : 'common.bedsShortMany', { n: bedrooms })}`
+        : ''
       const area = featProps.area_m2 ? `· ${translate('common.areaM2Compact', { n: featProps.area_m2 })}` : ''
       detailsDiv.textContent = `${featProps.neighborhood_name || ''} ${beds} ${area}`.trim()
       container.appendChild(detailsDiv)

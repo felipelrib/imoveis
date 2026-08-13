@@ -485,10 +485,17 @@ export default function Properties() {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="page-header">
           <h1 className="page-title">{viewMode === 'favourites' ? t('properties.favouritesTitle') : t('properties.title')}</h1>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }} data-testid="results-count">
+              {/* pt-BR agreement: branch on the raw count, render the formatted one. */}
               {viewMode === 'favourites'
-                ? t('properties.countFavourited', { n: formatNumber(favouritesData.total, locale) })
-                : t('properties.countProperties', { n: formatNumber(totalResults, locale) })}
+                ? t(
+                    favouritesData.total === 1 ? 'properties.countFavouritedOne' : 'properties.countFavouritedMany',
+                    { n: formatNumber(favouritesData.total, locale) },
+                  )
+                : t(
+                    totalResults === 1 ? 'properties.countPropertiesOne' : 'properties.countPropertiesMany',
+                    { n: formatNumber(totalResults, locale) },
+                  )}
             </div>
         </div>
 
@@ -661,7 +668,10 @@ export default function Properties() {
       {compareMode && compareIds.length > 0 && !compareOpen && (
         <div className="compare-bar" data-testid="compare-bar" role="region" aria-label={t('properties.compareBarLabel')}>
           <span className="compare-bar-count" data-testid="compare-count">
-            {t('properties.compareSelected', { n: compareIds.length })}
+            {t(
+              compareIds.length === 1 ? 'properties.compareSelectedOne' : 'properties.compareSelectedMany',
+              { n: compareIds.length },
+            )}
           </span>
           <div className="compare-bar-actions">
             <button

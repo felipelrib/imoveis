@@ -521,11 +521,18 @@ So that Epic 2's new surfaces build on a correct foundation instead of inheritin
 **When** this story lands
 **Then** the shared provider matches the contract (bottom-anchored, max two stacked, per the DESIGN.md toast spec — UX-DR3) and every existing flow that raises a toast is re-verified, not just the new ones
 **And** the e2e specs asserting toast position are updated to the contract, and the story-1.6 lease-conflict toast still passes
+<!-- Corrected in place at delivery (2026-08-13): no e2e asserted toast position — the suite had no
+     position coverage at all — so this AC was met by *writing* `toast-contract.spec.js`, not by
+     updating existing specs. -->
 
 **Given** the v0.13-s1.6 locale flip promoted pre-existing single-form pt-BR catalog keys from an opt-in preference to **every** user's default
 **When** the catalog is swept
 **Then** `compareSelected`, `properties.countProperties`, `properties.countFavourited` and `common.bedsShort` model the singular/plural split the catalog already uses elsewhere (`modal.listingCountOne` / `listingCountMany`) — no more `1 selecionados`, `1 imóveis`, `1 favoritos`, `1 quartos`
 **And** `compare-select.spec.js`, `compare-map-select.spec.js` and `compare-view.spec.js`, which currently assert the defective strings **verbatim**, are corrected rather than neutralized — the assertions must still pin exact copy
+<!-- Corrected in place at delivery (2026-08-13): only two of the three froze a defective string
+     (`compare-select.spec.js:45`, `compare-map-select.spec.js:67`). `compare-view.spec.js` asserts
+     `"2 selecionados"` (L85, L114) — already-correct plural — so it was re-verified, not edited. -->
+
 
 **Given** this is a shared-surface change every later story inherits
 **When** the story completes
