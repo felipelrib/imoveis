@@ -177,7 +177,12 @@ development_status:
   # Wave order: 3-1 (serial) -> 3-2 ∥ 3-3 -> 3-4. Gate: 3-4←3-3 (both touch
   # src/core/backfill_runner.py). Epic 3 GATES Epic 2's 2-1: percentiles must
   # not be computed over a corpus still accruing fabricated scores.
-  epic-3: in-progress
+  # CLOSED 2026-08-13: all five stories done + operator-confirmed; outcome
+  # live-verified same day (supervised unit, requests-denominated budget 15/14k,
+  # lease-loss handover proven on the live run: exit 7, checkpoint intact,
+  # 1 unrecorded completion, successor resumed in ~2s). DW-27/17/18/11/31/33
+  # drained. Retrospective remains optional (recommended, fresh session).
+  epic-3: done
   # DW-27: the admin Start button only works while a hand-started
   # `backfill_gemma.py --serve` supervisor stays alive; no unit is committed or
   # wired into the stack. Topology decision (systemd unit / compose service /
