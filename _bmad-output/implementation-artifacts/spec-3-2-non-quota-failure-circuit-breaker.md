@@ -2,7 +2,7 @@
 title: 'Non-quota AI failures must not fabricate a score'
 type: 'bugfix'
 created: '2026-08-12'
-status: 'awaiting-operator'
+status: done
 baseline_revision: '4bad757b565197ab375da927e0d584f3522c8df4'
 final_revision: '64ee0fbf1b931b68445b587b5f33f576da119632'
 review_loop_iteration: 1
@@ -203,3 +203,15 @@ The raised message must not contain any `_QUOTA_MARKERS` substring (`backfill_ru
 - The persist gate is in the shared write authority, so the **live** `ai_enrich` path also stops fabricating. That is the intended one-mechanism design, but it is the widest behavioural surface here: a sustained local-backend outage now costs ~6 retry attempts per property where it previously wrote one fabricated score. Deferred to the ledger with its options.
 - A fabricated 0.5 is still reachable by a different door — a 200 response whose JSON merely *omits* the score key takes the `data.get("condition_score", 0.5)` default and is **not** marked degraded. Outside this story's intent contract (which is scoped to exception fallbacks) and deferred; the story's named causes (401, 404, DNS/proxy) all raise and are covered.
 - Rows poisoned before this fix stay unreachable — `mode_is_missing_ai` is `not score` — and Epic 2 computes percentiles over them. Deferred as the missing half of the Epic 3 → Epic 2 gate.
+
+## Operator Confirmation
+
+Confirmed 2026-08-13: the external actions this story owed were carried out.
+
+- Start Docker Desktop on the Windows host and enable WSL integration for this distro. The daemon is down (`docker.exe info` reports the `dockerDesktopLinuxEngine` pipe missing, and `docker` is not a usable binary in this distro), which is the only reason the full gate could not run.
+- With Docker up, re-run `bash scripts/agent/validate.sh all` from this worktree and confirm it is green — this is the one acceptance criterion this run could not verify. Expect the two `test_no_data_destroying_scripts.py::test_volumes_flag_is_refused_not_silently_ignored[stop.sh|clean.sh]` failures to disappear: they shell out to `stop.sh --volumes`, which aborts with "docker is not running" before printing the refusal they assert, and they fail identically on the untouched baseline.
+- Let the bmad-loop orchestrator merge this branch. `finish-feature.sh` refuses it ("branch does not have a valid conventional type prefix"), as it does every `bmad-loop/<run>/<story>` branch — do not merge by hand.
+- After the merge lands on `main` and is pushed, set `3-2-non-quota-failure-circuit-breaker: done` in `_bmad-output/implementation-artifacts/sprint-status.yaml`.
+- Optionally prove the breaker end to end, which no agent can do: point `GEMINI_API_KEY` at a revoked value, run one `scripts/dev/backfill_gemma.py` pass, and confirm it exits 9 with the "AI backend kept returning fabricated results" banner, that no `ai_score` was written for those rows, and that they are still counted as candidates by `--status`.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
