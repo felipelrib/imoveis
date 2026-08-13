@@ -14,7 +14,9 @@
 # KEY MAPPING: yaml story N-M ↔ project story id v0.13-sN.M (branch names
 # feat/v0.13-sN.M-…, feature docs docs/features/v0.13-sN.M-*.md — the
 # finish-feature.sh doc gate derives the id from the branch). Follow-ups
-# without a story keep their v0.13-fu<N> keys below (opaque to bmad-loop).
+# without a story keep their v0.13-fu<N> keys in the top-level `followups:`
+# map at the END of this file — NEVER inside development_status, where
+# bmad-loop flags every non-standard key via queue.sprint-status-unknown-keys.
 #
 # SEQUENCING GATES (from epics.md frontmatter `tracking:` — enforce order):
 #   1.2←1.1, 1.3←1.1, 1.4←1.1, 1.5←1.3, 1.6←1.4+1.5,
@@ -56,7 +58,8 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 # - Story done ONLY after finish-feature.sh has merged to main and pushed (CLAUDE.md)
-# - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short description)
+# - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short
+#   description) under the top-level `followups:` map — never in development_status
 
 generated: 2026-08-05T06:51:14-03:00
 last_updated: 2026-08-13
@@ -66,62 +69,6 @@ tracking_system: file-system
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
-  # ---- v0.13 pre-story harness track (PRD §6.2 gate — process, not FR) ----
-  v0.13-fu1-harness-surgery: done
-  # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
-  # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
-  # token-bucket sized from measured per-property token cost (~7k).
-  v0.13-fu2-backfill-tpm-limiter: done
-  # Follow-up: the backfill could not detect its own completion — `remaining` was
-  # total-minus-enriched, which 494 inactive un-enriched rows kept permanently
-  # positive, so the completion branch was dead and finished runs exited 0 via
-  # the "no progress" valve. Census-based completion + exit codes/banner, photo
-  # gate applied, and an attempt ledger that retires rows that never clear.
-  v0.13-fu3-backfill-completion-detection: done
-  # Follow-up: independent review of the s1.2 review delta (spec flagged
-  # followup_review_recommended). RoutingAIClient lifecycle hardening +
-  # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
-  v0.13-fu4-s1.2-followup-review: done
-  # Safety: stop.sh --volumes / clean.sh --volumes ran `down -v` on the PRIMARY
-  # project with no confirmation, wiping postgres_data + image_store + redis_data
-  # (whole corpus + multi-day enrichment). Capability removed; regression-locked.
-  v0.13-fu5-remove-data-destroying-paths: done
-  # Follow-up (DW-3/DW-4): migrate-primary.sh's backfill guard was
-  # check-then-act — it probed the `:active` heartbeat once and then ran alembic
-  # with nothing holding the window, and a runner sleeping out an RPD window
-  # cleared that heartbeat and resumed mid-migration. Added the migration-held
-  # key `backfill:gemma:migrating` with set-then-check on both sides.
-  v0.13-fu6-migration-backfill-mutual-exclusion: done
-  # Follow-up (DW-6): run_backfill renewed its lease only from event sites (per
-  # launch-loop iteration, per pause poll, per finished row), so nothing renewed
-  # it while a row was in flight — one enrichment slower than the TTL let the
-  # lease lapse under a live writer. Added a background timer task renewing at
-  # ttl/3 for the whole run, cancelled after the in-flight drain.
-  v0.13-fu7-backfill-lease-background-renewer: done
-  # Follow-up (DW-7): GeminiClient classified quota only on the HTTP-status
-  # path, so a throttle arriving as identical connection resets/timeouts
-  # re-raised untagged, the runner took the hard-error branch, and the attempt
-  # charged before launch stood — burning backfill.max_attempts on good rows
-  # inside one throttle window. Repeated identical transport failures within a
-  # configurable recency window of an observed 429 now raise the distinguished
-  # quota error; everything else stays a hard error.
-  v0.13-fu8-gemini-transport-quota-classification: done
-  # Follow-up (DW-2): CI retirement deleted the Trivy scan and the nightly
-  # pip-audit/npm audit jobs on the premise that local gates covered them, but
-  # no local gate audited anything and Dependabot has no checks on bot PRs.
-  # Added scripts/agent/audit-deps.sh (pip-audit + npm audit, JSON-parsed) as an
-  # advisory stage of `validate.sh all` — reports findings, never mutates rc,
-  # degrades to a visible skip offline.
-  v0.13-fu9-dependency-audit-gate: done
-  # Follow-up: bmad-loop dev sessions were bound to "finishing is ONLY
-  # finish-feature.sh" while the orchestrator owns merge-back for
-  # bmad-loop/<run>/<story> branches, so every Epic 3 session re-derived the
-  # generic refusal from script source. Explicit orchestrator-naming refusal in
-  # finish-feature.sh + carve-out in the dev-auto gate binding + docs
-  # (CLAUDE.md, Cursor mirror, harness-troubleshooting) + regression lock
-  # (refusal fires; bmad-loop never enters VALID_BRANCH_TYPES).
-  v0.13-fu11-bmad-loop-merge-ownership: done
-
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
   # CLOSED 2026-08-12 at the epic-1 retrospective. All six stories done, merged
@@ -234,3 +181,68 @@ development_status:
   2-4-saved-search-alert-management-ui: backlog
   2-5-detail-side-panel-migration: backlog
   epic-2-retrospective: optional
+
+# Off-sprint follow-ups (v<milestone>-fu<N> keys). Deliberately a SIBLING of
+# development_status, not part of it: bmad-loop parses ONLY development_status,
+# and any key there that misses its BMad-standard shapes (epic-N, N-M-slug,
+# epic-N-retrospective, epic-N-retro-item-M-slug) lands in unknown_keys and
+# trips the queue.sprint-status-unknown-keys warning on every validate/run
+# (moved here 2026-08-13 to clear exactly that). Same one-line contract as
+# before: key + status, short description in a comment. fu10 was never used
+# as a key (the epic-1 retro named it for DW-27, which became story 3-1).
+followups:
+  # ---- v0.13 pre-story harness track (PRD §6.2 gate — process, not FR) ----
+  v0.13-fu1-harness-surgery: done
+  # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
+  # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
+  # token-bucket sized from measured per-property token cost (~7k).
+  v0.13-fu2-backfill-tpm-limiter: done
+  # Follow-up: the backfill could not detect its own completion — `remaining` was
+  # total-minus-enriched, which 494 inactive un-enriched rows kept permanently
+  # positive, so the completion branch was dead and finished runs exited 0 via
+  # the "no progress" valve. Census-based completion + exit codes/banner, photo
+  # gate applied, and an attempt ledger that retires rows that never clear.
+  v0.13-fu3-backfill-completion-detection: done
+  # Follow-up: independent review of the s1.2 review delta (spec flagged
+  # followup_review_recommended). RoutingAIClient lifecycle hardening +
+  # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
+  v0.13-fu4-s1.2-followup-review: done
+  # Safety: stop.sh --volumes / clean.sh --volumes ran `down -v` on the PRIMARY
+  # project with no confirmation, wiping postgres_data + image_store + redis_data
+  # (whole corpus + multi-day enrichment). Capability removed; regression-locked.
+  v0.13-fu5-remove-data-destroying-paths: done
+  # Follow-up (DW-3/DW-4): migrate-primary.sh's backfill guard was
+  # check-then-act — it probed the `:active` heartbeat once and then ran alembic
+  # with nothing holding the window, and a runner sleeping out an RPD window
+  # cleared that heartbeat and resumed mid-migration. Added the migration-held
+  # key `backfill:gemma:migrating` with set-then-check on both sides.
+  v0.13-fu6-migration-backfill-mutual-exclusion: done
+  # Follow-up (DW-6): run_backfill renewed its lease only from event sites (per
+  # launch-loop iteration, per pause poll, per finished row), so nothing renewed
+  # it while a row was in flight — one enrichment slower than the TTL let the
+  # lease lapse under a live writer. Added a background timer task renewing at
+  # ttl/3 for the whole run, cancelled after the in-flight drain.
+  v0.13-fu7-backfill-lease-background-renewer: done
+  # Follow-up (DW-7): GeminiClient classified quota only on the HTTP-status
+  # path, so a throttle arriving as identical connection resets/timeouts
+  # re-raised untagged, the runner took the hard-error branch, and the attempt
+  # charged before launch stood — burning backfill.max_attempts on good rows
+  # inside one throttle window. Repeated identical transport failures within a
+  # configurable recency window of an observed 429 now raise the distinguished
+  # quota error; everything else stays a hard error.
+  v0.13-fu8-gemini-transport-quota-classification: done
+  # Follow-up (DW-2): CI retirement deleted the Trivy scan and the nightly
+  # pip-audit/npm audit jobs on the premise that local gates covered them, but
+  # no local gate audited anything and Dependabot has no checks on bot PRs.
+  # Added scripts/agent/audit-deps.sh (pip-audit + npm audit, JSON-parsed) as an
+  # advisory stage of `validate.sh all` — reports findings, never mutates rc,
+  # degrades to a visible skip offline.
+  v0.13-fu9-dependency-audit-gate: done
+  # Follow-up: bmad-loop dev sessions were bound to "finishing is ONLY
+  # finish-feature.sh" while the orchestrator owns merge-back for
+  # bmad-loop/<run>/<story> branches, so every Epic 3 session re-derived the
+  # generic refusal from script source. Explicit orchestrator-naming refusal in
+  # finish-feature.sh + carve-out in the dev-auto gate binding + docs
+  # (CLAUDE.md, Cursor mirror, harness-troubleshooting) + regression lock
+  # (refusal fires; bmad-loop never enters VALID_BRANCH_TYPES).
+  v0.13-fu11-bmad-loop-merge-ownership: done

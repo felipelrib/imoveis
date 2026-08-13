@@ -135,7 +135,7 @@ Config tests must clear `get_config()`'s `lru_cache` via `autouse` fixture when 
 
 ## Tracking (BMad artifacts — ADR 0005)
 
-**No external tracker.** Plan of record: `_bmad-output/planning-artifacts/epics.md`. Execution status: `_bmad-output/implementation-artifacts/sprint-status.yaml`. Story keys are `v<milestone>-s<epic>.<story>` (e.g. `v0.13-s1.1`); follow-ups without a story mint `v<milestone>-fu<N>` keys in sprint-status.yaml. Pre-v0.13 `BIN-*` ids in old docs are historical names only.
+**No external tracker.** Plan of record: `_bmad-output/planning-artifacts/epics.md`. Execution status: `_bmad-output/implementation-artifacts/sprint-status.yaml`. Story keys are `v<milestone>-s<epic>.<story>` (e.g. `v0.13-s1.1`); follow-ups without a story mint `v<milestone>-fu<N>` keys in sprint-status.yaml — under the top-level `followups:` map, **never** inside `development_status` (bmad-loop parses only that map and flags every non-standard key via its `queue.sprint-status-unknown-keys` warning). Pre-v0.13 `BIN-*` ids in old docs are historical names only.
 
 ### Milestone ordering
 
