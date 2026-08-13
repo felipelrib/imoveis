@@ -2,7 +2,7 @@
 title: 'Runner env contract — correct enablement surface, honest preflight, no test-gate collision'
 type: 'bugfix'
 created: '2026-08-12'
-status: 'awaiting-operator'
+status: done
 baseline_revision: 'a5d6ec134eaf8744e1e382fc523947476ca72560'
 final_revision: '6296e0690cc58a9818efe7a73ffb1de0f1f86627'
 review_loop_iteration: 1
@@ -180,3 +180,14 @@ done
 - The precedence rule now exists twice (Python loader, bash preflight). Paired tests pin both directions, but a new cloud backend added to `core.enrichment` must also be added to the installer's `CLOUD_BACKENDS`.
 - `ensure-test-db.sh` still re-sources `.env.local` in its own process; an operator `TEST_DATABASE_URL` can still redirect migrations away from the ephemeral DB (deferred, pre-existing).
 - The runner's own crash-loop message still points at the committed YAML (deferred — that file is fenced by this story's intent contract).
+
+## Operator Confirmation
+
+Confirmed 2026-08-13: the external actions this story owed were carried out.
+
+- Restart the supervisor so it re-reads the env file: `sudo systemctl restart imoveis-backfill-serve`. systemd reads `EnvironmentFile=` only at unit start, so a unit that started before the three `IMOVEIS_AI__ENRICHMENT_ROUTING__*` lines were added to .env.local is still resolving the all-local map and crash-looping.
+- Confirm the restart took: `systemctl status imoveis-backfill-serve` shows active (running) and `journalctl -u imoveis-backfill-serve -n 50` shows no startup refusal about routing or GEMINI_API_KEY.
+- From the primary checkout on main after this merges, run `bash scripts/install-backfill-runner.sh --check` and confirm it prints "Effective backfill routing: gemma for visual sentiment deal_verdict" with no routing warning. (Verified during this run against your current .env.local — it passed, where the pre-fix installer warned the unit "would exit at startup and restart forever".)
+- Press Start on the Operações backfill card with no run in flight and confirm a run begins and the status endpoint reports runner_present true — the end-to-end check no agent can perform.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._

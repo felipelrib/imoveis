@@ -212,7 +212,7 @@ development_status:
   # pytest, so operator env silently reddens the gate (observed: test_celery_app
   # failed on a partial routing map; patched locally, needs a structural fix).
   # NO GATE — shares zero files with 3-2/3-3/3-4, runs parallel to all of Wave B.
-  3-5-runner-env-contract: awaiting-operator
+  3-5-runner-env-contract: done
   epic-3-retrospective: optional
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
