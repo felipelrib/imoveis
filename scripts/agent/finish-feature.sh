@@ -91,6 +91,13 @@ fi
 
 [ "$BRANCH" != "main" ] || die "you are ON main — run this from a feature branch"
 BRANCH_TYPE="${BRANCH%%/*}"
+# bmad-loop worktree branches (bmad-loop/<run-id>/<story>) are merged by the
+# bmad-loop ORCHESTRATOR after its review pass — never by this gate. Merging
+# here would bypass that review, tear down a worktree the orchestrator owns,
+# and delete the branch out from under its own merge step (run-state desync).
+if [ "$BRANCH_TYPE" = "bmad-loop" ]; then
+  die "'$BRANCH' is a bmad-loop orchestrator branch — the orchestrator merges it after its review pass. Commit your work, run 'bash scripts/agent/validate.sh all', and end the session; NEVER merge a bmad-loop branch by hand."
+fi
 echo "$BRANCH_TYPE" | grep -qE "^($VALID_BRANCH_TYPES)$" || die "branch '$BRANCH' does not have a valid conventional type prefix (expected one of: $VALID_BRANCH_TYPES)"
 
 # --- Validate-only mode -----------------------------------------------------

@@ -113,6 +113,14 @@ development_status:
   # advisory stage of `validate.sh all` — reports findings, never mutates rc,
   # degrades to a visible skip offline.
   v0.13-fu9-dependency-audit-gate: done
+  # Follow-up: bmad-loop dev sessions were bound to "finishing is ONLY
+  # finish-feature.sh" while the orchestrator owns merge-back for
+  # bmad-loop/<run>/<story> branches, so every Epic 3 session re-derived the
+  # generic refusal from script source. Explicit orchestrator-naming refusal in
+  # finish-feature.sh + carve-out in the dev-auto gate binding + docs
+  # (CLAUDE.md, Cursor mirror, harness-troubleshooting) + regression lock
+  # (refusal fires; bmad-loop never enters VALID_BRANCH_TYPES).
+  v0.13-fu11-bmad-loop-merge-ownership: done
 
   # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
   # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)

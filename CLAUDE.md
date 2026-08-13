@@ -112,6 +112,8 @@ NEVER merge manually. ALWAYS use:
 bash scripts/agent/finish-feature.sh
 ```
 
+**Exception — bmad-loop branches:** `bmad-loop/<run>/<story>` worktree branches are merged by the bmad-loop **orchestrator** after its review pass; `finish-feature.sh` refuses them by design (two merge machineries must never race on one branch). In a bmad-loop session, finishing = commit + `validate.sh all` green + end the session. Never merge such a branch by hand and never add `bmad-loop` to `VALID_BRANCH_TYPES`.
+
 `all` ends with an **advisory** dependency audit (`scripts/agent/audit-deps.sh`: `pip-audit` + `npm audit`) — it never affects the verdict, missing tools/offline degrade to a visible `[WARN]` skip, and a real finding is resolved by a deliberate dependency bump, never by muting the tool.
 
 If validation fails: diagnose → fix → re-run. Missing tools (`pre-commit`, `isort`, `flake8`, `pytest`): `pip install`.
