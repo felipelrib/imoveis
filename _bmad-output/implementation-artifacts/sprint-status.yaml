@@ -208,7 +208,16 @@ development_status:
   # `not score`, so nothing re-queues them, and 2-1's percentiles would compute
   # over them. Gates 2-1 (the missing half of the Epic 3 → Epic 2 gate).
   # File-disjoint from 2-6; runs parallel to it (Wave 0).
-  2-7-corpus-repair-fabricated-scores: backlog
+  2-7-corpus-repair-fabricated-scores: awaiting-operator
+  # DO NOT START 2-1 YET — the 2.1←2.7 gate is NOT machine-enforced.
+  # `awaiting-operator` is not in bmad-loop's ACTIONABLE_STATUSES, so
+  # next_actionable() skips 2-7 and returns THIS key (verified against the real
+  # parser on 2026-08-13). 2-7's migration ships un-applied: the repair only
+  # lands when the operator runs migrate-primary.sh on the primary corpus and
+  # flips 2-7 to `done`. Starting 2-1 before that computes cohort percentiles
+  # over a corpus still carrying known-fabricated scores — precisely what the
+  # gate exists to prevent (epics.md "Do not parallelize"; docs/features/
+  # v0.13-s2.7-corpus-repair-fabricated-scores.md).
   2-1-cohort-price-m2-percentiles-pipeline: backlog
   2-2-percentile-badge-and-filter: backlog
   2-3-saved-search-new-match-detection: backlog
