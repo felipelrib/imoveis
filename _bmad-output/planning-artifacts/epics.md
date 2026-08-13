@@ -40,6 +40,17 @@ tracking: >
   pytest). It shares no files with s3.2–s3.4, so it carries no gate and runs
   parallel to all of Wave B. Epic 2's s2.1 gate is unchanged — s3.5 touches no
   enrichment-write path, so it does not block Epic 2.
+  RETROSPECTIVE AMENDMENT (2026-08-13, epic-3 retro): Epic 3 closed and
+  retrospected (epic-3-retro-2026-08-13.md). s2.7 minted — one-off corpus
+  repair for rows poisoned with fabricated 0.5 scores before s3.2 landed
+  (the missing half of the Epic 3 → Epic 2 gate). Added gate: s2.1←s2.7.
+  Story 3.4's goal/AC corrected in place (the "re-enrichment gap" premise was
+  false — nothing reads last_property_id back; see the story's dated note).
+  DW-32 (start.sh primary-migration bypass) is scheduled before Epic 2 Wave 1
+  (epic-3-retro-item-3); the DW-9/20/21 ticker bundle follows after s2.7.
+  Epic 2 wave order: (s2.6 ∥ s2.7 ∥ DW-32) → s2.1 → (s2.2 ∥ s2.3) →
+  (s2.4 ∥ s2.5). Retro action items tracked as epic-3-retro-item-N-<slug>
+  keys in sprint-status.
 inputDocuments:
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-imoveis-2026-08-05/addendum.md'
@@ -520,6 +531,30 @@ So that Epic 2's new surfaces build on a correct foundation instead of inheritin
 **When** the story completes
 **Then** `bash scripts/agent/validate.sh all` is green including the full Playwright suite, no new string exists in only one catalog (NFR-7), and no Epic 2 UI story has been started against the old strings
 
+### Story 2.7: Corpus repair — rows poisoned with fabricated scores before s3.2
+
+*(Minted 2026-08-13 at the epic-3 retrospective. The missing half of the Epic 3 → Epic 2 gate: story 3.2 stopped **new** fabrication but repairs nothing retroactively, and rows already stamped with a fabricated 0.5 are permanently outside the candidate set — `mode_is_missing_ai` keys on `not score`, so nothing re-queues them. Gates 2.1: percentiles must not compute over known-fabricated scores. File-disjoint from 2.6; the two run in parallel.)*
+
+As the operator,
+I want rows that were stamped with a fabricated 0.5 score before story 3.2 landed to be repaired back into the candidate set,
+So that Epic 2's percentiles compute over honest values and the live backfill re-enriches the poisoned rows instead of ignoring them forever (FR-27/FR-30 integrity; s3.2's deferred repair half).
+
+**Acceptance Criteria:**
+
+**Given** rows whose stored visual/sentiment carry the fabrication signature (`meta->'visual'->>'analysis' = 'Error'` and/or the sentiment twin, with `ai_score` sitting on the configured `visual_weight`/`text_weight` blend of 0.5)
+**When** the repair runs
+**Then** those rows' `ai_score` is nulled so `mode=missing` re-queues them as candidates, the repair reports the count it touched, and rows with legitimate scores — including `neutral_sentiment_no_description()`'s honest 0.5 sentiment beside a real visual score — are untouched
+**And** a characterization test locks the detection predicate's include/exclude boundary before the repair is applied (brownfield corpus surgery)
+
+**Given** story 3.2's contract forbids `analysis == "Error"` string-matching as a runtime signal
+**When** this story lands
+**Then** the forensic predicate lives **only** in the one-off repair artifact — never in feature code, never in a recurring path — and the chosen delivery mechanism (migration vs admin action vs script) is recorded with its rationale
+**And** if delivered as a migration it passes `alembic check`, and applying it to the primary DB goes through the sanctioned operator step (`migrate-primary.sh` or an equivalently guarded path — never an unguarded script against a live backfill)
+
+**Given** repaired rows re-enter the candidate set while a backfill may be mid-run
+**When** the repair is applied
+**Then** the running backfill picks the rows up through its normal census/candidate path with no restart required, and 2.1 may start once the repair has landed — repaired-but-not-yet-re-enriched rows are honest nulls, which 2.1's suppression rules already handle
+
 ## Epic 3: Enrichment Hardening & Operability
 
 *(Minted 2026-08-12 at the Epic 1 retrospective. Not new scope: this is FR-28's unmet stated outcome plus the corpus-integrity holes Epic 1's review passes found and deliberately fenced out of their own stories' intent contracts.)*
@@ -601,15 +636,17 @@ So that AC-1's never-exceed guarantee is about the provider's RPD rather than a 
 
 ### Story 3.4: Checkpoint advance semantics under lease loss
 
+*(Corrected 2026-08-13 at the epic-3 retrospective, per the delivered story's own evidence: nothing reads `last_property_id` back — resume is `mode=missing` set subtraction — so the originally stated "re-enrichment of a gap already covered" never existed. The real damage was a lying resume marker and an inflated `processed_total` on `--status` / `GET /admin/backfill/status`, and the delivered counter semantics is at-most-once, not exactly-once. The original wording is preserved in git history and quoted in `spec-3-4-checkpoint-advance-semantics.md`.)*
+
 As the operator,
-I want a displaced runner's draining rows to stop rewinding its successor's position,
-So that a lease handover does not cause re-enrichment of a gap already covered and does not inflate `processed_total` (DW-11).
+I want a displaced runner's draining rows to stop overwriting its successor's checkpoint,
+So that a lease handover cannot leave a lying resume marker or inflate `processed_total` on the operator-facing status surfaces (DW-11).
 
 **Acceptance Criteria:**
 
 **Given** `checkpoint.advance()` is an unconditional `hset` on a key shared by every runner, and in-flight rows always drain by design (cancelling mid-enrichment leaves half-written properties)
 **When** this story lands
-**Then** a runner that has lost its lease can no longer move `last_property_id` backwards for the successor, and `processed_total` counts each row once
+**Then** a runner that has lost its lease can no longer overwrite `last_property_id`/`last_run_date` for the successor, and `processed_total` counts each row **at most once** (a drained row the successor never re-fetches may go uncounted — reported, not silent)
 **And** the chosen mechanism — monotonic compare-and-set on the id's ordering, or lease-gated advance — is recorded with its trade-off, because the same call also records genuinely completed work that must not be lost
 
 **Given** story 1.3's drain-after-loss constraint and v0.13-fu7's `_publish` guard
@@ -645,4 +682,20 @@ So that following the runbook does not turn the merge gate red or report a worki
 **When** this story lands
 **Then** the collision is closed structurally, not one test module at a time: either the unit gets its own `EnvironmentFile` distinct from the validate-sourced file, or `validate.sh` sources only the workspace-identity keys it needs, or `IMOVEIS_*` is stripped suite-wide in a root conftest — the choice recorded with its rationale (DW-33)
 **And** a regression proves the suite is green with a fully-populated operator `.env.local` present, including the cloud routing override, so the next operator variable cannot silently redden the gate
+
+### Epic 3 close + post-epic sequencing (retrospective, 2026-08-13)
+
+Epic 3 closed with all five stories delivered, merged, pushed and operator-confirmed; the outcome was live-verified the same day (supervised unit, requests-denominated budget, lease-loss handover proven on the live run). Its retrospective (`_bmad-output/implementation-artifacts/epic-3-retro-2026-08-13.md`) found the epic converged in **one review pass per story** (epic-1's A2 lesson institutionalized), that the operator handoff surfaced four defects reviews could not see (DW-31/32/33/34, two fixed in-epic as story 3.5), and that the ledger grew net-positive again (closed 6, opened 20) — with one gap in the Epic 3 → Epic 2 gate itself: story 3.2 stopped new score fabrication but repaired nothing retroactively, so **Story 2.7** was minted to close the gate's other half.
+
+**Wave order (recorded here so future sessions do not re-derive it):**
+
+- **Wave 0 (parallel, before Epic 2 proper):** `2.6` (UI contract debt, frontend-only) ∥ `2.7` (corpus repair, DB/scripts-only) ∥ **DW-32** (`start.sh` primary-migration bypass — `epic-3-retro-item-3`, high severity). All three are file-disjoint.
+- **Wave 1:** `2.1` — cohort percentiles.
+- **Wave 2:** `2.2` ∥ `2.3`.
+- **Wave 3:** `2.4` ∥ `2.5`.
+- **After 2.7:** the DW-9/20/21 background-ticker bundle (one root cause, three keys: `:active` heartbeat, published state, lease outside `run_backfill`) is the scheduled next drain candidate — deliberately not minted as a story yet.
+
+**Gates:** `2.1←2.7` (new — percentiles never compute over known-fabricated scores) and DW-32 `done` before `2.1`; `2.2←2.1+2.6`, `2.3←2.1`, `2.4←2.3+2.6`, `2.5←2.2+2.6`. The original `2.1←3.2+3.3+3.4` gate is satisfied (Epic 3 done).
+
+**Do not parallelize:** any Epic 2 UI story (`2.2`/`2.4`/`2.5`) before `2.6` lands (they would pin e2e assertions on the wrong pt-BR strings); `2.1` before `2.7` (percentiles over known-fabricated scores); DW-32 with anything else touching `scripts/agent/` or the `scripts/*.sh` helpers.
 **And** the local guard added to `test_celery_app.py` on 2026-08-12 is folded into whichever mechanism wins, not left as a second, divergent copy

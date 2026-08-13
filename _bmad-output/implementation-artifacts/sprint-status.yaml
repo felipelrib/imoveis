@@ -18,12 +18,13 @@
 # map at the END of this file — NEVER inside development_status, where
 # bmad-loop flags every non-standard key via queue.sprint-status-unknown-keys.
 #
-# SEQUENCING GATES (from epics.md frontmatter `tracking:` — enforce order):
-#   1.2←1.1, 1.3←1.1, 1.4←1.1, 1.5←1.3, 1.6←1.4+1.5,
-#   2.2←2.1, 2.3←2.1, 2.4←2.3, 2.5←2.2.
-#   Wave 1: 1.1 ∥ 2.1 → Wave 2: 1.2 ∥ 1.3 ∥ 1.4 ∥ 2.2 ∥ 2.3 →
-#   Wave 3: 1.5 ∥ 2.4 ∥ 2.5 → Wave 4: 1.6.
-#   Epic 1 and Epic 2 chains are independent and can run in parallel.
+# SEQUENCING GATES (from epics.md — enforce order; refreshed 2026-08-13 at
+# the epic-3 retro, superseding the original epic-1∥epic-2 wave plan):
+#   Wave 0: 2-6 ∥ 2-7 ∥ DW-32 (epic-3-retro-item-3) — all file-disjoint.
+#   Wave 1: 2-1 (gates: 2.1←2.7 + DW-32 done; 2.1←3.2+3.3+3.4 satisfied).
+#   Wave 2: 2-2 ∥ 2-3 → Wave 3: 2-4 ∥ 2-5.
+#   Gates: 2.2←2.1+2.6, 2.3←2.1, 2.4←2.3+2.6, 2.5←2.2+2.6, 2.1←2.7.
+#   After 2.7: DW-9/20/21 ticker bundle (scheduled, not minted).
 
 # STATUS DEFINITIONS:
 # ===========# Epic Status:
@@ -103,14 +104,19 @@ development_status:
   # fixed through a different field, promote it to a spec I/O-matrix invariant
   # instead of running another pass (1.6 pass 3: "the third door into the same
   # defect"; 1.3 spent 4 passes / 64 patches).
-  epic-1-retro-item-2-third-pass-invariant-rule: open
+  # DONE 2026-08-13 (epic-3 retro): every epic-3 spec carried frozen I/O-matrix
+  # invariant rows; all five stories converged in ONE review pass (epic 1: 13).
+  epic-1-retro-item-2-third-pass-invariant-rule: done
   # A3 — a story marked done inside another story's branch gets its own
   # docs/features/<story-key>-*.md in that same branch, not in a later review
   # pass (1.4 sat `done` with no doc until 1.6's third pass caught it).
-  epic-1-retro-item-3-feature-doc-on-absorption: open
+  # DONE 2026-08-13 (epic-3 retro): no absorption occurred in epic 3; all five
+  # v0.13-s3.x feature docs present at epic close.
+  epic-1-retro-item-3-feature-doc-on-absorption: done
   # A4 — verify `git rev-list --count origin/main..main == 0` at the END of a
   # loop run, not only per-merge (the loop left origin 9 merges behind).
-  epic-1-retro-item-4-push-verification-at-loop-end: open
+  # DONE 2026-08-13 (epic-3 retro): origin gap was 0 at the retrospective.
+  epic-1-retro-item-4-push-verification-at-loop-end: done
   # A5 — track deferred-work opened vs closed per epic; a net-positive epic
   # ends with a scheduled drain wave rather than an open ledger (epic 1 closed
   # 7 and opened 32).
@@ -165,7 +171,27 @@ development_status:
   # failed on a partial routing map; patched locally, needs a structural fix).
   # NO GATE — shares zero files with 3-2/3-3/3-4, runs parallel to all of Wave B.
   3-5-runner-env-contract: done
-  epic-3-retrospective: optional
+  # Retrospective held 2026-08-13: epic-3-retro-2026-08-13.md. Ledger delta at
+  # close: 6 drained, 20 opened (~46 open). A2/A3/A4 above verified done; A1/A5
+  # stay open. Story 2-7 minted (corpus repair, gates 2-1); story 3.4's
+  # epics.md goal corrected in place; DW-32 scheduled before Epic 2 Wave 1.
+  epic-3-retrospective: done
+
+  # Epic 3 retrospective action items (2026-08-13, RETRO_ITEM_RE shape).
+  # Owners/criteria: epic-3-retro-2026-08-13.md §6.
+  #
+  # R1 — bmad-loop presents ONE consolidated, deduplicated operator checklist
+  # per wave instead of per-story checklists (epic 3: five checklists in two
+  # days, the same Docker-restart instruction verbatim in three specs).
+  epic-3-retro-item-1-operator-actions-batch-per-wave: open
+  # R2 — the five spent-cap `followup_review_recommended` flags on
+  # spec-3-1…spec-3-5 get a deliberate sweep disposition (mint ledger entries
+  # or clear with a recorded reason); the sweep must see frontmatter flags.
+  epic-3-retro-item-2-followup-review-flag-disposition: open
+  # R3 — drive DW-32 (start.sh migrates primary, bypassing the fu6 mutual
+  # exclusion; high severity) to done BEFORE 2-1 leaves backlog. DW-9/20/21
+  # ticker bundle follows after 2-7 (recorded in epics.md, not minted).
+  epic-3-retro-item-3-dw32-drain-before-epic-2: open
   # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
   # Minted 2026-08-12 (epic-1 retro): Epic 2's UX foundation piece — numbered
@@ -175,6 +201,12 @@ development_status:
   # 1.6 locale flip promoted to everyone's default and that 1.6's e2e repairs
   # pinned verbatim in three compare specs. Gates: 2-2, 2-4 and 2-5 all ← 2-6.
   2-6-ui-contract-debt: backlog
+  # Minted 2026-08-13 (epic-3 retro): one-off corpus repair for rows poisoned
+  # with fabricated 0.5 scores before story 3-2 landed — mode=missing keys on
+  # `not score`, so nothing re-queues them, and 2-1's percentiles would compute
+  # over them. Gates 2-1 (the missing half of the Epic 3 → Epic 2 gate).
+  # File-disjoint from 2-6; runs parallel to it (Wave 0).
+  2-7-corpus-repair-fabricated-scores: backlog
   2-1-cohort-price-m2-percentiles-pipeline: backlog
   2-2-percentile-badge-and-filter: backlog
   2-3-saved-search-new-match-detection: backlog
