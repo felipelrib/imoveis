@@ -137,6 +137,8 @@ Config tests must clear `get_config()`'s `lru_cache` via `autouse` fixture when 
 
 **No external tracker.** Plan of record: `_bmad-output/planning-artifacts/epics.md`. Execution status: `_bmad-output/implementation-artifacts/sprint-status.yaml`. Story keys are `v<milestone>-s<epic>.<story>` (e.g. `v0.13-s1.1`); follow-ups without a story mint `v<milestone>-fu<N>` keys in sprint-status.yaml — under the top-level `followups:` map, **never** inside `development_status` (bmad-loop parses only that map and flags every non-standard key via its `queue.sprint-status-unknown-keys` warning). Pre-v0.13 `BIN-*` ids in old docs are historical names only.
 
+**Run order = `development_status` key order.** bmad-loop's sprint-status queue is strictly serial file order (`next_actionable` returns the first non-`done` story). When planning/retro sets a non-default order, encode it by **reordering the keys** to match the wave plan (gates go in epics.md), then verify with the real parser, never by eye: `PYTHONPATH=~/.bmad/cache/external-modules/bmad-loop/src python3 -c "from pathlib import Path; from bmad_loop.sprintstatus import load, next_actionable; print(next_actionable(load(Path('_bmad-output/implementation-artifacts/sprint-status.yaml'))))"`. Never hand-author a `stories.yaml` — sprint-status mode ignores it, and in stories mode `bmad-spec` is its sole writer.
+
 ### Milestone ordering
 
 Milestones are **versioned only** (`v0.1`, `v0.2`, …), recorded in the PRD + epics.md (`planningTarget`). Prefer **one large multi-story epic per numbered milestone**; thin single-story waves also get their own `v0.N`.
