@@ -2,7 +2,7 @@
 title: 'The daily budget must count requests, not properties'
 type: 'bugfix'
 created: '2026-08-12'
-status: 'awaiting-operator'
+status: done
 baseline_revision: 'c134c0fca4a86e056a9904c70d59946dbc046953'
 final_revision: '5cec437'
 review_loop_iteration: 1
@@ -213,3 +213,15 @@ if request_counter is not None:
 - A mid-run window roll now over-charges the new window by up to the in-flight set's spend (previously it under-charged by the same amount). That is the deliberate direction — under-charging is what can pass a real RPD — but it costs a little throughput at a boundary a long pass can cross.
 - Nothing bounds a single row's worst-case cost *before* launch: the loop still reserves 3 for a row that can spend ~45. Inside the 400-request margin between `14000` and the free-tier 14,400 at `concurrency: 1`, outside it at `concurrency: 10`. Deferred with its options.
 - The `--continuous` headroom shortcut skips one `_sleep_for_reset`, which is also where a displaced runner notices a lost lease. Bounded to one extra pass — that pass cannot launch without the lease and sets `lease_lost` at its own loop head — and gated on a live window so the no-window path (where the wait is only `reset_margin`) keeps the old behaviour.
+
+## Operator Confirmation
+
+Confirmed 2026-08-13: the external actions this story owed were carried out.
+
+- Start Docker Desktop on the Windows host and enable WSL integration for this distro. The daemon is down (`docker` is not a usable binary in this distro), which is the only reason the full gate could not run.
+- With Docker up, re-run `bash scripts/agent/validate.sh all` from this worktree and confirm it is green — this is the one acceptance criterion this run could not verify. It is also the first execution of the 6 new real-Redis tests in `src/tests/integration/test_backfill_lua_scripts.py` and of the amended budget assertion in `src/tests/contract/test_api_contract.py`. Expect the two `test_no_data_destroying_scripts.py::test_volumes_flag_is_refused_not_silently_ignored[stop.sh|clean.sh]` failures to disappear: they shell out to `stop.sh --volumes`, which aborts with "docker is not running" before printing the refusal they assert, and they fail identically on the untouched baseline.
+- Let the bmad-loop orchestrator merge this branch. `finish-feature.sh` refuses it ("branch does not have a valid conventional type prefix"), as it does every `bmad-loop/<run>/<story>` branch — do not merge by hand.
+- After the merge lands on `main` and is pushed, set `3-3-budget-counts-requests: done` in `_bmad-output/implementation-artifacts/sprint-status.yaml` (it is `in-progress` now).
+- Optionally prove the reconciliation against the live provider, which no agent can do here: run one `scripts/dev/backfill_gemma.py` pass over a handful of properties and confirm the `backfill_progress` journal line shows `requests_consumed` above `requests_reserved` whenever `retry_count` is non-zero, and that `--status` reports the same consumed figure.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._

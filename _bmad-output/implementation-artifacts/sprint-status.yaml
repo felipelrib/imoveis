@@ -196,7 +196,7 @@ development_status:
   # up to 3 stages x 3 JSON attempts x 5 HTTP retries = 45 real requests, and
   # 429s are retried — so AC-1's never-exceed guarantee measures the wrong
   # quantity, worst exactly when the account is already throttled.
-  3-3-budget-counts-requests: awaiting-operator
+  3-3-budget-counts-requests: done
   # DW-11: after a lost lease, still-draining rows advance the SHARED
   # checkpoint hash, rewinding the successor's position and inflating
   # processed_total. Decide monotonic compare-and-set vs lease-gated advance.
