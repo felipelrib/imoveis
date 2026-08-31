@@ -237,3 +237,7 @@ The agent harness is **BMad skills (committed, `.agents/skills/`) + `_bmad/custo
 
 - No worktree-orchestration MCP tools here — `cd` to the target checkout path directly; the session's working directory persists across shell calls.
 - `.claude/skills/` holds only framework skills (BMad, WDS); project workflow discipline lives in this file, the `_bmad/custom/` overrides, and the `scripts/agent/` gates — not in per-tool skills.
+
+## Cross-provider AI docs (gitignored — keep in sync)
+
+Local-only AI docs for other agent harnesses (OpenAI Codex, Cursor) live at root `AGENTS.md` (entrypoint) + `docs/ai/` (`project-context.md`, `working-rules.md`, `memory-export.md`, `gotchas.md`). Both are gitignored: they duplicate this file, the global engineering rules, and Claude's persistent project memory so any agent tool can work at context parity. **Whenever a durable rule, gotcha, or memory changes — in this file, `.cursor/rules/imoveis-core.mdc`, `docs/harness-troubleshooting.md`, or Claude memory — update `AGENTS.md`/`docs/ai/` in the same pass.** Multi-harness mirrors must not silently drift (same rule as the Cursor mirror above). If they are ever missing on a fresh clone, regenerate them from this file + memory export.

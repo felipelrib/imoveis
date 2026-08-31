@@ -122,7 +122,7 @@ All settings live in `configs/app_config.yaml`. Environment variable overrides u
 ```bash
 export DATABASE_URL=postgresql://user:pass@localhost:5432/realestate_dev
 export REDIS_URL=redis://localhost:6379/0
-export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_HOST=http://localhost:11434
 ```
 
 ### Start Services
@@ -327,7 +327,7 @@ docker compose --env-file .env.local up -d
 ```env
 DATABASE_URL=postgresql://user:password@db-host:5432/realestate_prod
 REDIS_URL=redis://redis-host:6379/0
-OLLAMA_BASE_URL=http://gpu-host:11434
+OLLAMA_HOST=http://gpu-host:11434
 ```
 
 ### Cloud Backfill Runner (host-side, systemd)

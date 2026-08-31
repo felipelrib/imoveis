@@ -108,3 +108,9 @@ coverage.xml
 .bmad-loop/cache/
 .bmad-loop/policy.toml
 _bmad/render/
+
+# Cross-provider AI docs (local-only mirrors of CLAUDE.md + agent memory for
+# Codex/Cursor — see CLAUDE.md "Cross-provider AI docs"). Never committed:
+# they duplicate private memory content and would drift from their sources.
+/AGENTS.md
+/docs/ai/
