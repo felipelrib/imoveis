@@ -40,6 +40,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Setup: setup.md
+  - Windows Migration: windows-migration.md
   - Add a locale: i18n/add-a-locale.md
   - Harness Troubleshooting: harness-troubleshooting.md
   - Architecture: architecture.md
