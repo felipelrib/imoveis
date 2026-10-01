@@ -183,6 +183,16 @@ existing operational/source-access issues, not data-transfer failures. Dependenc
 advisories and the feature/operator backlog above remain separate work. No
 migration procedure authorizes primary schema repair or closes those items.
 
+The final browser smoke loaded live grid records and images. An additional map
+check exposed an existing API-contract mismatch: `Properties.tsx` requests
+`page_size=200`, while `src/api/properties.py` accepts at most 100. A direct native
+HTTP request reproduced 422 with that validation error; both files are unchanged
+from the migration baseline. Vite also logged a missing optimized
+`maplibre-gl-worker.mjs` asset. Map behavior needs application follow-up; the
+passing browser suite does not establish that the live map works. An unsigned
+browser session also needs the existing API credential for administrative views;
+separate authenticated HTTP probes verified those endpoints without exposing it.
+
 The final finish gate passed **2,146 unit tests** (2 skips and 1 slow test
 deselected), **119 integration tests**, **51 contract tests**, and **110 Chromium
 E2E tests**, plus lint and the frontend build. The dependency audit is advisory;
