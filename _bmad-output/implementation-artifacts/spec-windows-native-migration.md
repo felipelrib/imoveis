@@ -2,7 +2,7 @@
 title: 'Finish native Windows development migration'
 type: 'bugfix'
 created: '2026-10-01'
-status: 'in-review'
+status: 'done'
 baseline_commit: 'ff69e260f30c41ce38a83969c2decf1f3efd6490'
 review_loop_iteration: 0
 context:
@@ -119,7 +119,7 @@ supervisors, or mark the unrelated feature/dependency backlog complete.
 
 ### Observed native acceptance (2026-10-01)
 
-- Corrected full run: 2,143 unit tests passed (2 skipped, 1 slow deselected),
+- Final finish gate: 2,146 unit tests passed (2 skipped, 1 slow deselected),
   119 integration, 51 contract and 110 Chromium E2E passed; lint/build passed.
   Advisory dependency stage runs afterward and does not suppress test failures.
 - Native Task Scheduler install, idle stop, heartbeat removal and reinstall
@@ -133,9 +133,12 @@ supervisors, or mark the unrelated feature/dependency backlog complete.
   omitted Linux's default-database advisory) was fixed with three output/secret
   regressions. Its red gate had one expected failure and 2,145 passes.
   Edge Case Hunter found no actionable issues. No intent or spec loopback required.
-- Native full gate before that small review patch exited 0. The mandatory
-  finish gate will validate the final staged tree before merging/pushing.
-- Spec closure remains pending until the code has landed on origin/main.
+- The mandatory native finish gate validated the final code, squash-merged it
+  as `09b20093`, pushed it to origin/main and cleaned the disposable stack and
+  implementation branch. Spec closure is recorded after that successful push.
+- BMad preflight has no blocking problems. Its older-relay advisory was checked
+  with an isolated Windows event smoke: SessionStart and Stop were both received
+  exactly once. The historical paused run remains unchanged.
 
 ## Suggested Review Order
 

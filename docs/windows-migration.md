@@ -2,8 +2,8 @@
 
 This audit covers moving development from `/home/felipe/workfolder/imoveis` to
 `C:\Workfolder\imoveis`. It records pending work and state that Git does not
-carry. Native dependencies, data transfer and runtime cutover are verified below;
-final native validation and shipping evidence complete this record.
+carry. Native dependencies, data transfer, runtime cutover and the full native
+finish gate are complete. The migration code is pushed to `origin/main`.
 
 ## Repository audit
 
@@ -22,8 +22,8 @@ divergent commits.
 | Other worktree entries | `/home/felipe/backfill-run` is a stale registration with a missing checkout. The four `.worktrees/` directories contain no files. Neither represents live implementation to merge. |
 
 The initial audit shipped as `ff69e26` through the docs-only finish gate. The
-runtime migration is a separate code change and requires the full native gate
-before `finish-feature.sh` merges and pushes it.
+runtime migration shipped as `09b20093` through the full native
+`finish-feature.sh` gate, including merge, push and disposable-stack cleanup.
 
 ## Existing pending development
 
@@ -137,6 +137,10 @@ supplement the original transfer receipt.
   mirrored locally and the verification command explicitly uses Git Bash. The
   historical paused orchestrator run remains paused and preserved. Its unrelated
   operator gates are not bypassed by this migration.
+  Final preflight reports 13 OK, zero problems and one advisory about the older
+  committed hook relay. An isolated native smoke confirmed the current runtime
+  receives both SessionStart and Stop exactly once through its legacy channel.
+  Updating the orchestrator relay is separate version maintenance.
 
 ### Completed runtime cutover
 
@@ -179,7 +183,18 @@ existing operational/source-access issues, not data-transfer failures. Dependenc
 advisories and the feature/operator backlog above remain separate work. No
 migration procedure authorizes primary schema repair or closes those items.
 
-The corrected native run passed **2,143 unit tests** (2 skips and 1 slow test
+The final finish gate passed **2,146 unit tests** (2 skips and 1 slow test
 deselected), **119 integration tests**, **51 contract tests**, and **110 Chromium
 E2E tests**, plus lint and the frontend build. The dependency audit is advisory;
 its findings do not erase the separate dependency-update backlog.
+
+### Continue development
+
+Use `C:\Workfolder\imoveis` as the project folder and the native commands in
+[setup](setup.md). Stop the Vite development server before running the full gate:
+Windows can lock its native modules while `npm ci` replaces dependencies.
+
+This existing Codex chat still declares the historical WSL UNC folder as its
+default workspace. All migration commands explicitly targeted the Windows
+checkout. Open the native folder for future Codex work; completing the code and
+runtime migration does not rebind an existing chat's workspace setting.
