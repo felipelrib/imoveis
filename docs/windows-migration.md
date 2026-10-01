@@ -2,7 +2,8 @@
 
 This audit covers moving development from `/home/felipe/workfolder/imoveis` to
 `C:\Workfolder\imoveis`. It records pending work and state that Git does not
-carry. Native Windows runtime and validation remain unverified.
+carry. Native dependencies, data transfer and runtime cutover are verified below;
+final native validation and shipping evidence complete this record.
 
 ## Repository audit
 
@@ -20,9 +21,9 @@ divergent commits.
 | Windows local files | `src/tests/conftest.py` is an old untracked fixture that conflicts with the modern tracked file. Preserve it outside the checkout before updating. Preserve `.claude/` and `opencode.jsonc` privately too. |
 | Other worktree entries | `/home/felipe/backfill-run` is a stale registration with a missing checkout. The four `.worktrees/` directories contain no files. Neither represents live implementation to merge. |
 
-This migration's documentation change uses `scripts/agent/finish-feature.sh`.
-Its docs-only path runs `mkdocs build --strict`, merges, and pushes. That result
-does not establish application-test or native Windows acceptance.
+The initial audit shipped as `ff69e26` through the docs-only finish gate. The
+runtime migration is a separate code change and requires the full native gate
+before `finish-feature.sh` merges and pushes it.
 
 ## Existing pending development
 
@@ -80,7 +81,7 @@ and local agent records and must not be committed or uploaded.
 
 | Local state | Transfer treatment |
 | --- | --- |
-| `.env.local` | Copy privately. Review database host/port, routing, and host-specific settings. Contains API/cloud credentials and a WSL-only password entry; never print values. |
+| `.env.local` | Copy privately. Review database host/port, routing, and host-specific settings. API/cloud credentials remain private; the unused WSL-only password entry was removed from the native copy. |
 | `frontend/.env.development` | Copy privately; verify API URL and credential against the intended backend. |
 | `AGENTS.md`, `docs/ai/` | Copy local project rules, gotchas, and prior project-memory export. WSL references need review as Windows support changes. |
 | `.cursor/`, `.claude/` | Preserve rules, settings, and skill mirrors. Canonical `.agents/skills/` is already tracked. Review hooks before enabling; preserve Windows-only settings when combining directories. |
@@ -88,9 +89,9 @@ and local agent records and must not be committed or uploaded.
 | `_bmad/config.user.toml`, `_bmad/custom/config.user.toml` | Copy personal BMad preferences; team configuration is tracked. |
 | `.bmad-loop/policy.toml`, `.bmad-loop/runs/` | Preserve policy and run evidence. Recreate or repair old run worktrees through the orchestrator before use on Windows. |
 | Architecture `reviews/`, `data/bench/` | Optional historical evidence, included in the small local-state recovery copy. |
-| `data/images/` | **387,859 files; 38,598,529,264 bytes (about 38.6 GB).** Separate bulk transfer required to preserve the host image cache; excluded from the small backup. |
-| Docker PostgreSQL / Redis / image storage | Outside Git. Compose declares `postgres_data`, `redis_data`, and `image_store`. Actual daemon, volume names, contents, and backups still need verification. |
-| `/etc/systemd/system/imoveis-backfill-serve.service` | Preserve as a reference. At audit time it was active and used the WSL checkout and Linux virtualenv. Native Windows needs an equivalent supervisor and deliberate single-runner cutover. |
+| `data/images/` | **387,859 files; 38,598,529,264 bytes (about 38.6 GB).** Copied to native `data/images/`; every file SHA256 matched the source, with zero missing, extra or mismatched files. Source retained. |
+| Docker PostgreSQL / Redis / image storage | Outside Git. Compose declares `postgres_data`, `redis_data`, and `image_store`. The same `desktop-linux` engine retains `imoveis_postgres_data`, `imoveis_redis_data` and `imoveis_image_store`; no data volume was replaced. |
+| `/etc/systemd/system/imoveis-backfill-serve.service` | Preserved privately. The WSL unit is now disabled/inactive with PID 0. The native sign-in task replaces it; stop/restart and Redis heartbeat were verified. |
 | Git refs, stashes, worktree metadata | A private verified Git bundle preserves all refs and every original stash tip. A clone/pull alone does not. Old worktree `.git` pointers are not portable. |
 
 Host `data/images/` and Docker's `image_store` volume are distinct configured
@@ -107,20 +108,78 @@ its old absolute paths are useful only as historical evidence.
 
 ## Native Windows readiness
 
-The checkout can live on `C:\Workfolder\imoveis` independently of runtime
-readiness. Before retiring WSL:
+Private evidence and recovery files live outside Git at
+`C:\Workfolder\imoveis-migration-20261001-010057`. They include credentials and
+agent records; do not upload or commit this directory. New verification receipts
+supplement the original transfer receipt.
 
-1. Make Docker Desktop available and identify the existing primary volumes.
-   Its daemon was unreachable from Windows and its WSL integration unavailable
-   during this audit. No primary container or database was changed.
-2. Recreate Windows Python/frontend environments and validate the Bash agent
-   gates under Git Bash. `lib.sh` states Git Bash support; `validate.sh` prefers
-   `.venv/bin/python`, so Windows virtualenv discovery needs an actual run.
-3. Replace the systemd-only backfill hosting path while preserving environment,
-   checkpoint, quota, and migration-exclusion contracts. Stop the old supervisor
-   during cutover before enabling another against the same corpus.
-4. Transfer or reuse data stores and images, then verify counts, image reads,
-   API/frontend connectivity, and Ollama access.
-5. Run `bash scripts/agent/validate.sh all` against the ephemeral test stack.
-   Primary DB repairs remain subject to their operator procedure; do not use
-   startup scripts to bypass Story 2.7 or DW-32.
+- **Dependencies:** native Python 3.11.15, regenerated Windows dependency lock,
+  gate tooling, `npm ci` and Playwright Chromium installed. The previous native
+  virtualenv is preserved privately. Linux lock and Docker dependency pins stay intact.
+- **Images:** complete host-cache transfer verified with SHA256 for all 387,859
+  files; receipts `images-verification.json` and `images-source-sha256.jsonl`.
+  This is separate from the retained Docker `image_store` volume.
+- **Database recovery:** `postgres-before-windows-cutover.dump` is a 372,210,414-byte
+  custom-format archive, SHA256
+  `529795063c72fb1352a37772549f33f33e262ddb1e313c546584d0601d7c7946`.
+  `pg_restore --list` parsed its 121 table-of-contents lines. A restore rehearsal
+  was not performed; the live database and Redis volumes are reused in place.
+- **Docker:** Desktop's stale runtime sockets were isolated without resetting
+  data; Engine 29.6.1 became available. The operator separately approved replacing
+  only API, workers and beat to bind native configuration. Existing images were
+  verified against the checkout's 101 production Python files per image.
+- **Local AI:** native Ollama produced an actual 1024-dimensional `bge-m3`
+  embedding and a successful `qwen2.5vl:7b` response. No cloud run was requested.
+- **Application smoke:** native Vite served the property grid with live records
+  and images. Authenticated host HTTP checks returned successful health, system
+  status and backfill status responses before container cutover.
+- **Harness:** native BMad CLI and psmux are available; canonical skills are
+  mirrored locally and the verification command explicitly uses Git Bash. The
+  historical paused orchestrator run remains paused and preserved. Its unrelated
+  operator gates are not bypassed by this migration.
+
+### Completed runtime cutover
+
+The four app containers now bind `C:\Workfolder\imoveis\configs`, using the same
+verified image IDs. All seven config files match the WSL source after newline
+normalization. PostgreSQL retains its August 13 container and Redis its August 4
+container, with their original named volumes. The scraper exceeded the approved
+900-second drain window and exited 137 at Docker's cutoff; its replacement started
+and resumed processing queued jobs. Redis queue/unacknowledged state remains in
+place. This was not a clean completion of every in-flight scrape.
+
+Post-cutover native HTTP checks returned `/health` OK and authenticated
+`/system/status` HTTP 200 with database, Redis, Ollama and workers all OK.
+`/admin/backfill/status` returned HTTP 200, `runner_present=true`, state `idle`.
+The live snapshot contained 178,085 properties, 251,112 listings and 275,720 price
+history rows; these counts continue to change while workers run.
+
+The WSL systemd supervisor is disabled/inactive (PID 0). The installed
+`Imoveis-Backfill-Supervisor` task has native `pythonw.exe`, Windows working
+directory, interactive sign-in and recovery triggers, `IgnoreNew`, no time limit,
+no hard termination and no battery stop. Its actual interpreter process was
+verified against the Windows command line. A real Stop disabled the task and
+cleared the Redis heartbeat; reinstall restarted it and restored the heartbeat.
+No cloud start request or active backfill lease was present. Sign-out/reboot was
+not forced during this session; sign-in behavior is supported by the registered
+trigger and exercised task action, not a claim of an observed login cycle.
+
+### Validation and remaining development scope
+
+The native full gate uses only `imoveis-test` for disposable PostgreSQL/Redis.
+Its first pass confirmed 119 integration and 51 contract tests. Corrections to
+Windows process identity fixtures and a Vite-held native module lock precede the
+final gate result, recorded below. Native `pip check` is clean and installed
+versions exactly match the regenerated Windows lock. Strict MkDocs build passes.
+
+External scrape results remain source-dependent: the replacement worker logged
+OLX's missing FlareSolverr hostname and Zap HTTP 403. No FlareSolverr sidecar was
+running before this cutover; all mounted config matches the source. These are
+existing operational/source-access issues, not data-transfer failures. Dependency
+advisories and the feature/operator backlog above remain separate work. No
+migration procedure authorizes primary schema repair or closes those items.
+
+The corrected native run passed **2,143 unit tests** (2 skips and 1 slow test
+deselected), **119 integration tests**, **51 contract tests**, and **110 Chromium
+E2E tests**, plus lint and the frontend build. The dependency audit is advisory;
+its findings do not erase the separate dependency-update backlog.

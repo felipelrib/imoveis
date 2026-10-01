@@ -42,6 +42,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import PRESERVED_ENV_VARS, should_strip_env_var
+from tests.shell_helpers import BASH
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LIB_SH = REPO_ROOT / "scripts" / "agent" / "lib.sh"
@@ -98,7 +99,7 @@ def _load_workspace_env(env_file: Path, preset: dict[str, str] | None = None) ->
         f'exec "{sys.executable}" -c "import json,os;print(json.dumps(dict(os.environ)))"\n'
     )
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -116,7 +117,7 @@ def _load_workspace_env(env_file: Path, preset: dict[str, str] | None = None) ->
 def _allowlisted_keys() -> set[str]:
     """``WORKSPACE_ENV_ALLOWLIST`` as lib.sh itself defines it."""
     result = subprocess.run(
-        ["bash", "-c", f'source "{LIB_SH}"; printf "%s\\n" "$WORKSPACE_ENV_ALLOWLIST"'],
+        [BASH, "-c", f'source "{LIB_SH}"; printf "%s\\n" "$WORKSPACE_ENV_ALLOWLIST"'],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -237,11 +238,21 @@ class TestWorkspaceEnvAllowlist:
         """
         env_file = tmp_path / "env.local"
         env_file.write_text("API_PORT=8123\n", encoding="utf-8")
-        env_file.chmod(0o000)
-
-        script = f'source "{LIB_SH}"\nload_workspace_env "{env_file}"\necho "rc=$?"\n'
+        if os.name != "nt":
+            env_file.chmod(0o000)
+        # Windows chmod only toggles the read-only bit; model its read-access
+        # denial at the shell boundary instead of silently losing this branch.
+        deny_read = (
+            'function [() { if [[ "$1" == "-r" ]]; then return 1; fi; '
+            'if [[ "$1" == "!" && "$2" == "-r" ]]; then return 0; fi; builtin [ "$@"; }\n'
+            if os.name == "nt" else ""
+        )
+        script = (
+            f'source "{LIB_SH}"\n{deny_read}load_workspace_env "{env_file}"\necho "rc=$?"\n'
+            f'exec "{sys.executable}" -c "import json,os;print(json.dumps(dict(os.environ)))"\n'
+        )
         result = subprocess.run(
-            ["bash", "-c", script],
+            [BASH, "-c", script],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -254,7 +265,8 @@ class TestWorkspaceEnvAllowlist:
         assert str(env_file) in result.stderr and "readable" in result.stderr, (
             f"the skip must say which file and why: {result.stderr!r}"
         )
-        assert "API_PORT" not in _load_workspace_env(env_file), "an unreadable file must not be half-applied"
+        loaded = json.loads(result.stdout.splitlines()[-1])
+        assert "API_PORT" not in loaded, "an unreadable file must not be half-applied"
 
     @pytest.mark.parametrize(
         "line, expected",

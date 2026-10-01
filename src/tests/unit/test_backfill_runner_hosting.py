@@ -42,6 +42,7 @@ import pytest
 import yaml
 
 from infra.config import BackfillConfig
+from tests.shell_helpers import BASH, bash_path, host_path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts" / "install-backfill-runner.sh"
@@ -54,7 +55,7 @@ _SECRET = "not-a-real-key-3f9c1a"
 
 def _run(*args: str, timeout: int = 60, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(INSTALLER), *args],
+        [BASH, str(INSTALLER), *(bash_path(arg) if Path(arg).is_absolute() else arg for arg in args)],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -65,7 +66,7 @@ def _run(*args: str, timeout: int = 60, env: dict[str, str] | None = None) -> su
 
 def _write_env(tmp_path: Path, body: str, name: str = "env.local") -> Path:
     path = tmp_path / name
-    path.write_text(body, encoding="utf-8")
+    path.write_text(body, encoding="utf-8", newline="\n")
     return path
 
 
@@ -159,9 +160,9 @@ class TestRenderedUnit:
         assert "@@" not in unit, "an unrendered placeholder survived"
 
         assert _directive(unit, "User", "Service") == "opuser"
-        assert _directive(unit, "WorkingDirectory", "Service") == str(REPO_ROOT)
-        assert _directive(unit, "EnvironmentFile", "Service") == str(env_file)
-        assert _directive(unit, "ExecStart", "Service") == f"/bin/sh {REPO_ROOT / RUNNER_REL} --serve"
+        assert _directive(unit, "WorkingDirectory", "Service") == bash_path(REPO_ROOT)
+        assert _directive(unit, "EnvironmentFile", "Service") == bash_path(env_file)
+        assert _directive(unit, "ExecStart", "Service") == f"/bin/sh {bash_path(REPO_ROOT / RUNNER_REL)} --serve"
         assert _directive(unit, "Type", "Service") == "simple"
         assert _directive(unit, "Restart", "Service") == "always"
         assert _directive(unit, "RestartSec", "Service") == "10"
@@ -200,7 +201,7 @@ class TestRenderedUnit:
         assert result.returncode == 0, result.stderr
 
         exec_start = _directive(result.stdout, "ExecStart", "Service")
-        script = Path(exec_start.split()[1])
+        script = host_path(exec_start.split()[1])
         assert script.is_absolute(), "systemd resolves ExecStart as given — it must be absolute"
         assert script == REPO_ROOT / RUNNER_REL
         assert script.is_file(), f"{script} does not exist"
@@ -337,7 +338,7 @@ class TestPreflight:
         result = _run("--check", "--python", str(missing_python), "--env-file", str(env_file))
 
         assert result.returncode != 0
-        assert str(missing_python) in result.stderr
+        assert bash_path(missing_python) in result.stderr
         assert "setup.sh" in result.stderr
 
     def test_force_downgrades_preflight_failures_to_warnings(self, tmp_path):
@@ -571,7 +572,7 @@ class TestInstallGuards:
         systemctl_marker = tmp_path / "systemctl-was-called"
         for name, marker in (("sudo", sudo_marker), ("systemctl", systemctl_marker)):
             stub = bin_dir / name
-            stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{marker}"\nexit 97\n', encoding="utf-8")
+            stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{bash_path(marker)}"\nexit 97\n', encoding="utf-8")
             stub.chmod(0o755)
         return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}, sudo_marker, systemctl_marker
 
@@ -662,9 +663,15 @@ class TestCliSurface:
         assert swallowed.returncode != 0
         assert "--user requires a value" in swallowed.stderr
 
-    def test_status_of_an_uninstalled_unit_is_not_success(self):
+    def test_status_of_an_uninstalled_unit_is_not_success(self, tmp_path):
         """Never-installed IS the DW-27 failure — it must not read as benign."""
-        result = _run("--status", "--unit-name", f"imoveis-test-absent-{uuid.uuid4().hex}")
+        systemctl = tmp_path / "systemctl"
+        systemctl.write_text("#!/usr/bin/env bash\nexit 4\n", encoding="utf-8", newline="\n")
+        systemctl.chmod(0o755)
+        result = _run(
+            "--status", "--unit-name", f"imoveis-test-absent-{uuid.uuid4().hex}",
+            env={"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        )
 
         assert result.returncode != 0
         assert "install" in result.stderr.lower()

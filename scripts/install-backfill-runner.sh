@@ -227,7 +227,8 @@ env_key_uses_export() {
 }
 
 env_file_has_cr() {
-  grep -q $'\r' "$1"
+  # Git Bash grep otherwise removes CR while reading a Windows text file.
+  grep -qU $'\r' "$1"
 }
 
 # True when DATABASE_URL's database component is the config default `imoveis`

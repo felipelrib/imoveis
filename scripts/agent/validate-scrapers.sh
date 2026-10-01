@@ -33,9 +33,7 @@ done
 rc=0
 cd "$REPO_ROOT"
 
-# Prefer python3 (matches validate.sh)
-PYTHON_BIN="python3"
-command -v python3 &>/dev/null || PYTHON_BIN="python"
+activate_project_python || die "runnable Python required for scraper validation"
 
 log "Scraper validation: HTML cassette + unit tests"
 if "$PYTHON_BIN" -m pytest \

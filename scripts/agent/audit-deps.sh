@@ -37,10 +37,8 @@ for arg in "${@}"; do
   esac
 done
 
-# Project venv tools (pip-audit installed by setup-tools.sh) win over system ones.
-if [ -d "$REPO_ROOT/.venv/bin" ]; then
-  export PATH="$REPO_ROOT/.venv/bin:$PATH"
-fi
+# Advisory mode still reports missing Python as a visible degraded audit.
+activate_project_python || true
 
 PIP_AUDIT_BIN="${PIP_AUDIT_BIN:-pip-audit}"
 NPM_BIN="${NPM_BIN:-npm}"
@@ -102,18 +100,6 @@ fi
 _timeout() { ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "$@"; }
 # `timeout` reports 124 on SIGTERM, 137 when --kill-after had to SIGKILL.
 _timed_out() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
-
-# Python is only used to PARSE the audit JSON — never to scrape human output.
-PYTHON_BIN=""
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-  PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
-elif [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
-  PYTHON_BIN="$REPO_ROOT/.venv/bin/python3"
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN="python3"
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN="python"
-fi
 
 cd "$REPO_ROOT"
 
@@ -282,7 +268,7 @@ _report() {
   REPORT_COUNT="$count"
 }
 
-# --- Python (requirements.txt) ---------------------------------------------
+# --- Python (the native platform lock) ---------------------------------------------
 audit_python() {
   if [ -z "$PYTHON_BIN" ]; then
     warn "python not found — skipping python audit"
@@ -292,17 +278,19 @@ audit_python() {
     warn "pip-audit not installed — skipping python audit (setup-tools.sh installs it)"
     return 0
   fi
-  if [ ! -f "$REPO_ROOT/requirements.txt" ]; then
-    warn "requirements.txt not found — skipping python audit"
+  local requirements=requirements.txt
+  [ "$PYTHON_PLATFORM" != win32 ] || requirements=requirements-windows.txt
+  if [ ! -f "$REPO_ROOT/$requirements" ]; then
+    warn "$requirements not found — skipping python audit"
     return 0
   fi
 
-  log "Python: pip-audit over requirements.txt"
+  log "Python: pip-audit over $requirements"
   local out parsed
   # pip-audit exits non-zero for "vulns found" too — the JSON, not the exit
   # code, is what distinguishes findings from a genuine tool/network failure.
   local trc=0
-  out="$(_timeout "$PIP_AUDIT_BIN" --requirement requirements.txt --format json --progress-spinner off 2>/dev/null)" || trc=$?
+  out="$(_timeout "$PIP_AUDIT_BIN" --requirement "$requirements" --format json --progress-spinner off 2>/dev/null)" || trc=$?
   # Distinguish "the bound fired" from "offline": telling an operator the network
   # is down when the audit was actually too slow invites them to LOWER
   # AUDIT_TIMEOUT, which disables the audit permanently.

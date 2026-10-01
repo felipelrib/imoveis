@@ -39,14 +39,7 @@ else
   ADMIN_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${PRIMARY_DB}"
 fi
 
-PYTHON_BIN=""
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-  PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
-elif command -v python3 &>/dev/null; then
-  PYTHON_BIN="python3"
-else
-  die "python3 required to ensure test database"
-fi
+activate_project_python || die "runnable Python required to ensure test database"
 
 if [[ ! "$TEST_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   die "refusing unsafe POSTGRES_TEST_DB name: ${TEST_DB}"
@@ -89,6 +82,6 @@ PY
 
 log "Migrating test database (alembic upgrade head)..."
 export DATABASE_URL="$TARGET_URL"
-export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+prepend_python_path "$REPO_ROOT/src"
 "$PYTHON_BIN" -m alembic upgrade head
 ok "test database ready (${TEST_DB})"

@@ -20,15 +20,7 @@ if ! curl -fsS "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
 fi
 ok "Ollama is reachable"
 
-# Prefer project .venv (matches validate.sh)
-PYTHON_BIN=""
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-  PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
-elif command -v python3 &>/dev/null; then
-  PYTHON_BIN="python3"
-elif command -v python &>/dev/null; then
-  PYTHON_BIN="python"
-else
+if ! activate_project_python; then
   warn "python not found — skipping AI validation"
   exit 0
 fi
@@ -36,7 +28,7 @@ fi
 cd "$REPO_ROOT"
 
 log "AI validation: running golden-file tests"
-export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+prepend_python_path "$REPO_ROOT/src"
 if "$PYTHON_BIN" -m pytest src/tests/unit/test_ai_quality.py -v --timeout=120; then
   ok "AI validation PASSED"
 else

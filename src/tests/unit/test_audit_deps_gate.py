@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_helpers import BASH, bash_path
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT_SCRIPTS = REPO_ROOT / "scripts" / "agent"
 AUDIT_SH = AGENT_SCRIPTS / "audit-deps.sh"
@@ -232,7 +234,7 @@ def _run_audit(tmp_path, pip_payload, npm_payload, *args, **env_overrides):
         **env_overrides,
     }
     completed = subprocess.run(
-        ["bash", str(AUDIT_SH), *args],
+        [BASH, str(AUDIT_SH), *args],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -422,19 +424,19 @@ class TestAuditParsing:
         stub = tmp_path / "recording-stub"
         stub.write_text(
             "#!/usr/bin/env bash\n"
-            f'printf "%s\\n" "$*" >> {recorded}\n'
+            f'printf "%s\\n" "$*" >> "{bash_path(recorded)}"\n'
             "cat <<'JSON'\n" + PIP_CLEAN + "\nJSON\n"
         )
         stub.chmod(0o755)
         npm_stub = tmp_path / "recording-npm-stub"
         npm_stub.write_text(
             "#!/usr/bin/env bash\n"
-            f'printf "%s\\n" "$*" >> {recorded}\n'
+            f'printf "%s\\n" "$*" >> "{bash_path(recorded)}"\n'
             "cat <<'JSON'\n" + NPM_CLEAN_RESOLVED + "\nJSON\n"
         )
         npm_stub.chmod(0o755)
         completed = subprocess.run(
-            ["bash", str(AUDIT_SH)],
+            [BASH, str(AUDIT_SH)],
             cwd=str(REPO_ROOT),
             env={**os.environ, "PIP_AUDIT_BIN": str(stub), "NPM_BIN": str(npm_stub)},
             capture_output=True,
@@ -444,7 +446,8 @@ class TestAuditParsing:
         assert completed.returncode == 0, completed.stdout + completed.stderr
         argv = recorded.read_text()
         assert "--format json" in argv, f"pip-audit must request JSON, got: {argv!r}"
-        assert "--requirement requirements.txt" in argv
+        lock = "requirements-windows.txt" if os.name == "nt" else "requirements.txt"
+        assert f"--requirement {lock}" in argv
         assert "audit --json" in argv, f"npm must request JSON, got: {argv!r}"
 
     def test_audit_still_runs_when_coreutils_timeout_is_unavailable(self, tmp_path):
@@ -452,32 +455,21 @@ class TestAuditParsing:
         substitution that captures the tool's JSON. Warning from there polluted
         the payload, so a host without ``timeout`` skipped BOTH audits and blamed
         the network, and the UNBOUNDED notice was swallowed with it."""
-        shim = tmp_path / "nt"
-        shim.mkdir()
-        for directory in ("/usr/bin", "/bin", "/usr/local/bin"):
-            src = Path(directory)
-            if not src.is_dir():
-                continue
-            for entry in src.iterdir():
-                if entry.name == "timeout":
-                    continue
-                target = shim / entry.name
-                if not target.exists():
-                    try:
-                        target.symlink_to(entry)
-                    except OSError:
-                        pass
-        if not (shim / "bash").exists() or not (shim / "git").exists():
-            pytest.skip("could not build a timeout-free PATH shim on this host")
-
+        # Make just the timeout capability absent while retaining every other
+        # real host tool; no /usr/bin symlink farm or Windows admin rights.
+        startup = tmp_path / "without-timeout.sh"
+        startup.write_text(
+            'command() { if [[ "$1" == "-v" && "$2" == "timeout" ]]; then return 1; fi; builtin command "$@"; }\n',
+            encoding="utf-8", newline="\n",
+        )
         env = {
             **os.environ,
-            "PATH": str(shim),
+            "BASH_ENV": str(startup),
             "PIP_AUDIT_BIN": _stub(tmp_path, "pip-audit-stub", PIP_CLEAN),
             "NPM_BIN": _stub(tmp_path, "npm-stub", NPM_CLEAN_RESOLVED),
         }
         completed = subprocess.run(
-            ["bash", str(AUDIT_SH)],
+            [BASH, str(AUDIT_SH)],
             cwd=str(REPO_ROOT),
             env=env,
             capture_output=True,
@@ -503,7 +495,7 @@ class TestAuditDegradation:
             "NPM_BIN": "definitely-not-installed-npm",
         }
         completed = subprocess.run(
-            ["bash", str(AUDIT_SH)],
+            [BASH, str(AUDIT_SH)],
             cwd=str(REPO_ROOT),
             env=env,
             capture_output=True,
@@ -522,7 +514,7 @@ class TestAuditDegradation:
         out loud, and the script must still exit 0."""
         env = {**os.environ, "PIP_AUDIT_BIN": "/bin/false", "NPM_BIN": "/bin/false"}
         completed = subprocess.run(
-            ["bash", str(AUDIT_SH)],
+            [BASH, str(AUDIT_SH)],
             cwd=str(REPO_ROOT),
             env=env,
             capture_output=True,
@@ -543,7 +535,7 @@ class TestAuditDegradation:
         exit 0 (that is what keeps the gate advisory)."""
         env = {**os.environ, "PIP_AUDIT_BIN": "/bin/false", "NPM_BIN": "/bin/false"}
         completed = subprocess.run(
-            ["bash", str(AUDIT_SH), "--strict"],
+            [BASH, str(AUDIT_SH), "--strict"],
             cwd=str(REPO_ROOT),
             env=env,
             capture_output=True,

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_helpers import BASH
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FINISH_SH = REPO_ROOT / "scripts" / "agent" / "finish-feature.sh"
 
@@ -24,7 +26,7 @@ def _derive(branch: str) -> tuple[int, str]:
         f'BRANCH="{branch}"; derive_story_key'
     )
     result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
+        [BASH, "-c", script], capture_output=True, text=True, check=False
     )
     return result.returncode, result.stdout.strip()
 
@@ -72,7 +74,7 @@ class TestBmadLoopBranchRefusal:
             check=True,
         )
         result = subprocess.run(
-            ["bash", str(FINISH_SH), "--dry-run"],
+            [BASH, str(FINISH_SH), "--dry-run"],
             cwd=repo,
             capture_output=True,
             text=True,

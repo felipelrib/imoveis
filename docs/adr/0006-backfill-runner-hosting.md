@@ -164,3 +164,43 @@ read it through a default-deny allowlist of workspace-identity keys
 `EnvironmentFile` for the unit was rejected: it would double the operator's env
 contract and still not stop `IMOVEIS_*` landing in `.env.local`. Details:
 [`v0.13-s3.5`](../features/v0.13-s3.5-runner-env-contract.md).
+
+## Amendment — 2026-10-01 (native Windows hosting)
+
+The operator moved development to `C:\Workfolder\imoveis` and selected automatic
+startup at Windows sign-in. Linux installations retain the systemd path above;
+Windows uses `scripts/install-backfill-runner.ps1` and the stable user task
+`Imoveis-Backfill-Supervisor`. Pre-login availability is not required.
+
+The task runs native `.venv/Scripts/pythonw.exe` in the permanent checkout, under
+the signed-in user's interactive token with limited privileges. A sign-in
+trigger and repeating recovery trigger use `IgnoreNew`, unlimited execution,
+battery-safe settings and `AllowHardTerminate=false`. The task contains paths
+only, never environment values. Use the installer to stop it; Task Scheduler's
+manual End action is not the application's cooperative shutdown protocol.
+
+`scripts/windows/backfill_host.py` reads the private dotenv file literally,
+validates required `GEMINI_API_KEY`, `DATABASE_URL`, `REDIS_URL` and effective
+cloud routing through the existing AppConfig/runner preflight, then calls the
+unchanged `main(["--serve"])` on the main thread. Installation does not issue a
+backfill start request. Cloud credentials remain host-only; existing quota,
+checkpoint, lease and migration-exclusion behavior stays in the original runner.
+
+An OS file lock prevents duplicate wrappers for the same checkout. A stop file
+carries the current process nonce, so stale requests cannot stop a replacement.
+The watcher schedules the runner's existing SIGINT handler once: idle service
+clears its heartbeat; an active run requests a stop and drains its lease. Stop
+waits at least the configured lease TTL (minimum 900 seconds) and fails visibly
+on timeout without killing the process. Reinstall/uninstall disables scheduling
+before draining, including the old working directory if the checkout moved.
+
+Unexpected runner exits retry after ten seconds with the host lock retained.
+Task recovery covers process-level failure. UTF-8 rotating logs and local control
+files live in `.run/backfill-host/`; the log stream masks env credentials and URL
+passwords. `Check` validates without contacting services; `Status` reports local
+host/task state. Confirm `/admin/backfill/status` separately for live Redis
+`runner_present` evidence. A task registration alone is not a healthy supervisor.
+
+The WSL-to-Windows cutover must stop and disable the previous systemd unit before
+starting the Windows task. A per-checkout OS lock cannot arbitrate two different
+hosts against the same Redis. The existing cross-host run lease remains intact.

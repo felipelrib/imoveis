@@ -56,6 +56,27 @@ Use **Plan Mode** for non-trivial work, then implement in the same session. An o
 - `.agents/skills/` — committed BMad Method skills (framework-native, shared across tools).
 - `_bmad/custom/` — committed per-skill BMad overrides (gate bindings).
 
+## Native Windows development
+
+Use `C:\Workfolder\imoveis`, native Python **3.11** in `.venv/Scripts`, and
+**Git Bash** for every `scripts/agent/` gate. From PowerShell invoke
+`& 'C:/Program Files/Git/bin/bash.exe' scripts/agent/validate.sh all` (and the
+same executable for `setup-branch.sh` / `finish-feature.sh`). Bare `bash` can
+resolve to the System32 WSL launcher. The host gate must report `platform win32`.
+Stop this checkout's Vite server before full/finish gates; Windows locks its
+loaded native build module during `npm ci`. Restart it after finishing.
+Install `requirements-windows.txt` on Windows; `requirements.txt` remains the
+Linux/Docker lock. Recreate virtualenvs and Node dependencies; never copy Linux
+executables. Keep shell scripts and `.env.local` LF-terminated.
+
+`lib.sh` owns interpreter discovery, canonical Git roots and platform-specific
+`PYTHONPATH`; use its helpers instead of assuming `.venv/bin/python` or `:`.
+Windows backfill hosting uses `scripts/install-backfill-runner.ps1` and the
+existing serve loop, starting at user sign-in. Stop/drain the previous host
+before enabling its replacement. Primary-stack protections remain unchanged;
+a migration-specific operator approval is not ongoing permission to manage it.
+See `docs/setup.md` and `docs/windows-migration.md` for operation and evidence.
+
 ## Session lifecycle
 
 ### Start (NON-NEGOTIABLE)
@@ -76,8 +97,8 @@ After confirming the correct branch:
 
 ```bash
 git fetch origin main --quiet
-pip install -r requirements.txt
-(cd frontend && npm install)
+pip install -r requirements.txt  # Linux; Windows: .venv/Scripts/python.exe -m pip install -r requirements-windows.txt
+(cd frontend && npm ci)
 ```
 
 (Feature branches are local-only now. On `main`, update with `git pull --ff-only origin main`. Do **not** auto-merge `origin/main` into a resumed feature branch — if you choose to sync one, run the merge deliberately and resolve conflicts before touching anything else; the finish gate re-checks against `main` anyway.)

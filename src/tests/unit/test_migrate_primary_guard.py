@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from infra.config import BackfillConfig
+from tests.shell_helpers import BASH
 
 _AGENT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts" / "agent"
 _MIGRATE_PRIMARY = _AGENT_SCRIPTS / "migrate-primary.sh"
@@ -230,7 +231,7 @@ def _run_guard(
         extra_env=extra_env,
     )
     completed = subprocess.run(
-        ["bash", str(primary / "scripts" / "agent" / "migrate-primary.sh"), *args],
+        [BASH, str(primary / "scripts" / "agent" / "migrate-primary.sh"), *args],
         cwd=primary,
         capture_output=True,
         text=True,
@@ -491,7 +492,7 @@ def test_a_hard_killed_migration_stops_renewing_so_the_key_self_clears(tmp_path:
         tmp_path, mode="idle", ttl=3, alembic_seconds=30
     )
     proc = subprocess.Popen(
-        ["bash", str(primary / "scripts" / "agent" / "migrate-primary.sh")],
+        [BASH, str(primary / "scripts" / "agent" / "migrate-primary.sh")],
         cwd=primary,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

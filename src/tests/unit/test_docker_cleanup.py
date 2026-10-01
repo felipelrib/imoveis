@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_helpers import BASH
+
 _LIB = (
     Path(__file__).resolve().parents[3] / "scripts" / "agent" / "docker-cleanup-lib.sh"
 )
@@ -23,7 +25,7 @@ fi
 exit 1
 """
     completed = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         check=False,
         capture_output=True,
         text=True,

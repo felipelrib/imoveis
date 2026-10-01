@@ -4,6 +4,38 @@ Accumulated gotchas from running the agent workflow (implement → validate → 
 
 When a retrospect finds a new one-off failure worth remembering, add it to the relevant section below.
 
+## Native Windows migration (2026-10-01)
+
+- Before `validate.sh all` or `finish-feature.sh`, stop Vite processes using this
+  checkout. Windows locks loaded native Rolldown modules; `npm ci` then fails
+  with EPERM and leaves dependencies incomplete. Stop only the identified dev
+  process, re-run `npm ci --prefix frontend`, and restart Vite after finishing.
+- A Windows virtualenv executable may launch a separate base-interpreter process.
+  The supervisor records the real process PID, which can differ from the launcher
+  PID returned by `Popen` or Task Scheduler. Verify identity against the child
+  process command line; ownership depends on the OS file lock, not a stale PID.
+- Invoke Git Bash by its full path from PowerShell. Windows subprocess lookup can
+  select `C:\Windows\System32\bash.exe` even when a parent Git Bash shell selected
+  the right tools. Shell regression fixtures resolve the executable explicitly.
+- Windows virtualenvs use `.venv/Scripts/python.exe`; `uvloop` is Linux-only.
+  Install the generated Windows lock with Python 3.11. WindowsApps aliases are
+  not proof of a runnable Python. Gate helpers capability-check the interpreter.
+- Git reports drive paths while MSYS reports `/c/...`. Compare canonical Git
+  roots, and pass native Python module paths separated by `;` on Windows.
+  `.gitattributes` pins shell files to LF. Keep `.env.local` LF too for scripts
+  that source it. The native supervisor loads dotenv literally without expansion.
+- `chmod 000` does not make a normal NTFS file unreadable. The allowlist failure
+  fixture simulates the failed readability probe in the same shell and still
+  asserts that no values were applied; production handling is unchanged.
+- Docker Desktop failed here on inaccessible AF_UNIX reparse entries in both
+  `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine`.
+  With Desktop stopped, preserving those two runtime directories under dated
+  names and creating fresh directories allowed startup. This was a local repair,
+  not a general instruction to delete Docker state. Settings, VHDX, containers
+  and named volumes were retained. Do not factory-reset or purge data to clear
+  a socket error. [Docker troubleshooting](https://docs.docker.com/desktop/troubleshoot-and-support/troubleshoot/)
+  describes diagnostics and the destructive scope of its reset options.
+
 ## Workspace setup
 
 - **`setup-workspace.sh` argument handling:** don't pass `--help` (or other unknown flags) — the script treats non-flag args as the branch slug and will create a real worktree (e.g. `feat/help`). Read the script header for usage; tear down accidental worktrees with `git worktree remove --force <path>` + `git branch -D`.

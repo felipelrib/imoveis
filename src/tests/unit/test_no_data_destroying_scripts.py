@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_helpers import BASH
+
 pytestmark = pytest.mark.unit
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
@@ -72,7 +74,7 @@ def test_script_never_removes_volumes_directly(script):
 def test_volumes_flag_is_refused_not_silently_ignored(script):
     """`--volumes` must fail loudly (non-zero) so it can never appear to work."""
     proc = subprocess.run(
-        ["bash", str(script), "--volumes"],
+        [BASH, str(script), "--volumes"],
         capture_output=True,
         text=True,
         timeout=60,

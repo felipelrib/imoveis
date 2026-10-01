@@ -24,26 +24,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-# Project venv tools (pre-commit, alembic, pytest) win over system ones.
-if [ -d "$REPO_ROOT/.venv/bin" ]; then
-    export PATH="$REPO_ROOT/.venv/bin:$PATH"
-fi
+# Activate the native project interpreter and its command-line tools first.
+activate_project_python || die "runnable project Python required (create .venv first)"
 
-# Ensure required tools are installed
+# Ensure required tools are installed.
 if [ -f "$HERE/setup-tools.sh" ]; then
     source "$HERE/setup-tools.sh" 2>/dev/null || true
-fi
-
-# Detect python binary (prefer project .venv, then python3)
-PYTHON_BIN=""
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-    PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
-elif [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
-    PYTHON_BIN="$REPO_ROOT/.venv/bin/python3"
-elif command -v python3 &>/dev/null; then
-    PYTHON_BIN="python3"
-elif command -v python &>/dev/null; then
-    PYTHON_BIN="python"
 fi
 
 SOFT=false
@@ -170,7 +156,7 @@ run_contract() {
     # PostGIS system tables (tiger, topology, spatial_ref_sys) always appear as
     # "extra" in autogenerate, so alembic check always reports false positives.
     # This check is informational only — never fails the build for PostGIS projects.
-    ( cd "$REPO_ROOT" && PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" \
+    ( cd "$REPO_ROOT" && prepend_python_path "$REPO_ROOT/src" && \
         "$PYTHON_BIN" -m alembic check 2>/dev/null ) && ok "alembic check passed" \
       || warn "alembic check: PostGIS system tables detected (expected — informational only)"
   fi

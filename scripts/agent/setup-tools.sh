@@ -9,17 +9,12 @@ set -euo pipefail
 
 echo "[setup-tools] Checking required tools..."
 
-# ---- Python version detection ----
-# Prefer python3, fall back to python
-PYTHON=""
-if command -v python3 &>/dev/null; then
-    PYTHON="python3"
-elif command -v python &>/dev/null; then
-    PYTHON="python"
-else
-    echo "[setup-tools] ERROR: python not found"
-    exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Also support a direct setup-tools invocation.
+if ! declare -F activate_project_python >/dev/null; then
+    source "$SCRIPT_DIR/lib.sh"
 fi
+activate_project_python || die "runnable project Python required (create .venv first)"
 
 # ---- Ensure ~/.local/bin is on PATH ----
 if [ -d "$HOME/.local/bin" ]; then
@@ -33,22 +28,20 @@ fi
 PYTHON_TOOLS=(isort flake8 pytest pytest-timeout alembic autoflake pre-commit pip-audit)
 MISSING=()
 for tool in "${PYTHON_TOOLS[@]}"; do
-    if ! command -v "$tool" &>/dev/null; then
+    # Plugins such as pytest-timeout have no console executable.
+    if ! "$PYTHON_BIN" -c 'import importlib.metadata, sys; importlib.metadata.version(sys.argv[1])' "$tool" 2>/dev/null; then
         MISSING+=("$tool")
     fi
 done
 
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo "[setup-tools] Installing missing Python tools: ${MISSING[*]}"
-    $PYTHON -m pip install --break-system-packages "${MISSING[@]}" 2>/dev/null \
-        || $PYTHON -m pip install "${MISSING[@]}" 2>/dev/null \
+    "$PYTHON_BIN" -m pip install --break-system-packages "${MISSING[@]}" 2>/dev/null \
+        || "$PYTHON_BIN" -m pip install "${MISSING[@]}" 2>/dev/null \
         || echo "[setup-tools] WARNING: Could not install some tools: ${MISSING[*]}"
 fi
 
 # ---- Ensure frontend dependencies ----
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 if [ -d "$REPO_ROOT/frontend" ] && [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
     echo "[setup-tools] Installing frontend dependencies..."
     (cd "$REPO_ROOT/frontend" && npm install --ignore-scripts 2>/dev/null) \

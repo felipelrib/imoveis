@@ -12,12 +12,10 @@ set -euo pipefail
 # REPO_ROOT   : the CURRENT working tree (may be a worktree).
 # PRIMARY_ROOT: the main checkout that owns .git — where the shared registry lives.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-# `git rev-parse --git-common-dir` points at the shared .git; its parent is primary.
-_common_git="$(git rev-parse --git-common-dir)"
-case "$_common_git" in
-  /*|[A-Za-z]:*) PRIMARY_ROOT="$(dirname "$_common_git")" ;;
-  *)             PRIMARY_ROOT="$(cd "$REPO_ROOT/$(dirname "$_common_git")" && pwd)" ;;
-esac
+# Ask Git for both absolute paths: mixing Git's C:/... with MSYS pwd's /c/...
+# incorrectly identifies a Windows primary checkout as a linked worktree.
+_common_git="$(git rev-parse --path-format=absolute --git-common-dir)"
+PRIMARY_ROOT="$(dirname "$_common_git")"
 
 # Port/session registry (user-writable). Nested `.worktrees/` is legacy/root-owned —
 # sibling dirs `../<repo>-wt-<slug>` are used for parallel isolation instead.
@@ -69,6 +67,53 @@ log()   { printf '%s> %s%s\n' "$(_c 36)" "$*" "$(_c 0)"; }
 ok()    { printf '%s  [OK] %s%s\n' "$(_c 32)" "$*" "$(_c 0)"; }
 warn()  { printf '%s  [WARN] %s%s\n' "$(_c 33)" "$*" "$(_c 0)"; }
 die()   { printf '%s  [FAIL] %s%s\n' "$(_c 31)" "$*" "$(_c 0)" >&2; exit 1; }
+
+# --- Host Python -----------------------------------------------------------
+# Select an executable interpreter, not a WindowsApps alias that only exists.
+# Linked worktrees can use the primary venv without Windows symlink privileges.
+activate_project_python() {
+  local candidate platform tools_dir
+  local candidates=()
+  case "${OSTYPE:-}" in
+    msys*)
+      candidates=("$REPO_ROOT/.venv/Scripts/python.exe" "$PRIMARY_ROOT/.venv/Scripts/python.exe" python python3)
+      ;;
+    *)
+      candidates=("$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/.venv/bin/python3"
+                  "$PRIMARY_ROOT/.venv/bin/python" python3 python)
+      ;;
+  esac
+  PYTHON_BIN=""
+  PYTHON_PLATFORM=""
+  for candidate in "${candidates[@]}"; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    platform="$("$candidate" -c 'import sys; print(sys.platform)' 2>/dev/null)" || continue
+    platform="${platform%$'\r'}"
+    # A Windows gate must never silently delegate host execution to WSL.
+    case "${OSTYPE:-}:$platform" in msys*:win32) ;; msys*:*) continue ;; esac
+    PYTHON_BIN="$(command -v "$candidate")"
+    PYTHON_PLATFORM="$platform"
+    tools_dir="$(dirname "$PYTHON_BIN")"
+    case "${OSTYPE:-}" in msys*) tools_dir="$(cygpath -u "$tools_dir")" ;; esac
+    export PATH="$tools_dir:$PATH"
+    # Committed source/config is UTF-8 on both platforms, including subprocesses.
+    export PYTHONUTF8=1
+    export PYTHON_BIN PYTHON_PLATFORM
+    return 0
+  done
+  return 1
+}
+
+# Native Python uses semicolons; MSYS's implicit conversion cannot handle a
+# POSIX path prepended to an inherited C:\... list. Convert only our new entry.
+prepend_python_path() {
+  local entry="$1" separator=:
+  if [ "${PYTHON_PLATFORM:-}" = win32 ]; then
+    entry="$(cygpath -m "$entry")"
+    separator=';'
+  fi
+  export PYTHONPATH="${entry}${PYTHONPATH:+${separator}${PYTHONPATH}}"
+}
 
 # --- Workspace env: default-deny allowlist (DW-33) --------------------------
 # `.env.local` is dual-purpose: it carries this workspace's compose/port
@@ -245,6 +290,7 @@ is_docs_only_vs_main() {
 }
 
 validate_docs_only() {
+  activate_project_python || { warn "python not installed — docs validation cannot run"; return 1; }
   if command -v mkdocs >/dev/null 2>&1; then
     log "Docs-only change — running mkdocs build --strict"
     (cd "$REPO_ROOT" && mkdocs build --strict) || return 1

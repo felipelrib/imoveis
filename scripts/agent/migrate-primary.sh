@@ -78,14 +78,7 @@ esac
 [ "$MIGRATE_LOCK_TTL_SECONDS" -ge 1 ] || die "MIGRATE_LOCK_TTL_SECONDS must be >= 1 (got '$MIGRATE_LOCK_TTL_SECONDS')"
 MIGRATE_LOCK_TOKEN="migrate-primary:${HOSTNAME:-host}:$$:$(date +%s)"
 
-PYTHON_BIN=""
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-  PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
-elif command -v python3 &>/dev/null; then
-  PYTHON_BIN="python3"
-else
-  die "python3 required"
-fi
+activate_project_python || die "runnable Python required"
 
 if [ "$DRY_RUN" = true ]; then
   # A dry run reports the guard, it does not participate in it: taking
@@ -321,7 +314,8 @@ log "Migrating PRIMARY ${PRIMARY_DB} (alembic upgrade head, host-side)..."
 # Not under `set -e`: a FAILED upgrade is exactly when "was this guarded?" matters
 # most (the schema may be half-applied), and dying on the spot skipped the check.
 set +e
-DATABASE_URL="$PRIMARY_DB_URL" PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:$PYTHONPATH}" \
+prepend_python_path "$REPO_ROOT/src"
+DATABASE_URL="$PRIMARY_DB_URL" \
   "$PYTHON_BIN" -m alembic upgrade head
 ALEMBIC_RC=$?
 set -e

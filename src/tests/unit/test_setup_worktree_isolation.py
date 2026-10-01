@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_helpers import BASH
+
 _AGENT_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts" / "agent"
 _SETUP_WORKTREE = _AGENT_SCRIPTS / "setup-worktree.sh"
 _LIB = _AGENT_SCRIPTS / "lib.sh"
@@ -56,7 +58,7 @@ def test_in_linked_worktree_true_inside_worktree_false_in_primary(tmp_path: Path
         # returning 1 would trip errexit before `echo "RC=$?"` ever runs.
         script = f'source "{_LIB}"; in_linked_worktree && echo "RC=0" || echo "RC=1"'
         completed = subprocess.run(
-            ["bash", "-c", script],
+            [BASH, "-c", script],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -85,7 +87,7 @@ def test_setup_worktree_skips_nested_creation_when_already_isolated(tmp_path: Pa
     ).stdout
 
     completed = subprocess.run(
-        ["bash", str(_SETUP_WORKTREE), "fix/some-slug"],
+        [BASH, str(_SETUP_WORKTREE), "fix/some-slug"],
         cwd=worktree,
         capture_output=True,
         text=True,
@@ -115,7 +117,7 @@ def test_setup_worktree_skips_nested_creation_when_already_isolated(tmp_path: Pa
     # Last stdout line is the machine-readable worktree path — must be the
     # CURRENT worktree, not a new sibling path.
     last_line = completed.stdout.strip().splitlines()[-1]
-    assert last_line == str(worktree)
+    assert Path(last_line) == worktree
 
     # Branch got renamed to match Conventional Branch (was "worktree-random-name").
     branch = subprocess.run(
@@ -138,7 +140,7 @@ def test_generated_env_local_sets_required_api_key(tmp_path: Path):
     primary = _init_primary_repo(tmp_path)
 
     completed = subprocess.run(
-        ["bash", str(_SETUP_WORKTREE), "feat/needs-api-key"],
+        [BASH, str(_SETUP_WORKTREE), "feat/needs-api-key"],
         cwd=primary,
         capture_output=True,
         text=True,
@@ -169,7 +171,7 @@ def test_setup_worktree_still_creates_sibling_when_not_already_isolated(tmp_path
     primary = _init_primary_repo(tmp_path)
 
     completed = subprocess.run(
-        ["bash", str(_SETUP_WORKTREE), "feat/still-sibling"],
+        [BASH, str(_SETUP_WORKTREE), "feat/still-sibling"],
         cwd=primary,
         capture_output=True,
         text=True,
@@ -183,4 +185,4 @@ def test_setup_worktree_still_creates_sibling_when_not_already_isolated(tmp_path
         f"\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     last_line = completed.stdout.strip().splitlines()[-1]
-    assert last_line == str(sibling_path)
+    assert Path(last_line) == sibling_path
