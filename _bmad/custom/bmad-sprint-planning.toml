@@ -1,0 +1,19 @@
+# Imoveis project overrides for bmad-sprint-planning.
+# Merges over the skill's customize.toml (arrays append, scalars win).
+#
+# WHY THIS EXISTS: this project keeps retrospective action items as
+# `epic-N-retro-item-M-<slug>` keys inside `development_status`
+# (bmad-retrospective.toml — the only shape bmad-loop parses). The generator
+# rebuilds `development_status` from epics.md alone, so every refresh dropped
+# them as orphans and they had to be re-added by hand. restore_retro_items.py
+# does that deterministically; the entries below make every run call it.
+
+[workflow]
+
+persistent_facts = [
+  "RETRO-ITEM KEYS ARE NOT ORPHANS: `epic-N-retro-item-M-<slug>` keys in sprint-status.yaml `development_status` are this project's retrospective action items. `sprint_plan.py generate` always lists them under `dropped_orphans`, reports `in_sync: false` because of them, and `sprint_plan.py validate` reports them as `unrecognized key`. All three are expected for these keys and are not findings; never reconcile them with `--set` and never move them to an `action_items:` block.",
+  "AFTER EVERY NON-DRY-RUN `sprint_plan.py generate`, before committing or validating, run `python _bmad/custom/restore_retro_items.py --status-file {implementation_artifacts}/sprint-status.yaml` (Windows: `.venv/Scripts/python.exe`). It re-inserts the retro-item keys from the committed version of the file with their statuses and comments. If the status file has uncommitted retro-item edits, copy it first and pass the copy with `--before`. Keys it reports as `unplaced` belong to an epic number the regenerated plan no longer has: show them to the user with their old status and do not write them.",
+  "EPIC RENUMBERING: when a new epics.md reuses epic numbers of an already-tracked wave, do not merge. Archive the current file verbatim as `sprint-status-archive-<version>.yaml`, generate from an absent status file, and record the old-key to new-owner mapping in the new file's header comment (precedent: the v0.13 to v0.14 cut on 2026-10-07).",
+]
+
+on_complete = "If this run wrote sprint-status.yaml, confirm `_bmad/custom/restore_retro_items.py` was run after the last generate and report its `restored` and `unplaced` lists in the wrap-up."
