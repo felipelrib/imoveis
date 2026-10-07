@@ -342,7 +342,7 @@ flowchart LR
 | MCP wrapper over FR-42 | Convenience; the REST contract is the product surface (AD-8) |
 | Profile-builder UI, per-user profiles | PRD non-goal; AD-16 config + version control is the surface |
 | Attributes beyond profile needs (view, orientation, sun) | Added by extending the `core` enum + vocabulary when a profile references them (AD-16) |
-| Epic 2 vs v0.14 ordering | Sprint planning (PRD Q3); AD-19 keeps the overlap to `schemas.py` by adding `property_fit_status` instead of `metrics_scoring` columns; AD-3's single price basis is the one shared decision |
+| Epic 2 vs v0.14 ordering | Decided 2026-10-07 (Felipe): every pending v0.13 item (Epic 2 s2.1–s2.5, s2.7, open retro items, `fu` keys, open DW ledger entries) is transferred into the v0.14 epics pass as a carry-over epic — one deliverable plan, no separate in-flight wave; AD-19 keeps the overlap to `schemas.py` by adding `property_fit_status` instead of `metrics_scoring` columns; AD-3's single price basis gates the percentile story |
 | Multi-city productization | v0.15+ candidate (PRD §5); config may allow, UX stays BH-first |
 | Burning down AD-1 debt in `core` | Still open as of 2026-10-07 — dedupe ORM/enqueue leak remains and lazy `adapters` imports spread; new v0.14 `core` modules are pure (AD-1); burn-down via dedicated stories |
 | Numeric success-metric instrumentation as KPIs | Product metrics — FR-29 coverage telemetry (extended, conventions) is the first step; not an architectural divergence point |
