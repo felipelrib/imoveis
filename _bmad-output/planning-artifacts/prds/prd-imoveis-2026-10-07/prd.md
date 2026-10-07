@@ -324,13 +324,18 @@ s2.7 (operator applies the corpus-repair migration) → s2.1 → (s2.2 ∥ s2.3)
 
 **Carried answered (for the record):** the 2026-08-05 PRD's Q1–Q2 (FR-28 surface, Theme B cut), Q4 (coverage SLO) and Q5 (FR-33–38 → v0.14) remain answered. Numbering below restarts for this PRD.
 
-**Blocking for downstream (resolve at or before the epics pass):** Q1, Q2, Q3, Q5. **Decided unless overridden** at the named revisit point: Q4, Q6, Q7.
+**Answered 2026-10-07 (Felipe; patched at the v0.14 epics pass — these supersede every "proposed" / "confirmation requested" / `[NOTE FOR PM]` wording about them elsewhere in this document):**
+
+1. **FR-31 un-deferral — CONFIRMED.** FR-31 is un-deferred and is Tier 1 foundation; the AD-3 cost columns on `property_listings` bind. Cohort price/m² basis is fee-exclusive `rent_monthly` once FR-31 lands, stamped `price_basis` (`headline` until then), behind a characterization lock.
+2. **Transit routing provider vs NFR-1 — ANSWERED by AD-18.** Local OSRM (car, walk) + OpenTripPlanner 2.10 (transit) behind one `TravelTimeProvider` port; a cloud transit provider is an optional adapter, off by default. Anchor coordinate invalidation is the overlay version lock (AD-16 as written).
+3. **Epic 2 vs v0.14 ordering — DECIDED.** There is no separate v0.13 in-flight wave: every pending v0.13 item (Epic 2 s2.1–s2.5, s2.7, open retro items, `fu` keys, open deferred-work entries) is carried into the v0.14 epics as one carry-over epic and re-keyed. §4.2 and §6.2 describe the pre-decision state.
+
+**Also answered 2026-10-07 (Felipe):** Q4 — home-office-capable is a second enclosed bedroom OR an explicit office mention (the default below, confirmed). Q5 — `compra-2028` is a Belo Horizonte search with no soft preferences for now (confirmed).
+
+**Decided unless overridden** at the named revisit point: Q6, Q7.
 
 **Open:**
 
-1. **FR-31 un-deferral** — this PRD reverses the 2026-08-05 epics-time deferral because aluguel-2027 has a total-cost cap. Confirm the reversal. *Owner: Felipe. Revisit: v0.14 epics pass.*
-2. **Transit routing provider vs NFR-1** — transit minutes need a schedule-aware router. Options: local GTFS router (OpenTripPlanner / r5) fed by BH GTFS — heavier ops, fully local; or a cloud directions API as a bounded optional provider — simpler, sends property coordinates off-box. Product preference stated here: local first, cloud only as an explicitly enabled provider with `unknown` as default. Note that a cloud provider receives Property **and Anchor** coordinates — the Anchor egress is the sharper privacy cost. *Owner: architecture pass. Revisit: before FR-35 stories.*
-3. **Epic 2 vs v0.14 ordering** — finish Epic 2 (s2.7 → s2.1 → …) before opening v0.14 stories, or run the v0.14 foundation (FR-41/FR-39/FR-31) in parallel? Shared files (`metrics_scoring`, API schemas, detail panel) argue for a gate. *Owner: Felipe at epics. Revisit: v0.14 sprint planning.*
 4. **Home-office-capable room** — definition for the extractor: a second enclosed bedroom (any size)? a room with a desk visible? a described "escritório"/"home office"? Default here: second enclosed bedroom OR explicit office mention. *Owner: Felipe. Revisit: FR-39 story.*
 5. **compra-2028 preferences and geography** — only hard constraints were given. BH assumed; soft preferences empty. *Owner: Felipe. Revisit: when FR-41 config is authored.*
 6. **Strata spike timing** — before FR-39 stories (so accuracy thresholds are set against the winning backend) or after a first `qwen2.5vl:7b` baseline? Default here: spike first, time-boxed, since the host RAM/NVMe requirement may rule it out quickly. *Owner: Felipe. Revisit: v0.14 wave plan.*
