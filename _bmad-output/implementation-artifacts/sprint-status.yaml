@@ -47,14 +47,10 @@
 # - SEQUENCING GATES, waves and the do-not-parallelize list live in epics.md
 #   ("Sequencing gates and Parallel work plan"). Wave 0 start-here set:
 #   1-1, 1-4, 1-11, 1-15, 1-16, 1-17, 2-1, 3-1, 3-4, 5-1, 6-4.
-# - DO NOT START 1-6 before 1-5 is `done`; the gate is not machine-enforced.
-#   1-5 evidence so far (read-only check, 2026-10-07): the primary DB is at
-#   alembic head f3a7c81d5e42 (the repair migration) and the recovery query
-#   returns marker_rows 1193, still_poisoned 0 — the repair is already applied
-#   (not through migrate-primary.sh, so its N/M log line was never captured).
-#   1-5 still owes its feature doc and the flip to `done`. Delete
-#   .bmad-loop/operator/2-7-corpus-repair-fabricated-scores.json when 1-5 is
-#   done (Felipe, 2026-10-07).
+# - 1-5 closed 2026-10-07: the fabricated-score repair is verified on the
+#   primary corpus (still_poisoned 0; evidence in
+#   docs/features/v0.14-s1.5-corpus-repair-applied-and-verified.md). 1-6 is
+#   now gated only on 1-3 and 1-4.
 # - Statuses only move forward; `done` only after the merge is pushed.
 # - Off-sprint follow-ups mint v0.14-fu<N> keys under the top-level
 #   `followups:` map at the end of this file, never in development_status.
@@ -70,12 +66,12 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: '{project-root}/_bmad-output/implementation-artifacts'
 development_status:
-  epic-1: backlog
+  epic-1: in-progress
   1-1-total-monthly-cost-on-the-persist-path: backlog
   1-2-cost-in-the-canonical-projection-and-coverage: backlog
   1-3-one-cohort-price-basis-for-rent: backlog
   1-4-primary-migration-cannot-bypass-the-backfill-guard: backlog
-  1-5-corpus-repair-applied-and-verified: backlog
+  1-5-corpus-repair-applied-and-verified: done
   1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline: backlog
   1-7-percentile-badge-on-cards-and-percentile-filter: backlog
   1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow: backlog
