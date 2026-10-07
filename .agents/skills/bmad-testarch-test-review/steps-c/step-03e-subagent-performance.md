@@ -34,11 +34,11 @@ Evaluate exactly these registry rows and no others. Load
 `{skill-root}/steps-c/criteria-registry.md` for each row's firing predicate, its
 pinned severity, and its gate.
 
-| Row | Criterion                       | Severity | Gate          |
-| --- | ------------------------------- | -------: | ------------- |
-| M1  | Network-first violated          |   MEDIUM | Applicability |
-| M6  | Unawaited async                 |   MEDIUM | Absolute      |
-| H5  | Oversize test file (>300 lines) |     HIGH | Absolute      |
+| Row | Criterion                        | Severity | Gate          |
+| --- | -------------------------------- | -------: | ------------- |
+| M1  | Network-first violated           |   MEDIUM | Applicability |
+| M6  | Unawaited async                  |   MEDIUM | Absolute      |
+| H5  | Oversize test file (>1000 lines) |     HIGH | Absolute      |
 
 **The hard-wait double count is fixed here.** This worker used to score
 `waitForTimeout(5000)` as MEDIUM while the determinism worker scored the identical
@@ -83,6 +83,11 @@ const score = Math.max(0, 100 - totalPenalty);
 ---
 
 ## OUTPUT FORMAT
+
+Write this JSON to `/tmp/tea-test-review-performance-<timestamp>.json`, using the
+`timestamp` the dispatching step handed you. Do not generate one: step-03
+section 5 aborts the workflow when the path it expects does not exist, and a
+worker that invented its own timestamp writes a file nobody looks for.
 
 ```json
 {
