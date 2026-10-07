@@ -49,6 +49,9 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+for _stream in (sys.stdout, sys.stderr):  # Windows consoles/redirects default to cp1252
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 REPO_ROOT = HERE.parent.parent
 PYTHON = sys.executable
 
@@ -381,7 +384,7 @@ class Gate:
         }
         os.environ.update(self._stack_env)
         self.timings.append(("test stack up", time.monotonic() - start, True))
-        ok(f"test stack up (postgres:{pg} redis:{rd}) → {db}")
+        ok(f"test stack up (postgres:{pg} redis:{rd}) -> {db}")
         return self._ensure_test_db(admin_url, url, db)
 
     def _ensure_test_db(self, admin_url: str, url: str, db: str) -> bool:

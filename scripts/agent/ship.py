@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ship the current branch: validate (tier from the diff) → squash-merge into main → push.
+"""Ship the current branch: validate (tier from the diff) -> squash-merge into main -> push.
 
     python scripts/agent/ship.py [--tier auto|docs|fast|frontend|backend|full] [--no-merge] [--skip-docs]
 
@@ -27,6 +27,9 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+for _stream in (sys.stdout, sys.stderr):  # Windows consoles/redirects default to cp1252
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 REPO_ROOT = HERE.parent.parent
 PYTHON = sys.executable
 STORY_KEY_RE = re.compile(r"^v\d+[.-]\d+-(?:s\d+[.-]\d+|fu\d+)")
