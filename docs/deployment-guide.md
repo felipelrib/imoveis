@@ -21,7 +21,7 @@ Local-first, single-host Docker Compose. No cloud deployment target; the "produc
 
 Volumes: `postgres_data`, `redis_data`, `image_store` (never deleted by cleanup tooling).
 
-A second, **ephemeral** compose file (`docker-compose.test.yml`, project `<workspace>-test`) carries validation's Postgres + Redis: docker-assigned ports, no named volumes, managed exclusively by `scripts/agent/test-stack.sh`.
+A second, **ephemeral** compose file (`docker-compose.test.yml`, project `<COMPOSE_PROJECT_NAME>-test`, plus a short hash suffix inside linked worktrees) carries validation's Postgres + Redis: docker-assigned ports, no named volumes, built and removed exclusively by `scripts/agent/validate.py` (`--down`).
 
 ## Host-side units (not compose)
 
@@ -39,21 +39,20 @@ worktree).
 
 ## Environment
 
-- `.env.local` — ports and credentials; always `docker compose --env-file .env.local` (bare `up` drifts ports and breaks `API_KEY` auth). `COMPOSE_PROJECT_NAME` in this file is the workspace's compose identity — teardown reads it from the file and fails closed without it.
+- `.env.local` — ports and credentials; always `docker compose --env-file .env.local` (bare `up` drifts ports and breaks `API_KEY` auth). `COMPOSE_PROJECT_NAME` in this file is the workspace's compose identity — the gate derives its ephemeral test project name from it. The file is operator-owned: `.claude/hooks/guard.py` denies agent edits to it (and to `configs/anchors.local.yaml`).
 - `.env.local` is also the backfill unit's `EnvironmentFile`: `GEMINI_API_KEY` and `DATABASE_URL` are required for a host-side run (the config default DB name is not the primary `realestate`), `REDIS_URL` whenever `REDIS_PORT` is not 6379. Keys are env-only — never committed, never in a container.
 - **Cloud backfill is enabled per host in that same file**, with `IMOVEIS_AI__ENRICHMENT_ROUTING__{VISUAL,SENTIMENT,DEAL_VERDICT}=gemma` (no `export ` prefix — `EnvironmentFile=` is not a shell). **All three, naming the same backend**: `--serve` drives one cloud client and has no local mode, so it refuses to start unless every class in the backfill scope resolves to the same cloud backend — a partial or `gemma`+`gemini` split map means the unit restarts forever. Never by editing `ai.enrichment_routing` in the committed `configs/app_config.yaml`: it must stay all-local (NFR-1) and a unit test pins it, so that edit reddens the merge gate. The installer's `--check` resolves the effective map from both inputs and applies the same all-classes/one-backend rule.
-- Because that file is dual-purpose, `validate.sh` / `finish-feature.sh` read it through a **default-deny allowlist** of workspace-identity keys (`scripts/agent/lib.sh::load_workspace_env`) instead of sourcing it: nothing else **in `.env.local`** — the cloud key, the primary `DATABASE_URL`, the `IMOVEIS_*` config overrides — becomes ambient pytest env (DW-33). It filters the file, not the shell: a variable already exported in the invoking shell still reaches the gate, which is why the suite also strips the `IMOVEIS_*` channel in `src/tests/conftest.py` whatever its origin. `test-stack.sh` / `ensure-test-db.sh` / `migrate-primary.sh` are separate processes and still read the whole file.
+- Because that file is dual-purpose, `validate.py` / `ship.py` read it through a **default-deny allowlist** of workspace-identity keys (`WORKSPACE_ENV_ALLOWLIST` in `scripts/agent/validate.py`; `scripts/agent/lib.sh::load_workspace_env` is the shell mirror) instead of sourcing it: nothing else **in `.env.local`** — the cloud key, the primary `DATABASE_URL`, the `IMOVEIS_*` config overrides — becomes ambient pytest env (DW-33). It filters the file, not the shell: a variable already exported in the invoking shell still reaches the gate, which is why the suite also strips the `IMOVEIS_*` channel in `src/tests/conftest.py` whatever its origin. `migrate-primary.sh` is a separate process and still reads the whole file.
 - Ollama runs on the host (Windows side in WSL setups), not in compose; `OLLAMA_NUM_PARALLEL` must equal `gpu.semaphore_limit`.
 
 ## Merge gate & automation
 
-- The merge gate is fully **local**: `scripts/agent/validate.sh all` (lint via pre-commit on all files, unit, integration, contract, frontend build, E2E, plus a **non-gating** dependency audit — `audit-deps.sh`, which reports `pip-audit`/`npm audit` findings without affecting the exit code) inside `scripts/agent/finish-feature.sh` (validate → local squash-merge to `main` → mandatory `git push origin main` → cleanup).
-- GitHub Actions (non-gating): `docs.yml` — MkDocs Material site build/deploy; `nightly.yml` — live scraper drift canary. Dependabot stays advisory-only; bumps are validated locally before merge.
+- The merge gate is fully **local**: `python scripts/agent/validate.py` picks a tier from the diff (`docs` | `fast` = pre-commit + unit | `frontend` = + eslint, build, Playwright | `backend` = + ephemeral stack, integration, contract, `alembic check` | `full`) plus path-triggered scraper / AI / harness gates, and on a clean tree writes a validation stamp (`.run/validated/<tree-sha>.<tier>`). `python scripts/agent/ship.py` merges `origin/main` in, checks the feature doc, validates, squash-merges into `main`, re-checks the stamp and pushes. `.claude/hooks/guard.py` denies any `git push` to `main` whose HEAD tree carries no stamp ([ADR 0007](adr/0007-tiered-gate-and-hook-enforced-push.md)).
+- GitHub Actions (non-gating): `docs.yml` — MkDocs Material site build/deploy; `nightly.yml` — live scraper drift canary (`validate.py --only scrapers`) + advisory dependency audit (`scripts/ops/audit-deps.sh`: `pip-audit` / `npm audit`). Dependabot stays advisory-only; bumps are validated locally before merge.
 
 ## Operational guardrails
 
-- `validate.sh` / `finish-feature.sh` **never touch the primary stack** — no container create/recreate/restart/stop, no `realestate` schema or data changes. Safe during live backfills.
-- Primary `realestate` migration is exclusively `bash scripts/agent/migrate-primary.sh` — an explicit operator step that refuses while the backfill runner's TTL'd heartbeat (`backfill:gemma:active`) is alive.
-- `teardown.sh` fails closed: refuses on ambiguous project identity or the primary project (`--primary` operator override stops containers only; primary volumes are never wiped by scripts).
-- Never `docker system prune` / `volume rm` / `compose down -v` on the primary stack.
-- `scripts/agent/docker-cleanup.sh` after feature work: prunes stopped containers, dangling/feature/worktree images, build cache; keeps primary `imoveis-*` images and all named volumes.
+- `validate.py` / `ship.py` **never touch the primary stack** — no container create/recreate/restart/stop, no `realestate` schema or data changes. Safe during live backfills. `.claude/hooks/guard.py` enforces it: `docker compose` lifecycle commands not scoped to `docker-compose.test.yml` / a `*-test*` project are denied in every permission mode.
+- Primary `realestate` migration is exclusively `bash scripts/agent/migrate-primary.sh` — an explicit operator step that takes a Redis lock and refuses while the backfill runner's TTL'd heartbeat (`backfill:gemma:active`) is alive.
+- Never `docker system prune` / `volume rm` / `compose down -v` on the primary stack (also hook-denied).
+- `bash scripts/ops/docker-cleanup.sh` is an occasional operator task, never in the merge path: prunes stopped containers, dangling/unused feature images, build cache; keeps primary `imoveis-*` images and all named volumes.

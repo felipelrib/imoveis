@@ -23,7 +23,10 @@ divergent commits.
 
 The initial audit shipped as `ff69e26` through the docs-only finish gate. The
 runtime migration shipped as `09b20093` through the full native
-`finish-feature.sh` gate, including merge, push and disposable-stack cleanup.
+`finish-feature.sh` gate of the time, including merge, push and disposable-stack
+cleanup. (That script was retired on 2026-10-07 — see
+[ADR 0007](adr/0007-tiered-gate-and-hook-enforced-push.md); the current gate is
+`python scripts/agent/validate.py` and shipping is `python scripts/agent/ship.py`.)
 
 ## Existing pending development
 
@@ -103,8 +106,9 @@ checkpoint, attempt, and budget state.
 
 Recreate `.venv`, `node_modules`, `frontend/node_modules`, Playwright browser
 installs, builds, coverage, caches, logs, and PID files. Linux executables do not
-belong in a Windows environment. Recreate the workspace port registry too;
-its old absolute paths are useful only as historical evidence.
+belong in a Windows environment. The old workspace port registry
+(`.agent-workspaces/`) is retired with the worktree tooling; its absolute paths
+are useful only as historical evidence.
 
 ## Native Windows readiness
 
@@ -134,7 +138,8 @@ supplement the original transfer receipt.
   and images. Authenticated host HTTP checks returned successful health, system
   status and backfill status responses before container cutover.
 - **Harness:** native BMad CLI and psmux are available; canonical skills are
-  mirrored locally and the verification command explicitly uses Git Bash. The
+  mirrored locally and the verification command of the time explicitly used Git
+  Bash (the current `validate.py` gate runs from any shell). The
   historical paused orchestrator run remains paused and preserved. Its unrelated
   operator gates are not bypassed by this migration.
   Final preflight reports 13 OK, zero problems and one advisory about the older
@@ -201,8 +206,10 @@ its findings do not erase the separate dependency-update backlog.
 ### Continue development
 
 Use `C:\Workfolder\imoveis` as the project folder and the native commands in
-[setup](setup.md). Stop the Vite development server before running the full gate:
-Windows can lock its native modules while `npm ci` replaces dependencies.
+[setup](setup.md) (`.venv/Scripts/python.exe scripts/agent/validate.py`, no Git
+Bash required). Stop the Vite development server before running the `frontend`
+or `full` tier: Windows can lock its native modules while `npm ci` replaces
+dependencies.
 
 This existing Codex chat still declares the historical WSL UNC folder as its
 default workspace. All migration commands explicitly targeted the Windows

@@ -52,18 +52,21 @@ imoveis/
 ├── alembic/versions/             # 24 migrations (schema history)
 ├── configs/app_config.yaml       # Single source of truth (database, auth, scraping, ai, gpu, alerts…)
 ├── scripts/
-│   ├── agent/                    # Gate scripts: validate.sh, finish-feature.sh, test-stack.sh,
-│   │                             # migrate-primary.sh, setup-branch.sh, validate-scrapers.sh,
-│   │                             # validate-ai.sh, docker-cleanup.sh, teardown.sh, worktree tooling
+│   ├── agent/                    # The gate: validate.py (tiered, stamp-writing), ship.py (merge + push),
+│   │                             # validate.sh (thin wrapper), migrate-primary.sh, gen-docs.sh, lib.sh
+│   ├── ops/                      # Operator tasks, never in the merge path: audit-deps.sh (nightly),
+│   │                             # docker-cleanup.sh + docker-cleanup-lib.sh (occasional, by hand)
 │   ├── dev/                      # Cassette recording, benchmarks, backfill runners
 │   └── setup.sh / start.sh / …   # Stack lifecycle
 ├── docker-compose.yml            # PRIMARY stack (project `imoveis`): postgres(PostGIS), redis, api,
 │                                 # worker_ai, worker_scraper, beat, ollama_init, flaresolverr + volumes
 ├── docker-compose.test.yml       # EPHEMERAL validation stack (project `<workspace>-test`) — postgres+redis
-│                                 # only, docker-assigned ports, throwaway volumes (test-stack.sh owns it)
-├── .github/workflows/            # docs.yml (Pages deploy) + nightly.yml (scraper drift canary) — non-gating;
-│                                 # the merge gate is local (validate.sh inside finish-feature.sh)
-├── docs/                         # MkDocs site + this generated knowledge set + 169 feature docs + 5 ADRs
+│                                 # only, docker-assigned ports, throwaway volumes (validate.py owns it)
+├── .claude/hooks/                # Enforcement: guard.py (PreToolUse: push-without-stamp, force push,
+│                                 # primary compose, .env.local edits), auto_push.py (Stop), session_start.py
+├── .github/workflows/            # docs.yml (Pages deploy) + nightly.yml (scraper drift canary + dependency
+│                                 # audit) — non-gating; the merge gate is local (validate.py + ship.py)
+├── docs/                         # MkDocs site + this generated knowledge set + 169 feature docs + 7 ADRs
 ├── _bmad-output/                 # BMad planning artifacts (PRD, architecture spine, epics, sprint status)
 ├── _bmad/custom/                 # Committed BMad skill overrides (gate bindings for dev skills)
 └── .agents/ & .claude/           # BMad skills (committed) / framework skill mirrors (local; no
@@ -82,7 +85,7 @@ imoveis/
 |---|---|
 | `src/core/` | Pure domain logic; highest test rigour (TDD) |
 | `src/adapters/scrapers/` | Unstable external surface; cassette-fixture tested; merge-blocking live gate |
-| `src/adapters/ai/` | Ollama prompts/clients; `validate-ai.sh` gate |
+| `src/adapters/ai/` | Ollama prompts/clients; path-triggered Ollama golden gate (`validate.py --only ai`) |
 | `src/api/schemas.py` + `src/tests/contract/` | API contract surface |
 | `alembic/versions/` | Schema history; `alembic check` gate |
-| `scripts/agent/` | Non-negotiable validation/finish gates |
+| `scripts/agent/` | Non-negotiable validation/ship gates (`validate.py`, `ship.py`) |

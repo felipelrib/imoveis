@@ -1,13 +1,11 @@
-# Imoveis project overrides for bmad-dev-story (CAP-6, v0.13-fu1 harness surgery).
-# BMad dev skills are the sanctioned story executors — constrained to the
-# scripts/agent gates. Merges over the skill's customize.toml (arrays append).
+# Imoveis project overrides for the deprecated bmad-dev-story shim (identical to bmad-build.toml; remove with the shim).
+# Merges over the skill's customize.toml (arrays append). ADR 0007.
 
 [workflow]
 
 persistent_facts = [
-  "GATE (non-negotiable): validation is ONLY `bash scripts/agent/validate.sh [fast|backend|all]`. NEVER run raw `pytest`, `npm test`, or ad-hoc test commands — the gate derives the isolated ephemeral test-stack env that raw runners miss.",
-  "GATE (non-negotiable): finishing a story is ONLY `bash scripts/agent/finish-feature.sh` (validate → local squash-merge to main → mandatory `git push origin main` → cleanup). There is no PR step and no remote CI gate. Run it with a generous timeout or in the background — it takes minutes.",
-  "PRIMARY STACK IS INVIOLABLE: never run any `docker compose` command against the primary project `imoveis` (up/down/restart/stop/build/run). DB/Redis for tests come from `bash scripts/agent/test-stack.sh` (ephemeral `<workspace>-test` project). Primary DB migration is exclusively the operator step `bash scripts/agent/migrate-primary.sh`.",
-  "Domain hooks are merge-blocking and unweakenable: scraper changes → `bash scripts/agent/validate-scrapers.sh --require-live`; AI prompt/client changes → `bash scripts/agent/validate-ai.sh`; API schema changes → contract tests; DB schema changes → `alembic check`.",
-  "Scope discipline: stay inside the story's scope; if a change needs more than 3 unexpected files, STOP and ask the human. Every story ships a feature doc `docs/features/<story-key>-<slug>.md` before finish (finish-feature.sh enforces this).",
+  "GATE: the ONLY validation is `python scripts/agent/validate.py` (tier chosen from the diff; `--tier backend|full` to force). Never run raw `pytest`/`npm test` to validate — the gate builds the isolated ephemeral test stack and writes the validation stamp a push to main requires. Every spec's `## Verification` section lists that command with expected exit 0.",
+  "PRIMARY STACK IS OPERATOR-OWNED: never run `docker compose` lifecycle commands against the primary project `imoveis` (a PreToolUse hook denies them). Tests use the ephemeral `<workspace>-test` stack validate.py creates. Primary DB migration is only the operator step `bash scripts/agent/migrate-primary.sh`. A stuck docker state is halt-and-escalate, never improvised cleanup.",
+  "SHIPPING: `python scripts/agent/ship.py` (validate → squash-merge into main → push). Pushes to main are hook-gated on the validation stamp; never force-push. On a `bmad-loop/<run>/<story>` branch the orchestrator merges: commit, validate, end the session — never ship or rename such a branch.",
+  "Scope: stay inside the story; more than 3 unexpected files means STOP and ask. Every story ships `docs/features/<story-key>-<slug>.md` (ship.py checks story-key branches). Every `fix:` ships a regression test that fails without it.",
 ]

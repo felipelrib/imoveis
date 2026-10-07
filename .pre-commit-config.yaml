@@ -58,17 +58,3 @@ repos:
         entry: bash -c '! grep -rnP "(\btext\(\s*f[\x27\"]|\bf[\x27\"][^\x27\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|ORDER BY)\b)" src/ --include="*.py" | grep -v "/tests/"'
         language: system
         pass_filenames: false
-
-      - id: pytest-unit
-        name: pytest (unit only)
-        entry: pytest src/tests/unit/ -v --timeout=30
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: frontend-build
-        name: frontend build check
-        entry: bash -c 'cd frontend && npm ci && npm run build'
-        language: system
-        pass_filenames: false
-        stages: [pre-push]

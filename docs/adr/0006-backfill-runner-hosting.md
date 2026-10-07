@@ -61,7 +61,7 @@ enters an image or a compose environment.
 
 - **A one-time operator step.** `bash scripts/install-backfill-runner.sh` needs
   `sudo` (it writes `/etc/systemd/system` and calls `systemctl`). No agent, gate
-  or script runs it; `validate.sh` and `finish-feature.sh` are untouched.
+  or script runs it; `validate.py` and `ship.py` are untouched.
 - **Upgrades re-run the installer.** A repo move, a rebuilt `.venv` or a changed
   env-file path all change rendered content — re-running rewrites the same unit
   name and reloads systemd.
@@ -87,10 +87,11 @@ enters an image or a compose environment.
   reloads; a missing unit is not an error. A run already in flight keeps its
   lease until it drains.
 - **Install refuses from a linked git worktree.** Worktree paths are disposable
-  (`teardown.sh --remove`); the refusal names the primary checkout.
-- **No compose surface is added**, so `docker-cleanup.sh`'s image filter, the
-  primary project's service list and the gates' primary-safety all stand
-  unchanged.
+  (bmad-loop / Claude Code `--worktree` remove them); the refusal names the
+  primary checkout.
+- **No compose surface is added**, so `scripts/ops/docker-cleanup.sh`'s image
+  filter, the primary project's service list and the gate's primary-safety all
+  stand unchanged.
 
 ## Alternatives considered
 
@@ -157,9 +158,11 @@ rule cannot drift silently.
 
 **The gate no longer inherits the runner's env.** Making `.env.local` the unit's
 `EnvironmentFile` also made every operator variable ambient pytest env, because
-`validate.sh` / `finish-feature.sh` sourced the file wholesale (DW-33). They now
-read it through a default-deny allowlist of workspace-identity keys
-(`scripts/agent/lib.sh::load_workspace_env`), with a suite-wide guard in
+the gate scripts of the time (`validate.sh` / `finish-feature.sh`) sourced the
+file wholesale (DW-33). The gate now reads it through a default-deny allowlist
+of workspace-identity keys (`WORKSPACE_ENV_ALLOWLIST` in
+`scripts/agent/validate.py`, mirrored by `scripts/agent/lib.sh::load_workspace_env`
+for the remaining shell scripts), with a suite-wide guard in
 `src/tests/conftest.py` as the invocation-independent second layer. A second
 `EnvironmentFile` for the unit was rejected: it would double the operator's env
 contract and still not stop `IMOVEIS_*` landing in `.env.local`. Details:

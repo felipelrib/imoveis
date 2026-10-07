@@ -6,6 +6,8 @@
 
 ## Decision
 
+*Superseded in part by [ADR 0007](0007-tiered-gate-and-hook-enforced-push.md) (2026-10-07): the worktree machinery below — `setup-workspace.sh` / `setup-worktree.sh` / `workspace-status.sh` / `teardown.sh` / `run-services.sh`, the `.agent-workspaces` port registry and sibling `../imoveis-wt-*` checkouts — is retired (history keeps it at commit `ef193e86`). Branching is plain `git switch -c feat/<slug>`; parallel work uses bmad-loop's own worktrees or Claude Code's native `--worktree`, and `validate.py` gives each linked worktree a hash-suffixed ephemeral test project so concurrent validation does not collide. `finish-feature.sh` is replaced by `python scripts/agent/ship.py`; the primary compose project is protected by `.claude/hooks/guard.py` rather than a fail-closed teardown script. The idle invariant (leave the primary on `main` after shipping) still holds — `ship.py` ends on `main`.*
+
 > **Amended by the v0.13-fu1 harness surgery (2026-08-05):** still accepted, with three behavioural updates — (1) `validate.sh` no longer starts/migrates any primary services; each workspace's test DB/Redis come from its own ephemeral `<workspace>-test` compose project (`test-stack.sh`), so port pressure on the shared primary is gone during validation; (2) `teardown.sh` now **fails closed**: it reads `COMPOSE_PROJECT_NAME` from `.env.local` only and refuses ambiguous or primary identities (`--primary` = explicit operator override, volumes never wiped); (3) `finish-feature.sh` merges locally (squash) and pushes `main` — there is no PR step. The idle invariant, sibling-worktree layout, and port registry stand.
 
 Multiple Cursor agents may work on **different features in parallel**. Isolation is **opt-in when needed**, not mandatory for every feature:

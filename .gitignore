@@ -64,7 +64,9 @@ worker.log
 # Claude Code agent harness skills (local only — not committed, mirrors .cursor).
 # CLAUDE.md itself stays committed (project instructions, unlike Cursor rules).
 # No trailing slash: worktrees use a .claude symlink (same as .venv / .cursor).
-.claude
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 
 # Legacy Cline local-only state (if present)
 .cline/memory/
@@ -112,5 +114,3 @@ _bmad/render/
 # Cross-provider AI docs (local-only mirrors of CLAUDE.md + agent memory for
 # Codex/Cursor — see CLAUDE.md "Cross-provider AI docs"). Never committed:
 # they duplicate private memory content and would drift from their sources.
-/AGENTS.md
-/docs/ai/

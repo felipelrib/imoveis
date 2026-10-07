@@ -41,13 +41,16 @@ from pathlib import Path
 
 import pytest
 
+# Spawns the real shell scripts: slow on Windows, so the fast tier skips it (see validate.py).
+pytestmark = pytest.mark.harness
+
 from tests.conftest import PRESERVED_ENV_VARS, should_strip_env_var
 from tests.shell_helpers import BASH
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LIB_SH = REPO_ROOT / "scripts" / "agent" / "lib.sh"
 VALIDATE_SH = REPO_ROOT / "scripts" / "agent" / "validate.sh"
-FINISH_SH = REPO_ROOT / "scripts" / "agent" / "finish-feature.sh"
+VALIDATE_PY = REPO_ROOT / "scripts" / "agent" / "validate.py"
 ENV_EXAMPLE = REPO_ROOT / ".env.local.example"
 
 _SECRET = "not-a-real-key-7b2e0d"
@@ -359,12 +362,25 @@ class TestGateScriptsDoNotRawSourceEnvLocal:
     reintroduce exactly the same bleed while the literal never appears.
     """
 
-    @pytest.mark.parametrize("script", [VALIDATE_SH, FINISH_SH], ids=lambda p: p.name)
-    def test_gate_script_uses_the_allowlist_loader(self, script):
-        body = "\n".join(_uncommented_lines(script))
-        assert "load_workspace_env" in body, f"{script.name} must read .env.local through the allowlist (DW-33)"
+    def test_python_gate_reads_env_local_through_its_allowlist_only(self):
+        """validate.py (the gate itself) owns a Python port of the allowlist: no dotenv, no wholesale load."""
+        body = "\n".join(_uncommented_lines(VALIDATE_PY))
+        assert "WORKSPACE_ENV_ALLOWLIST" in body, "validate.py must declare the DW-33 allowlist"
+        assert "dotenv" not in body, "validate.py must not load .env.local wholesale (DW-33)"
 
-    @pytest.mark.parametrize("script", [VALIDATE_SH, FINISH_SH], ids=lambda p: p.name)
+    def test_python_allowlist_matches_the_bash_allowlist(self):
+        """Two loaders, one contract: the key sets must stay identical."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("imoveis_validate_gate", VALIDATE_PY)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bash_keys = set(re.search(r'WORKSPACE_ENV_ALLOWLIST="([^"]+)"', LIB_SH.read_text(encoding="utf-8")).group(1).split())
+        assert set(module.WORKSPACE_ENV_ALLOWLIST) == bash_keys
+        for key in OPERATOR_ONLY_KEYS:
+            assert key not in module.WORKSPACE_ENV_ALLOWLIST
+
+    @pytest.mark.parametrize("script", [VALIDATE_SH], ids=lambda p: p.name)
     def test_gate_script_sources_nothing_but_the_shared_helpers(self, script):
         offenders = [
             line
@@ -378,12 +394,12 @@ class TestGateScriptsDoNotRawSourceEnvLocal:
             f"{script.name} sources something other than {list(SANCTIONED_SOURCES)} — {_DW33} {offenders}"
         )
 
-    @pytest.mark.parametrize("script", [VALIDATE_SH, FINISH_SH], ids=lambda p: p.name)
+    @pytest.mark.parametrize("script", [VALIDATE_SH], ids=lambda p: p.name)
     def test_gate_script_never_turns_on_allexport(self, script):
         offenders = [line for line in _uncommented_lines(script) if _ALLEXPORT_RE.search(line)]
         assert not offenders, f"{script.name} enables allexport (`set -a`) — {_DW33} {offenders}"
 
-    @pytest.mark.parametrize("script", [VALIDATE_SH, FINISH_SH], ids=lambda p: p.name)
+    @pytest.mark.parametrize("script", [VALIDATE_SH], ids=lambda p: p.name)
     def test_gate_script_never_evals_a_file(self, script):
         offenders = [line for line in _uncommented_lines(script) if _EVAL_OF_A_FILE_RE.search(line)]
         assert not offenders, f"{script.name} evals a file's contents — {_DW33} {offenders}"
@@ -412,7 +428,7 @@ class TestGateScriptsDoNotRawSourceEnvLocal:
         assert caught, f"the source pin would not notice: {snippet}"
 
     def test_the_pin_tolerates_the_sanctioned_helper_sourcing(self):
-        """Both gate scripts legitimately source lib.sh — the pin must not cry wolf."""
+        """The validate.sh wrapper legitimately sources lib.sh — the pin must not cry wolf."""
         for snippet in ('source "$HERE/lib.sh"', 'source "$HERE/setup-tools.sh" 2>/dev/null || true'):
             assert not [
                 match

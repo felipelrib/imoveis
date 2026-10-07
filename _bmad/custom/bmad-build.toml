@@ -1,4 +1,4 @@
-# Imoveis project overrides for bmad-dev-auto (legacy id bmad-loop still dispatches; identical to bmad-build-auto.toml).
+# Imoveis project overrides for bmad-build (BMAD >= 6.11; was bmad-quick-dev.toml).
 # Merges over the skill's customize.toml (arrays append). ADR 0007.
 
 [workflow]

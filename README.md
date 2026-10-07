@@ -31,7 +31,7 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 | Frontend    | React 19 + Vite 8 + TypeScript (maplibre-gl, recharts) | Score-coloured property grid, map, dashboard |
 | Config      | Pydantic + YAML        | Single source of truth (`configs/app_config.yaml`) |
 | Migrations  | Alembic                | Schema versioning               |
-| Gates       | `scripts/agent/` local | `validate.sh` = THE merge gate; GitHub Actions = docs deploy + nightly scraper drift canary only |
+| Gates       | `scripts/agent/` local + `.claude/hooks/` | `validate.py` = THE merge gate (tiered, stamp-enforced on push); GitHub Actions = docs deploy + nightly scraper canary/dependency audit only |
 | Tracking    | BMad artifacts (`_bmad-output/`) | `epics.md` = plan of record; `sprint-status.yaml` = execution status |
 
 ```
@@ -134,37 +134,42 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/start.sh` | Start stack + background Vite on :5173 (migrations; `--no-frontend` for backend only; service names to start a subset) |
 | `./scripts/stop.sh`  | Stop containers and background Vite                   |
 | `./scripts/restart.sh`| Stop + start (`--build` to rebuild images)           |
-| `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`) — prefer `scripts/agent/validate.sh` for the real gate |
+| `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`) — prefer `scripts/agent/validate.py` for the real gate |
 | `./scripts/dev.sh`   | Same stack, Vite in the foreground (Ctrl+C = UI only) |
 | `./scripts/clean.sh` | Stop stack; **never** deletes volumes (`--all` also drops rebuildable images/cache) |
-| `bash scripts/agent/docker-cleanup.sh` | Prune stopped containers + dangling/unused feat/wt images + build cache (keeps `imoveis-*` + bases; never volumes) |
+| `python scripts/agent/validate.py` | The merge gate — tier chosen from the diff (`--tier X` forces; `--only scrapers\|ai\|harness`; `--down` removes the ephemeral test stack) |
+| `python scripts/agent/ship.py` | Validate → squash-merge into `main` → push (refuses a dirty tree) |
+| `bash scripts/ops/docker-cleanup.sh` | Occasional operator task: prune stopped containers + dangling/unused feature images + build cache (keeps `imoveis-*` + bases; never volumes) |
 
 ## Validation & Merge Gate
 
-There is **no remote CI gate** — the merge gate is local (`scripts/agent/`, see [ADR 0002](docs/adr/0002-cursor-single-agent-workflow.md) as amended). GitHub Actions only deploys docs and runs a nightly scraper drift canary. Never run raw `pytest` / `npm test`; use:
+There is **no remote CI gate** — the merge gate is local and hook-enforced (`scripts/agent/` + `.claude/hooks/`, see [ADR 0007](docs/adr/0007-tiered-gate-and-hook-enforced-push.md)). GitHub Actions only deploys docs and runs a nightly scraper drift canary + advisory dependency audit. Never run raw `pytest` / `npm test`; use:
 
 ```bash
-bash scripts/agent/validate.sh fast      # lint (pre-commit, all files) + unit
-bash scripts/agent/validate.sh backend   # fast + integration + contract (+ alembic check)
-bash scripts/agent/validate.sh all       # full gate: + frontend build + Playwright e2e + advisory dependency audit
+python scripts/agent/validate.py                  # tier chosen from the diff: docs | fast | frontend | backend | full
+python scripts/agent/validate.py --tier backend   # force a tier
+python scripts/agent/validate.py --only scrapers  # one domain gate: scrapers | ai | harness
 ```
 
-Validation runs against an **ephemeral test stack** (`bash scripts/agent/test-stack.sh up|env|down|status` — throwaway compose project with docker-assigned ports); the primary `imoveis` compose project is **never touched**, so validating is safe at any time, including during a live backfill.
+Tiers: `docs` = `mkdocs build --strict`; `fast` = pre-commit (all files) + unit (xdist) — ≈ 75 s on the Windows host; `frontend` = + eslint + Vite build + Playwright e2e; `backend` = + ephemeral PostGIS/Redis stack + integration + contract + `alembic check`; `full` = everything. Any shell works (`.venv/Scripts/python.exe` on Windows); `bash scripts/agent/validate.sh [all|fast|…]` is a thin wrapper (`all` = `full`).
 
-Shipping is a single command:
+Validation runs against an **ephemeral test stack** (built by `validate.py` from `docker-compose.test.yml` — throwaway compose project `<COMPOSE_PROJECT_NAME>-test` with docker-assigned ports); the primary `imoveis` compose project is **never touched**, so validating is safe at any time, including during a live backfill.
+
+A green run on a clean tree writes a validation stamp (`.run/validated/<tree-sha>.<tier>`). Shipping is a single command:
 
 ```bash
-bash scripts/agent/finish-feature.sh
+python scripts/agent/ship.py
 ```
 
-It validates, squash-merges the feature branch into `main` locally, **pushes `main` to origin immediately**, and cleans up (worktree teardown / test stack down / docker temp prune). Docs-only branches automatically get a lighter `mkdocs build --strict` gate. A red validation blocks the merge — there is no zero-gate path to `main`.
+It merges `origin/main` into the branch, checks the feature doc on story-key branches, validates (auto tier), squash-merges into `main` locally, re-checks the stamp for the merged tree, **pushes `main` to origin immediately** and deletes the branch. No Docker teardown or image pruning. A red validation blocks the merge — and `.claude/hooks/guard.py` denies any `git push` to `main` whose tree carries no stamp, so there is no zero-gate path to `main`.
 
-Domain gates for specific surfaces:
+Domain gates are path-triggered inside `validate.py` (run one alone with `--only`):
 
-- **Scraper changes:** `bash scripts/agent/validate-scrapers.sh --require-live` (merge-blocking; refresh cassettes with `python scripts/dev/record_scraper_cassettes.py` on HTML drift).
-- **AI prompt/client changes:** `bash scripts/agent/validate-ai.sh` (live Ollama golden tests).
-- **API schema changes:** update/run the contract suite (`src/tests/contract/`) — it runs inside `validate.sh backend`.
+- **Scraper changes:** cassette suite + live dry-run (merge-blocking; refresh cassettes with `python scripts/dev/record_scraper_cassettes.py` on HTML drift).
+- **AI prompt/client changes:** live Ollama golden tests (`--only ai`; skipped loudly when Ollama is unreachable).
+- **API schema changes:** update/run the contract suite (`src/tests/contract/`) — it runs in the `backend` tier.
 - **DB schema changes:** migrations run on the ephemeral stack inside the gate; the primary DB is migrated only via the explicit operator step `bash scripts/agent/migrate-primary.sh` (mutually exclusive with a running backfill).
+- **Harness/script changes:** the `harness`-marked tests (≈ 14 min serial; also in `full`).
 
 ## Configuration
 
@@ -188,9 +193,9 @@ The multi-day corpus backfill (Gemma via the Gemini API, free-tier paced) runs a
 Risk-tiered, not blanket coverage (see `CLAUDE.md` for the full table): TDD on pure domain logic, recorded fixtures/cassettes for scrapers, characterization tests before changing existing invariants, minimal mocked paths for thin glue. Every bug fix ships a regression test.
 
 - Backend: pytest under `src/tests/{unit,integration,contract}` (markers: `unit`, `integration`, `e2e`, `slow`); host tests isolate to `realestate_test` + Redis DB 15, never the primary data.
-- Frontend: Playwright e2e under `frontend/tests/e2e` (`npm run test:e2e` — but run it via `validate.sh all`).
-- Lint: `pre-commit run --all-files` (isort, flake8, secrets, hygiene fixers) — the fixer hooks modify files on failure; commit their edits.
-- Dependency audit: `bash scripts/agent/audit-deps.sh` (`pip-audit` + `npm audit`) runs as the advisory last stage of `validate.sh all` — it reports and never blocks; act on findings with a deliberate bump.
+- Frontend: Playwright e2e under `frontend/tests/e2e` (`npm run test:e2e` — but run it via the `frontend`/`full` tier of `validate.py`).
+- Lint: `pre-commit run --all-files` (isort, flake8, secrets, hygiene fixers) — the fixer hooks modify files on failure; commit their edits. `pre-commit install` once so they also run on every commit.
+- Dependency audit: `bash scripts/ops/audit-deps.sh` (`pip-audit` + `npm audit`) is advisory and runs in the nightly GitHub workflow, never in the merge path; act on findings with a deliberate bump.
 
 ## Documentation
 
@@ -202,11 +207,11 @@ Full documentation is published via MkDocs Material (auto-deployed to GitHub Pag
 | [Architecture](docs/architecture.md) | Data flow, components, tech decisions |
 | [API Reference](docs/api.md) | Endpoints, parameters, examples |
 | [Harness Troubleshooting](docs/harness-troubleshooting.md) | Accumulated agent-workflow gotchas (validation, Playwright, scrapers, compose) |
-| [Development Guide](docs/development-guide.md) | Generated dev-workflow reference (branch/validate/finish) |
+| [Development Guide](docs/development-guide.md) | Generated dev-workflow reference (branch/validate/ship) |
 | [Deployment Guide](docs/deployment-guide.md) | Generated deployment reference (incl. backfill runner) |
 | [Add a locale](docs/i18n/add-a-locale.md) | i18n catalog / synonym / lexicon checklist |
 | [Features](docs/features/) | Implementation notes per shipped story (`BIN-*` historical, `v0.N-*` current) |
-| [ADRs](docs/adr/) | Architecture Decision Records (0001–0006) |
+| [ADRs](docs/adr/) | Architecture Decision Records (0001–0007) |
 
 Preview docs locally: `pip install mkdocs-material && mkdocs serve`
 
@@ -221,14 +226,14 @@ Imoveis uses [BMad Method](https://docs.bmad-method.org/tutorials/getting-starte
 
 ## Development Workflow
 
-1. **Branch** — `bash scripts/agent/setup-branch.sh "<task-slug>"` (or `setup-workspace.sh` / `setup-worktree.sh` for parallel agents; conventional branch types enforced). Story branches embed the key: `feat/v0.13-s1.1-…`.
+1. **Branch** — `git switch -c feat/<slug>`. Story branches embed the key: `feat/v0.14-s1.2-…` (that is what drives the feature-doc check).
 2. **Implement** — risk-tiered TDD with conventional commits (`feat:`, `fix:`, `docs:`, …).
-3. **Validate** — `bash scripts/agent/validate.sh all`.
-4. **Document** — every story ships `docs/features/<story-key>-<slug>.md` (`bash scripts/agent/gen-docs.sh <slug> "<Title>" [story-key]` scaffolds it); the finish gate refuses story-key branches without one.
-5. **Finish** — `bash scripts/agent/finish-feature.sh` (validate → local squash-merge → push → cleanup).
+3. **Validate** — `python scripts/agent/validate.py` (tier from the diff).
+4. **Document** — every story ships `docs/features/<story-key>-<slug>.md` (`bash scripts/agent/gen-docs.sh <slug> "<Title>" [story-key]` scaffolds it); `ship.py` refuses story-key branches without one.
+5. **Ship** — `python scripts/agent/ship.py` (merge main in → validate → local squash-merge → push → branch deleted).
 6. **Track** — set the story key to `done` in sprint-status.yaml **after** the merge is pushed.
 
-**Parallel agents:** `bash scripts/agent/workspace-status.sh`; if the primary checkout is busy, the next agent gets a sibling worktree under `../imoveis-wt-<slug>` with private compose ports ([ADR 0004](docs/adr/0004-parallel-agent-workspaces.md)).
+**Parallel agents:** no worktree tooling in the repo — bmad-loop creates its own worktrees and Claude Code has native `--worktree`; each linked worktree gets its own ephemeral test project (hash-suffixed), so concurrent validation does not collide ([ADR 0007](docs/adr/0007-tiered-gate-and-hook-enforced-push.md)).
 
 ## License
 

@@ -41,6 +41,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+# Spawns the real shell scripts: slow on Windows, so the fast tier skips it (see validate.py).
+pytestmark = pytest.mark.harness
+
 from infra.config import BackfillConfig
 from tests.shell_helpers import BASH, bash_path, host_path
 

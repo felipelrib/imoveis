@@ -8,9 +8,9 @@
 
 > **Amended by [ADR 0005](0005-drop-linear-bmad-artifacts-sole-tracker.md) (2026-08-05):** Linear was dropped entirely; BMad artifacts (`epics.md` + `sprint-status.yaml`) are now the sole tracker. Linear references below are historical.
 >
-> **Further amended by the v0.13-fu1 harness surgery (2026-08-05):** the "bridge" is dissolved — BMad now owns execution too. The feature-pipeline and planning-bridge skills were deleted; ticket → ship is the BMad story cycle (`bmad-create-story` → `bmad-dev-story` → `bmad-code-review`, or `bmad-quick-dev`) bound to the `scripts/agent` gates via `_bmad/custom/` overrides. The PR/CI steps below are retired (local squash-merge + mandatory push). Alternative 1 ("replace feature-pipeline with BMad story cycle only") was effectively adopted — **without** losing the scraper/AI gates, which the overrides keep mandatory.
+> **Further amended by the v0.13-fu1 harness surgery (2026-08-05):** the "bridge" is dissolved — BMad now owns execution too. The feature-pipeline and planning-bridge skills were deleted; ticket → ship is the BMad story cycle (`bmad-create-story` → `bmad-dev-story` → `bmad-code-review`, or `bmad-quick-dev`) bound to the `scripts/agent` gates via `_bmad/custom/` overrides. The PR/CI steps below are retired (local squash-merge + mandatory push). Since [ADR 0007](0007-tiered-gate-and-hook-enforced-push.md) (2026-10-07) those gates are `python scripts/agent/validate.py` (tiered; scraper/AI gates path-triggered inside it) and `python scripts/agent/ship.py`; `validate.sh` survives only as a thin wrapper and `finish-feature.sh` is gone. Alternative 1 ("replace feature-pipeline with BMad story cycle only") was effectively adopted — **without** losing the scraper/AI gates, which the overrides keep mandatory.
 
-Imoveis uses **BMad Method** for product planning and solutioning (PRD, architecture spine, epics/stories, implementation readiness, sprint planning). **Implementation and merge gates stay on ADR 0002**: single Cursor agent, Linear as execution tracker, committed `scripts/agent/` validate / finish-feature / babysit.
+Imoveis uses **BMad Method** for product planning and solutioning (PRD, architecture spine, epics/stories, implementation readiness, sprint planning). **Implementation and merge gates stay on ADR 0002**: single Cursor agent, Linear as execution tracker, committed `scripts/agent/` validate / finish-feature / babysit (historical names — today `validate.py` / `ship.py`).
 
 | Concern | Owner |
 |---------|--------|
@@ -30,7 +30,7 @@ After readiness + sprint planning:
 
 1. Optional `bmad-create-story` (fresh chat) → story file under `_bmad-output/implementation-artifacts/`.
 2. Ensure Linear child exists (v0.5: BIN-41..55 under epic parents BIN-19..23).
-3. Local `feature-pipeline`: `setup-workspace.sh` → TDD → `validate.sh` (+ scraper/AI gates when relevant) → `finish-feature.sh --pr` → babysit → Linear Done → `docs/features/`.
+3. Local `feature-pipeline` (historical; now `git switch -c` → TDD → `validate.py` → `ship.py` → `docs/features/`): `setup-workspace.sh` → TDD → `validate.sh` (+ scraper/AI gates when relevant) → `finish-feature.sh --pr` → babysit → Linear Done → `docs/features/`.
 4. Keep `_bmad-output/implementation-artifacts/sprint-status.yaml` in sync (never downgrade statuses).
 
 Recommended v0.5 delivery order (from readiness): **Epic 1 → 2 → 3|5 → 4** so AD-12 property projection lands before export/digest.
@@ -40,7 +40,7 @@ Recommended v0.5 delivery order (from readiness): **Epic 1 → 2 → 3|5 → 4**
 - Commit `_bmad/`, `.agents/skills/`, and `_bmad-output/` planning **and** implementation artifacts (`sprint-status.yaml`); gitignore personal `*.user.toml` and local `.cursor/`.
 - Run each major BMad workflow in a **fresh chat**.
 - After epics exist, sync stories to Linear before coding; do not invent a parallel backlog ahead of the PRD.
-- Optional `bmad-dev-story` / `bmad-code-review` may assist implementation, but cannot skip `validate.sh` or CI.
+- Optional `bmad-dev-story` / `bmad-code-review` may assist implementation, but cannot skip the gate (`validate.py`; the push guard enforces it).
 - Local bridge skill: `.cursor/skills/imoveis-planning-bridge`; execution skill: `.cursor/skills/feature-pipeline`.
 
 ## Alternatives considered

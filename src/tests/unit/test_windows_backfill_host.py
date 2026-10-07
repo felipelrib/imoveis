@@ -20,7 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 HOST = ROOT / "scripts/windows/backfill_host.py"
 INSTALLER = ROOT / "scripts/install-backfill-runner.ps1"
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.harness]
 
 
 def _module():

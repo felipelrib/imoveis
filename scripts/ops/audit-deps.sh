@@ -27,7 +27,7 @@
 # ---------------------------------------------------------------------------
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
-source "$HERE/lib.sh"   # NOTE: lib.sh sets -euo pipefail — guard every tool call.
+source "$HERE/../agent/lib.sh"   # NOTE: lib.sh sets -euo pipefail — guard every tool call.
 
 STRICT=false
 for arg in "${@}"; do

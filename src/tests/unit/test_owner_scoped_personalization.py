@@ -5,6 +5,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+# Fixed ids for parametrize cases: fresh uuid4() values at import time make every
+# pytest-xdist worker collect different test ids and abort the run.
+_FIXED_ID = "0f3b5e1a-3f2e-4a6c-9d8b-1c2d3e4f5a6b"
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,8 +48,8 @@ PROTECTED_GETS = (
     "/favourites",
     "/saved-searches",
     "/watchlist",
-    f"/favourites/check/{uuid4()}",
-    f"/watchlist/check/{uuid4()}",
+    f"/favourites/check/{_FIXED_ID}",
+    f"/watchlist/check/{_FIXED_ID}",
 )
 
 
@@ -67,9 +71,9 @@ def test_personalization_rejects_missing_credential(
         ("post", "/favourites", {"json": {}}),
         ("post", "/saved-searches", {"json": {}}),
         ("post", "/watchlist", {"json": {}}),
-        ("delete", f"/favourites/{uuid4()}", {}),
-        ("delete", f"/saved-searches/{uuid4()}", {}),
-        ("delete", f"/watchlist/{uuid4()}", {}),
+        ("delete", f"/favourites/{_FIXED_ID}", {}),
+        ("delete", f"/saved-searches/{_FIXED_ID}", {}),
+        ("delete", f"/watchlist/{_FIXED_ID}", {}),
     ],
 )
 def test_personalization_mutations_reject_missing_credential(

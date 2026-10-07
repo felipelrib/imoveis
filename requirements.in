@@ -19,6 +19,8 @@ rapidfuzz
 pytest
 pytest-cov
 pytest-asyncio
+pytest-timeout
+pytest-xdist
 
 beautifulsoup4
 aiohttp

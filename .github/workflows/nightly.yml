@@ -1,9 +1,8 @@
 name: Nightly
 
-# Post-CI-retirement (v0.13-fu1 harness surgery): the only job left is the
-# live scraper drift canary — it watches an EXTERNAL surface (portal HTML)
-# that local gates cannot cover. Unit/integration/dependency jobs were
-# deleted; those run locally via scripts/agent/validate.sh, the sole gate.
+# Non-gating safety nets that watch EXTERNAL surfaces: the live scraper drift
+# canary (portal HTML) and the dependency advisory audit (PyPI / npm). Code
+# validation runs locally via scripts/agent/validate.py (the only merge gate).
 
 on:
   schedule:
@@ -22,7 +21,27 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-timeout
+        run: pip install -r requirements.txt
 
       - name: Cassette unit tests + live dry-run
-        run: bash scripts/agent/validate-scrapers.sh --require-live
+        run: python scripts/agent/validate.py --only scrapers
+
+  # ---- Dependencies: advisory audit (pip-audit + npm audit) ----
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install audit tools
+        run: pip install -r requirements.txt pip-audit
+
+      - name: Dependency audit (advisory)
+        run: bash scripts/ops/audit-deps.sh

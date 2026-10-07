@@ -31,7 +31,7 @@ import pytest
 
 from tests.shell_helpers import BASH
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.harness]
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 _STOP = _SCRIPTS / "stop.sh"

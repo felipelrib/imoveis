@@ -44,4 +44,4 @@ Celery tasks in `src/adapters/queue/tasks.py` (16 tasks), notable:
 
 ## Testing strategy
 
-Risk-tiered (per CLAUDE.md): TDD on `core/`, cassette/oracle-first on scrapers, characterization locks on brownfield SQL/dedupe, thin-glue minimal on queue wrappers. Markers: unit/integration/e2e/slow. Entry: `scripts/agent/validate.sh {fast|backend|all}` — never raw pytest. Domain gates: `validate-scrapers.sh --require-live`, `validate-ai.sh`, contract tests, `alembic check`.
+Risk-tiered (per CLAUDE.md): TDD on `core/`, cassette/oracle-first on scrapers, characterization locks on brownfield SQL/dedupe, thin-glue minimal on queue wrappers. Markers: unit/integration/e2e/slow. Entry: `python scripts/agent/validate.py` (tier from the diff; `--tier {docs|fast|frontend|backend|full}` forces) — never raw pytest. Domain gates are path-triggered inside it (`--only scrapers|ai|harness` runs one alone): scraper cassettes + live dry-run, Ollama golden tests, contract tests, `alembic check`.

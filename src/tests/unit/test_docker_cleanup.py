@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pytest
 
+# Spawns the real shell scripts: slow on Windows, so the fast tier skips it (see validate.py).
+pytestmark = pytest.mark.harness
+
 from tests.shell_helpers import BASH
 
 _LIB = (
-    Path(__file__).resolve().parents[3] / "scripts" / "agent" / "docker-cleanup-lib.sh"
+    Path(__file__).resolve().parents[3] / "scripts" / "ops" / "docker-cleanup-lib.sh"
 )
 
 

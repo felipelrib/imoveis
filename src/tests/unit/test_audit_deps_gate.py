@@ -4,8 +4,8 @@ CI retirement (v0.13-fu1) deleted the Trivy/pip-audit/npm-audit jobs, so
 ``scripts/agent/audit-deps.sh`` is now the only thing scanning dependencies for
 known vulnerabilities. Two properties must never silently regress:
 
-1. **Advisory** — the stage runs in ``validate.sh all`` only and can never turn
-   a green gate red (no ``rc=1``, no ``--strict`` from validate.sh).
+1. **Advisory** — the audit runs in the nightly GitHub workflow (never inside
+   the merge gate) and its default mode can never turn anything red.
 2. **Visibly degrading** — a missing tool or an unreachable network prints a
    ``[WARN]`` skip line and still exits 0, so offline merges keep working.
 
@@ -24,26 +24,12 @@ import pytest
 
 from tests.shell_helpers import BASH, bash_path
 
+# Spawns the real shell script: slow on Windows, so the fast tier skips it (see validate.py).
+pytestmark = pytest.mark.harness
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT_SCRIPTS = REPO_ROOT / "scripts" / "agent"
-AUDIT_SH = AGENT_SCRIPTS / "audit-deps.sh"
-VALIDATE_SH = AGENT_SCRIPTS / "validate.sh"
-SETUP_TOOLS_SH = AGENT_SCRIPTS / "setup-tools.sh"
-
-
-def _scope_arm(scope: str) -> str:
-    """Return the body of one ``case "$SCOPE"`` arm in validate.sh."""
-    source = VALIDATE_SH.read_text()
-    match = re.search(rf"^  {scope}\)\n(.*?)^    ;;$", source, re.MULTILINE | re.DOTALL)
-    assert match, f"could not locate the '{scope})' arm in validate.sh"
-    return match.group(1)
-
-
-def _run_audit_body() -> str:
-    source = VALIDATE_SH.read_text()
-    match = re.search(r"^run_audit\(\) \{\n(.*?)^\}$", source, re.MULTILINE | re.DOTALL)
-    assert match, "validate.sh no longer defines run_audit()"
-    return match.group(1)
+AUDIT_SH = REPO_ROOT / "scripts" / "ops" / "audit-deps.sh"
 
 
 @pytest.mark.unit
@@ -55,22 +41,8 @@ class TestAuditDepsScript:
     def test_script_sources_lib_helpers(self):
         """Repo convention: agent scripts reuse lib.sh's log/ok/warn/die + REPO_ROOT."""
         body = AUDIT_SH.read_text()
-        assert 'source "$HERE/lib.sh"' in body
+        assert 'source "$HERE/../agent/lib.sh"' in body
         assert "$REPO_ROOT" in body
-
-    def test_setup_tools_declares_pip_audit_in_the_tools_array(self):
-        """pip-audit is a gate-only tool: declared in PYTHON_TOOLS, never in
-        requirements.txt (the pip-compile'd runtime lockfile for the API image).
-
-        Asserts the ARRAY, not the file text — the file also carries a comment
-        mentioning pip-audit, which would keep a bare substring check green even
-        if the tool were dropped from PYTHON_TOOLS.
-        """
-        array = re.search(r"^PYTHON_TOOLS=\((.*?)\)$", SETUP_TOOLS_SH.read_text(), re.MULTILINE)
-        assert array, "setup-tools.sh no longer defines PYTHON_TOOLS=(...)"
-        assert "pip-audit" in array.group(1).split()
-        assert "pip-audit" not in (REPO_ROOT / "requirements.txt").read_text()
-        assert "pip-audit" not in (REPO_ROOT / "requirements.in").read_text()
 
     def test_network_calls_are_bounded_by_a_timeout(self):
         """An advisory stage of the merge gate must not hang finish-feature.sh
@@ -105,70 +77,6 @@ class TestAuditDepsScript:
         assert not re.search(r"\b(warn|ok|log)\b", fn.group(0)), (
             f"_timeout must not write to stdout, found: {fn.group(0)!r}"
         )
-
-
-@pytest.mark.unit
-class TestAuditStageWiring:
-    def test_validate_defines_and_calls_run_audit_in_all(self):
-        assert "run_audit" in _scope_arm("all")
-
-    def test_audit_absent_from_fast_and_backend(self):
-        assert "run_audit" not in _scope_arm("fast")
-        assert "run_audit" not in _scope_arm("backend")
-        assert "run_audit" not in _scope_arm("frontend")
-
-    def test_run_audit_never_sets_rc(self):
-        """Advisory: the stage must never mutate validate.sh's exit-code accumulator.
-
-        Matches assignment *forms* (``rc=``, ``rc+=``, ``let rc``, ``((rc++))``)
-        rather than the bare substring ``rc=`` — ``rc+=1`` contains no ``rc=``
-        and would have slipped through. Reads of ``$rc`` stay allowed: the stage
-        legitimately checks whether the gate already failed.
-        """
-        body = _run_audit_body()
-        forbidden = re.search(r"\brc\s*(=|\+=)|\blet\s+rc|\(\(\s*rc", body)
-        assert not forbidden, f"run_audit must not assign rc, found: {forbidden.group(0)!r}"
-
-    def test_validate_never_passes_strict(self):
-        """--strict is an operator-only mode; passing it from the gate would
-        make dependency advisories merge-blocking.
-
-        Matches any argument after the script path, not just the literal
-        ``--strict``, so variable indirection cannot slip past. Backslash line
-        continuations are *followed* rather than treated as a terminator — the
-        script is already invoked across a continuation, so stopping at ``\\``
-        would have let ``audit-deps.sh \\\\\\n --strict`` pass this lock.
-        """
-        # The continuation alternative must come FIRST: otherwise the character
-        # class consumes the lone `\` and the match stops at the newline anyway.
-        invocations = re.findall(
-            r'bash "\$HERE/audit-deps\.sh"((?:\\\n|[^\n|&;])*)', VALIDATE_SH.read_text()
-        )
-        assert invocations, "validate.sh no longer invokes audit-deps.sh"
-        for args in invocations:
-            cleaned = args.replace("\\\n", " ").strip('" ')
-            assert not cleaned, f"audit-deps.sh must be called with no arguments, got: {args!r}"
-
-    def test_audit_runs_in_a_subshell_not_sourced(self):
-        """``bash script`` not ``source script``: audit-deps.sh calls ``die`` on
-        bad usage, and lib.sh sets ``-e`` — sourcing it would let the advisory
-        stage kill validate.sh outright, taking the verdict with it."""
-        body = _run_audit_body()
-        assert 'bash "$HERE/audit-deps.sh"' in body
-        assert not re.search(r"^\s*(source|\.)\s+\"?\$HERE/audit-deps\.sh", body, re.MULTILINE)
-
-    def test_audit_is_skipped_once_the_gate_is_already_red(self):
-        """The audit is the last stage and makes bounded network calls; spending
-        minutes on it after validation already failed only delays a verdict."""
-        body = _run_audit_body()
-        assert re.search(r'\[\s*"\$rc"\s+-ne\s+0\s*\]', body), (
-            "run_audit no longer short-circuits on an already-failed run"
-        )
-
-    def test_terminal_verdict_strings_unchanged(self):
-        source = VALIDATE_SH.read_text()
-        assert 'ok "VALIDATION PASSED"' in source
-        assert 'warn "VALIDATION FAILED (rc=$rc)"' in source
 
 
 def _stub(tmp_path: Path, name: str, payload: str) -> str:

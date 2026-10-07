@@ -22,26 +22,30 @@ Compose stack (primary project `imoveis`): `postgres` (PostGIS 17-3.5), `redis`,
 ## Validation (never raw pytest / npm test)
 
 ```bash
-bash scripts/agent/validate.sh fast      # lint (pre-commit, all files) + unit (<60s)
-bash scripts/agent/validate.sh backend   # + integration + contract
-bash scripts/agent/validate.sh all       # full gate before merge (+ advisory dependency audit)
+python scripts/agent/validate.py                  # tier chosen from the diff: docs | fast | frontend | backend | full
+python scripts/agent/validate.py --tier backend   # force a tier
+python scripts/agent/validate.py --only scrapers  # one domain gate: scrapers | ai | harness
+python scripts/agent/validate.py --check-stamp    # exit 0 iff HEAD's tree carries a stamp for the required tier
 ```
 
-`all` ends with an **advisory** dependency audit (`scripts/agent/audit-deps.sh` — `pip-audit` over `requirements.txt`, `npm audit` over `frontend/`). It reports findings and never changes the verdict: a run with advisories still prints `VALIDATION PASSED`. Missing tools or an unreachable network degrade to a visible `[WARN]` skip (each call bounded by `$AUDIT_TIMEOUT`, default 180s), so offline merges keep working — a degraded source reads `skipped`, never `0`, including when a resolution produced nothing to audit. npm findings are listed per package with `isDirect` and fix availability. The stage is skipped entirely when the gate has already failed. Act on a critical advisory by **bumping the dependency deliberately and revalidating** through the normal gate — do not mute the tool, add a suppression file, or make the stage blocking. `bash scripts/agent/audit-deps.sh --strict` is the operator-only variant that exits 1 on findings *or* on a degraded run; `validate.sh` never passes it. Scope is dependency manifests only — the retired CI's Trivy filesystem/base-image scan is still not replaced.
+Tiers (each includes the previous, except `docs`): `docs` = `mkdocs build --strict`; `fast` = pre-commit (all files) + unit (pytest-xdist) — measured ≈ 75 s on the Windows host (lint 17 s + unit 55 s), `docs` ≈ 11 s; `frontend` = + eslint + Vite build + Playwright e2e; `backend` = + ephemeral PostGIS/Redis stack + integration + contract + `alembic check`; `full` = backend + frontend. Path-triggered extras: scraper changes run the cassette suite + live dry-run, AI prompt/client changes run the Ollama golden tests (skipped loudly when Ollama is unreachable), `scripts/`/harness changes run the `harness`-marked tests (≈ 14 min serial — only when scripts change or in `full`). `bash scripts/agent/validate.sh [all|fast|…]` is a thin wrapper (`all` = `full`); any shell works, no Git Bash needed (`.venv/Scripts/python.exe` on Windows).
 
-Validation runs against the **ephemeral test stack** (`scripts/agent/test-stack.sh`, compose project `<workspace>-test`, docker-assigned ports, throwaway volumes) — the primary stack is never touched, so validation is safe at any time, including during a live backfill. Migrating the primary `realestate` DB is a separate explicit operator step: `bash scripts/agent/migrate-primary.sh` (guarded by the backfill heartbeat).
+A green run on a **clean** tree writes `.run/validated/<tree-sha>.<tier>` in the primary checkout. That stamp is what the push guard checks — a dirty-tree run prints a warning and writes none.
 
-Domain gates: `validate-scrapers.sh --require-live` (scraper changes), `validate-ai.sh` (AI prompt/client changes), contract tests (API schema), `alembic check` (DB schema — runs against the ephemeral test DB inside `validate.sh backend`).
+Validation runs against the **ephemeral test stack** (built by `validate.py` from `docker-compose.test.yml`, compose project `<COMPOSE_PROJECT_NAME>-test` plus a short hash suffix inside linked worktrees, docker-assigned ports, throwaway volumes; `--down` removes it) — the primary stack is never touched, so validation is safe at any time, including during a live backfill. Migrating the primary `realestate` DB is a separate explicit operator step: `bash scripts/agent/migrate-primary.sh` (Redis lock + backfill heartbeat guard).
 
-## Branch & finish workflow
+The dependency audit (`scripts/ops/audit-deps.sh` — `pip-audit` + `npm audit`, advisory) is **not** in the merge path: it runs in the nightly GitHub workflow's `audit` job, or by hand. Act on a finding by bumping the dependency deliberately and revalidating; never mute the tool. Scope is dependency manifests only — the retired CI's Trivy filesystem/base-image scan is still not replaced.
+
+## Branch & ship workflow
 
 ```bash
-git rev-parse --abbrev-ref HEAD                      # first action every session
-bash scripts/agent/setup-branch.sh "<task-slug>"     # if on main
-bash scripts/agent/finish-feature.sh                 # validate → local squash-merge → push main → cleanup (long-running)
+git switch -c feat/<slug>            # story branches embed the key: feat/v0.14-s1.2-…
+python scripts/agent/ship.py         # merge origin/main in → feature-doc check → validate (auto tier) → squash-merge → push
 ```
 
-`finish-feature.sh` is the merge gate: a red `validate.sh all` blocks the merge; a green one squash-merges into `main` locally and **pushes `main` to origin immediately** (origin is the backup of record). GitHub Actions carries only `docs.yml` (MkDocs Pages deploy) and `nightly.yml` (live scraper drift canary) — neither gates a merge.
+`.claude/hooks/session_start.py` prints branch / dirty state / stamp state at session start, so there is no "first action: git rev-parse" ritual. `ship.py` refuses a dirty tree and `bmad-loop/*` branches (the orchestrator merges those); a story-key branch whose diff touches code must carry `docs/features/<key>-*.md`; a red gate stops before the merge; after the squash-merge it re-checks the stamp for the merged tree, pushes `origin main` and deletes the branch. No Docker teardown, no image pruning (`scripts/ops/docker-cleanup.sh` is an occasional operator task).
+
+Enforcement is hooks, not prose ([ADR 0007](adr/0007-tiered-gate-and-hook-enforced-push.md)): `.claude/hooks/guard.py` (PreToolUse) denies `git push` to `main` without a stamp for HEAD's tree, any force push, `docker compose` lifecycle commands against the primary project `imoveis`, `docker system prune` / `docker volume rm`, and edits to `.env.local` / `configs/anchors.local.yaml`; `.claude/hooks/auto_push.py` (Stop) pushes `main` when it is clean, ahead, not behind and stamped. GitHub Actions carries only `docs.yml` (MkDocs Pages deploy) and `nightly.yml` (scraper drift canary + dependency audit) — neither gates a merge. Parallel work: bmad-loop makes its own worktrees; Claude Code has native `--worktree`.
 
 ## Conventions
 

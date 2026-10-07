@@ -79,8 +79,10 @@ class TestNoFstringSqlLint:
         assert "forbid-fstring-sql" in config
 
     def test_validate_sh_runs_the_hook_via_pre_commit(self):
-        """validate.sh's run_lint runs pre-commit on ALL files, which carries the
-        forbid-fstring-sql hook (post harness-surgery: the inline grep copy was
-        replaced by the single pre-commit source of truth)."""
-        validate_sh = (REPO_ROOT / "scripts" / "agent" / "validate.sh").read_text()
-        assert "pre-commit run --all-files" in validate_sh
+        """The gate's lint stage runs pre-commit on ALL files, which carries the
+        forbid-fstring-sql hook (the inline grep copy was replaced by the single
+        pre-commit source of truth). validate.sh is a wrapper over validate.py."""
+        validate_py = (REPO_ROOT / "scripts" / "agent" / "validate.py").read_text(encoding="utf-8")
+        assert '"pre_commit", "run", "--all-files"' in validate_py
+        validate_sh = (REPO_ROOT / "scripts" / "agent" / "validate.sh").read_text(encoding="utf-8")
+        assert "validate.py" in validate_sh

@@ -14,7 +14,7 @@ from tests.shell_helpers import BASH
 
 ROOT = Path(__file__).resolve().parents[3]
 LIB = ROOT / "scripts" / "agent" / "lib.sh"
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.harness]
 
 
 def _bash(body: str, *, cwd: Path = ROOT, env: dict | None = None):

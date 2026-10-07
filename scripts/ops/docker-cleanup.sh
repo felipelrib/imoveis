@@ -24,7 +24,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
-source "$HERE/lib.sh"
+source "$HERE/../agent/lib.sh"
 # shellcheck source=docker-cleanup-lib.sh
 source "$HERE/docker-cleanup-lib.sh"
 

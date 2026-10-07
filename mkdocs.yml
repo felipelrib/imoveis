@@ -78,6 +78,7 @@ nav:
       - Parallel Agent Workspaces: adr/0004-parallel-agent-workspaces.md
       - Drop Linear — BMad Artifacts Sole Tracker: adr/0005-drop-linear-bmad-artifacts-sole-tracker.md
       - Backfill Runner Hosting: adr/0006-backfill-runner-hosting.md
+      - Tiered Gate and Hook-Enforced Push: adr/0007-tiered-gate-and-hook-enforced-push.md
 
 plugins:
   - search

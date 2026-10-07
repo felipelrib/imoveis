@@ -23,19 +23,23 @@ From PowerShell in the checkout:
 
 ```powershell
 py -3.11 -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements-windows.txt
+.venv/Scripts/python.exe -m pip install -r requirements-windows.txt pre-commit
+.venv/Scripts/python.exe -m pre_commit install
 npm ci --prefix frontend
 & ./frontend/node_modules/.bin/playwright.cmd install chromium
-& 'C:/Program Files/Git/bin/bash.exe' scripts/agent/validate.sh all
+.venv/Scripts/python.exe scripts/agent/validate.py --tier full
 ```
 
-Use the full Git Bash path for `setup-branch.sh` and `finish-feature.sh` too;
-bare `bash` may launch WSL. The validation header must show native `win32`.
-Stop this checkout's Vite dev server before the full/finish gate: Windows locks
-its loaded native build module and can block the gate's `npm ci`. Restart Vite
-after finishing.
-Keep `.env.local` private and LF-terminated. The gates load only allowed workspace
-settings and isolate tests from primary database, cloud routing and credentials.
+The gate and the ship script are plain Python and run from any shell — no Git
+Bash needed. Only the remaining shell scripts (`scripts/agent/migrate-primary.sh`,
+`scripts/ops/*.sh`) need Git Bash; invoke it by its full path
+(`& 'C:/Program Files/Git/bin/bash.exe' scripts/agent/migrate-primary.sh`)
+because bare `bash` may launch WSL.
+Stop this checkout's Vite dev server before a `frontend`/`full` tier run: Windows
+locks its loaded native build module and can block the gate's `npm ci`. Restart
+Vite after finishing.
+Keep `.env.local` private and LF-terminated. The gate loads only allowed workspace
+settings and isolates tests from primary database, cloud routing and credentials.
 
 The Linux/Docker lock remains `requirements.txt`. Regenerate the Windows lock on
 native Python 3.11 after changing the source or Linux pins:
@@ -132,7 +136,9 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 | `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |
 | `./scripts/dev.sh` | Same stack, but Vite in the foreground (Ctrl+C stops UI only) |
 | `./scripts/clean.sh` | Stop stack; **never** deletes volumes (`--all` also drops rebuildable images/cache) |
-| `bash scripts/agent/docker-cleanup.sh` | After wrap-up: prune stopped containers, dangling + unused feat/wt images, build cache (keeps primary `imoveis-*` + bases; never volumes) |
+| `python scripts/agent/validate.py` | The merge gate — tier chosen from the diff (`--tier X` forces; `--only scrapers\|ai\|harness` runs one domain gate; `--down` removes the ephemeral test stack) |
+| `python scripts/agent/ship.py` | Validate → squash-merge into `main` → push (refuses a dirty tree) |
+| `bash scripts/ops/docker-cleanup.sh` | Occasional operator task: prune stopped containers, dangling + unused feature images, build cache (keeps primary `imoveis-*` + bases; never volumes) |
 
 Start specific services only:
 
@@ -174,7 +180,7 @@ pip-compile requirements.in --output-file=requirements.txt --strip-extras --upgr
 pip-compile requirements.in --output-file=requirements.txt --strip-extras --upgrade-package fastapi
 ```
 
-After regenerating, run `bash scripts/agent/validate.sh all` and rebuild the API/worker images (`docker compose build api worker`) before trusting the change — the lockfile only takes effect once the image is rebuilt from it.
+After regenerating, run `python scripts/agent/validate.py --tier full` and rebuild the API/worker images (`docker compose build api worker`) before trusting the change — the lockfile only takes effect once the image is rebuilt from it.
 
 ### Database
 
@@ -322,36 +328,77 @@ transport swaps. Disable by setting `enabled: false` and restarting workers (and
 This project uses [pre-commit](https://pre-commit.com/) for local linting and validation. Install the hooks once after cloning:
 
 ```bash
-pip install pre-commit
-pre-commit install          # runs on commit (isort, flake8, secrets, etc.)
-pre-commit install --hook-type pre-push  # runs on push (unit tests, frontend build)
+pip install pre-commit      # no-op once the regenerated lock carries it (it is declared in requirements.in)
+pre-commit install          # runs on commit (isort, flake8, secrets, hygiene fixers)
 ```
 
-After installation, all checks run automatically on every `git commit` and `git push`.
-This is the **same** hook set used by the CI `lint` job (`pre-commit/action`) —
-run them locally so formatting/lint issues never reach GitHub Actions.
-
-To run all hooks manually:
+After `pre-commit install`, the hooks run automatically on every
+`git commit`; there is no pre-push stage — the push itself is guarded by the
+validation stamp (below). The gate's lint stage runs the **same** hook set over
+all tracked files:
 
 ```bash
 pre-commit run --all-files
 ```
 
+The fixer hooks (whitespace, end-of-file, isort) modify files when they fail —
+commit their edits and re-run.
+
 ### Testing
 
+Never run raw `pytest` / `npm test` as the gate. The gate is one command that
+picks its tier from the diff:
+
 ```bash
-./scripts/test.sh unit        # Unit tests only (fast)
-./scripts/test.sh integration # Integration tests (needs running stack)
-./scripts/test.sh all         # Everything
-./scripts/test.sh unit --args "-v -k test_dedupe"  # Filter tests
+python scripts/agent/validate.py                  # docs | fast | frontend | backend | full, chosen from the diff
+python scripts/agent/validate.py --tier backend   # force a tier
+python scripts/agent/validate.py --only scrapers  # one domain gate: scrapers | ai | harness
+python scripts/agent/validate.py --check-stamp    # does HEAD's tree carry a stamp for the required tier?
 ```
 
-Prefer `bash scripts/agent/validate.sh` for the CI-equivalent gate. Host pytest uses
-an isolated Postgres DB (`realestate_test`) and Redis logical DB **15**
-(`REDIS_TEST_DB`); Compose API/Celery keep Postgres `realestate` and Redis DB **0**
-so fixtures that truncate tables / `flushdb` do not wipe scraped data or Celery
-queues. See `docs/features/BIN-71-isolate-integration-test-db.md` and
-`docs/features/BIN-117-isolate-redis-test-db.md`.
+Tiers: `docs` = `mkdocs build --strict`; `fast` = pre-commit + unit (xdist);
+`frontend` = fast + eslint + Vite build + Playwright; `backend` = fast +
+ephemeral PostGIS/Redis stack + integration + contract + `alembic check`;
+`full` = everything. Path-triggered extras: scraper changes add the cassette
+suite + live dry-run, AI prompt/client changes add the Ollama golden tests,
+`scripts/`/harness changes add the `harness`-marked tests. On the Windows host
+`fast` takes ≈ 75 s (lint 17 s + unit 55 s), `docs` ≈ 11 s; the harness-marked
+tests take ≈ 14 min serial and run only when scripts change or in `full`.
+`bash scripts/agent/validate.sh [all|fast|backend|…]` still works as a thin
+wrapper (`all` = `full`).
+
+A green run on a clean tree writes `.run/validated/<tree-sha>.<tier>`; that
+stamp — not prose — is what lets a push to `main` through (see below).
+
+The `backend`/`full` tiers build a throwaway compose project
+`<COMPOSE_PROJECT_NAME>-test` from `docker-compose.test.yml` (docker-assigned
+ports, anonymous volumes; `--down` removes it). Host pytest therefore uses an
+isolated Postgres DB and Redis logical DB **15** (`REDIS_TEST_DB`); the primary
+`imoveis` project keeps Postgres `realestate` and Redis DB **0** and is never
+touched, so fixtures that truncate tables / `flushdb` cannot wipe scraped data or
+Celery queues. See `docs/features/BIN-71-isolate-integration-test-db.md` and
+`docs/features/BIN-117-isolate-redis-test-db.md`. `./scripts/test.sh` remains
+for ad-hoc runs against your own running stack
+(`./scripts/test.sh unit --args "-v -k test_dedupe"`).
+
+### Shipping
+
+```bash
+git switch -c feat/<slug>        # story branches embed the key: feat/v0.14-s1.2-…
+# … commit …
+python scripts/agent/ship.py     # merge origin/main in → feature-doc check → validate → squash-merge → push
+```
+
+`ship.py` refuses a dirty tree and `bmad-loop/*` branches (the orchestrator
+merges those), re-checks the validation stamp of the merged tree before pushing,
+and deletes the branch afterwards. There is no Docker teardown or image pruning
+in the merge path. Enforcement lives in Claude Code hooks, not prose:
+`.claude/hooks/guard.py` denies `git push` to `main` without a stamp for HEAD's
+tree, any force push, `docker compose` lifecycle commands against the primary
+project, `docker system prune` / `docker volume rm`, and edits to `.env.local` /
+`configs/anchors.local.yaml`; `.claude/hooks/auto_push.py` pushes `main` at the
+end of a session when it is clean, ahead, not behind and stamped. See
+[ADR 0007](adr/0007-tiered-gate-and-hook-enforced-push.md).
 
 ### Frontend Development
 
@@ -452,12 +499,14 @@ Preconditions:
 - Run the installer from the **primary checkout**; it refuses from a linked git
   worktree (that path is disposable).
 
-`.env.local` is also read by the local gates, but only through an allowlist of
+`.env.local` is also read by the local gate, but only through an allowlist of
 workspace-identity keys (ports, `COMPOSE_PROJECT_NAME`, the DB credentials and
 test-DB selectors, `API_KEY`/`JWT_SECRET`) —
-`scripts/agent/lib.sh::load_workspace_env`. Nothing else **in that file** — the
-cloud key, the primary `DATABASE_URL`, the `IMOVEIS_*` overrides — reaches
-`validate.sh` / `finish-feature.sh`, so an enabled host still runs a green gate.
+`WORKSPACE_ENV_ALLOWLIST` in `scripts/agent/validate.py` (mirrored by
+`scripts/agent/lib.sh::load_workspace_env` for the remaining shell scripts).
+Nothing else **in that file** — the cloud key, the primary `DATABASE_URL`, the
+`IMOVEIS_*` overrides — reaches `validate.py` / `ship.py`, so an enabled host
+still runs a green gate.
 The loader filters what it *reads*; it cannot unset a variable you exported in
 your own shell before running the gate, so for the `IMOVEIS_*` config-override
 channel specifically the suite has a second, origin-independent guard
@@ -475,8 +524,14 @@ it rewrites the same unit name in place. `--uninstall` removes it.
 
 ### CI/CD
 
-GitHub Actions runs on every push and PR:
-- Linting, tests, Docker build verification, and security checks
+There is **no merge-gate CI**: code validation is local only
+(`python scripts/agent/validate.py`, enforced on push by the stamp guard). GitHub
+Actions carries two non-gating workflows:
+
+- `docs.yml` — MkDocs Material site build + Pages deploy on push to `main`.
+- `nightly.yml` — external-surface safety nets: the live scraper drift canary
+  (`python scripts/agent/validate.py --only scrapers`) and the advisory
+  dependency audit (`bash scripts/ops/audit-deps.sh`: `pip-audit` + `npm audit`).
 
 ### Docs Deployment
 
