@@ -33,28 +33,31 @@ repos:
         args: [--max-line-length, "127", --extend-ignore, "E203,W503,E261,E302,E304,E305,E402,E501,E128,W291"]
         exclude: '^(\.agents/|_bmad/(?!custom/))'
 
+  # Patterns and scan roots live in scripts/agent/lint_forbidden.py. These were
+  # `bash -c '! grep -rnP …'` entries; on Windows that passed with nothing checked
+  # whenever grep rejected the locale, and ran in WSL when System32 led PATH.
   - repo: local
     hooks:
       - id: forbid-hardcoded-secrets
         name: forbid imoveis/dev secrets
-        entry: bash -c '! grep -rnP "(imoveis_secret|dev-secret-key)" src/ frontend/src/ --include="*.py" --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx"'
+        entry: python scripts/agent/lint_forbidden.py secrets
         language: system
         pass_filenames: false
 
       - id: forbid-only
         name: forbid .only() in test files
-        entry: bash -c '! grep -rn "\.only(" src/tests/'
+        entry: python scripts/agent/lint_forbidden.py only
         language: system
         pass_filenames: false
 
       - id: forbid-print
         name: forbid print() in source code
-        entry: bash -c '! grep -rnP "^[^#]*\bprint\s*\(" src/ --include="*.py" | grep -v "__init__.py" | grep -v "test_"'
+        entry: python scripts/agent/lint_forbidden.py print
         language: system
         pass_filenames: false
 
       - id: forbid-fstring-sql
         name: forbid f-string-built SQL fragments (BIN-135)
-        entry: bash -c '! grep -rnP "(\btext\(\s*f[\x27\"]|\bf[\x27\"][^\x27\"]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|ORDER BY)\b)" src/ --include="*.py" | grep -v "/tests/"'
+        entry: python scripts/agent/lint_forbidden.py fstring-sql
         language: system
         pass_filenames: false

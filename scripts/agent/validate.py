@@ -171,7 +171,62 @@ def load_workspace_env(path: Path | None = None) -> dict[str, str]:
     return loaded
 
 
+IS_WINDOWS = os.name == "nt"
+# Directories whose bash.exe is the WSL launcher, not a shell that can run the repo's scripts.
+WSL_LAUNCHER_DIRS = ("system32", "windowsapps")
+
+
+def is_wsl_launcher(bash: str) -> bool:
+    return Path(bash).parent.name.lower() in WSL_LAUNCHER_DIRS
+
+
+def find_git_bash() -> str | None:
+    """Git for Windows' bash.exe, located from git itself so PATH order does not matter."""
+    roots: list[Path] = []
+    git = shutil.which("git")
+    if git:
+        # git.exe sits in <root>\cmd, <root>\bin or <root>\mingw64\bin.
+        roots.extend(list(Path(git).resolve().parents)[:3])
+    for var, tail in (("ProgramFiles", "Git"), ("ProgramW6432", "Git"), ("LOCALAPPDATA", "Programs/Git")):
+        if os.environ.get(var):
+            roots.append(Path(os.environ[var]) / tail)
+    for root in roots:
+        candidate = root / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(entry) / "bash.exe"
+        if entry and candidate.is_file() and not is_wsl_launcher(str(candidate)):
+            return str(candidate)
+    return None
+
+
+def prefer_git_bash_on_path() -> None:
+    """Windows resolves a bare ``bash`` to System32's WSL launcher when it comes first on
+    PATH (PowerShell sessions); pre-commit hooks and script tests then run in the wrong
+    shell or refuse to. Put Git Bash ahead of it for the gate's children."""
+    if not IS_WINDOWS:
+        return
+    current = shutil.which("bash")
+    if current and not is_wsl_launcher(current):
+        return
+    git_bash = find_git_bash()
+    if git_bash:
+        os.environ["PATH"] = str(Path(git_bash).parent) + os.pathsep + os.environ.get("PATH", "")
+
+
+def gate_python_first_on_path() -> None:
+    """The local pre-commit hooks run ``python scripts/agent/lint_forbidden.py``; make that
+    ``python`` the gate's interpreter rather than whatever PATH offers (or nothing)."""
+    here = str(Path(PYTHON).parent)
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    if entries[0] != here:
+        os.environ["PATH"] = os.pathsep.join([here, *entries])
+
+
 def apply_gate_env() -> None:
+    prefer_git_bash_on_path()
+    gate_python_first_on_path()
     for key in list(os.environ):
         if key.startswith(CONFIG_ENV_PREFIX) and key not in PRESERVED_PREFIXED:
             del os.environ[key]
