@@ -1,6 +1,7 @@
 ---
 title: Imoveis — Deal Tracker
-status: final
+status: superseded
+superseded_by: prds/prd-imoveis-2026-10-07/prd.md
 created: 2026-08-05
 updated: 2026-08-05
 supersedes: prds/prd-imoveis-2026-07-23/prd.md
