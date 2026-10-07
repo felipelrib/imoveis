@@ -1,319 +1,142 @@
-# generated: 2026-08-05T06:51:14-03:00 (bmad-sprint-planning regeneration; v0.13 wave)
-# last_updated: 2026-08-05T07:20:00-03:00 (re-keyed to BMad-standard keys for bmad-loop)
-# project: imoveis
-# project_key: NOKEY
-# tracking_system: file-system
-# story_location: {project-root}/_bmad-output/implementation-artifacts
-#
-# NOTE (2026-08-05, ADR 0005): Linear DROPPED entirely. This file is the SOLE
-# execution-status tracker; epics.md = plan of record (planningTarget v0.13).
-# Delivered pre-v0.13 history (epics 1-8) is archived verbatim in
-# sprint-status-archive-pre-v0.13.yaml — this file tracks ONLY the current
-# wave, with BMad-standard keys (epic-N, N-M-slug) that bmad-loop parses.
-#
-# KEY MAPPING: yaml story N-M ↔ project story id v0.13-sN.M (branch names
-# feat/v0.13-sN.M-…, feature docs docs/features/v0.13-sN.M-*.md — the
-# finish-feature.sh doc gate derives the id from the branch). Follow-ups
-# without a story keep their v0.13-fu<N> keys in the top-level `followups:`
-# map at the END of this file — NEVER inside development_status, where
-# bmad-loop flags every non-standard key via queue.sprint-status-unknown-keys.
-#
-# SEQUENCING GATES (from epics.md — enforce order; refreshed 2026-08-13 at
-# the epic-3 retro, superseding the original epic-1∥epic-2 wave plan):
-#   Wave 0: 2-6 ∥ 2-7 ∥ DW-32 (epic-3-retro-item-3) — all file-disjoint.
-#   Wave 1: 2-1 (gates: 2.1←2.7 + DW-32 done; 2.1←3.2+3.3+3.4 satisfied).
-#   Wave 2: 2-2 ∥ 2-3 → Wave 3: 2-4 ∥ 2-5.
-#   Gates: 2.2←2.1+2.6, 2.3←2.1, 2.4←2.3+2.6, 2.5←2.2+2.6, 2.1←2.7.
-#   After 2.7: DW-9/20/21 ticker bundle (scheduled, not minted).
-
 # STATUS DEFINITIONS:
-# ===========# Epic Status:
+# ==================
+# Epic Status:
 #   - backlog: Epic not yet started
 #   - in-progress: Epic actively being worked on
 #   - done: All stories in epic completed
-#
-# Epic Status Transitions:
-#   - backlog → in-progress: Automatically when first story is created (via create-story)
-#   - in-progress → done: Manually when all stories reach 'done' status
-#
+
 # Story Status:
 #   - backlog: Story only exists in epic file
-#   - ready-for-dev: Story file created in stories folder
+#   - ready-for-dev: Story file created, ready for development
 #   - in-progress: Developer actively working on implementation
-#   - review: Ready for code review (via Dev's code-review workflow)
+#   - review: Implementation complete, ready for review
 #   - done: Story completed
-#
+
 # Retrospective Status:
 #   - optional: Can be completed but not required
 #   - done: Retrospective has been completed
-#
+
 # Action Item Status:
 #   - open: Committed during a retrospective, not yet addressed
 #   - in-progress: Actively being worked on
 #   - done: Completed
-#
-# WORKFLOW NOTES:
-# ========# - Epic transitions to 'in-progress' automatically when first story is created
-# - Stories can be worked in parallel if team capacity allows (respect the gates above)
-# - Developer typically creates next story after previous one is 'done' to incorporate learnings
-# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
-# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
-# - Story done ONLY after finish-feature.sh has merged to main and pushed (CLAUDE.md)
-# - Off-sprint follow-ups mint v<milestone>-fu<N> keys (one line, status + short
-#   description) under the top-level `followups:` map — never in development_status
 
-generated: 2026-08-05T06:51:14-03:00
-last_updated: 2026-08-13
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+# PROJECT NOTES (imoveis, v0.14 wave — regenerated 2026-10-07):
+# - Sole execution-status tracker (ADR 0005); plan of record is
+#   _bmad-output/planning-artifacts/epics.md (planningTarget v0.14).
+# - v0.13 statuses are archived verbatim in sprint-status-archive-v0.13.yaml
+#   (pre-v0.13 in sprint-status-archive-pre-v0.13.yaml). The v0.14 epics reuse
+#   epic numbers 1-3, so the old keys could not stay here: a merge would have
+#   marked the new epic-1 / epic-3 `done`. Nothing delivered was downgraded;
+#   it lives in the archive.
+# - KEY MAPPING: yaml story N-M <-> story id v0.14-sN.M (branch
+#   feat/v0.14-sN.M-<slug>, feature doc docs/features/v0.14-sN.M-*.md).
+# - Superseded v0.13 keys -> v0.14 owner: 2-7 -> 1-5, 2-1 -> 1-6, 2-2 -> 1-7,
+#   2-5 -> 1-8, 2-3 -> 1-9, 2-4 -> 1-10, v0.13-fu12 + v0.13-fu13 -> 1-11.
+# - Open v0.13 retro items -> v0.14 owner (closed by that story, recorded in
+#   its feature doc): epic-3-retro-item-3 (DW-32 drain) -> 1-4;
+#   epic-1-retro-item-1, epic-1-retro-item-5, epic-3-retro-item-1,
+#   epic-3-retro-item-2 -> 1-17.
+# - SEQUENCING GATES, waves and the do-not-parallelize list live in epics.md
+#   ("Sequencing gates and Parallel work plan"). Wave 0 start-here set:
+#   1-1, 1-4, 1-11, 1-15, 1-16, 1-17, 2-1, 3-1, 3-4, 5-1, 6-4.
+# - DO NOT START 1-6 before 1-5 is `done`. 1-5 is an operator step
+#   (migrate-primary.sh applies the fabricated-score repair); the gate is not
+#   machine-enforced.
+# - Statuses only move forward; `done` only after the merge is pushed.
+# - Off-sprint follow-ups mint v0.14-fu<N> keys under the top-level
+#   `followups:` map at the end of this file, never in development_status.
+# - Retro action items use epic-N-retro-item-M-<slug> keys inside
+#   development_status (_bmad/custom/bmad-retrospective.toml). The generator
+#   drops them on a refresh as orphans: re-add them by hand after rerunning it.
+
+generated: 10-07-2026 18:35
+last_updated: 10-07-2026 18:35
 project: imoveis
 project_key: NOKEY
 tracking_system: file-system
-story_location: "{project-root}/_bmad-output/implementation-artifacts"
-
+story_location: '{project-root}/_bmad-output/implementation-artifacts'
 development_status:
-  # ---- v0.13 wave (epics.md 2026-08-05, UX-contract refresh) ----
-  # Epic 1: Hybrid Enrichment, Productized (Theme A — FR-27/FR-28/FR-29)
-  # CLOSED 2026-08-12 at the epic-1 retrospective. All six stories done, merged
-  # and pushed; no untracked leftovers remain — DW-27 (FR-28's unmet
-  # "graduates from scripts/dev") is tracked as v0.13-fu10 and runs immediately
-  # next, by explicit decision (Felipe, 2026-08-12; retro §5). Full record:
-  # epic-1-retro-2026-08-12.md.
-  epic-1: done
-  1-1-canonical-enrichment-task-classes-routing-config: done
-  1-2-live-pipeline-routes-by-task-class-local-fallback: done
-  1-3-backfill-runner-control-core: done
-  # 1.4 escalated on 2026-08-06 on a stale branch-state blocker (an unmerged
-  # story-1.3 follow-up branch, since landed) and was never re-driven. Story 1.6
-  # is undeliverable without its coverage endpoint, so 1.4's scope was
-  # implemented inside the 1-6 branch, built to 1.4's own epics.md ACs.
-  1-4-enrichment-coverage-telemetry: done
-  1-5-admin-backfill-control-api: done
-  1-6-operacoes-backfill-card-coverage-visibility: done
-  epic-1-retrospective: done
+  epic-1: backlog
+  1-1-total-monthly-cost-on-the-persist-path: backlog
+  1-2-cost-in-the-canonical-projection-and-coverage: backlog
+  1-3-one-cohort-price-basis-for-rent: backlog
+  1-4-primary-migration-cannot-bypass-the-backfill-guard: backlog
+  1-5-corpus-repair-applied-and-verified: backlog
+  1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline: backlog
+  1-7-percentile-badge-on-cards-and-percentile-filter: backlog
+  1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow: backlog
+  1-9-saved-search-new-match-detection-on-the-pipeline: backlog
+  1-10-saved-search-alert-management-ui: backlog
+  1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip: backlog
+  1-12-backfill-liveness-is-visible-for-the-whole-run: backlog
+  1-13-runner-lifecycle-ends-honestly: backlog
+  1-14-transport-quota-inference-holds-across-a-throttle: backlog
+  1-15-dependency-and-image-scanning-restored: backlog
+  1-16-the-admin-audit-trail-names-who-acted: backlog
+  1-17-ledger-and-loop-hygiene: backlog
+  epic-1-retrospective: optional
 
-  # Epic 1 retrospective action items (2026-08-12). These use bmad-loop's
-  # RETRO_ITEM_RE shape (^epic-N-retro-item-M-slug$) so the loop can see them —
-  # the base bmad-retrospective skill writes an `action_items:` block outside
-  # development_status, which parses as nothing. Overridden project-wide in
-  # _bmad/custom/bmad-retrospective.toml. Owners/criteria: epic-1-retro-2026-08-12.md §6.
-  #
-  # A1 — re-check an escalated story's stated blocker against the current tree
-  # before the loop advances past it; re-drive if the cause has cleared, rather
-  # than absorbing the scope into a sibling branch (story 1.4's failure mode).
-  epic-1-retro-item-1-escalation-reverification: open
-  # A2 — when a review pass finds the same defect SHAPE a prior pass already
-  # fixed through a different field, promote it to a spec I/O-matrix invariant
-  # instead of running another pass (1.6 pass 3: "the third door into the same
-  # defect"; 1.3 spent 4 passes / 64 patches).
-  # DONE 2026-08-13 (epic-3 retro): every epic-3 spec carried frozen I/O-matrix
-  # invariant rows; all five stories converged in ONE review pass (epic 1: 13).
-  epic-1-retro-item-2-third-pass-invariant-rule: done
-  # A3 — a story marked done inside another story's branch gets its own
-  # docs/features/<story-key>-*.md in that same branch, not in a later review
-  # pass (1.4 sat `done` with no doc until 1.6's third pass caught it).
-  # DONE 2026-08-13 (epic-3 retro): no absorption occurred in epic 3; all five
-  # v0.13-s3.x feature docs present at epic close.
-  epic-1-retro-item-3-feature-doc-on-absorption: done
-  # A4 — verify `git rev-list --count origin/main..main == 0` at the END of a
-  # loop run, not only per-merge (the loop left origin 9 merges behind).
-  # DONE 2026-08-13 (epic-3 retro): origin gap was 0 at the retrospective.
-  epic-1-retro-item-4-push-verification-at-loop-end: done
-  # A5 — track deferred-work opened vs closed per epic; a net-positive epic
-  # ends with a scheduled drain wave rather than an open ledger (epic 1 closed
-  # 7 and opened 32).
-  epic-1-retro-item-5-ledger-budget-per-epic: open
-
-  # ---- Epic 3: Enrichment Hardening & Operability ----
-  # Minted 2026-08-12 at the epic-1 retrospective. NOT new scope: FR-28's unmet
-  # stated outcome (the runner never graduated out of scripts/dev) plus the
-  # corpus-integrity ledger items Epic 1's review passes found and correctly
-  # fenced out of their own stories' intent contracts.
-  # Wave order: 3-1 (serial) -> 3-2 ∥ 3-3 -> 3-4. Gate: 3-4←3-3 (both touch
-  # src/core/backfill_runner.py). Epic 3 GATES Epic 2's 2-1: percentiles must
-  # not be computed over a corpus still accruing fabricated scores.
-  # CLOSED 2026-08-13: all five stories done + operator-confirmed; outcome
-  # live-verified same day (supervised unit, requests-denominated budget 15/14k,
-  # lease-loss handover proven on the live run: exit 7, checkpoint intact,
-  # 1 unrecorded completion, successor resumed in ~2s). DW-27/17/18/11/31/33
-  # drained. Retrospective remains optional (recommended, fresh session).
-  epic-3: done
-  # DW-27: the admin Start button only works while a hand-started
-  # `backfill_gemma.py --serve` supervisor stays alive; no unit is committed or
-  # wired into the stack. Topology decision (systemd unit / compose service /
-  # supported entrypoint) with cloud-key placement and the local-first /
-  # residential-IP invariants in play. Ships with an ADR.
-  3-1-backfill-runner-hosting: done
-  # DW-17: non-quota AI failures (401 revoked key, 404 retired model, DNS
-  # outage) still persist a fabricated 0.5, commit, advance the checkpoint and
-  # — because mode=missing keys on `not score` — permanently retire the row, at
-  # ~4,600 properties/day behind a healthy banner. Needs a typed marker on the
-  # fallback result + a consecutive-fallback circuit breaker in run_backfill,
-  # never the `analysis == "Error"` string. Local Ollama template fallback must
-  # be preserved (story 1.3's intent contract fenced this deliberately).
-  3-2-non-quota-failure-circuit-breaker: done
-  # DW-18: the budget charges a flat 3 requests/property while one property is
-  # up to 3 stages x 3 JSON attempts x 5 HTTP retries = 45 real requests, and
-  # 429s are retried — so AC-1's never-exceed guarantee measures the wrong
-  # quantity, worst exactly when the account is already throttled.
-  3-3-budget-counts-requests: done
-  # DW-11: after a lost lease, still-draining rows advance the SHARED
-  # checkpoint hash, rewinding the successor's position and inflating
-  # processed_total. Decide monotonic compare-and-set vs lease-gated advance.
-  3-4-checkpoint-advance-semantics: done
-  # DW-31 + DW-33: two defects in story 3-1's OWN delivery, found while doing
-  # its operator handoff (2026-08-12). (a) 3-1's instructions tell the operator
-  # to set ai.enrichment_routing to gemma in the COMMITTED configs/app_config.yaml,
-  # which fails test_enrichment_routing_default_all_local (story 1.1's NFR-1 AC)
-  # — the sanctioned surface is the per-host env override the unit already reads;
-  # and install-backfill-runner.sh's routing_has_cloud_backend() greps the YAML
-  # only, so a correctly-configured host gets a false WARN. (b) .env.local is
-  # BOTH the unit's EnvironmentFile= and the file validate.sh:60 sources into
-  # pytest, so operator env silently reddens the gate (observed: test_celery_app
-  # failed on a partial routing map; patched locally, needs a structural fix).
-  # NO GATE — shares zero files with 3-2/3-3/3-4, runs parallel to all of Wave B.
-  3-5-runner-env-contract: done
-  # Retrospective held 2026-08-13: epic-3-retro-2026-08-13.md. Ledger delta at
-  # close: 6 drained, 20 opened (~46 open). A2/A3/A4 above verified done; A1/A5
-  # stay open. Story 2-7 minted (corpus repair, gates 2-1); story 3.4's
-  # epics.md goal corrected in place; DW-32 scheduled before Epic 2 Wave 1.
-  epic-3-retrospective: done
-
-  # Epic 3 retrospective action items (2026-08-13, RETRO_ITEM_RE shape).
-  # Owners/criteria: epic-3-retro-2026-08-13.md §6.
-  #
-  # R1 — bmad-loop presents ONE consolidated, deduplicated operator checklist
-  # per wave instead of per-story checklists (epic 3: five checklists in two
-  # days, the same Docker-restart instruction verbatim in three specs).
-  epic-3-retro-item-1-operator-actions-batch-per-wave: open
-  # R2 — the five spent-cap `followup_review_recommended` flags on
-  # spec-3-1…spec-3-5 get a deliberate sweep disposition (mint ledger entries
-  # or clear with a recorded reason); the sweep must see frontmatter flags.
-  epic-3-retro-item-2-followup-review-flag-disposition: open
-  # R3 — drive DW-32 (start.sh migrates primary, bypassing the fu6 mutual
-  # exclusion; high severity) to done BEFORE 2-1 leaves backlog. DW-9/20/21
-  # ticker bundle follows after 2-7 (recorded in epics.md, not minted).
-  epic-3-retro-item-3-dw32-drain-before-epic-2: open
-  # Epic 2: Deal-Intelligence Deepening (Theme B cut — FR-30 + FR-32; FR-31 deferred)
   epic-2: backlog
-  # Minted 2026-08-12 (epic-1 retro): Epic 2's UX foundation piece — numbered
-  # last, sequenced FIRST. Re-anchor ToastProvider to DESIGN.md's bottom-
-  # anchored/max-two spec (UX-DR3 binds every Epic 2 toast surface) and sweep
-  # the pt-BR plural-agreement catalog ("1 selecionados", "1 imóveis") that the
-  # 1.6 locale flip promoted to everyone's default and that 1.6's e2e repairs
-  # pinned verbatim in two compare specs (corrected at delivery 2026-08-13: the
-  # third, compare-view.spec.js, pins the already-correct "2 selecionados").
-  # Gates: 2-2, 2-4 and 2-5 all ← 2-6.
-  2-6-ui-contract-debt: done
-  # Minted 2026-08-13 (epic-3 retro): one-off corpus repair for rows poisoned
-  # with fabricated 0.5 scores before story 3-2 landed — mode=missing keys on
-  # `not score`, so nothing re-queues them, and 2-1's percentiles would compute
-  # over them. Gates 2-1 (the missing half of the Epic 3 → Epic 2 gate).
-  # File-disjoint from 2-6; runs parallel to it (Wave 0).
-  2-7-corpus-repair-fabricated-scores: awaiting-operator
-  # DO NOT START 2-1 YET — the 2.1←2.7 gate is NOT machine-enforced.
-  # `awaiting-operator` is not in bmad-loop's ACTIONABLE_STATUSES, so
-  # next_actionable() skips 2-7 and returns THIS key (verified against the real
-  # parser on 2026-08-13). 2-7's migration ships un-applied: the repair only
-  # lands when the operator runs migrate-primary.sh on the primary corpus and
-  # flips 2-7 to `done`. Starting 2-1 before that computes cohort percentiles
-  # over a corpus still carrying known-fabricated scores — precisely what the
-  # gate exists to prevent (epics.md "Do not parallelize"; docs/features/
-  # v0.13-s2.7-corpus-repair-fabricated-scores.md).
-  2-1-cohort-price-m2-percentiles-pipeline: backlog
-  2-2-percentile-badge-and-filter: backlog
-  2-3-saved-search-new-match-detection: backlog
-  2-4-saved-search-alert-management-ui: backlog
-  2-5-detail-side-panel-migration: backlog
+  2-1-search-profiles-as-versioned-config: backlog
+  2-2-attribute-store-with-one-resolver: backlog
+  2-3-scraper-attributes-through-the-amenity-vocabulary: backlog
+  2-4-fit-evaluation-as-a-pure-function: backlog
+  2-5-fit-status-persisted-per-profile-version: backlog
+  2-6-agent-reads-profiles-and-the-fit-status-listing: backlog
+  2-7-fit-bundle-per-property: backlog
+  2-8-cohort-summary-per-profile: backlog
+  2-9-agent-stars-with-a-reason-and-the-agent-guide: backlog
+  2-10-coverage-for-attributes-and-fit: backlog
   epic-2-retrospective: optional
 
-# Off-sprint follow-ups (v<milestone>-fu<N> keys). Deliberately a SIBLING of
-# development_status, not part of it: bmad-loop parses ONLY development_status,
-# and any key there that misses its BMad-standard shapes (epic-N, N-M-slug,
-# epic-N-retrospective, epic-N-retro-item-M-slug) lands in unknown_keys and
-# trips the queue.sprint-status-unknown-keys warning on every validate/run
-# (moved here 2026-08-13 to clear exactly that). Same one-line contract as
-# before: key + status, short description in a comment. fu10 was never used
-# as a key (the epic-1 retro named it for DW-27, which became story 3-1).
-followups:
-  # ---- v0.13 pre-story harness track (PRD §6.2 gate — process, not FR) ----
-  v0.13-fu1-harness-surgery: done
-  # Follow-up: Gemma backfill runner overshot the 16K TPM ceiling at
-  # --concurrency 4 (21.15k/16k observed). Added a proactive sliding-60s
-  # token-bucket sized from measured per-property token cost (~7k).
-  v0.13-fu2-backfill-tpm-limiter: done
-  # Follow-up: the backfill could not detect its own completion — `remaining` was
-  # total-minus-enriched, which 494 inactive un-enriched rows kept permanently
-  # positive, so the completion branch was dead and finished runs exited 0 via
-  # the "no progress" valve. Census-based completion + exit codes/banner, photo
-  # gate applied, and an attempt ledger that retires rows that never clear.
-  v0.13-fu3-backfill-completion-detection: done
-  # Follow-up: independent review of the s1.2 review delta (spec flagged
-  # followup_review_recommended). RoutingAIClient lifecycle hardening +
-  # dispatch test coverage; 1 finding deferred to 1.3 via deferred-work.md.
-  v0.13-fu4-s1.2-followup-review: done
-  # Safety: stop.sh --volumes / clean.sh --volumes ran `down -v` on the PRIMARY
-  # project with no confirmation, wiping postgres_data + image_store + redis_data
-  # (whole corpus + multi-day enrichment). Capability removed; regression-locked.
-  v0.13-fu5-remove-data-destroying-paths: done
-  # Follow-up (DW-3/DW-4): migrate-primary.sh's backfill guard was
-  # check-then-act — it probed the `:active` heartbeat once and then ran alembic
-  # with nothing holding the window, and a runner sleeping out an RPD window
-  # cleared that heartbeat and resumed mid-migration. Added the migration-held
-  # key `backfill:gemma:migrating` with set-then-check on both sides.
-  v0.13-fu6-migration-backfill-mutual-exclusion: done
-  # Follow-up (DW-6): run_backfill renewed its lease only from event sites (per
-  # launch-loop iteration, per pause poll, per finished row), so nothing renewed
-  # it while a row was in flight — one enrichment slower than the TTL let the
-  # lease lapse under a live writer. Added a background timer task renewing at
-  # ttl/3 for the whole run, cancelled after the in-flight drain.
-  v0.13-fu7-backfill-lease-background-renewer: done
-  # Follow-up (DW-7): GeminiClient classified quota only on the HTTP-status
-  # path, so a throttle arriving as identical connection resets/timeouts
-  # re-raised untagged, the runner took the hard-error branch, and the attempt
-  # charged before launch stood — burning backfill.max_attempts on good rows
-  # inside one throttle window. Repeated identical transport failures within a
-  # configurable recency window of an observed 429 now raise the distinguished
-  # quota error; everything else stays a hard error.
-  v0.13-fu8-gemini-transport-quota-classification: done
-  # Follow-up (DW-2): CI retirement deleted the Trivy scan and the nightly
-  # pip-audit/npm audit jobs on the premise that local gates covered them, but
-  # no local gate audited anything and Dependabot has no checks on bot PRs.
-  # Added scripts/agent/audit-deps.sh (pip-audit + npm audit, JSON-parsed) as an
-  # advisory stage of `validate.sh all` — reports findings, never mutates rc,
-  # degrades to a visible skip offline.
-  v0.13-fu9-dependency-audit-gate: done
-  # Follow-up: bmad-loop dev sessions were bound to "finishing is ONLY
-  # finish-feature.sh" while the orchestrator owns merge-back for
-  # bmad-loop/<run>/<story> branches, so every Epic 3 session re-derived the
-  # generic refusal from script source. Explicit orchestrator-naming refusal in
-  # finish-feature.sh + carve-out in the dev-auto gate binding + docs
-  # (CLAUDE.md, Cursor mirror, harness-troubleshooting) + regression lock
-  # (refusal fires; bmad-loop never enters VALID_BRANCH_TYPES).
-  v0.13-fu11-bmad-loop-merge-ownership: done
-  # Follow-up (story 2-6 review): the pt-BR count-into-fixed-plural defect that
-  # 2-6 fixed for its four named keys still ships on the Painel/dashboard side —
-  # dashboard.enrichResultOk / enrichResultOkSkipped ("{n} enfileirados"),
-  # dashboard.rerunSkipPhotoGate ("{n} bloqueados"), and dashboard.rerunWouldQueue
-  # / rerunQueued ("{n} imóveis", currently unreferenced from frontend/src — check
-  # they are live before splitting). Split them into …One/…Many the same way and
-  # extend the pins in src/tests/unit/test_i18n_catalog_parity.py. NOT defective,
-  # already checked: properties.platformsBadge (guarded by platformCount > 1) and
-  # operations.throughputLine / etaLine (One-variants already selected in lines.ts).
-  v0.13-fu12-plural-agreement-sweep-dashboard-keys: backlog
-  # Follow-up (story 2-6 review): two bottom-anchored surfaces now share the
-  # bottom strip — the toast stack (fixed, bottom:16/right:16, maxWidth 380,
-  # z-index 9999, pointerEvents auto) and .compare-bar (fixed, bottom:24, centred,
-  # min-width 280). They clear each other at the suite's 1280x720 viewport, which
-  # is all toast-contract.spec.js proves; below ~1100px a wide toast can cover the
-  # compare bar and swallow its clicks for the 4s it is up. Decide how the strip is
-  # shared (width clamp, a page-set bottom offset, or moving the compare bar) and
-  # pin it with a narrow-viewport e2e case.
-  v0.13-fu13-toast-compare-bar-bottom-strip: backlog
-  # Follow-up (story 2-6 session): scripts/agent/setup-worktree.sh would RENAME a
-  # bmad-loop/<run>/<story> branch. Its already-isolated-session path runs
-  # `git branch -m` whenever the current branch is not Conventional-Branch
-  # compliant, and bmad-loop is deliberately absent from VALID_BRANCH_TYPES, so it
-  # never is — renaming the branch out from under the orchestrator's merge-back.
-  # A worktree with no .venv/.env.local is exactly when an agent reaches for that
-  # script. Make it refuse (or skip the rename) on orchestrator-owned branches,
-  # mirroring finish-feature.sh's v0.13-fu11 carve-out.
-  v0.13-fu14-setup-worktree-renames-bmad-loop-branches: done  # moot 2026-10-07: setup-worktree.sh retired (ADR 0007)
+  epic-3: backlog
+  3-1-lm-studio-client-parity: backlog
+  3-2-strata-spike-a-b-and-verdict: backlog
+  3-3-task-class-scopes-replace-stage-literals: backlog
+  3-4-gallery-fingerprint-and-the-fuzzy-merge-guard: backlog
+  3-5-immutable-stamped-photo-evidence: backlog
+  3-6-attributes-extracted-from-listing-text: backlog
+  3-7-attributes-inferred-from-photos: backlog
+  3-8-fit-summary-in-the-bundle: backlog
+  3-9-attributes-with-provenance-in-the-detail-panel: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-anchors-as-versioned-config-with-a-local-coordinate-overlay: backlog
+  4-2-car-and-walk-minutes-from-a-local-router: backlog
+  4-3-transit-minutes-from-a-local-schedule-aware-router: backlog
+  4-4-minutes-in-fit-the-bundle-and-the-agent-listing: backlog
+  4-5-minutes-to-a-selected-anchor-on-the-map-and-cards: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-durable-scraper-run-history: backlog
+  5-2-run-analytics-with-reasons: backlog
+  5-3-scraper-health-chips-and-the-run-history-table: backlog
+  5-4-gone-and-returned-listings: backlog
+  5-5-recheck-a-listing-on-demand: backlog
+  5-6-daily-rechecks-for-starred-properties: backlog
+  5-7-favourite-gone-and-resurrection-alerts: backlog
+  5-8-alertas-panel-and-desktop-push: backlog
+  5-9-availability-in-the-detail-panel-cards-and-chart: backlog
+  5-10-favoritos-shows-what-is-verified-and-what-left: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-facets-derived-from-a-committed-vocabulary: backlog
+  6-2-facets-as-filters-and-soft-preferences: backlog
+  6-3-facet-picker-in-the-filter-bar: backlog
+  6-4-recent-filters-resurface-in-the-pickers: backlog
+  epic-6-retrospective: optional
+
+# Off-sprint follow-ups (v0.14-fu<N>-<slug>: status, short description in a comment).
+# Sibling of development_status on purpose: bmad-loop parses only development_status.
+followups: {}

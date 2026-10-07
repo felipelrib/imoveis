@@ -53,8 +53,8 @@ tracking: >
   GATES (2026-10-07): 1.2←1.1, 1.3←1.1, 1.6←1.3+1.4+1.5, 1.7←1.6, 1.8←1.2+1.7, 1.9←1.6,
   1.10←1.9; 2.2←2.1, 2.3←2.2, 2.4←2.2+1.1, 2.5←2.4, 2.6←2.5+1.2, 2.7←2.6, 2.8←2.7+1.3,
   2.9←2.8, 2.10←2.9; 3.2←3.1, 3.5←3.4+3.3, 3.6←3.2+3.3+2.2, 3.7←3.5+3.6, 3.8←3.3+2.7,
-  3.9←1.8+3.7; 4.1←2.1, 4.2←4.1, 4.3←4.2, 4.4←4.2+2.8, 4.5←4.4; 5.2←5.1, 5.3←5.2, 5.4←5.1,
-  5.5←1.16+5.4, 5.6←5.5, 5.7←5.4, 5.8←5.7, 5.9←5.5+1.8, 5.10←5.6+2.9; 6.1←2.2,
+  3.9←1.8+3.7+2.7; 4.1←2.1, 4.2←4.1, 4.3←4.2, 4.4←4.2+2.8, 4.5←4.4; 5.2←5.1, 5.3←5.2, 5.4←5.1,
+  5.5←1.16+5.4, 5.6←5.5, 5.7←5.4, 5.8←5.7+1.8, 5.9←5.5+1.8, 5.10←5.6+2.9; 6.1←2.2+2.5+3.3,
   6.2←6.1+2.8, 6.3←6.2. src/api/schemas.py edits are serial. 1.6 must not start before 1.5
   is done (operator step; not machine-enforced). Old-key mapping: 2-7→1.5, 2-1→1.6, 2-2→1.7,
   2-5→1.8, 2-3→1.9, 2-4→1.10, fu12+fu13→1.11. Full wave plan: section
@@ -498,7 +498,7 @@ So that percentiles never compute over known-fabricated scores (old story 2-7, `
 **When** sprint status is updated
 **Then** this story is `done` and old key 2-7 is marked superseded, and Story 1.6 may start
 
-### Story 1.6: Cohort price/m² percentiles computed in the pipeline
+### Story 1.6: Cohort price-per-m2 percentiles computed in the pipeline
 
 As a user evaluating a listing,
 I want each Property's price/m² percentile computed within its neighbourhood × listing-type cohort,
@@ -891,6 +891,8 @@ So that I write the Dossier from system data alone (FR-40, AD-12).
 **Then** both bundles are retrievable
 **And** contract tests cover every field and a bundle returns within 2 s on the test stack
 
+**Sequencing note:** Stories 5.4 (availability state) and 3.7 (Photo evidence reference) are scheduled before this story. Where their persisted rows already exist when this story lands, the bundle reads them here instead of emitting `unknown`; the wiring belongs to this story, not to a later patch.
+
 ### Story 2.8: Cohort summary per profile
 
 As the agent client,
@@ -1090,6 +1092,8 @@ So that a home office, furniture or split-AC visible in the gallery is recorded 
 **When** the resolver reads a `photo` row whose stamped fingerprint differs from the current one
 **Then** the row is `stale` and counts as `unknown`
 **And** a scraper "furnished: no" against photos showing furniture is kept as a conflict, the Fit bundle's Photo evidence reference is populated, and golden tests guard false positives on elevator, gym and home office (SM-C2)
+
+**Sequencing note:** this story is scheduled before Story 2.7 (the bundle). It persists the evidence reference on the stamped visual rows; if the bundle does not exist yet, Story 2.7 reads it into the bundle and this story's bundle assertion moves there.
 
 ### Story 3.8: Fit summary in the bundle
 
@@ -1319,6 +1323,8 @@ So that an outage never manufactures false deaths and a comeback is visible (FR-
 **Then** its availability state (live, gone since, returned on) is exposed, the Fit bundle's availability part is populated, and a gone Listing's `scraper` Attribute rows resolve as stale (AD-14)
 **And** a characterization test locks current last-seen behaviour first, and unit tests cover outage, N−1, N and resurrection
 
+**Sequencing note:** this story is scheduled before Story 2.7 (the bundle) and has no gate on Story 2.2 (the resolver). It exposes the availability state in the property projection and marks a gone Listing inactive; the bundle part is wired by Story 2.7, and the stale-`scraper`-row assertion is added by whichever of 5.4 and 2.2 lands second.
+
 ### Story 5.5: Recheck a listing on demand
 
 As the operator or the agent,
@@ -1530,10 +1536,11 @@ Gates are written `story ← prerequisites`. Stories from different epics run in
 
 - Epic 1: `1.2←1.1`, `1.3←1.1`, `1.6←1.3+1.4+1.5`, `1.7←1.6`, `1.8←1.2+1.7`, `1.9←1.6`, `1.10←1.9`. Stories 1.13 and 1.14 carry an advisory re-scope on the spike verdict (Story 3.2); it is not a gate.
 - Epic 2: `2.2←2.1`, `2.3←2.2`, `2.4←2.2+1.1`, `2.5←2.4`, `2.6←2.5+1.2`, `2.7←2.6`, `2.8←2.7+1.3`, `2.9←2.8`, `2.10←2.9`.
-- Epic 3: `3.2←3.1`, `3.5←3.4+3.3`, `3.6←3.2+3.3+2.2`, `3.7←3.5+3.6`, `3.8←3.3+2.7`, `3.9←1.8+3.7`.
+- Epic 3: `3.2←3.1`, `3.5←3.4+3.3`, `3.6←3.2+3.3+2.2`, `3.7←3.5+3.6`, `3.8←3.3+2.7`, `3.9←1.8+3.7+2.7`.
 - Epic 4: `4.1←2.1`, `4.2←4.1`, `4.3←4.2`, `4.4←4.2+2.8`, `4.5←4.4`.
-- Epic 5: `5.2←5.1`, `5.3←5.2`, `5.4←5.1`, `5.5←1.16+5.4`, `5.6←5.5`, `5.7←5.4`, `5.8←5.7`, `5.9←5.5+1.8`, `5.10←5.6+2.9`.
-- Epic 6: `6.1←2.2`, `6.2←6.1+2.8`, `6.3←6.2`, `6.4` has no gate.
+- Epic 5: `5.2←5.1`, `5.3←5.2`, `5.4←5.1`, `5.5←1.16+5.4`, `5.6←5.5`, `5.7←5.4`, `5.8←5.7+1.8`, `5.9←5.5+1.8`, `5.10←5.6+2.9`.
+- Epic 6: `6.1←2.2+2.5+3.3`, `6.2←6.1+2.8`, `6.3←6.2`, `6.4` has no gate.
+- Added at the readiness gate (2026-10-07): `3.9←2.7` (its AC reads the Story 2.7 projection), `5.8←1.8` (an alert click opens the detail side panel), `6.1←2.5+3.3` (the facet stage runs inside the fit sweep and in the enrichment dependency table). Bundle parts whose source story lands before Story 2.7 (availability from 5.4, Photo evidence reference from 3.7) are wired into the bundle by 2.7; see the sequencing notes on those stories.
 
 **Serial surface — `src/api/schemas.py`:** edited by 1.2, 1.7, 1.10, 1.13, 1.16, 2.6–2.10, 4.1, 4.4, 5.2, 5.4, 5.5, 5.7 and 6.2. Only one of these is in flight at a time; inside a wave they run in story-number order, and the chain 2.6 → 2.7 → 2.8 → 2.9 → 2.10 is strictly serial.
 
@@ -1541,10 +1548,10 @@ Gates are written `story ← prerequisites`. Stories from different epics run in
 
 - **Wave 0 — start here (file-disjoint):** 1.1, 1.4, 1.11, 1.15, 1.16, 1.17, 2.1, 3.1, 3.4, 5.1, 6.4.
 - **Wave 1:** 1.2, 1.3, 1.5 (operator applies migrations; this also applies the 2-7 repair), 1.12, 2.2, 3.2 (spike), 3.3, 4.1, 5.2, 5.4.
-- **Wave 2:** 1.6, 1.13, 2.3, 2.4, 3.5, 4.2, 5.3, 5.5, 5.7, 6.1.
-- **Wave 3:** 1.7, 1.9, 1.14, 2.5, 3.6, 4.3, 5.6, 5.8.
-- **Wave 4:** 1.8, 1.10, 2.6, 3.7.
-- **Wave 5:** 2.7, 5.9.
+- **Wave 2:** 1.6, 1.13, 2.3, 2.4, 3.5, 4.2, 5.3, 5.5, 5.7.
+- **Wave 3:** 1.7, 1.9, 1.14, 2.5, 3.6, 4.3, 5.6.
+- **Wave 4:** 1.8, 1.10, 2.6, 3.7, 6.1.
+- **Wave 5:** 2.7, 5.8, 5.9.
 - **Wave 6:** 2.8, 3.8, 3.9.
 - **Wave 7:** 2.9, 4.4, 6.2.
 - **Wave 8:** 2.10, 4.5, 5.10, 6.3.
