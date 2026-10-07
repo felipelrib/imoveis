@@ -64,6 +64,10 @@ frontend_port() {
   echo "${FRONTEND_PORT:-5173}"
 }
 
+_have_setsid() {
+  command -v setsid >/dev/null 2>&1
+}
+
 frontend_pid_alive() {
   local pid="$1"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
@@ -128,9 +132,15 @@ start_frontend_dev() {
 
   log "Starting frontend dev server on :$FRONTEND_PORT ..."
   # setsid gives a fresh process group so stop_frontend_dev can signal the tree.
+  # Git Bash on Windows ships no setsid: start plain there (stop_frontend_dev
+  # already falls back from the group kill to the pid).
   (
     cd "$REPO_ROOT/frontend"
-    setsid npm run dev >"$FRONTEND_LOG_FILE" 2>&1 &
+    if _have_setsid; then
+      setsid npm run dev >"$FRONTEND_LOG_FILE" 2>&1 &
+    else
+      npm run dev >"$FRONTEND_LOG_FILE" 2>&1 &
+    fi
     echo $! >"$FRONTEND_PID_FILE"
   )
 
