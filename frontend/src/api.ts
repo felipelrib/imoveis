@@ -6,6 +6,9 @@ const BASE = '/api'
 /** sessionStorage key for the paste-once API credential (never committed). */
 export const API_KEY_STORAGE = 'api_key'
 
+/** Largest `page_size` GET /properties accepts (`PropertyListFilters.page_size`, le=100); a larger value is a 422. */
+export const MAX_PAGE_SIZE = 100
+
 // ---------------------------------------------------------------------------
 // Shared wire types (mirrors src/api/schemas.py + the admin/watchlist/
 // favourites/saved-searches routers). Kept intentionally close to the

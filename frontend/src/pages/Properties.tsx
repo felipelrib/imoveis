@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type SyntheticEvent } from 'react'
 import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import {
-  fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist,
+  MAX_PAGE_SIZE, fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist,
   fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite,
   removeFavourite, fetchNeighborhoods, fetchCities,
   type Property, type PaginatedProperties, type FavouriteWithProperty,
@@ -220,7 +220,7 @@ export default function Properties() {
     try {
       const res = await fetchProperties({
         page: 1,
-        pageSize: 200,
+        pageSize: MAX_PAGE_SIZE,
         sortBy: sortBy === 'price_desc' ? 'price' : sortBy,
         sortDir: (sortBy === 'price_desc' ? 'desc' : sortDir) as SortDir,
         maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,

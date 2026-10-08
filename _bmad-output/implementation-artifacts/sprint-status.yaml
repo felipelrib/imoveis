@@ -141,4 +141,6 @@ development_status:
 
 # Off-sprint follow-ups (v0.14-fu<N>-<slug>: status, short description in a comment).
 # Sibling of development_status on purpose: bmad-loop parses only development_status.
-followups: {}
+followups:
+  # map view fetched page_size=200 against an API cap of 100 (422), so no point was ever drawn on the real API
+  v0.14-fu1-map-view-fetch-within-api-page-size: done
