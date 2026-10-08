@@ -2,7 +2,7 @@
 title: 'Story 1.1 — Total Monthly Cost on the persist path'
 type: 'feature'
 created: '2026-10-08'
-status: 'awaiting-operator'
+status: done
 baseline_revision: '10242503c5e0af36eeb7143ccd8939c2123a8a92'
 review_loop_iteration: 0
 followup_review_recommended: true
@@ -212,3 +212,15 @@ Status: awaiting-operator
 - Stored rows without an unbundled rent (old OLX rows without `base_price`) stay incomplete until the Property changes; the size of that population is unknown until the operator runs the step 4 query.
 - Until the operator migrates, rebuilds and runs the backfill, the primary has no cost data. Rebuilding before migrating would break every scrape persist.
 - Stories 1.2 and 1.3 depend on these columns existing on the primary; `awaiting-operator` is not machine-enforced as a gate.
+
+## Operator Confirmation
+
+Confirmed 2026-10-08: the external actions this story owed were carried out.
+
+- Wait for the orchestrator to merge this story into main, then from the primary checkout in Git Bash run: bash scripts/agent/migrate-primary.sh (expect alembic_version c4d5e6f7a8b9; it refuses while a cloud backfill runner is alive - wait, never delete the Redis keys). Do this BEFORE rebuilding any container: the new code INSERTs the new columns.
+- Rebuild and restart the primary stack so the API and workers run the merged code: ./scripts/restart.sh --build
+- Populate the stored Listings: docker compose --env-file .env.local exec worker_scraper celery -A adapters.queue.tasks call tasks.backfill_listing_costs ; then read the result with: docker compose --env-file .env.local logs --since 30m worker_scraper | grep listing_cost_backfill (expect listing_cost_backfill_complete; a second run must report updated=0).
+- Run the step 4 query in docs/features/v0.14-s1.1-total-monthly-cost-on-the-persist-path.md against the primary (read-only) and record the per-platform complete / bundled / incomplete / rent_unknown / iptu_ambiguous counts in that doc.
+- Confirm or override the two product calls made in this story: IPTU periodicity is inferred by magnitude (monthly at <= 15% of rent, annual at >= 40%, unknown between; for sale 0.10% / 0.25% of price), and a published zero is treated as unknown. To change either, edit the constants in src/core/listing_cost.py and re-run the backfill.
+
+_Appended by the bmad-loop orchestrator (`bmad-loop confirm`, #335): a human confirmed these external actions out of band, and the story was advanced from `awaiting-operator` to `done`._
