@@ -488,3 +488,35 @@ source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
 severity: low
 reason: scripts/stop.sh:40 and scripts/clean.sh:71,79 call compose down for whatever project the checkout names; restart.sh calls stop.sh. A host-side runner in the middle of a pass loses Postgres and Redis. No schema or data change and volumes are kept, so this is an interruption, not corruption. Found by the scripts audit of this story (DW-32 asked for it).
 status: open
+
+### DW-45: Nothing schedules the bulk scoring stage, so the stored percentile and cohort size of a Property's cohort peers lag until someone calls POST /admin/scoring/recalculate.
+origin: spec-deferred fae856fbeea6
+location: src/adapters/metrics/scoring.py:418
+source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.md`
+severity: medium
+reason: score_single_property (run after each enrichment) writes the scored Property's own percentile and size only. When it takes a cohort from 9 to 10 members the newcomer gets a value with size 10 while the other nine keep NULL with size 9; a Listing deactivated by a scraper rescores nobody. compute_neighborhood_stats has one caller, src/api/admin.py:187, and no beat task (grep of src/ for its name). The same lag already applied to neighborhood_mean / z_score / stat_score before this story. Story 1.7 filters and shows the stored percentile, so the lag becomes visible there. The run time that made a schedule unreasonable (62 minutes) is fixed in this story: the stage's statement takes 7.8 s on the primary; the whole request is not timed yet. Not measured: how fast cohorts drift on the primary between runs.
+status: open
+
+### DW-46: The stat cohort (neighbourhood mean, median, z-score, stat score, legacy percentile_rank) is still keyed by the exact neighbourhood label, so it merges cities and splits spellings, while the new percentile uses the city-aware folded key.
+origin: spec-deferred bcd2730c4800
+location: src/adapters/metrics/scoring.py:48
+source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.md`
+severity: medium
+reason: _COHORT_KEY_SQL is COALESCE(n.name, props_json->>'neighborhood', 'Unknown'). Read-only on the primary, 2026-10-08: no Property has a neighborhood_id; 97 labels occur in more than one of the 3 cities and hold 16,477 active Properties; 537 city x label spellings fold into 268 neighbourhoods holding 22,845 active Properties. Those Properties get a stat score against a cohort that is not their neighbourhood. This story left the stat key alone because changing it moves stat_score and combined_score for existing rows. A card can therefore show a stat band and a percentile computed on two different cohorts.
+status: open
+
+### DW-47: The legacy percentile_rank, percentile_rank_rent and percentile_rank_sale are still served by the API, the export and the modal, including the fabricated 0.5 the single-property path writes.
+origin: spec-deferred 1a497de7ea12
+location: src/core/property_projection.py:30
+source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.md`
+severity: low
+reason: core/property_projection.py selects and maps the three legacy columns and frontend/src/components/PropertyModal.tsx renders them as a percentile. On the primary (2026-10-08) percentile_rank_rent is exactly 0.5 on 1,007 rows and percentile_rank_sale on 817. _compute_type_scores defaults a missing rank to 0.5 and score_single_property passes 0.5. This story stores the trustworthy value in new columns and does not touch the wire; Story 1.7 (badge, filter) and Story 1.8 (panel) are where the legacy fields can be replaced and then dropped. test_percentile_characterization_lock.py pins the legacy behaviour and has to be edited by the story that removes it.
+status: open
+
+### DW-48: The single-property path spends about one second of database time per scored Property on its cohort count, because the folded cohort key cannot use an index.
+origin: spec-deferred 7d8820cda9c5
+location: src/adapters/metrics/scoring.py:352
+source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.md`
+severity: low
+reason: Read-only on the primary, 2026-10-08, the second statement of _single_property_percentile_counts for a Property of the Savassi cohort (309 rent, 1,429 sale members): 0.9 to 1.1 s; plan = sequential scan of property_listings (288,028 rows, aggregated) and a parallel sequential scan of properties with the fold evaluated for every active row (66,043 x 3 removed by the filter). It was 386 ms before the key was folded. The first statement takes 4 ms. It runs once per enrichment, next to a cached stat query of 262 ms per listing type and an LLM call of seconds, so it is tolerable today. A fix needs an expression index on the folded label and city (a migration, and the fold becomes part of the schema) or a stored folded key; neither is a contained change.
+status: open

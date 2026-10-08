@@ -268,6 +268,7 @@ scoring:
   stat_weight: 0.4              # statistical z-score/percentile component
   ai_weight: 0.4                # AI qualitative assessment (visual + listing claims)
   neighbourhood_weight: 0.2     # objective neighbourhood quality profile (BIN-94)
+  percentile_min_cohort_size: 10  # smallest city x neighbourhood x listing-type cohort that gets a price/m2 percentile (>= 2; below it the percentile is null)
 
 # ---------------------------------------------------------------------------
 # Local AI / VLM

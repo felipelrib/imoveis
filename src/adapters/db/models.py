@@ -188,6 +188,18 @@ class MetricsScoring(Base):
     # adapters/metrics/scoring.py from core.price_basis; a row with no rent
     # price/m² or scored from the legacy properties.price fallback is headline.
     price_basis = Column(String, nullable=False, server_default=sa.text("'headline'"))
+    # Story 1.6 (FR-30): share of the city x neighbourhood x listing-type
+    # cohort priced at or below this Property, in (0, 1], lower is cheaper
+    # (core.cohort_percentile). NULL = never evaluated, cohort below
+    # scoring.percentile_min_cohort_size (size still stored), or not a cohort
+    # member (size NULL too). Written only by adapters/metrics/scoring.py.
+    # The legacy percentile_rank* columns above keep their PERCENT_RANK meaning.
+    price_per_m2_percentile_rent = Column(Float)
+    price_per_m2_percentile_sale = Column(Float)
+    percentile_cohort_size_rent = Column(Integer)
+    percentile_cohort_size_sale = Column(Integer)
+    # Last time the scoring stage evaluated the percentiles, value or NULL.
+    percentile_evaluated_at = Column(DateTime)
     meta = Column(JSON)
     updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
 
@@ -195,6 +207,24 @@ class MetricsScoring(Base):
         sa.CheckConstraint(
             "price_basis IN ('rent_monthly', 'headline')",
             name="ck_metrics_scoring_price_basis",
+        ),
+        sa.CheckConstraint(
+            "price_per_m2_percentile_rent IS NULL OR "
+            "(price_per_m2_percentile_rent > 0 AND price_per_m2_percentile_rent <= 1)",
+            name="ck_metrics_scoring_price_per_m2_percentile_rent",
+        ),
+        sa.CheckConstraint(
+            "price_per_m2_percentile_sale IS NULL OR "
+            "(price_per_m2_percentile_sale > 0 AND price_per_m2_percentile_sale <= 1)",
+            name="ck_metrics_scoring_price_per_m2_percentile_sale",
+        ),
+        sa.CheckConstraint(
+            "percentile_cohort_size_rent IS NULL OR percentile_cohort_size_rent >= 1",
+            name="ck_metrics_scoring_percentile_cohort_size_rent",
+        ),
+        sa.CheckConstraint(
+            "percentile_cohort_size_sale IS NULL OR percentile_cohort_size_sale >= 1",
+            name="ck_metrics_scoring_percentile_cohort_size_sale",
         ),
     )
 

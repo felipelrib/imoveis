@@ -6,6 +6,9 @@ Replaces the original global in-memory approach with:
 - Rent and sale price/m² cohorts kept separate (BIN-84)
 - The price a Listing contributes to a cohort comes from core.price_basis
   (Story 1.3): this module never selects a Listing price itself
+- Cohort price/m² percentiles per listing type (Story 1.6): SQL counts the
+  city x neighbourhood x listing-type cohort, core.cohort_percentile divides
+  and applies the minimum cohort size; this module is their only writer
 - Single-query bulk recalculation when weights change (instantaneous)
 - score_single_property() for post-AI-enrichment updates
 """
@@ -13,12 +16,18 @@ Replaces the original global in-memory approach with:
 from __future__ import annotations
 
 import math
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Mapping, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from adapters.db.models import MetricsScoring, Neighborhood, Property, PropertyListing
+from core.cohort_percentile import (
+    COHORT_CITY_SQL,
+    COHORT_NEIGHBOURHOOD_SQL,
+    cohort_percentile,
+)
 from core.entities import ScoringWeights
 from core.neighbourhood_quality import aggregate_neighbourhood_score
 from core.price_basis import (
@@ -38,6 +47,44 @@ logger = get_logger(__name__)
 # Used by bulk stats SQL and single-property scoring so preference cannot drift.
 _COHORT_KEY_SQL = "COALESCE(n.name, p.props_json->>'neighborhood', 'Unknown')"
 _COHORT_KEY_SQL_P2 = "COALESCE(n2.name, p2.props_json->>'neighborhood', 'Unknown')"
+
+# --- Cohort percentile SQL (Story 1.6) ---------------------------------------
+# Fixed module constants built from core.cohort_percentile / core.price_basis
+# by plain concatenation (BIN-135). Aliases: p = properties, n = neighborhoods,
+# lm = the COHORT_PRICE_SQL relation. The stat cohort key above is not used:
+# the percentile cohort is listing type x city x neighbourhood.
+_PCT_PARTITION_SQL = (
+    "lm.listing_type, " + COHORT_CITY_SQL + ", " + COHORT_NEIGHBOURHOOD_SQL
+)
+# The price/m² a member is ranked on: the Story 1.3 cohort price over the area.
+_PCT_PRICE_PER_M2_SQL = "lm.price / NULLIF(p.area_m2, 0)"
+# Cohort members: active, with an area, an assigned neighbourhood and a row in
+# the cohort price relation. ``_PCT_MEMBERS_FROM_CTE_SQL`` reads the bulk
+# statement's ``listing_min`` CTE; ``_PCT_MEMBERS_FROM_SQL`` inlines the
+# relation so a filter on one Property is pushed into it.
+_PCT_MEMBERS_JOIN_WHERE_SQL = (
+    """ lm ON lm.property_id = p.id
+            LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
+            WHERE p.active = true
+              AND p.area_m2 > 0
+              AND """
+    + COHORT_NEIGHBOURHOOD_SQL
+    + " IS NOT NULL"
+)
+_PCT_MEMBERS_FROM_CTE_SQL = (
+    """
+            FROM properties p
+            JOIN listing_min"""
+    + _PCT_MEMBERS_JOIN_WHERE_SQL
+)
+_PCT_MEMBERS_FROM_SQL = (
+    """
+            FROM properties p
+            JOIN ("""
+    + COHORT_PRICE_SQL
+    + ")"
+    + _PCT_MEMBERS_JOIN_WHERE_SQL
+)
 
 # SQL expression: mean of available neighbourhood quality scores, else 0.5.
 _NHOOD_SCORE_SQL = """
@@ -215,6 +262,159 @@ def _apply_type_fields(
     ms.combined_score_sale = combined_score_sale
 
 
+def _utcnow() -> datetime:
+    """Naive UTC, like the ``now()`` server defaults of the DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _percentile_min_cohort_size() -> int:
+    return get_config().scoring.percentile_min_cohort_size
+
+
+def _apply_percentile_fields(
+    ms: MetricsScoring,
+    counts: Mapping[str, tuple[int, int]],
+    *,
+    min_cohort_size: int,
+    evaluated_at: datetime,
+) -> None:
+    """Write the cohort percentile columns of one evaluated row (Story 1.6).
+
+    ``counts`` is ``{listing_type: (at_or_below, cohort_size)}`` for the types
+    in which the Property is a cohort member. A missing type clears both of
+    its columns; a cohort below the minimum keeps its size and has no
+    percentile. The row is stamped either way.
+    """
+    values: dict[str, tuple[Optional[float], Optional[int]]] = {}
+    for listing_type in ("rent", "sale"):
+        pair = counts.get(listing_type)
+        if pair is None:
+            values[listing_type] = (None, None)
+            continue
+        at_or_below, cohort_size = pair
+        values[listing_type] = (
+            cohort_percentile(at_or_below, cohort_size, min_cohort_size),
+            cohort_size,
+        )
+    ms.price_per_m2_percentile_rent, ms.percentile_cohort_size_rent = values["rent"]
+    ms.price_per_m2_percentile_sale, ms.percentile_cohort_size_sale = values["sale"]
+    ms.percentile_evaluated_at = evaluated_at
+
+
+def _row_percentile_counts(
+    size_rent, at_or_below_rent, size_sale, at_or_below_sale
+) -> dict[str, tuple[int, int]]:
+    """Counts of one bulk row as ``{listing_type: (at_or_below, cohort_size)}``."""
+    counts: dict[str, tuple[int, int]] = {}
+    if size_rent is not None:
+        counts["rent"] = (int(at_or_below_rent), int(size_rent))
+    if size_sale is not None:
+        counts["sale"] = (int(at_or_below_sale), int(size_sale))
+    return counts
+
+
+def _clear_percentiles_of_non_members(session: Session, evaluated_at: datetime) -> int:
+    """Null the percentile and cohort size of rows whose Property left every cohort.
+
+    Run after a full bulk recalculation: rows the stage processed are already
+    correct, so this only reaches rows it did not return (inactive Property,
+    no area, no active priced Listing). One set-based statement.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE metrics_scoring AS ms
+            SET price_per_m2_percentile_rent = NULL,
+                price_per_m2_percentile_sale = NULL,
+                percentile_cohort_size_rent = NULL,
+                percentile_cohort_size_sale = NULL,
+                percentile_evaluated_at = :evaluated_at,
+                updated_at = NOW()
+            WHERE (
+                    ms.price_per_m2_percentile_rent IS NOT NULL
+                    OR ms.price_per_m2_percentile_sale IS NOT NULL
+                    OR ms.percentile_cohort_size_rent IS NOT NULL
+                    OR ms.percentile_cohort_size_sale IS NOT NULL
+                  )
+              AND NOT EXISTS (
+                  SELECT 1"""
+            + _PCT_MEMBERS_FROM_SQL
+            + """
+                    AND p.id = ms.property_id
+              )
+            """
+        ),
+        {"evaluated_at": evaluated_at},
+    )
+    return int(result.rowcount or 0)
+
+
+def _single_property_percentile_counts(
+    session: Session, property_id
+) -> dict[str, tuple[int, int]]:
+    """``{listing_type: (at_or_below, cohort_size)}`` for one Property.
+
+    Two statements: the Property's own cohort key and price/m² per type (empty
+    when it is not a cohort member), then the counts of the *other* members of
+    that cohort with those values bound. The Property itself is added here, so
+    the pair is consistent (1 <= at_or_below <= cohort_size) even when its
+    Listing changes between the two statements. Same expressions as the bulk
+    statement, so both writers agree on the same rows.
+    """
+    own = session.execute(
+        text(
+            "SELECT lm.listing_type, "
+            + COHORT_CITY_SQL
+            + " AS cohort_city, "
+            + COHORT_NEIGHBOURHOOD_SQL
+            + " AS cohort_neighbourhood, "
+            + _PCT_PRICE_PER_M2_SQL
+            + " AS price_per_m2"
+            + _PCT_MEMBERS_FROM_SQL
+            + """
+              AND p.id = :pid"""
+        ),
+        {"pid": property_id},
+    ).fetchall()
+    if not own:
+        return {}
+    own_ppm = {row[0]: float(row[3]) for row in own}
+
+    rows = session.execute(
+        text(
+            "SELECT lm.listing_type, COUNT(*) AS cohort_size, COUNT(*) FILTER (WHERE "
+            + _PCT_PRICE_PER_M2_SQL
+            + """ <= CASE lm.listing_type
+                    WHEN 'rent' THEN CAST(:ppm_rent AS double precision)
+                    ELSE CAST(:ppm_sale AS double precision)
+                END) AS at_or_below"""
+            + _PCT_MEMBERS_FROM_SQL
+            + """
+              AND p.id <> :pid
+              AND """
+            + COHORT_CITY_SQL
+            + """ = :cohort_city
+              AND """
+            + COHORT_NEIGHBOURHOOD_SQL
+            + """ = :cohort_neighbourhood
+            GROUP BY lm.listing_type"""
+        ),
+        {
+            "ppm_rent": own_ppm.get("rent"),
+            "ppm_sale": own_ppm.get("sale"),
+            "pid": property_id,
+            "cohort_city": own[0][1],
+            "cohort_neighbourhood": own[0][2],
+        },
+    ).fetchall()
+    others = {row[0]: (int(row[2]), int(row[1])) for row in rows}
+    counts: dict[str, tuple[int, int]] = {}
+    for listing_type in own_ppm:
+        others_at_or_below, others_size = others.get(listing_type, (0, 0))
+        counts[listing_type] = (others_at_or_below + 1, others_size + 1)
+    return counts
+
+
 def compute_neighborhood_stats(
     session: Session,
     neighborhood_key: Optional[str] = None,
@@ -226,6 +426,12 @@ def compute_neighborhood_stats(
     Listing prices come from core.price_basis (Story 1.3); each row is stamped
     with the basis of its rent price/m².
 
+    The same statement counts each cohort member's city x neighbourhood x
+    listing-type cohort (Story 1.6). Those counts are never restricted by
+    ``neighborhood_key``: a restricted run still ranks against whole cohorts.
+    A full run also clears the percentiles of rows whose Property is no longer
+    a cohort member.
+
     Args:
         session: Active SQLAlchemy session.
         neighborhood_key: If provided, only recompute for that neighbourhood key.
@@ -234,6 +440,8 @@ def compute_neighborhood_stats(
         Number of property rows processed.
     """
     weights = _scoring_weights()
+    min_cohort_size = _percentile_min_cohort_size()
+    evaluated_at = _utcnow()
 
     # where_clause/_COHORT_KEY_SQL/COHORT_PRICE_SQL are fixed module constants
     # (never user-supplied text); :nkey is a bound parameter. Assembled via
@@ -300,6 +508,18 @@ def compute_neighborhood_stats(
         + where_clause
         + """
         ),
+        medians AS (
+            -- One median per stat cohort, joined back. A subquery per row
+            -- over ``typed`` returned the same values and took the stage
+            -- from seconds to an hour on about 240,000 rows.
+            SELECT
+                n_key,
+                listing_type,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_m2)
+                    AS neighborhood_median
+            FROM typed
+            GROUP BY n_key, listing_type
+        ),
         stats AS (
             SELECT
                 t.property_id,
@@ -309,11 +529,7 @@ def compute_neighborhood_stats(
                 t.price_basis,
                 AVG(t.price_per_m2)
                     OVER (PARTITION BY t.n_key, t.listing_type) AS neighborhood_mean,
-                (
-                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t2.price_per_m2)
-                    FROM typed t2
-                    WHERE t2.n_key = t.n_key AND t2.listing_type = t.listing_type
-                ) AS neighborhood_median,
+                md.neighborhood_median,
                 STDDEV(t.price_per_m2)
                     OVER (PARTITION BY t.n_key, t.listing_type) AS neighborhood_stddev,
                 PERCENT_RANK()
@@ -322,6 +538,8 @@ def compute_neighborhood_stats(
                         ORDER BY t.price_per_m2
                     ) AS percentile_rank
             FROM typed t
+            JOIN medians md
+              ON md.n_key = t.n_key AND md.listing_type = t.listing_type
         ),
         pivoted AS (
             SELECT
@@ -348,9 +566,37 @@ def compute_neighborhood_stats(
                     AS price_basis_rent
             FROM stats
             GROUP BY property_id
+        ),
+        pct_members AS (
+            SELECT
+                p.id AS property_id,
+                lm.listing_type,
+                COUNT(*) OVER (PARTITION BY """
+        + _PCT_PARTITION_SQL
+        + """) AS cohort_size,
+                COUNT(*) OVER (
+                    PARTITION BY """
+        + _PCT_PARTITION_SQL
+        + """
+                    ORDER BY """
+        + _PCT_PRICE_PER_M2_SQL
+        + """
+                ) AS at_or_below"""
+        + _PCT_MEMBERS_FROM_CTE_SQL
+        + """
+        ),
+        pct_pivoted AS (
+            SELECT
+                property_id,
+                MAX(cohort_size) FILTER (WHERE listing_type = 'rent') AS pct_cohort_size_rent,
+                MAX(at_or_below) FILTER (WHERE listing_type = 'rent') AS pct_at_or_below_rent,
+                MAX(cohort_size) FILTER (WHERE listing_type = 'sale') AS pct_cohort_size_sale,
+                MAX(at_or_below) FILTER (WHERE listing_type = 'sale') AS pct_at_or_below_sale
+            FROM pct_members
+            GROUP BY property_id
         )
         SELECT
-            property_id,
+            pivoted.property_id,
             price_per_m2_rent,
             price_per_m2_sale,
             neighborhood_mean_rent,
@@ -361,8 +607,13 @@ def compute_neighborhood_stats(
             neighborhood_stddev_sale,
             percentile_rank_rent,
             percentile_rank_sale,
-            price_basis_rent
+            price_basis_rent,
+            pp.pct_cohort_size_rent,
+            pp.pct_at_or_below_rent,
+            pp.pct_cohort_size_sale,
+            pp.pct_at_or_below_sale
         FROM pivoted
+        LEFT JOIN pct_pivoted pp ON pp.property_id = pivoted.property_id
         """
     )
 
@@ -414,6 +665,7 @@ def compute_neighborhood_stats(
         pct_rent = float(row[9]) if row[9] is not None else None
         pct_sale = float(row[10]) if row[10] is not None else None
         price_basis = row_price_basis(row[11])
+        percentile_counts = _row_percentile_counts(row[12], row[13], row[14], row[15])
 
         primary = primary_listing_type_for_ppm(ppm_rent, ppm_sale)
         if primary is None:
@@ -506,11 +758,21 @@ def compute_neighborhood_stats(
             combined_score_rent=combined_rent,
             combined_score_sale=combined_sale,
         )
+        _apply_percentile_fields(
+            ms,
+            percentile_counts,
+            min_cohort_size=min_cohort_size,
+            evaluated_at=evaluated_at,
+        )
 
     session.flush()
+    percentiles_cleared = 0
+    if neighborhood_key is None:
+        percentiles_cleared = _clear_percentiles_of_non_members(session, evaluated_at)
     logger.info(
         "neighborhood_stats_computed",
         rows=count,
+        percentiles_cleared=percentiles_cleared,
         neighborhood_key=str(neighborhood_key) if neighborhood_key else "all",
     )
     return count
@@ -723,6 +985,16 @@ def score_single_property(session: Session, property_id: str) -> None:
     primary = primary_listing_type_for_ppm(ppm_rent, ppm_sale)
     if primary is None:
         logger.warning("score_single_property_no_price", property_id=property_id)
+        # Not a cohort member: an existing row must not keep a percentile.
+        stale = session.query(MetricsScoring).filter_by(property_id=property_id).one_or_none()
+        if stale is not None:
+            _apply_percentile_fields(
+                stale,
+                {},
+                min_cohort_size=_percentile_min_cohort_size(),
+                evaluated_at=_utcnow(),
+            )
+            session.flush()
         return
 
     price_per_m2 = ppm_rent if primary == "rent" else ppm_sale
@@ -819,6 +1091,12 @@ def score_single_property(session: Session, property_id: str) -> None:
         percentile_rank_sale=pct_sale,
         combined_score_rent=combined_rent,
         combined_score_sale=combined_sale,
+    )
+    _apply_percentile_fields(
+        ms,
+        _single_property_percentile_counts(session, prop.id),
+        min_cohort_size=_percentile_min_cohort_size(),
+        evaluated_at=_utcnow(),
     )
 
     session.flush()

@@ -479,6 +479,11 @@ class ScoringConfig(BaseModel, frozen=True):
     ai_weight: float = 0.4
     neighbourhood_weight: float = 0.2
     recalculate_on_enrichment: bool = True
+    # Story 1.6 (FR-30): a city x neighbourhood x listing-type cohort smaller
+    # than this has no price/m2 percentile (stored NULL, never defaulted). The
+    # floor of 2 is core.cohort_percentile.MIN_COHORT_SIZE_FLOOR: a cohort of
+    # one never has a percentile.
+    percentile_min_cohort_size: int = Field(default=10, ge=2)
 
 
 class TopDealsDigestConfig(BaseModel, frozen=True):
