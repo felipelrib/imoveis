@@ -35,16 +35,26 @@ class _Done:
         self.stderr = ""
 
 
+def _fake_toplevel(path: Path):
+    """Test double for git toplevel: this repo for anything under it, a dir with scripts/ for fixtures, else None."""
+    path = Path(path)
+    if str(path).startswith(str(REPO_ROOT)):
+        return REPO_ROOT
+    return path if (path / "scripts").is_dir() else None
+
+
 @pytest.fixture
 def no_stamp(guard, monkeypatch):
     monkeypatch.setattr(guard.subprocess, "run", lambda *a, **k: _Done(1, "NO VALID STAMP: required tier backend, have none"))
     monkeypatch.setattr(guard, "_git", lambda cwd, *args: "main")
+    monkeypatch.setattr(guard, "_toplevel", _fake_toplevel)
 
 
 @pytest.fixture
 def stamped(guard, monkeypatch):
     monkeypatch.setattr(guard.subprocess, "run", lambda *a, **k: _Done(0, "stamp ok"))
     monkeypatch.setattr(guard, "_git", lambda cwd, *args: "main")
+    monkeypatch.setattr(guard, "_toplevel", _fake_toplevel)
 
 
 @pytest.mark.unit
@@ -57,7 +67,7 @@ class TestPushGuard:
             "git push origin HEAD:main",
             "git -C . push origin main",
             "git -c push.default=current push origin main",
-            "cd /tmp && git push origin main",
+            "cd src && git push origin main",
             "git push origin main && echo done",
         ],
     )
@@ -85,6 +95,31 @@ class TestPushGuard:
     def test_push_to_feature_branch_needs_no_stamp(self, guard, no_stamp):
         assert guard.check_bash("git push origin feat/v0.14-s1.1-thing", REPO_ROOT) is None
         assert guard.check_bash("git push -u origin chore/harness", REPO_ROOT) is None
+
+    def test_push_from_another_repo_checks_that_repo_not_this_one(self, guard, monkeypatch, tmp_path):
+        """`cd <other repo> && git push origin main` must run the OTHER repo's stamp check."""
+        other = tmp_path / "other"
+        (other / "scripts").mkdir(parents=True)
+        (other / "scripts" / "validate.py").write_text("# --check-stamp\n", encoding="utf-8")
+        seen = {}
+
+        def fake_run(cmd, *a, **k):
+            seen["cmd"], seen["cwd"] = cmd, k.get("cwd")
+            return _Done(1, "NO VALID STAMP: required tier fast, have none")
+
+        monkeypatch.setattr(guard.subprocess, "run", fake_run)
+        monkeypatch.setattr(guard, "_git", lambda cwd, *args: "main")
+        monkeypatch.setattr(guard, "_toplevel", _fake_toplevel)
+        reason = guard.check_bash(f"cd {other} && git push origin main", REPO_ROOT)
+        assert reason and str(other) in reason
+        assert Path(seen["cwd"]) == other and str(other / "scripts" / "validate.py") in seen["cmd"][1]
+
+    def test_push_from_a_repo_without_a_stamp_gate_is_not_guarded(self, guard, no_stamp, tmp_path):
+        (tmp_path / "scripts").mkdir()
+        assert guard.check_bash(f"cd {tmp_path} && git push origin main", REPO_ROOT) is None
+
+    def test_push_outside_any_repo_is_not_guarded(self, guard, no_stamp, tmp_path):
+        assert guard.check_bash(f"cd {tmp_path} && git push origin main", REPO_ROOT) is None
 
     def test_git_commands_other_than_push_pass(self, guard, no_stamp):
         for cmd in ("git status", "git log --oneline -3", "git pull --ff-only origin main", "git fetch origin main"):
