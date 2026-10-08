@@ -13,7 +13,8 @@ Local-first, single-host Docker Compose. No cloud deployment target; the "produc
 | `postgres` | built in-repo (PostGIS 17-3.5 + pgvector) | Primary DB (`realestate`) |
 | `redis` | `redis:7-alpine` | Broker + cache + scheduler state |
 | `api` | built (`Dockerfile`) | FastAPI app |
-| `worker_scraper` | built | Celery scraper queue |
+| `worker_scraper` | built | Celery `scrapers` queue: scrapes and the operator-triggered cost backfill only |
+| `worker_periodic` | built | Celery `periodic` queue: every task that is not a scrape or GPU work (monitor, snapshot, alerts, digests, recheck, refresh), so none of it waits for a scrape slot |
 | `worker_ai` | built | Celery AI-enrichment queue (GPU semaphore) |
 | `beat` | built | Celery beat (Redis-backed schedule) |
 | `ollama_init` | `curlimages/curl` | Ensures Ollama models present |

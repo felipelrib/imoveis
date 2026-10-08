@@ -31,6 +31,9 @@ def collect_snapshot_fields() -> Dict[str, Any]:
         "enriched_properties": enriched,
         "scraper_queue": int(queues.get("scrapers") or 0),
         "ai_queue": int(queues.get("ai") or 0),
+        # Not a stored column (no migration in Story 1.18): carried in the task
+        # result and the log line only; ``write_snapshot`` ignores it.
+        "periodic_queue": int(queues.get("periodic") or 0),
         "throughput_per_min": float(ai_metrics.get("throughput_per_min") or 0.0),
     }
 
@@ -84,9 +87,16 @@ def snapshot_and_prune(session, retention_days: int = 7) -> Dict[str, Any]:
         "pipeline_metric_snapshot_written",
         total_properties=fields.get("total_properties"),
         ai_queue=fields.get("ai_queue"),
+        scraper_queue=fields.get("scraper_queue"),
+        periodic_queue=fields.get("periodic_queue", 0),
         throughput_per_min=fields.get("throughput_per_min"),
         pruned=pruned,
     )
-    return {"written": 1, "pruned": pruned, **{k: fields[k] for k in (
-        "total_properties", "enriched_properties", "scraper_queue", "ai_queue", "throughput_per_min"
-    )}}
+    return {
+        "written": 1,
+        "pruned": pruned,
+        **{k: fields[k] for k in (
+            "total_properties", "enriched_properties", "scraper_queue", "ai_queue", "throughput_per_min"
+        )},
+        "periodic_queue": fields.get("periodic_queue", 0),
+    }

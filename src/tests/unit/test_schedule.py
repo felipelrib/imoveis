@@ -225,17 +225,23 @@ class TestBuildBeatSchedule:
         assert app.conf.task_default_retry_delay == 30
         assert app.conf.task_default_max_retries == 3
         assert app.conf.task_routes["tasks.ai_enrich"] == {"queue": "ai"}
-        # BIN-76: beat maintenance must hit a queue workers consume (not default celery).
-        assert app.conf.task_routes["tasks.snapshot_pipeline_metrics"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.monitor_queues"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.evaluate_watchlist_alerts"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.send_daily_digest"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.send_top_deals_digest"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.recheck_listing_availability"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.refresh_neighbourhood_amenities"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.refresh_transit_proximity"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.refresh_neighbourhood_access"] == {"queue": "scrapers"}
-        assert app.conf.task_routes["tasks.refresh_listing_claim_stats"] == {"queue": "scrapers"}
+        # BIN-76: beat maintenance must hit a queue workers consume (not default
+        # celery). Story 1.18: that queue is `periodic`, never the scrape queue.
+        for periodic_task in (
+            "tasks.snapshot_pipeline_metrics",
+            "tasks.monitor_queues",
+            "tasks.evaluate_watchlist_alerts",
+            "tasks.send_daily_digest",
+            "tasks.send_top_deals_digest",
+            "tasks.recheck_listing_availability",
+            "tasks.refresh_neighbourhood_amenities",
+            "tasks.refresh_transit_proximity",
+            "tasks.refresh_neighbourhood_access",
+            "tasks.refresh_listing_claim_stats",
+            "tasks.send_price_drop_alert",
+        ):
+            assert app.conf.task_routes[periodic_task] == {"queue": "periodic"}, periodic_task
+        assert app.conf.task_routes["tasks.scrape_listings"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.backfill_listing_costs"] == {"queue": "scrapers"}
         assert app.conf.beat_schedule == {"scheduled": {}}
         build_schedule.assert_called_once()
@@ -260,8 +266,11 @@ class TestBuildBeatSchedule:
     @patch("adapters.queue.celery_app.build_beat_schedule", return_value={})
     @patch("adapters.queue.celery_app.Celery")
     @patch("adapters.queue.celery_app.get_config")
-    def test_beat_maintenance_tasks_routed_to_scrapers_queue(self, mock_get_config, celery_cls, _build_schedule):
-        """Regression BIN-76: unrouted beat tasks pile up on default `celery` (no consumer)."""
+    def test_beat_maintenance_tasks_routed_to_periodic_queue(self, mock_get_config, celery_cls, _build_schedule):
+        """Regression BIN-76: unrouted beat tasks pile up on default `celery` (no consumer).
+
+        Story 1.18: they route to `periodic`, whose worker a scrape cannot occupy.
+        """
         from adapters.queue.celery_app import make_celery
 
         mock_get_config.return_value.redis.url = "redis://broker:6379/9"
@@ -282,11 +291,13 @@ class TestBuildBeatSchedule:
             "tasks.refresh_transit_proximity",
             "tasks.refresh_neighbourhood_access",
             "tasks.refresh_listing_claim_stats",
-            "tasks.backfill_listing_costs",
         ):
-            assert routes.get(task_name) == {"queue": "scrapers"}, (
-                f"{task_name} must route to scrapers — workers do not consume default celery"
+            assert routes.get(task_name) == {"queue": "periodic"}, (
+                f"{task_name} must route to periodic — workers do not consume default celery, "
+                "and a scrape can hold a scrapers slot for hours"
             )
+        # Operator-triggered corpus walk: it would hold a periodic slot for its whole run.
+        assert routes.get("tasks.backfill_listing_costs") == {"queue": "scrapers"}
 
     @patch("adapters.queue.celery_app.Celery")
     @patch("adapters.queue.celery_app.get_config")
@@ -294,9 +305,9 @@ class TestBuildBeatSchedule:
     def test_every_scheduled_task_has_a_route(self, mock_get_redis, mock_get_config, celery_cls):
         """BIN-144: generic invariant — every task name build_beat_schedule()
         can produce must have a task_routes entry pointing at a queue workers
-        consume (`scrapers` or `ai`).
+        consume (`scrapers`, `ai` or `periodic`).
 
-        The tests above (and `test_beat_maintenance_tasks_routed_to_scrapers_queue`)
+        The tests above (and `test_beat_maintenance_tasks_routed_to_periodic_queue`)
         enumerate each task name individually, so a *newly added* beat task with a
         forgotten route entry would not fail any of them. This test enables every
         optional beat branch at once and asserts the invariant generically, so
@@ -336,7 +347,7 @@ class TestBuildBeatSchedule:
         assert len(scheduled_task_names) >= 10
 
         routes = app.conf.task_routes
-        consumed_queues = {"scrapers", "ai"}
+        consumed_queues = {"scrapers", "ai", "periodic"}
         for task_name in scheduled_task_names:
             assert task_name in routes, (
                 f"{task_name} is scheduled by build_beat_schedule() but has no "
@@ -351,7 +362,7 @@ class TestBuildBeatSchedule:
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_availability_recheck_schedule_when_enabled(self, mock_get_redis, mock_get_config):
-        """BIN-80: enabled availability_recheck adds a scrapers-bound beat entry."""
+        """BIN-80: enabled availability_recheck adds a periodic-bound beat entry."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
@@ -396,7 +407,7 @@ class TestBuildBeatSchedule:
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_osm_amenities_schedule_when_enabled(self, mock_get_redis, mock_get_config):
-        """BIN-88: enabled osm_amenities adds a scrapers-bound beat entry."""
+        """BIN-88: enabled osm_amenities adds a periodic-bound beat entry."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
@@ -445,7 +456,7 @@ class TestBuildBeatSchedule:
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_transit_proximity_schedule_when_enabled(self, mock_get_redis, mock_get_config):
-        """BIN-118: enabled transit adds a scrapers-bound beat entry."""
+        """BIN-118: enabled transit adds a periodic-bound beat entry."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
@@ -498,7 +509,7 @@ class TestBuildBeatSchedule:
     @patch("adapters.queue.celery_app.get_config")
     @patch("adapters.queue.celery_app.get_redis")
     def test_neighbourhood_access_schedule_when_enabled(self, mock_get_redis, mock_get_config):
-        """BIN-90: enabled neighbourhood_access adds a scrapers-bound beat entry."""
+        """BIN-90: enabled neighbourhood_access adds a periodic-bound beat entry."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()
@@ -555,7 +566,7 @@ class TestBuildBeatSchedule:
     def test_listing_claim_stats_schedule_when_enabled(
         self, mock_get_redis, mock_get_config
     ):
-        """BIN-93: enabled listing_claim_stats adds a scrapers-bound beat entry."""
+        """BIN-93: enabled listing_claim_stats adds a periodic-bound beat entry."""
         from adapters.queue.celery_app import build_beat_schedule
 
         cfg = MagicMock()

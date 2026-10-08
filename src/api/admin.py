@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from adapters.db.enrichment_coverage_queries import fetch_coverage_inputs
 from adapters.metrics.scoring import compute_neighborhood_stats, recalculate_all_combined_scores
+from adapters.queue.celery_app import QUEUE_AI, QUEUE_PERIODIC
 from adapters.queue.gpu_semaphore import GPUSemaphore
 from api.auth import verify_admin_access
 from api.errors import raise_api_error
@@ -369,7 +370,7 @@ def _enqueue_ai_enrich(
     ai_enrich.apply_async(
         args=[property_id, image_urls, description],
         kwargs={"stages": stages},
-        queue="ai",
+        queue=QUEUE_AI,
     )
 
 
@@ -466,7 +467,7 @@ def enqueue_availability_recheck(batch_size: Optional[int] = None):
 
     async_result = recheck_listing_availability.apply_async(
         kwargs={"batch_size": limit},
-        queue="scrapers",
+        queue=QUEUE_PERIODIC,
     )
     log_audit_action("availability_recheck", {"batch_size": limit, "task_id": async_result.id})
     return {"queued": True, "task_id": async_result.id, "batch_size": limit}
@@ -481,7 +482,7 @@ def enqueue_neighbourhood_access_refresh():
     if cfg.enabled is not True:
         raise HTTPException(status_code=400, detail="neighbourhood_access is disabled")
 
-    async_result = refresh_neighbourhood_access_task.apply_async(queue="scrapers")
+    async_result = refresh_neighbourhood_access_task.apply_async(queue=QUEUE_PERIODIC)
     log_audit_action(
         "neighbourhood_access_refresh",
         {"task_id": async_result.id},
@@ -500,7 +501,7 @@ def enqueue_listing_claim_stats_refresh():
             status_code=400, detail="listing_claim_stats is disabled"
         )
 
-    async_result = refresh_listing_claim_stats_task.apply_async(queue="scrapers")
+    async_result = refresh_listing_claim_stats_task.apply_async(queue=QUEUE_PERIODIC)
     log_audit_action(
         "listing_claim_stats_refresh",
         {"task_id": async_result.id},
@@ -588,7 +589,7 @@ def backfill_embeddings(force: bool = False):
                 )
             ).fetchall()
             for (prop_id,) in rows:
-                embed_property.apply_async(args=[str(prop_id)], queue="ai")
+                embed_property.apply_async(args=[str(prop_id)], queue=QUEUE_AI)
                 count += 1
         except Exception as exc:
             raise_api_error(logger, "embeddings_backfill_failed", exc)

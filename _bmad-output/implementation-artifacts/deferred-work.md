@@ -641,7 +641,8 @@ location: src/adapters/queue (beat schedule and task_routes)
 source_spec: n/a
 severity: medium
 reason: On 2026-10-08 the primary `scrapers` list held about 11,600 messages; a sample of the first 400 was 245 `tasks.snapshot_pipeline_metrics`, 121 `tasks.monitor_queues`, 23 `tasks.evaluate_watchlist_alerts` and 12 `tasks.scrape_listings`. The periodic tasks carry no `expires`, so every tick missed while the workers are busy or down stays queued and runs late, several in the same second. Scraping still works (Properties were first seen that day). Not measured: how late a beat task runs under this backlog. A blanket `expires` is not the fix for every entry: the story 1-9 review left it off the hourly sender on purpose, because under a backlog longer than an hour it would discard every sender run. Options: `expires` on the idempotent snapshot/monitor entries only, a separate queue for periodic housekeeping, or a single-flight guard.
-status: open
+status: resolved
+resolution: resolved in code by Story 1.18 (`docs/features/v0.14-s1.18-periodic-tasks-not-blocked-by-scrapes.md`), which takes all three options. Every task that is not a scrape or GPU work is routed to a new queue `periodic`, consumed by a new service `worker_periodic` that never consumes `scrapers`, so a scrape cannot occupy its slots. The nine idempotent beat entries carry `expires` equal to their own interval; the hourly sender, the digests and the scrapes carry none. `scrape_listings` is single-flight per platform and scope (two expiring Redis leases): the beat and `POST /scrape` publish nothing while one is queued or running, and a duplicate delivery returns `skipped`. Pinned by `src/tests/unit/test_queue_layout.py` and `test_scrape_single_flight.py`. Not done by the code: the primary deploy is an operator step (rebuild so `worker_periodic` exists; the messages already on `scrapers` drain through `worker_scraper` or, for the four housekeeping task types, are removed with `scripts/ops/purge_stale_periodic.py`); see the feature doc, Operator steps. How late a beat task ran under the backlog was never measured beyond the matcher not running in two hours.
 
 ### DW-64: The watchlist path records a price as announced before anything delivered it, so a watchlist alert that is debounced or fails to send is never retried.
 origin: spec-deferred 9aa11a47a791
@@ -665,4 +666,68 @@ location: frontend/src/labels.ts:6
 source_spec: `spec-1-10-saved-search-alert-management-ui.md`
 severity: low
 reason: frontend/src/labels.ts PLATFORM_LABELS has olx and quintoandar only; formatPlatform falls back to the slug. src/adapters/scrapers/zapimoveis.py exists, and the drop email names the platform ZapImóveis (core/saved_search_price_drops.py _PLATFORM_NAMES). Pre-existing in labels.ts; adding the label changes cards and filters outside this story.
+status: open
+
+### DW-67: One scheduled QuintoAndar scrape cannot finish inside its 60-minute interval: it walks about 1,500 price windows per city over three cities, so a scraper slot is held for more than three hours per run.
+origin: spec-deferred ee9b65f8ec4e
+location: configs/app_config.yaml:110
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: medium
+reason: Read on the primary worker log, read-only, 2026-10-08 16:34 to 19:41 UTC: 4,777 price-window fetches in three hours across two concurrent runs of the same scrape (3,341 URLs fetched by both processes, none twice by one); alugar windows per city: Sao Paulo 1,589, Belo Horizonte 1,556, Campinas 1,510; windows split down to R$ 13 wide; neither run had finished after 3 h 07 min, while the OLX and ZapImoveis scrapes finished in 38 s and 93 s. Cause, read in src/adapters/scrapers/quintoandar.py fetch_pages: a breadth-first price-window funnel (12 results per SSR page, split while saturated, then neighbourhood and house-type fan-out) under rate_limit 30/min with 2-7 s jitter, over the three cities of configs/app_config.yaml scraping.platforms.quintoandar .extra.cities. Expected from the design, not a parsing defect; the duplicate concurrent run was the defect and Story 1.18 removes it. Whether Sao Paulo and Campinas belong in the schedule of a Belo Horizonte decision engine, and whether the interval should match the run length, is a product decision. Not measured: the length of one complete run.
+status: open
+
+### DW-68: After the deploy the scrape_listings messages already on scrapers (193 counted) run one after the other, one per platform at a time, until they are gone; nothing coalesces them.
+origin: spec-deferred 0a0969a4ac18
+location: src/adapters/queue/tasks.py:336
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: Counted read-only on 2026-10-08: 193 tasks.scrape_listings among 11,716 messages on the primary scrapers list. The purge tool never removes a scrape (story rule). Each legacy message that starts while no scrape of its platform runs is a full scrape; for QuintoAndar that is more than three hours each, and the beat publishes nothing for a platform while one runs, so scraping is continuous until the backlog is consumed. This is no worse than before the story (the same messages ran, two at once). Options for the operator: let it drain, or remove old scrape messages by hand; a code option is to skip a scheduled scrape that starts soon after one of the same platform completed.
+status: open
+
+### DW-69: The SPA does not show the new queue or why the workers are not ok: the Celery card says offline for an unconsumed queue without the reason, and Scraper Control shows two queue lengths.
+origin: spec-deferred 2952f93fd9e2
+location: frontend/src/pages/Dashboard.tsx:93
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: frontend/src/pages/Dashboard.tsx:93,100 maps any workers.status other than ok to offline and never renders workers.detail or unconsumed_queues; frontend/src/pages/ScraperControl.tsx types and renders queues.scrapers and queues.ai only. The third part of this item (the manual trigger said "enqueued" for already_queued and already_running) was fixed in the follow-up review.
+status: open
+
+### DW-70: The Dashboard history has no series for the periodic queue: the snapshot row stores the scrapers and ai lengths only.
+origin: spec-deferred 51066a28eca4
+location: src/adapters/metrics/pipeline_snapshots.py:34
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: PipelineMetricSnapshot (src/adapters/db/models.py:501) has scraper_queue and ai_queue. Story 1.18 reports periodic_queue in the snapshot task result, its log line, the monitor log and GET /system/pipeline, and stores nothing: a third column needs a migration, a change to src/api/schemas.py (serial surface) and to the Dashboard chart, and the migration cannot be applied while a backfill holds the guard.
+status: open
+
+### DW-71: worker_periodic has two slots and no task on it has a time limit, so two long jobs at once (the availability recheck and a refresh job) delay the short periodic tasks until one ends.
+origin: spec-deferred fc910a9753de
+location: docker-compose.yml:159
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: docker-compose.yml worker_periodic runs --concurrency=2. recheck_listing_availability probes up to 50 URLs with a 20 s timeout each (about 17 minutes worst case, every six hours); refresh_neighbourhood_amenities in overpass mode sleeps for its rate limit; none has time_limit or soft_time_limit (only ai_enrich has). The weekly refresh jobs are off in the committed config, so today one slot at most is held. Stale housekeeping ticks expire meanwhile; the hourly sender waits.
+status: open
+
+### DW-72: A scrape killed without SIGTERM keeps its running lease for up to two hours, because the lease is renewed from the item loop and has no time-based heartbeat that would allow a short TTL.
+origin: spec-deferred 168f5cf68335
+location: src/adapters/queue/scrape_single_flight.py:33
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: src/adapters/queue/scrape_single_flight.py RUNNING_TTL_SECONDS is 2 h and renew() is called per yielded item. A graceful worker stop releases the lease (shutdown hook added in review); an OOM kill or power loss does not, and the redelivered message of that id returns skipped while the lease lives. POST /scrape (own scope) starts a scrape at once. A renewer thread in the task (the backfill runner has the pattern) would allow a TTL of minutes and remove the dependence on items being yielded; on 2026-10-08 the longest gap between item-level log lines of a run was 112 s in a 12-minute sample.
+status: open
+
+### DW-73: A second consumer of the scrapers queue would let a scrape start beside one that outlives a graceful stop, because the shutdown hook frees the lease when the stop is requested, not when the task ends.
+origin: spec-deferred 94d2f1b2dc67
+location: src/adapters/queue/tasks.py:364
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: Celery sends worker_shutting_down from the signal handler and then waits for running tasks. Checked on a real Celery 5.6.3 prefork worker in a scratch container (2026-10-08): the running lease was gone within a second of SIGTERM and the scrape ran 21 more seconds to completion. With the committed layout nothing can start in that time: worker_scraper is the only consumer of scrapers and under docker stop it is killed after ten seconds. docs/setup.md "Scaling" still says scraper workers scale horizontally; with two consumers and a stop that is allowed to wait, the beat would queue a scrape that the other worker starts while the first is finishing. A time-based heartbeat with a short TTL (the hard-kill item above) replaces the hook and closes this; until then the scaling sentence in docs/setup.md should say one scraper worker.
+status: open
+
+### DW-74: The architecture spine still lists the Celery services as scrapers, ai and beat (AD-7); the periodic worker is not in it.
+origin: spec-deferred 56c440ecc84b
+location: _bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/ARCHITECTURE-SPINE.md:115
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: low
+reason: _bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/ ARCHITECTURE-SPINE.md AD-7: "Docker Compose (Postgres/PostGIS, Redis, API, Celery scrapers + ai + beat, ...)". Story 1.18 adds worker_periodic and states it in AGENTS.md and docs/; the spine is a planning artifact amended by the architecture workflow, not by a dev session.
 status: open

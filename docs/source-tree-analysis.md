@@ -60,7 +60,7 @@ imoveis/
 │   ├── dev/                      # Cassette recording, benchmarks, backfill runners
 │   └── setup.sh / start.sh / …   # Stack lifecycle
 ├── docker-compose.yml            # PRIMARY stack (project `imoveis`): postgres(PostGIS), redis, api,
-│                                 # worker_ai, worker_scraper, beat, ollama_init, flaresolverr + volumes
+│                                 # worker_ai, worker_scraper, worker_periodic, beat, ollama_init, flaresolverr + volumes
 ├── docker-compose.test.yml       # EPHEMERAL validation stack (project `<workspace>-test`) — postgres+redis
 │                                 # only, docker-assigned ports, throwaway volumes (validate.py owns it)
 ├── .claude/hooks/                # Enforcement: guard.py (PreToolUse: push-without-stamp, force push,

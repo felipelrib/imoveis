@@ -156,7 +156,7 @@ def _schedule_for(tmp_path: Path, yaml_text: str) -> dict:
 class TestNewMatchAlertsSchedule:
     @patch("adapters.queue.celery_app.get_redis")
     @patch("adapters.queue.celery_app.get_config")
-    def test_both_tasks_are_routed_to_the_scrapers_queue(self, mock_get_config, mock_get_redis):
+    def test_both_tasks_are_routed_to_the_periodic_queue(self, mock_get_config, mock_get_redis):
         cfg = MagicMock()
         cfg.redis.url = "redis://localhost:6379/0"
         mock_get_config.return_value = cfg
@@ -166,7 +166,7 @@ class TestNewMatchAlertsSchedule:
 
         routes = make_celery().conf.task_routes
         for task in _NEW_MATCH_TASKS:
-            assert routes[task] == {"queue": "scrapers"}
+            assert routes[task] == {"queue": "periodic"}
 
     def test_both_tasks_are_registered_under_the_routed_names(self):
         from adapters.queue import tasks

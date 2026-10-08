@@ -8,11 +8,12 @@
 frontend (React SPA) ──REST/JSON (API key)──► api (FastAPI)
                                                │
                                                ├─ SQLAlchemy ──► PostgreSQL 17 + PostGIS + pgvector
-                                               ├─ Celery enqueue ──► Redis ──► worker_scraper / worker_ai / beat
+                                               ├─ Celery enqueue ──► Redis ──► worker_scraper / worker_ai / worker_periodic / beat
                                                └─ slowapi rate limits (Redis)
 
 worker_scraper ── aiohttp/httpx (+FlareSolverr) ──► QuintoAndar / OLX / ZapImoveis
 worker_ai ── HTTP ──► host Ollama / LM Studio (GPU-semaphored)
+worker_periodic ── SMTP / HTTP / SQL ──► alerts, digests, availability recheck, metrics snapshot, queue monitor
 adapters/geo ── HTTP ──► OSM Overpass / OSRM; GTFS files for transit
 notify ──► email / log / redis notifiers (price-drop + digests)
 ```
@@ -21,8 +22,8 @@ notify ──► email / log / redis notifiers (price-drop + digests)
 |---|---|---|---|
 | frontend | api | REST/JSON | `CredentialGate` API key; endpoints per [api-contracts-api.md](api-contracts-api.md); property URLs by `public_id` |
 | api | postgres | SQLAlchemy/psycopg2 | Migrations run from the api image at startup |
-| api | workers | Celery via Redis | Explicit `task_routes` — scraper vs AI queues |
-| beat | Redis | redis_scheduler | Persisted schedules; admin `POST/GET /schedule` |
+| api | workers | Celery via Redis | Explicit `task_routes` — three queues: `scrapers` (scrapes), `ai` (GPU), `periodic` (everything else); a new task goes to `periodic` unless it is a scrape or GPU work |
+| beat | Redis | redis_scheduler | Persisted schedules; admin `POST/GET /schedule`; idempotent entries expire after one interval; a scrape is not queued while one of the same platform is queued or running |
 | worker_scraper | platforms | HTTP + FlareSolverr | Circuit breaker on Cloudflare 403 (→ availability `unknown`); checkpoints in `platform_checkpoints` |
 | worker_ai | Ollama | HTTP | `gpu_semaphore` caps concurrency; image store volume for VLM inputs |
 | core/geo | OSM/OSRM/GTFS | HTTP/files | Amenity, access, transit-proximity refresh tasks |

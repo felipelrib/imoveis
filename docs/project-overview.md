@@ -18,7 +18,7 @@ Imoveis is a local-first real-estate deal-finding tool. It scrapes rental and sa
 | Category | Technology | Notes |
 |---|---|---|
 | API framework | FastAPI (uvicorn) | `api.main:app`, routers in `src/api/` |
-| Task queue | Celery 5.6 + Redis | Dedicated `worker_ai`, `worker_scraper`, `beat` services |
+| Task queue | Celery 5.6 + Redis | Dedicated `worker_scraper` (queue `scrapers`: scrapes), `worker_ai` (queue `ai`: GPU work), `worker_periodic` (queue `periodic`: every other task) and `beat` services |
 | Database | PostgreSQL 17 + PostGIS 3.5 + pgvector | Geospatial dedupe + 1024-dim embeddings |
 | ORM / migrations | SQLAlchemy 2 + GeoAlchemy2, Alembic (24 migrations) | |
 | AI runtime | Ollama / LM Studio (local), ONNX runtime | VLM + text models, GPU semaphore control |

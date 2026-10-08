@@ -733,6 +733,40 @@ So that this version starts without inherited process debt (DW-26, DW-30; epic-3
 **Then** `_bmad/custom/*.toml` or `AGENTS.md` states: an escalated story's blocker is re-checked against the current tree before the loop advances; operator actions are presented as one deduplicated checklist per wave; and each epic close reports deferred-work opened versus closed and schedules a drain when net-positive
 **And** the four retro keys are closed in sprint status with a pointer to the binding
 
+### Story 1.18: Periodic tasks are not blocked by scrapes
+
+As the operator,
+I want short periodic tasks to run on time while long scrapes are in flight,
+So that alerts, digests, metrics snapshots and queue monitoring are not delayed by hours (DW-63).
+
+**Acceptance Criteria:**
+
+**Given** `scrape_listings` runs that hold every slot of the scraper worker for hours
+**When** a periodic task comes due (the saved-search matcher and sender, watchlist evaluation, digests, metrics snapshot, queue monitor, availability recheck, the refresh tasks)
+**Then** it runs within its own schedule interval, on capacity a scrape cannot occupy
+**And** a test pins that no periodic task shares a queue with `scrape_listings`
+
+**Given** a beat entry whose previous run has not started yet
+**When** the next tick fires
+**Then** idempotent housekeeping runs do not accumulate without bound (stale runs are discarded or coalesced)
+**And** a task whose missed run must not be lost (the hourly alert sender, the digests) is never discarded
+
+**Given** `scrape_listings` itself is scheduled more often than a run completes
+**When** a run for the same platform and scope is already queued or in flight
+**Then** a duplicate is not queued behind it
+
+**Given** the convention in AGENTS.md that every beat task is listed in `task_routes`
+**When** this story lands
+**Then** the convention still holds for the new queue, GPU work stays only on `ai` behind the GPU semaphore, and the queue monitor and the pipeline metrics snapshot report the new queue
+**And** AGENTS.md, `docs/architecture.md` and `docs/setup.md` state the new layout
+
+**Given** the primary stack already holds a backlog
+**When** the operator deploys this
+**Then** the feature doc gives the exact operator steps, including what happens to messages already queued on `scrapers` under the old routing (they must still be consumed, not stranded)
+**And** DW-63 is resolved in the ledger
+
+*Added 2026-10-08 from an operator observation on the primary stack (both scraper worker slots held by scrapes for more than two hours, about 11,400 messages waiting on `scrapers`); not part of the original Epic 1 breakdown.*
+
 ## Epic 2: Ask the agent which listings fit
 
 Felipe asks Claude Code what fits a Search Profile and gets an answer read from the system: profiles are versioned config, every active Property carries a persisted Fit status per profile, and documented, contract-tested read endpoints serve the listing, the Fit bundle and the cohort summary. Attributes in this epic come from scraper fields and the amenity vocabulary; evidence-only Attributes are `unknown`.
@@ -1534,7 +1568,7 @@ Gates are written `story ← prerequisites`. Stories from different epics run in
 
 **Gates**
 
-- Epic 1: `1.2←1.1`, `1.3←1.1`, `1.6←1.3+1.4+1.5`, `1.7←1.6`, `1.8←1.2+1.7`, `1.9←1.6`, `1.10←1.9`. Stories 1.13 and 1.14 carry an advisory re-scope on the spike verdict (Story 3.2); it is not a gate.
+- Epic 1: `1.2←1.1`, `1.3←1.1`, `1.6←1.3+1.4+1.5`, `1.7←1.6`, `1.8←1.2+1.7`, `1.9←1.6`, `1.10←1.9`; `1.18` has no gate (added 2026-10-08, runs as soon as it is minted). Stories 1.13 and 1.14 carry an advisory re-scope on the spike verdict (Story 3.2); it is not a gate.
 - Epic 2: `2.2←2.1`, `2.3←2.2`, `2.4←2.2+1.1`, `2.5←2.4`, `2.6←2.5+1.2`, `2.7←2.6`, `2.8←2.7+1.3`, `2.9←2.8`, `2.10←2.9`.
 - Epic 3: `3.2←3.1`, `3.5←3.4+3.3`, `3.6←3.2+3.3+2.2`, `3.7←3.5+3.6`, `3.8←3.3+2.7`, `3.9←1.8+3.7+2.7`.
 - Epic 4: `4.1←2.1`, `4.2←4.1`, `4.3←4.2`, `4.4←4.2+2.8`, `4.5←4.4`.
@@ -1546,7 +1580,7 @@ Gates are written `story ← prerequisites`. Stories from different epics run in
 
 **Waves** (a story appears in the first wave its gates allow; stories in the same wave that share a do-not-parallelize entry run one after the other)
 
-- **Wave 0 — start here (file-disjoint):** 1.1, 1.4, 1.11, 1.15, 1.16, 1.17, 2.1, 3.1, 3.4, 5.1, 6.4.
+- **Wave 0 — start here (file-disjoint):** 1.1, 1.4, 1.11, 1.15, 1.16, 1.17, 1.18 (added 2026-10-08), 2.1, 3.1, 3.4, 5.1, 6.4.
 - **Wave 1:** 1.2, 1.3, 1.5 (operator applies migrations; this also applies the 2-7 repair), 1.12, 2.2, 3.2 (spike), 3.3, 4.1, 5.2, 5.4.
 - **Wave 2:** 1.6, 1.13, 2.3, 2.4, 3.5, 4.2, 5.3, 5.5, 5.7.
 - **Wave 3:** 1.7, 1.9, 1.14, 2.5, 3.6, 4.3, 5.6.
@@ -1568,6 +1602,7 @@ Gates are written `story ← prerequisites`. Stories from different epics run in
 - 1.1 with 2.3 and 5.4 (all change the scraper normalize/persist path).
 - 1.12, 1.13 and 1.14 with each other (`backfill_runner.py` and the Gemini client).
 - 1.4 with anything else touching `scripts/` (harness-marked tests run about 14 minutes serial).
+- 1.18 with any story that edits `task_routes`, the beat schedule or the worker services in `docker-compose.yml` (2.3, 2.5, 4.2 and 5.6 each add a routed beat task; a task added while 1.18 is in flight must be routed to the queue 1.18 introduces, not to `scrapers`), and with 1.4 (both touch `scripts/`).
 - 2.1, 4.1 and 6.1 with each other (`src/infra/config.py` loader).
 - 1.8, 3.9 and 5.9 with each other (detail side panel); 1.7, 4.5, 6.3 and 6.4 with each other (filter bar).
 - Anything requiring the primary migration while a backfill is running — `migrate-primary.sh` enforces it; never delete its Redis keys.

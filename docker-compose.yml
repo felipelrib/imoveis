@@ -143,6 +143,41 @@ services:
       - ./configs:/app/configs
 
   # ---------------------------------------------------------------------------
+  # Celery periodic worker (Story 1.18)
+  #
+  # Consumes only `periodic`: every task that is not a scrape and not GPU work
+  # (queue monitor, pipeline metrics snapshot, watchlist and saved-search
+  # alerts, digests, price-drop alerts, availability recheck, neighbourhood
+  # refresh jobs). It has its own two slots so none of that waits for a scrape,
+  # which can hold a `worker_scraper` slot for hours.
+  #
+  # Messages published to `scrapers` before this service existed are not moved:
+  # they still drain through `worker_scraper`, which loads the same task module.
+  # Never add `scrapers` here or `periodic` to `worker_scraper`
+  # (src/tests/unit/test_queue_layout.py pins it).
+  # ---------------------------------------------------------------------------
+  worker_periodic:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    command: >
+      celery -A adapters.queue.tasks worker
+      --loglevel=info
+      --queues=periodic
+      --concurrency=2
+    environment:
+      DATABASE_URL: postgresql://imoveis:${POSTGRES_PASSWORD:-imoveis_local_dev}@postgres:5432/realestate
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs
+
+  # ---------------------------------------------------------------------------
   # Ollama Models Init
   # ---------------------------------------------------------------------------
   ollama_init:

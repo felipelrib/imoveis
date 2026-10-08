@@ -113,8 +113,10 @@ def trigger_scrape(request: Request, req: ScrapeRequest):
         import adapters.scrapers.olx  # noqa: F401
         import adapters.scrapers.quintoandar  # noqa: F401
         import adapters.scrapers.zapimoveis  # noqa: F401
+        from adapters.queue.scrape_single_flight import QUEUED, enqueue_scrape
         from adapters.queue.tasks import scrape_listings
         from adapters.scrapers.registry import ScraperRegistry
+        from infra.redis_client import get_redis
 
         available = ScraperRegistry.available()
         if req.platform not in available:
@@ -124,14 +126,25 @@ def trigger_scrape(request: Request, req: ScrapeRequest):
             )
         checkpoint = req.checkpoint or {}
         checkpoint["scrape_type"] = req.scrape_type
-        task = scrape_listings.delay(req.platform, checkpoint)
-        logger.info(
-            "scrape_enqueued",
-            platform=req.platform,
-            scrape_type=req.scrape_type,
-            task_id=task.id,
-        )
-        return {"task_id": task.id, "platform": req.platform, "status": "queued"}
+        # Single-flight per platform and scope (Story 1.18): a second trigger
+        # of the same scrape reports the one already queued or running.
+        task_id, status = enqueue_scrape(scrape_listings, req.platform, checkpoint, get_redis())
+        if status != QUEUED:
+            logger.info(
+                "scrape_enqueue_skipped",
+                platform=req.platform,
+                scrape_type=req.scrape_type,
+                reason=status.removeprefix("already_"),
+                holder_task_id=task_id,
+            )
+        else:
+            logger.info(
+                "scrape_enqueued",
+                platform=req.platform,
+                scrape_type=req.scrape_type,
+                task_id=task_id,
+            )
+        return {"task_id": task_id, "platform": req.platform, "status": status}
     except HTTPException:
         raise
     except Exception as exc:

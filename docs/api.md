@@ -226,14 +226,43 @@ Price-drop alerts (see `docs/features/v0.14-s1.10-saved-search-alert-management-
 POST /scrape
 ```
 
+Admin credential required. Rate limit: 10 per minute.
+
 Body:
 
 ```json
 {
   "platform": "quintoandar",
-  "search_url": "https://quintoandar.com.br/..."
+  "scrape_type": "both",
+  "checkpoint": {}
 }
 ```
+
+- `platform` (required): a registered platform name (`GET /platforms`). Unknown: 400.
+- `scrape_type` (optional, default `"both"`): stored into the checkpoint override as `scrape_type`.
+- `checkpoint` (optional, default `{}`): checkpoint override for this run.
+
+Response, 200 in all three cases:
+
+```json
+{
+  "task_id": "0f6c…",
+  "platform": "quintoandar",
+  "status": "queued"
+}
+```
+
+| `status` | Meaning | `task_id` |
+|---|---|---|
+| `queued` | A scrape was published. | the new task |
+| `already_queued` | A scrape of the same platform and scope is waiting; nothing was published. | the waiting task (the holder) |
+| `already_running` | A scrape of the same platform and scope is running; nothing was published. | the running task (the holder) |
+
+A scrape is single-flight per platform and scope (Story 1.18). The scope of a
+manual trigger is derived from its checkpoint override (`scrape_type` included),
+so `{"scrape_type": "rent"}` and `{"scrape_type": "both"}` are different scopes,
+and neither is the scope of the scheduled scrape: a manual trigger does not wait
+for, and is not blocked by, the scheduled scrape of the same platform.
 
 ### Get Platforms
 
@@ -401,4 +430,31 @@ POST /admin/schedule    # Update scrape interval
 
 ```
 GET /system/pipeline     # Pipeline status and telemetry
+GET /system/status       # Component health (database, redis, ollama, workers)
 GET /system/health       # Detailed health check
+```
+
+### Queue lengths (`GET /system/pipeline`)
+
+`queues` has one entry per routed Celery queue (Story 1.18):
+
+```json
+{ "queues": { "scrapers": 3, "ai": 40, "periodic": 0 } }
+```
+
+`scrapers` carries scrapes, `ai` GPU work, `periodic` every other task. The
+persisted history (`GET /system/pipeline/history`) still has `scraper_queue` and
+`ai_queue` only.
+
+### Workers (`GET /system/status`)
+
+`workers` reports who answers and whether every routed queue has a consumer:
+
+```json
+{ "workers": { "status": "ok", "nodes": ["celery@…", "celery@…", "celery@…"], "unconsumed_queues": [] } }
+```
+
+When a routed queue has no consumer, `status` is `error`, `unconsumed_queues`
+lists the queue names and `detail` reads `No worker consumes queue(s): periodic`
+(`nodes` still lists the workers that answered). When no worker answers at all:
+`{"status": "error", "detail": "No workers responding"}`, without the other keys.

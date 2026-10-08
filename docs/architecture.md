@@ -63,9 +63,22 @@ Local AI pipeline using Ollama (primary) or LM Studio (fallback). Enriches listi
 
 ### Task Queue (`src/adapters/queue/`)
 
-Celery workers split into two queues:
-- **scrapers** (I/O-bound, higher concurrency) — platform scraping tasks
-- **ai** (GPU-bound, concurrency=2, serial generates per property) — AI enrichment tasks
+Celery work is split into three queues, each consumed by its own worker service (`docker-compose.yml`). The names are defined once, in `src/adapters/queue/celery_app.py`:
+
+| Queue | Worker service | Tasks |
+|---|---|---|
+| **scrapers** | `worker_scraper` (concurrency 2; also drains the default `celery`) | `tasks.scrape_listings` and the operator-triggered `tasks.backfill_listing_costs` only. A scrape can hold a slot for hours. |
+| **ai** | `worker_ai` (GPU-bound, concurrency 2, serial generates per property) | `tasks.ai_enrich`, `tasks.embed_property`, behind the GPU semaphore. The only GPU path. |
+| **periodic** | `worker_periodic` (concurrency 2) | every other task: queue monitor, pipeline metrics snapshot, watchlist and saved-search alerts, digests, price-drop alerts, availability recheck, neighbourhood refresh jobs. |
+
+Rules (pinned by `src/tests/unit/test_queue_layout.py`):
+
+- Every task has a `task_routes` entry. A new task is routed to `periodic` unless it is a scrape or GPU work. No scheduled task other than a scrape shares the queue of `scrape_listings`, and `periodic` and `scrapers` are never consumed by the same worker.
+- An idempotent beat entry carries `expires` equal to its own interval, so a worker that was down or is behind discards the missed ticks. The hourly alert sender, the digests and the scrapes carry none: they must not be lost.
+- A scrape is single-flight per platform and scope (`src/adapters/queue/scrape_single_flight.py`): the beat and `POST /scrape` publish nothing while one is queued or running, and a duplicate that is delivered anyway returns `skipped`. Both leases expire by TTL.
+- `GET /system/pipeline`, the queue monitor and the metrics snapshot report all three queues; `GET /system/status` reports a routed queue that no worker consumes.
+
+Details and operator steps: `docs/features/v0.14-s1.18-periodic-tasks-not-blocked-by-scrapes.md`.
 
 ### Frontend (`frontend/`)
 

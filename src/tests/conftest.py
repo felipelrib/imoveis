@@ -39,6 +39,17 @@ import os
 
 import pytest
 
+from tests.redis_isolation import install_redis_connection_guard
+
+#: Broker and Redis isolation (Story 1.18). Installed at import, before any test
+#: module loads the app, in every xdist worker: redis-py (so Kombu, the Celery
+#: result backend and the rate limiter too) can only connect to the Redis named
+#: by a wipe-safe ``REDIS_URL``, which the gate exports for its ephemeral stack.
+#: A raw ``pytest`` and the gate's unit tier have none and reach no Redis: the
+#: config default ``redis://localhost:6379/0`` is the primary broker on a
+#: development host. None means nothing is reachable.
+ISOLATED_REDIS_ENDPOINT = install_redis_connection_guard()
+
 #: Prefix of the generic config-override channel (``infra.config._ENV_PREFIX``).
 CONFIG_ENV_PREFIX = "IMOVEIS_"
 

@@ -25,7 +25,7 @@ Scraper → Normalize → Dedupe → DB → Metrics → AI Enrich
 | Component   | Technology             | Purpose                         |
 |-------------|------------------------|---------------------------------|
 | API         | FastAPI                | REST endpoints, admin controls  |
-| Task Queue  | Celery + Redis         | Async scraping, AI enrichment (queues: `scrapers`, `ai`; beat scheduler) |
+| Task Queue  | Celery + Redis         | Async scraping, AI enrichment, periodic work (queues: `scrapers`, `ai`, `periodic`, one worker each; beat scheduler) |
 | Database    | PostgreSQL 17 + PostGIS + pgvector | Geospatial + embedding storage |
 | AI          | Ollama / LM Studio (local); Gemma via Gemini API (cloud backfill only) | VLM + text + embedding models |
 | Frontend    | React 19 + Vite 8 + TypeScript (maplibre-gl, recharts) | Score-coloured property grid, map, dashboard |

@@ -211,12 +211,25 @@ export OLLAMA_HOST=http://localhost:11434
 # API
 uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 
-# Scraper workers (I/O-bound, high concurrency)
-celery -A src.adapters.queue.celery worker -Q scrapers -c 4
+# Scraper workers (scrapes only; a scrape can hold a slot for hours)
+celery -A src.adapters.queue.celery worker -Q scrapers -c 4 -n scraper@%h
 
 # AI workers (GPU-bound — match gpu.semaphore_limit / OLLAMA_NUM_PARALLEL)
-celery -A src.adapters.queue.celery worker -Q ai -c 2
+celery -A src.adapters.queue.celery worker -Q ai -c 2 -n ai@%h
+
+# Periodic workers (every other task: monitor, snapshot, alerts, digests, recheck, refresh)
+celery -A src.adapters.queue.celery worker -Q periodic -c 2 -n periodic@%h
 ```
+
+Each worker gets its own node name (`-n`): without it all three are `celery@<host>`,
+and `GET /system/status`, which keys the workers' replies by node name, sees one.
+
+Three queues, one worker each: `scrapers`, `ai`, `periodic`. Without a worker on
+`periodic` no alert, digest, snapshot or queue monitor runs, and `GET /system/status`
+reports `No worker consumes queue(s): periodic`. In Docker the three services are
+`worker_scraper`, `worker_ai` and `worker_periodic`. A new task is routed to `periodic`
+unless it is a scrape or GPU work; an idempotent beat entry also gets `expires`
+(see `docs/architecture.md`, Task Queue).
 
 ## AI Model Setup
 

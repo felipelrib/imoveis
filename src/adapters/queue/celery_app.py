@@ -10,6 +10,35 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Queue layout (Story 1.18) -- the one definition every other module imports
+# ---------------------------------------------------------------------------
+
+# Scrapes only (plus the operator-triggered corpus walk). A scrape can hold a
+# slot for hours, so nothing that has to run on time may wait here.
+QUEUE_SCRAPERS = "scrapers"
+# GPU work only, behind the GPU semaphore.
+QUEUE_AI = "ai"
+# Every other task: short periodic and operator-triggered work, on its own
+# worker (``worker_periodic``), so it never waits for a scrape slot.
+QUEUE_PERIODIC = "periodic"
+ROUTED_QUEUES = (QUEUE_SCRAPERS, QUEUE_AI, QUEUE_PERIODIC)
+
+SCRAPE_TASK_NAME = "tasks.scrape_listings"
+
+
+def _expiring(entry: dict) -> dict:
+    """Mark an idempotent beat entry: a tick not started within one interval is dropped.
+
+    Celery checks ``expires`` when a worker receives the message, so a worker
+    that was down or is behind replays at most one interval of the entry
+    instead of every missed tick. Only for entries whose next run covers the
+    work of a missed one; never for a sender or a digest.
+    """
+    entry["options"] = {"expires": float(entry["schedule"])}
+    return entry
+
+
+# ---------------------------------------------------------------------------
 # Beat schedule builder
 # ---------------------------------------------------------------------------
 
@@ -51,7 +80,7 @@ def build_beat_schedule() -> dict:
                 continue
 
             schedule[f"scrape-{name}"] = {
-                "task": "tasks.scrape_listings",
+                "task": SCRAPE_TASK_NAME,
                 "schedule": interval * 60,  # convert minutes to seconds (Celery periodic task)
                 "args": [name],
                 "kwargs": {},
@@ -60,15 +89,15 @@ def build_beat_schedule() -> dict:
         logger.exception("beat_schedule_build_failed")
 
     # Always-on maintenance jobs (independent of scraper platform config)
-    schedule["evaluate-watchlist-alerts"] = {
+    schedule["evaluate-watchlist-alerts"] = _expiring({
         "task": "tasks.evaluate_watchlist_alerts",
         "schedule": 300.0,
-    }
+    })
 
-    schedule["monitor-queues"] = {
+    schedule["monitor-queues"] = _expiring({
         "task": "tasks.monitor_queues",
         "schedule": 60.0,
-    }
+    })
 
     # Pipeline metric snapshots (Dashboard history). Interval from YAML; default 30s.
     snapshot_interval = 30.0
@@ -81,10 +110,10 @@ def build_beat_schedule() -> dict:
     except (TypeError, ValueError):
         snapshot_interval = 30.0
     if snapshot_interval > 0:
-        schedule["snapshot-pipeline-metrics"] = {
+        schedule["snapshot-pipeline-metrics"] = _expiring({
             "task": "tasks.snapshot_pipeline_metrics",
             "schedule": snapshot_interval,
-        }
+        })
 
     if digest_mode:
         schedule["send-daily-digest"] = {
@@ -114,10 +143,10 @@ def build_beat_schedule() -> dict:
     if new_match_cfg is not None and getattr(new_match_cfg, "enabled", False) is True:
         match_interval = int(getattr(new_match_cfg, "match_interval_minutes", 15) or 0)
         if match_interval > 0:
-            schedule["match-saved-search-new-matches"] = {
+            schedule["match-saved-search-new-matches"] = _expiring({
                 "task": "tasks.match_saved_search_new_matches",
                 "schedule": match_interval * 60,
-            }
+            })
         schedule["send-saved-search-new-match-alerts"] = {
             "task": "tasks.send_saved_search_new_match_alerts",
             "schedule": crontab(minute=0),
@@ -134,10 +163,10 @@ def build_beat_schedule() -> dict:
     if recheck_cfg is not None and getattr(recheck_cfg, "enabled", False) is True:
         interval_min = int(getattr(recheck_cfg, "interval_minutes", 360) or 0)
         if interval_min > 0:
-            schedule["recheck-listing-availability"] = {
+            schedule["recheck-listing-availability"] = _expiring({
                 "task": "tasks.recheck_listing_availability",
                 "schedule": interval_min * 60,
-            }
+            })
 
     # OSM amenity density for neighbourhoods (BIN-88). Explicit ``is True`` so
     # MagicMock stubs in unit tests do not accidentally enable the job.
@@ -150,10 +179,10 @@ def build_beat_schedule() -> dict:
     if osm_cfg is not None and getattr(osm_cfg, "enabled", False) is True:
         interval_hours = float(getattr(osm_cfg, "interval_hours", 168) or 0)
         if interval_hours > 0:
-            schedule["refresh-neighbourhood-amenities"] = {
+            schedule["refresh-neighbourhood-amenities"] = _expiring({
                 "task": "tasks.refresh_neighbourhood_amenities",
                 "schedule": interval_hours * 3600,
-            }
+            })
 
     # Transit proximity stop reload + neighbourhood rescore (BIN-118). Explicit
     # ``is True`` so MagicMock stubs in unit tests do not accidentally enable.
@@ -166,10 +195,10 @@ def build_beat_schedule() -> dict:
     if transit_cfg is not None and getattr(transit_cfg, "enabled", False) is True:
         transit_hours = float(getattr(transit_cfg, "interval_hours", 168) or 0)
         if transit_hours > 0:
-            schedule["refresh-transit-proximity"] = {
+            schedule["refresh-transit-proximity"] = _expiring({
                 "task": "tasks.refresh_transit_proximity",
                 "schedule": transit_hours * 3600,
-            }
+            })
 
     # Neighbourhood access / travel-time to hubs (BIN-90). Explicit ``is True`` so
     # MagicMock stubs in unit tests do not accidentally enable the job.
@@ -181,10 +210,10 @@ def build_beat_schedule() -> dict:
     if access_cfg is not None and getattr(access_cfg, "enabled", False) is True:
         access_interval = int(getattr(access_cfg, "interval_minutes", 1440) or 0)
         if access_interval > 0:
-            schedule["refresh-neighbourhood-access"] = {
+            schedule["refresh-neighbourhood-access"] = _expiring({
                 "task": "tasks.refresh_neighbourhood_access",
                 "schedule": access_interval * 60,
-            }
+            })
 
     # Listing LLM flag aggregates by neighbourhood (BIN-93). Explicit ``is True``.
     listing_claim_cfg = None
@@ -200,10 +229,10 @@ def build_beat_schedule() -> dict:
     ) is True:
         claim_interval = float(getattr(listing_claim_cfg, "interval_hours", 24) or 0)
         if claim_interval > 0:
-            schedule["refresh-listing-claim-stats"] = {
+            schedule["refresh-listing-claim-stats"] = _expiring({
                 "task": "tasks.refresh_listing_claim_stats",
                 "schedule": claim_interval * 3600,
-            }
+            })
 
     return schedule
 
@@ -239,26 +268,31 @@ def make_celery() -> Celery:
     celery_app.conf.task_default_retry_delay = 30
     celery_app.conf.task_default_max_retries = 3
 
-    # Task routes (TD-06-C). Workers only consume `scrapers` and `ai` — anything
-    # left on the default `celery` queue never runs (BIN-76: empty Dashboard history).
+    # Task routes. Three queues, each consumed by exactly one worker service in
+    # docker-compose.yml (pinned by src/tests/unit/test_queue_layout.py):
+    #   scrapers -> worker_scraper   scrapes and the operator-triggered cost backfill
+    #   ai       -> worker_ai        GPU work, behind the GPU semaphore
+    #   periodic -> worker_periodic  everything else
+    # A new task goes to ``periodic`` unless it is a scrape or GPU work; a task
+    # with no route lands on the default ``celery`` queue (BIN-76).
     celery_app.conf.task_routes = {
-        'tasks.scrape_listings': {'queue': 'scrapers'},
-        'tasks.ai_enrich': {'queue': 'ai'},
-        'tasks.embed_property': {'queue': 'ai'},
-        'tasks.send_price_drop_alert': {'queue': 'scrapers'},
-        'tasks.snapshot_pipeline_metrics': {'queue': 'scrapers'},
-        'tasks.monitor_queues': {'queue': 'scrapers'},
-        'tasks.evaluate_watchlist_alerts': {'queue': 'scrapers'},
-        'tasks.send_daily_digest': {'queue': 'scrapers'},
-        'tasks.send_top_deals_digest': {'queue': 'scrapers'},
-        'tasks.match_saved_search_new_matches': {'queue': 'scrapers'},
-        'tasks.send_saved_search_new_match_alerts': {'queue': 'scrapers'},
-        'tasks.recheck_listing_availability': {'queue': 'scrapers'},
-        'tasks.refresh_neighbourhood_amenities': {'queue': 'scrapers'},
-        'tasks.refresh_transit_proximity': {'queue': 'scrapers'},
-        'tasks.refresh_neighbourhood_access': {'queue': 'scrapers'},
-        'tasks.refresh_listing_claim_stats': {'queue': 'scrapers'},
-        'tasks.backfill_listing_costs': {'queue': 'scrapers'},
+        SCRAPE_TASK_NAME: {'queue': QUEUE_SCRAPERS},
+        'tasks.backfill_listing_costs': {'queue': QUEUE_SCRAPERS},
+        'tasks.ai_enrich': {'queue': QUEUE_AI},
+        'tasks.embed_property': {'queue': QUEUE_AI},
+        'tasks.send_price_drop_alert': {'queue': QUEUE_PERIODIC},
+        'tasks.snapshot_pipeline_metrics': {'queue': QUEUE_PERIODIC},
+        'tasks.monitor_queues': {'queue': QUEUE_PERIODIC},
+        'tasks.evaluate_watchlist_alerts': {'queue': QUEUE_PERIODIC},
+        'tasks.send_daily_digest': {'queue': QUEUE_PERIODIC},
+        'tasks.send_top_deals_digest': {'queue': QUEUE_PERIODIC},
+        'tasks.match_saved_search_new_matches': {'queue': QUEUE_PERIODIC},
+        'tasks.send_saved_search_new_match_alerts': {'queue': QUEUE_PERIODIC},
+        'tasks.recheck_listing_availability': {'queue': QUEUE_PERIODIC},
+        'tasks.refresh_neighbourhood_amenities': {'queue': QUEUE_PERIODIC},
+        'tasks.refresh_transit_proximity': {'queue': QUEUE_PERIODIC},
+        'tasks.refresh_neighbourhood_access': {'queue': QUEUE_PERIODIC},
+        'tasks.refresh_listing_claim_stats': {'queue': QUEUE_PERIODIC},
     }
 
     # Build and apply the beat schedule from config

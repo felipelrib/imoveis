@@ -18,6 +18,7 @@ import time
 import uuid
 from typing import List, Optional
 
+from celery.signals import worker_shutting_down
 from pydantic import ValidationError
 
 import adapters.scrapers.olx  # noqa: F401
@@ -33,8 +34,19 @@ from adapters.ai.image_store import ImageStore
 from adapters.ai.prompts import build_sentiment_prompt, build_visual_condition_prompt
 from adapters.metrics.scoring import score_single_property
 from adapters.queue.async_bridge import run_coro
-from adapters.queue.celery_app import make_celery
+from adapters.queue.celery_app import (
+    QUEUE_AI,
+    QUEUE_PERIODIC,
+    QUEUE_SCRAPERS,
+    SCRAPE_TASK_NAME,
+    make_celery,
+)
 from adapters.queue.gpu_semaphore import GPUSemaphore
+from adapters.queue.scrape_single_flight import (
+    ScrapeSingleFlight,
+    release_running_leases_of,
+    scrape_scope,
+)
 from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.listing_description import candidate_listing_url
 from adapters.scrapers.registry import ScraperRegistry
@@ -229,10 +241,10 @@ def _enqueue_post_scrape_jobs(candidate, result, *, skip_ai_enrich: bool = False
     if candidate.image_urls and not skip_ai_enrich:
         ai_enrich.apply_async(
             args=[str(result.property_id), candidate.image_urls, candidate.description or ""],
-            queue="ai",
+            queue=QUEUE_AI,
         )
     if (candidate.title or "").strip() or (candidate.description or "").strip():
-        embed_property.apply_async(args=[str(result.property_id)], queue="ai")
+        embed_property.apply_async(args=[str(result.property_id)], queue=QUEUE_AI)
 
 
 def _set_property_active(session, property_id: str, active: bool) -> None:
@@ -318,6 +330,72 @@ def _reconcile_olx_candidate(
     return candidate, result.action
 
 
+def _cancel_scrape_reservation(flight: ScrapeSingleFlight) -> None:
+    """Hand the own queued lease back; a Redis error is logged, never raised.
+
+    Called on the way to a retry or an error that must reach Celery as it is.
+    """
+    try:
+        flight.cancel_reservation()
+    except Exception as lease_exc:
+        logger.error("scrape_single_flight_release_failed", error=str(lease_exc))
+
+
+def _finish_scrape_flight(flight: ScrapeSingleFlight) -> None:
+    """Release the own running lease; a Redis error is logged, never raised."""
+    try:
+        flight.finish()
+    except Exception as lease_exc:
+        logger.error("scrape_single_flight_release_failed", error=str(lease_exc))
+
+
+def _active_scrape_task_ids() -> set:
+    """Ids of the scrapes this worker is executing, as its main process sees them."""
+    from celery.worker import state as worker_state
+
+    return {
+        str(request.id)
+        for request in tuple(worker_state.active_requests)
+        if getattr(request, "name", None) == SCRAPE_TASK_NAME and getattr(request, "id", None)
+    }
+
+
+@worker_shutting_down.connect
+def release_scrape_leases_on_shutdown(sender=None, **_kwargs):
+    """Free the running leases of the scrapes this worker is executing when it is asked to stop.
+
+    A stopped worker (``restart.sh``: SIGTERM, ten seconds, SIGKILL) never runs
+    the ``finally`` of a scrape in flight. The broker redelivers that message
+    after the restart; with the lease still held it would return ``skipped`` and
+    the platform would wait out the two-hour TTL.
+
+    Celery sends this signal in the main process when the stop is requested,
+    not when the tasks have ended: under a warm shutdown a scrape goes on until
+    it finishes or the process is killed, and from here on it holds no lease
+    (it logs ``scrape_single_flight_lost`` at its next renewal and releases
+    nothing). That is harmless while this worker is the only consumer of
+    ``scrapers``, which the compose layout pins; with a second consumer a new
+    scrape of the platform could start beside the one that is ending.
+
+    Only the leases of this worker's own active scrapes are released (``sender``
+    is the node name recorded as the lease owner, the task id is its token), so
+    a worker that runs no scrape, or one that shares a node name, frees nothing.
+    """
+    try:
+        task_ids = _active_scrape_task_ids()
+        if not task_ids:
+            return
+        released = release_running_leases_of(get_redis(), str(sender or ""), task_ids)
+        if released > 0:
+            logger.info(
+                "scrape_single_flight_released_on_shutdown",
+                worker=str(sender),
+                released=released,
+            )
+    except Exception as exc:
+        logger.error("scrape_single_flight_shutdown_release_failed", error=str(exc))
+
+
 @celery.task(
     name="tasks.scrape_listings",
     bind=True,
@@ -334,24 +412,62 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         checkpoint: Optional override checkpoint; otherwise loaded from DB.
     """
     cfg = get_config()
-
-    # Resolve platform config — dataclass → dict for scraper constructor
-    platform_cfg = cfg.scraping.platforms.get(platform_name)
-    if platform_cfg is None:
-        raise ValueError(f"Unknown platform: {platform_name!r}")
-    scraper_config = platform_cfg.model_dump()
-
-    session = SessionLocal()
     r = get_redis()
     processed = skipped = errors = 0
     scraper = None
 
-    # Check paused flag (TD-06-A)
+    # Single-flight per platform and scope (Story 1.18). ``.run()`` and eager
+    # calls carry no request id, so one is generated: the lease token is never
+    # empty. Built before anything can raise, so every early exit below can
+    # hand the publisher's reservation back.
+    flight = ScrapeSingleFlight(
+        r,
+        platform=platform_name,
+        scope=scrape_scope(checkpoint),
+        task_id=str(getattr(self.request, "id", None) or uuid.uuid4()),
+        owner=getattr(self.request, "hostname", None),
+    )
+
+    # Resolve platform config — dataclass → dict for scraper constructor
+    platform_cfg = cfg.scraping.platforms.get(platform_name)
+    if platform_cfg is None:
+        _cancel_scrape_reservation(flight)
+        raise ValueError(f"Unknown platform: {platform_name!r}")
+    scraper_config = platform_cfg.model_dump()
+
+    # Check paused flag (TD-06-A). The retry is a new wait of unknown length:
+    # hand the reservation back so the platform is not held by a message that
+    # is not going to scrape yet.
     if r.exists(REDIS_KEY_SCRAPERS_PAUSED):
         logger.info("scrapers_paused", platform=platform_name)
+        _cancel_scrape_reservation(flight)
         raise self.retry(countdown=120, exc=Exception("Scrapers paused due to high AI queue depth"))
 
+    # Another execution of this platform and scope is in flight (a message from
+    # before the single-flight, or a redelivery of the same id): do not scrape
+    # the same windows again, and leave that run's leases alone.
     try:
+        began = flight.begin()
+    except Exception:
+        # Redis failed between the two lease steps. Give the running lease back
+        # if it was taken: the retry carries the same id and would otherwise be
+        # skipped as a duplicate of this execution.
+        _finish_scrape_flight(flight)
+        raise
+    if not began:
+        logger.info(
+            "scrape_skipped_already_running",
+            platform=platform_name,
+            scope=flight.scope,
+            task_id=flight.task_id,
+        )
+        return {"status": "skipped", "reason": "already_running", "platform": platform_name}
+
+    session = None
+    store = None
+    cp: dict = {}
+    try:
+        session = SessionLocal()
         store = CheckpointStore(session)
         cp = store.get(platform_name) or {}
         if checkpoint is not None:
@@ -375,6 +491,21 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
 
         with scraper:
             for raw in scraper.fetch_pages(cp):
+                # First thing per item, so a skipped or rejected item renews
+                # too. Throttled inside to one Redis call a minute. A Redis
+                # error here must not abort a scrape that is hours in.
+                try:
+                    renewed = flight.renew()
+                except Exception as lease_exc:
+                    renewed = None
+                    logger.warning("scrape_single_flight_renew_failed", error=str(lease_exc))
+                if renewed is False:
+                    logger.warning(
+                        "scrape_single_flight_lost",
+                        platform=platform_name,
+                        scope=flight.scope,
+                        task_id=flight.task_id,
+                    )
                 candidate, outcome = _normalize_scrape_item(scraper, raw, platform_name)
                 if outcome == "circuit_open":
                     break
@@ -535,8 +666,9 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
         logger.error("scrape_task_error", error=str(exc))
         # Persist checkpoint before retry so we resume from last page
         try:
-            store.set(platform_name, cp)
-            session.commit()
+            if store is not None:
+                store.set(platform_name, cp)
+                session.commit()
         except Exception as cp_exc:
             logger.error("checkpoint_save_failed_in_error_handler", error=str(cp_exc))
         try:
@@ -558,11 +690,15 @@ def scrape_listings(self, platform_name: str, checkpoint: Optional[dict] = None)
             logger.error("scrape_telemetry_record_failed", error=str(tel_exc))
         raise
     finally:
-        session.close()
+        if session is not None:
+            session.close()
         try:
             get_redis().delete(f"pipeline:scraper:{platform_name}:status")
         except Exception as redis_exc:
             logger.error("redis_cleanup_failed", error=str(redis_exc))
+        # Released here so a failed run frees its platform before Celery
+        # schedules the retry (autoretry runs after this function returns).
+        _finish_scrape_flight(flight)
 
 
 # ---------------------------------------------------------------------------
@@ -1157,11 +1293,29 @@ def monitor_queues():
 
     # Threshold could be configurable
     BATCH_THRESHOLD = 50
+    # A periodic worker that keeps up leaves at most one interval of each
+    # housekeeping entry (an older tick is discarded when the worker receives
+    # it, not before) plus the hourly sender and the digests: this many pending
+    # means its worker is down, stuck or far behind.
+    PERIODIC_BACKLOG_THRESHOLD = 100
 
     # LLEN gives pending items in Celery list queues (when using redis broker)
-    ai_len = r.llen("ai")
+    ai_len = r.llen(QUEUE_AI)
+    scrapers_len = r.llen(QUEUE_SCRAPERS)
+    periodic_len = r.llen(QUEUE_PERIODIC)
 
-    logger.info("queue_monitor", ai_queue=ai_len)
+    logger.info(
+        "queue_monitor",
+        ai_queue=ai_len,
+        scrapers_queue=scrapers_len,
+        periodic_queue=periodic_len,
+    )
+    if periodic_len > PERIODIC_BACKLOG_THRESHOLD:
+        logger.warning(
+            "queue_monitor_periodic_backlog",
+            periodic_queue=periodic_len,
+            threshold=PERIODIC_BACKLOG_THRESHOLD,
+        )
 
     if ai_len > BATCH_THRESHOLD:
         if not r.exists(REDIS_KEY_SCRAPERS_PAUSED):
@@ -1292,7 +1446,7 @@ _NEW_MATCH_ALL_SEARCHES_SQL = (
     "new_match_last_window_on FROM saved_searches "
     "WHERE owner = :owner ORDER BY created_at, id"
 )
-# One sender at a time per search (the scrapers worker has more than one
+# One sender at a time per search (the periodic worker has more than one
 # process and queued runs can start together). The row lock covers a short
 # transaction only: the state is read again under it, the day is claimed
 # (window date stamped) and the transaction commits before the mail server is

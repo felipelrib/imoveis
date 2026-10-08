@@ -162,12 +162,28 @@ class TestScrapeEndpoint:
         )
         assert response.status_code == 403
 
-    def test_scrape_with_valid_credential_enqueues(self, client, admin_headers, monkeypatch):
-        """A correctly-credentialed request still reaches the enqueue path."""
-        from adapters.queue.tasks import scrape_listings
+    @pytest.fixture
+    def scrape_broker(self, monkeypatch):
+        """An in-memory Redis and a recording publisher: no broker is touched.
 
-        fake_task = type("FakeTask", (), {"id": "fake-task-id"})()
-        monkeypatch.setattr(scrape_listings, "delay", lambda *a, **k: fake_task)
+        ``POST /scrape`` reserves a single-flight lease and publishes with
+        ``apply_async`` (Story 1.18); unpatched, this test would enqueue a real
+        scrape on whatever Redis the environment resolves.
+        """
+        from adapters.queue.tasks import scrape_listings
+        from tests.fake_queue_redis import FakeQueueRedis
+
+        redis = FakeQueueRedis()
+        published: list = []
+        monkeypatch.setattr("infra.redis_client.get_redis", lambda: redis)
+        monkeypatch.setattr(
+            scrape_listings, "apply_async", lambda **kwargs: published.append(kwargs)
+        )
+        return redis, published
+
+    def test_scrape_with_valid_credential_enqueues(self, client, admin_headers, scrape_broker):
+        """A correctly-credentialed request still reaches the enqueue path."""
+        _redis, published = scrape_broker
 
         response = client.post(
             "/scrape",
@@ -178,7 +194,63 @@ class TestScrapeEndpoint:
         data = response.json()
         assert data["platform"] == "olx"
         assert data["status"] == "queued"
-        assert data["task_id"] == "fake-task-id"
+        assert len(published) == 1
+        assert published[0]["args"] == ["olx", {"scrape_type": "both"}]
+        assert data["task_id"] == published[0]["task_id"]
+
+    def test_scrape_duplicate_while_queued_reports_the_holder(self, client, admin_headers, scrape_broker):
+        """Story 1.18: a second trigger of the same platform and scope publishes nothing."""
+        _redis, published = scrape_broker
+        first = client.post("/scrape", json={"platform": "olx"}, headers=admin_headers).json()
+
+        response = client.post("/scrape", json={"platform": "olx"}, headers=admin_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "task_id": first["task_id"],
+            "platform": "olx",
+            "status": "already_queued",
+        }
+        assert len(published) == 1
+
+    def test_scrape_duplicate_while_running_reports_the_holder(self, client, admin_headers, scrape_broker):
+        from adapters.queue.scrape_single_flight import ScrapeSingleFlight, scrape_scope
+
+        redis, published = scrape_broker
+        first = client.post("/scrape", json={"platform": "olx"}, headers=admin_headers).json()
+        # The worker starts the task: the reservation becomes the running lease.
+        assert ScrapeSingleFlight(
+            redis,
+            platform="olx",
+            scope=scrape_scope({"scrape_type": "both"}),
+            task_id=first["task_id"],
+        ).begin()
+
+        response = client.post("/scrape", json={"platform": "olx"}, headers=admin_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "task_id": first["task_id"],
+            "platform": "olx",
+            "status": "already_running",
+        }
+        assert len(published) == 1
+
+    def test_scrape_of_another_scope_is_not_a_duplicate(self, client, admin_headers, scrape_broker):
+        # Two requests only: the route is rate-limited to 10 a minute for the
+        # whole class. Platforms are covered in test_scrape_single_flight.py.
+        _redis, published = scrape_broker
+        rent = client.post(
+            "/scrape", json={"platform": "olx", "scrape_type": "rent"}, headers=admin_headers
+        )
+        sale = client.post(
+            "/scrape", json={"platform": "olx", "scrape_type": "sale"}, headers=admin_headers
+        )
+
+        assert rent.json()["status"] == "queued"
+        assert sale.json()["status"] == "queued"
+        assert rent.json()["task_id"] != sale.json()["task_id"]
+        assert len(published) == 2
 
     def test_scrape_unknown_platform_still_returns_400_when_authorized(self, client, admin_headers):
         """Auth gate must not shadow the existing unknown-platform validation."""

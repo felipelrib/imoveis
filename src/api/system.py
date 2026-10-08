@@ -69,15 +69,49 @@ async def _check_ollama() -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
+def _consumed_queues(active: dict) -> set:
+    """Queue names from an ``inspect().active_queues()`` reply."""
+    return {
+        queue.get("name")
+        for queues in active.values()
+        for queue in (queues or [])
+        if isinstance(queue, dict)
+    }
+
+
 def _check_workers() -> dict:
+    """Worker health: who replies, and whether every routed queue has a consumer.
+
+    One ``active_queues`` round trip answers both. A routed queue nobody
+    consumes fills without a single error anywhere else (Story 1.18), so it is
+    reported as an error naming the queue.
+    """
     try:
-        from adapters.queue.celery_app import make_celery
+        from adapters.queue.celery_app import ROUTED_QUEUES, make_celery
         app = make_celery()
         i = app.control.inspect()
-        ping_res = i.ping()
-        if not ping_res:
+        active = i.active_queues()
+        if not active:
             return {"status": "error", "detail": "No workers responding"}
-        return {"status": "ok", "nodes": list(ping_res.keys())}
+        consumed = _consumed_queues(active)
+        nodes = list(active.keys())
+        unconsumed = [queue for queue in ROUTED_QUEUES if queue not in consumed]
+        if unconsumed:
+            # ``active_queues`` waits one second for replies: a node that
+            # answers late looks like a queue without a consumer. Ask once more
+            # and count what either round saw before calling it an error.
+            again = i.active_queues() or {}
+            consumed |= _consumed_queues(again)
+            nodes += [node for node in again if node not in nodes]
+            unconsumed = [queue for queue in ROUTED_QUEUES if queue not in consumed]
+        if unconsumed:
+            return {
+                "status": "error",
+                "detail": "No worker consumes queue(s): " + ", ".join(unconsumed),
+                "nodes": nodes,
+                "unconsumed_queues": unconsumed,
+            }
+        return {"status": "ok", "nodes": nodes, "unconsumed_queues": []}
     except Exception as exc:
         return {"status": "error", "detail": str(exc)}
 
@@ -256,7 +290,9 @@ def _pipeline_proxy_summary() -> dict:
 
 
 def _pipeline_queue_lengths(redis) -> dict:
-    return {"scrapers": redis.llen("scrapers"), "ai": redis.llen("ai")}
+    from adapters.queue.celery_app import ROUTED_QUEUES
+
+    return {queue: redis.llen(queue) for queue in ROUTED_QUEUES}
 
 
 def _scraper_pipeline_statuses(redis) -> dict:

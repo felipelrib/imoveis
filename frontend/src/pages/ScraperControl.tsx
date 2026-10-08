@@ -259,9 +259,20 @@ export default function ScraperControl() {
     setScraping(true)
     addLog('info', t('scraper.logTrigger', { platform: formatPlatform(selectedPlatform), type: scrapeTypeLabel(scrapeType) }))
     try {
-      await triggerScrape(selectedPlatform, {}, scrapeType)
-      addLog('success', t('scraper.logEnqueued', { time: ts() }))
-      showToast(t('scraper.toastEnqueued'), { type: 'success' })
+      // POST /scrape is single-flight per platform and scope (Story 1.18): a
+      // duplicate answers 200 with the status of the scrape that already exists
+      // and publishes nothing, so "enqueued" would not be true.
+      const result = await triggerScrape(selectedPlatform, {}, scrapeType)
+      if (result?.status === 'already_running') {
+        addLog('warn', t('scraper.logAlreadyRunning', { time: ts() }))
+        showToast(t('scraper.toastAlreadyRunning'), { type: 'warning' })
+      } else if (result?.status === 'already_queued') {
+        addLog('warn', t('scraper.logAlreadyQueued', { time: ts() }))
+        showToast(t('scraper.toastAlreadyQueued'), { type: 'warning' })
+      } else {
+        addLog('success', t('scraper.logEnqueued', { time: ts() }))
+        showToast(t('scraper.toastEnqueued'), { type: 'success' })
+      }
     } catch (e) {
       addLog('error', t('scraper.logError', { time: ts(), message: errMessage(e) }))
       showToast(t('scraper.toastScrapeFailed'), { type: 'error' })

@@ -17,7 +17,7 @@ pip install -r requirements.txt
 (cd frontend && npm install && npm run dev)
 ```
 
-Compose stack (primary project `imoveis`): `postgres` (PostGIS 17-3.5), `redis`, `api`, `worker_ai`, `worker_scraper`, `beat`, `ollama_init`, `flaresolverr`. Primary DB: `realestate`.
+Compose stack (primary project `imoveis`): `postgres` (PostGIS 17-3.5), `redis`, `api`, `worker_ai`, `worker_scraper`, `worker_periodic`, `beat`, `ollama_init`, `flaresolverr`. Primary DB: `realestate`.
 
 ## Validation (never raw pytest / npm test)
 

@@ -55,7 +55,7 @@ def test_admin_listing_claims_refresh_queues(client_with_auth):
         )
     assert response.status_code == 200, response.text
     assert response.json() == {"queued": True, "task_id": "task-claim-1"}
-    mock_apply.assert_called_once_with(queue="scrapers")
+    mock_apply.assert_called_once_with(queue="periodic")
     mock_audit.assert_called_once_with(
         "listing_claim_stats_refresh",
         {"task_id": "task-claim-1"},
