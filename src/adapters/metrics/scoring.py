@@ -4,6 +4,8 @@ Replaces the original global in-memory approach with:
 - SQL window functions for per-neighbourhood stats (no OOM risk)
 - Mean, median, stddev, z-score, percentile rank stored per property
 - Rent and sale price/m² cohorts kept separate (BIN-84)
+- The price a Listing contributes to a cohort comes from core.price_basis
+  (Story 1.3): this module never selects a Listing price itself
 - Single-query bulk recalculation when weights change (instantaneous)
 - score_single_property() for post-AI-enrichment updates
 """
@@ -19,6 +21,14 @@ from sqlalchemy.orm import Session
 from adapters.db.models import MetricsScoring, Neighborhood, Property, PropertyListing
 from core.entities import ScoringWeights
 from core.neighbourhood_quality import aggregate_neighbourhood_score
+from core.price_basis import (
+    COHORT_PRICE_FOR_TYPE_SQL,
+    COHORT_PRICE_SQL,
+    PRICE_BASIS_HEADLINE_SQL,
+    CohortPrice,
+    property_cohort_prices,
+    row_price_basis,
+)
 from infra.config import get_config
 from infra.logging import get_logger
 
@@ -172,6 +182,7 @@ def _update_metrics_score(
 def _apply_type_fields(
     ms: MetricsScoring,
     *,
+    price_basis: str,
     price_per_m2_rent: Optional[float],
     price_per_m2_sale: Optional[float],
     neighborhood_mean_rent: Optional[float],
@@ -187,6 +198,7 @@ def _apply_type_fields(
     combined_score_rent: Optional[float] = None,
     combined_score_sale: Optional[float] = None,
 ) -> None:
+    ms.price_basis = price_basis
     ms.price_per_m2_rent = price_per_m2_rent
     ms.price_per_m2_sale = price_per_m2_sale
     ms.neighborhood_mean_rent = neighborhood_mean_rent
@@ -211,6 +223,8 @@ def compute_neighborhood_stats(
 
     Rent and sale $/m² are cohorted separately from active property_listings
     (BIN-84). Legacy columns use the primary listing type (rent preferred).
+    Listing prices come from core.price_basis (Story 1.3); each row is stamped
+    with the basis of its rent price/m².
 
     Args:
         session: Active SQLAlchemy session.
@@ -221,9 +235,9 @@ def compute_neighborhood_stats(
     """
     weights = _scoring_weights()
 
-    # where_clause/_COHORT_KEY_SQL are fixed module constants (never
-    # user-supplied text); :nkey is a bound parameter. Assembled via plain
-    # concatenation (not an f-string) per BIN-135.
+    # where_clause/_COHORT_KEY_SQL/COHORT_PRICE_SQL are fixed module constants
+    # (never user-supplied text); :nkey is a bound parameter. Assembled via
+    # plain concatenation (not an f-string) per BIN-135.
     where_clause = (
         ("AND " + _COHORT_KEY_SQL + " = :nkey")
         if neighborhood_key is not None
@@ -232,17 +246,9 @@ def compute_neighborhood_stats(
 
     sql = text(
         """
-        WITH listing_min AS (
-            SELECT
-                pl.property_id,
-                pl.listing_type,
-                MIN(pl.price) AS price
-            FROM property_listings pl
-            WHERE pl.active = true
-              AND pl.price > 0
-              AND pl.listing_type IN ('rent', 'sale')
-            GROUP BY pl.property_id, pl.listing_type
-        ),
+        WITH listing_min AS ("""
+        + COHORT_PRICE_SQL
+        + """        ),
         has_listing AS (
             SELECT DISTINCT property_id FROM listing_min
         ),
@@ -253,7 +259,8 @@ def compute_neighborhood_stats(
         + _COHORT_KEY_SQL
         + """ AS n_key,
                 lm.listing_type,
-                lm.price / NULLIF(p.area_m2, 0) AS price_per_m2
+                lm.price / NULLIF(p.area_m2, 0) AS price_per_m2,
+                lm.price_basis
             FROM properties p
             JOIN listing_min lm ON lm.property_id = p.id
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
@@ -276,7 +283,10 @@ def compute_neighborhood_stats(
                         THEN 'sale'
                     ELSE 'rent'
                 END AS listing_type,
-                p.price / NULLIF(p.area_m2, 0) AS price_per_m2
+                p.price / NULLIF(p.area_m2, 0) AS price_per_m2,
+                """
+        + PRICE_BASIS_HEADLINE_SQL
+        + """ AS price_basis
             FROM properties p
             LEFT JOIN neighborhoods n ON n.id = p.neighborhood_id
             WHERE p.area_m2 IS NOT NULL
@@ -296,6 +306,7 @@ def compute_neighborhood_stats(
                 t.n_key,
                 t.listing_type,
                 t.price_per_m2,
+                t.price_basis,
                 AVG(t.price_per_m2)
                     OVER (PARTITION BY t.n_key, t.listing_type) AS neighborhood_mean,
                 (
@@ -332,7 +343,9 @@ def compute_neighborhood_stats(
                 MAX(percentile_rank) FILTER (WHERE listing_type = 'rent')
                     AS percentile_rank_rent,
                 MAX(percentile_rank) FILTER (WHERE listing_type = 'sale')
-                    AS percentile_rank_sale
+                    AS percentile_rank_sale,
+                MAX(price_basis) FILTER (WHERE listing_type = 'rent')
+                    AS price_basis_rent
             FROM stats
             GROUP BY property_id
         )
@@ -347,7 +360,8 @@ def compute_neighborhood_stats(
             neighborhood_stddev_rent,
             neighborhood_stddev_sale,
             percentile_rank_rent,
-            percentile_rank_sale
+            percentile_rank_sale,
+            price_basis_rent
         FROM pivoted
         """
     )
@@ -399,6 +413,7 @@ def compute_neighborhood_stats(
         std_sale = float(row[8]) if row[8] is not None else None
         pct_rent = float(row[9]) if row[9] is not None else None
         pct_sale = float(row[10]) if row[10] is not None else None
+        price_basis = row_price_basis(row[11])
 
         primary = primary_listing_type_for_ppm(ppm_rent, ppm_sale)
         if primary is None:
@@ -475,6 +490,7 @@ def compute_neighborhood_stats(
 
         _apply_type_fields(
             ms,
+            price_basis=price_basis,
             price_per_m2_rent=ppm_rent,
             price_per_m2_sale=ppm_sale,
             neighborhood_mean_rent=mean_rent,
@@ -588,22 +604,14 @@ def get_neighborhood_stats_cached(
     if cached:
         return json.loads(cached)
 
-    # _COHORT_KEY_SQL is a fixed module constant (never user-supplied text);
-    # :nkey/:lt are bound parameters. Assembled via plain concatenation
-    # (not an f-string) per BIN-135.
+    # _COHORT_KEY_SQL/COHORT_PRICE_FOR_TYPE_SQL are fixed module constants
+    # (never user-supplied text); :nkey/:lt are bound parameters. Assembled
+    # via plain concatenation (not an f-string) per BIN-135.
     sql = text(
         """
-        WITH listing_min AS (
-            SELECT
-                pl.property_id,
-                pl.listing_type,
-                MIN(pl.price) AS price
-            FROM property_listings pl
-            WHERE pl.active = true
-              AND pl.price > 0
-              AND pl.listing_type = :lt
-            GROUP BY pl.property_id, pl.listing_type
-        ),
+        WITH listing_min AS ("""
+        + COHORT_PRICE_FOR_TYPE_SQL
+        + """        ),
         typed AS (
             SELECT
                 lm.price / NULLIF(p.area_m2, 0) AS price_per_m2
@@ -657,25 +665,24 @@ def get_neighborhood_stats_cached(
     return stats
 
 
-def _min_listing_prices(session: Session, property_id) -> dict[str, float]:
-    """Return {listing_type: min_price} for active listings on a property."""
+def _listing_cohort_prices(session: Session, property_id) -> dict[str, CohortPrice]:
+    """Return {listing_type: CohortPrice} for a property's Listings.
+
+    Loads the raw columns only; which Listings count and which price each one
+    contributes is decided by core.price_basis (the mirror of the SQL the bulk
+    path runs).
+    """
     rows = (
-        session.query(PropertyListing.listing_type, PropertyListing.price)
-        .filter(
-            PropertyListing.property_id == property_id,
-            PropertyListing.active.is_(True),
-            PropertyListing.price > 0,
-            PropertyListing.listing_type.in_(("rent", "sale")),
+        session.query(
+            PropertyListing.listing_type,
+            PropertyListing.price,
+            PropertyListing.rent_monthly,
+            PropertyListing.active,
         )
+        .filter(PropertyListing.property_id == property_id)
         .all()
     )
-    out: dict[str, float] = {}
-    for listing_type, price in rows:
-        lt = str(listing_type)
-        val = float(price)
-        if lt not in out or val < out[lt]:
-            out[lt] = val
-    return out
+    return property_cohort_prices(row._mapping for row in rows)
 
 
 def score_single_property(session: Session, property_id: str) -> None:
@@ -694,15 +701,17 @@ def score_single_property(session: Session, property_id: str) -> None:
         return
 
     n_key = _property_neighborhood_key(session, prop)
-    listing_prices = _min_listing_prices(session, prop.id)
+    listing_prices = _listing_cohort_prices(session, prop.id)
 
     ppm_rent = None
     ppm_sale = None
+    rent_basis = None  # set only when a Listing supplies the rent price
     if prop.area_m2 and prop.area_m2 > 0:
         if "rent" in listing_prices:
-            ppm_rent = listing_prices["rent"] / prop.area_m2
+            ppm_rent = listing_prices["rent"].price / prop.area_m2
+            rent_basis = listing_prices["rent"].price_basis
         if "sale" in listing_prices:
-            ppm_sale = listing_prices["sale"] / prop.area_m2
+            ppm_sale = listing_prices["sale"].price / prop.area_m2
         if ppm_rent is None and ppm_sale is None and prop.price and prop.price > 0:
             # Legacy row with no listings — treat like decisioning (rent preferred).
             props = prop.props_json or {}
@@ -795,6 +804,7 @@ def score_single_property(session: Session, property_id: str) -> None:
 
     _apply_type_fields(
         ms,
+        price_basis=row_price_basis(rent_basis),
         price_per_m2_rent=ppm_rent,
         price_per_m2_sale=ppm_sale,
         neighborhood_mean_rent=mean_rent if ppm_rent is not None else None,

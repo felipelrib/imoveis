@@ -184,8 +184,19 @@ class MetricsScoring(Base):
     percentile_rank_sale = Column(Float)
     combined_score_rent = Column(Float)
     combined_score_sale = Column(Float)
+    # Story 1.3 (AD-3): which price produced price_per_m2_rent. Written only by
+    # adapters/metrics/scoring.py from core.price_basis; a row with no rent
+    # price/m² or scored from the legacy properties.price fallback is headline.
+    price_basis = Column(String, nullable=False, server_default=sa.text("'headline'"))
     meta = Column(JSON)
     updated_at = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "price_basis IN ('rent_monthly', 'headline')",
+            name="ck_metrics_scoring_price_basis",
+        ),
+    )
 
 
 class PriceHistory(Base):

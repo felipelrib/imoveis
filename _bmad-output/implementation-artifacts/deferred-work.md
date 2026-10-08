@@ -430,3 +430,19 @@ location: src/core/dedupe.py:264
 source_spec: `spec-1-1-total-monthly-cost-on-the-persist-path.md`
 reason: (a) The noop check relies on every cost input being mirrored in `props_json` or `price` (true today for Zap, QuintoAndar and OLX; pinned by a test only for Zap) - state the invariant at `_is_unchanged` or compare `cost_source` there. (b) `backfill_listing_costs` locks each batch `FOR UPDATE` in id order (`src/core/dedupe.py:681`) while a scrape updates a candidate's rent then sale row in one transaction; a deadlock aborts the task and `max_retries=2` is dead config because nothing calls `self.retry`. A rerun is idempotent, so the cost today is an operator rerun.
 status: open
+
+### DW-38: 67 active QuintoAndar rent Listings on the primary carry a rent_monthly above their headline price, which the cost rules of Story 1.1 should not produce (the headline is rent plus fees).
+origin: spec-deferred 456caf7293f8
+location: src/core/listing_cost.py
+source_spec: `spec-1-3-one-cohort-price-basis-for-rent.md`
+severity: low
+reason: Read-only probe of the primary on 2026-10-08: count(*) FILTER (WHERE rent_monthly > price) over active rent Listings = 67 for quintoandar, 0 for olx and zapimoveis. Scoring now reads rent_monthly for these rows, so their rent price/m2 rises instead of falling. Not checked: the raw payloads of those 67 rows (rentPrice against totalCost), which would say whether the platform publishes them that way or the legacy-row reconstruction in core/listing_cost.py picked the wrong field.
+status: open
+
+### DW-39: The cached cohort statistics and the bulk scoring stage disagree on which Listing-less Properties fall back to properties.price.
+origin: spec-deferred 72217d20779d
+location: src/adapters/metrics/scoring.py:617
+source_spec: `spec-1-3-one-cohort-price-basis-for-rent.md`
+severity: low
+reason: Pre-existing, unchanged by this story. compute_neighborhood_stats uses the fallback when the Property has no active priced rent/sale Listing (NOT EXISTS in has_listing); get_neighborhood_stats_cached uses it only when the Property has no active Listing at all. A Property whose only active Listing has price 0 is scored from properties.price by the bulk path and left out of the cohort by the cached path, so the single-property z-score is computed against a slightly different cohort.
+status: open
