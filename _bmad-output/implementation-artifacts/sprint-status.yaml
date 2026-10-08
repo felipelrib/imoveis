@@ -84,7 +84,7 @@ development_status:
   1-15-dependency-and-image-scanning-restored: backlog
   1-16-the-admin-audit-trail-names-who-acted: backlog
   1-17-ledger-and-loop-hygiene: backlog
-  1-18-periodic-tasks-not-blocked-by-scrapes: awaiting-operator
+  1-18-periodic-tasks-not-blocked-by-scrapes: done
   epic-1-retrospective: optional
 
   epic-2: backlog

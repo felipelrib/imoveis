@@ -731,3 +731,11 @@ source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
 severity: low
 reason: _bmad-output/planning-artifacts/architecture/architecture-imoveis-2026-07-23/ ARCHITECTURE-SPINE.md AD-7: "Docker Compose (Postgres/PostGIS, Redis, API, Celery scrapers + ai + beat, ...)". Story 1.18 adds worker_periodic and states it in AGENTS.md and docs/; the spine is a planning artifact amended by the architecture workflow, not by a dev session.
 status: open
+
+### DW-75: The Playwright e2e suite proxies any unmocked `/api` call to whatever listens on the API port, which on a developer host is the primary API.
+origin: review of story 1-18 (follow-up pass, 2026-10-08)
+location: frontend/vite.config.js (dev-server `proxy`), frontend/playwright.config.js
+source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
+severity: medium (unverified)
+reason: Every e2e spec mocks the calls it knows about with `page.route`; a call a spec forgets to mock is forwarded by the Vite dev server's proxy to the configured API target. On this host that target is the live primary API on :8000, so a forgotten mock of a write (a favourite, a saved search, `POST /scrape`) would act on real data, the same class of leak as the raw-pytest incident of 2026-10-08 that the Redis connection guard closed for the backend. Not checked: which target the gate's e2e run actually resolves, and whether any current spec leaves a write unmocked. A fix points the e2e dev server at a closed port or a stub that fails loudly on an unmocked call.
+status: open
