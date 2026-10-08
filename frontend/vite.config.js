@@ -10,6 +10,12 @@ const apiPort = Number(process.env.API_PORT) || 8000
 
 export default defineConfig({
   plugins: [react()],
+  // maplibre-gl starts its worker as a module worker (`new Worker(url, { type:
+  // 'module' })`), so the `?worker&url` import in MapView.tsx must be emitted as
+  // an ES module in dev and in the build alike (Vite's default is `iife`).
+  worker: {
+    format: 'es',
+  },
   server: {
     port: frontendPort,
     strictPort: true,

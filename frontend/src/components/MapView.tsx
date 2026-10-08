@@ -7,7 +7,16 @@ import {
   type GeoJSONSource,
   type MapLayerMouseEvent,
   type StyleSpecification,
+  setWorkerUrl,
 } from 'maplibre-gl'
+// maplibre-gl 6 is ESM-only and loads its web worker from a URL. Left alone it
+// derives that URL at run time from its own module location, which no bundler
+// can follow: Vite's dev pre-bundle and the production build both moved the
+// library and left the worker behind, so the GeoJSON point layers (tiled in the
+// worker) never drew while the raster basemap did (DW-53). `?worker&url` is the
+// documented Vite route: Vite bundles the worker with its shared chunk and
+// returns the URL it is served from, in dev and in the build.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { FeatureCollection, Feature, Point } from 'geojson'
 import { useLocale } from '../i18n/LocaleContext.jsx'
@@ -20,6 +29,9 @@ import type { TFunction } from '../i18n/LocaleContext.jsx'
 
 /** A property guaranteed to have numeric coordinates (post-filter). */
 type LocatedProperty = Property & { lat: number; lon: number }
+
+// Must run before the first Map is constructed: the worker pool reads it once.
+setWorkerUrl(maplibreWorkerUrl)
 
 function scoreColor(v: number | null | undefined): string {
   if (v == null) return '#6b7280'  // grey for no score

@@ -144,3 +144,5 @@ development_status:
 followups:
   # map view fetched page_size=200 against an API cap of 100 (422), so no point was ever drawn on the real API
   v0.14-fu1-map-view-fetch-within-api-page-size: done
+  # maplibre-gl 6 worker script was not served by Vite (dev 404, build emitted none), so no map point rendered (DW-53)
+  v0.14-fu2-maplibre-worker-served: done
