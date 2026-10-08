@@ -2,7 +2,7 @@
 title: 'Story 1.6 — Cohort price-per-m2 percentiles computed in the pipeline'
 type: 'feature'
 created: '2026-10-08'
-status: 'awaiting-operator'
+status: done
 baseline_revision: '27c11048888ac8a5ad5d9526f3332916cfae18db'
 review_loop_iteration: 0
 followup_review_recommended: false
@@ -344,3 +344,16 @@ Status: awaiting-operator
 - The stand-in used for the operator queries holds what the SQL computes; the real rows go through the Python division and the ORM. The integration tests cover that path on small data.
 - 16 active Properties whose label carries a non-ASCII space or a typographic apostrophe are ranked in a cohort of their own spelling.
 - Peers lag between full runs (deferred entry), now cheaper to close because the stage is fast.
+
+## Operator Confirmation
+
+Confirmed 2026-10-08: the external actions this story owed were carried out.
+
+- Wait for the orchestrator to merge feat/v0.14-s1.6-cohort-price-per-m2-percentiles into main, then from the primary checkout in Git Bash run: bash scripts/agent/migrate-primary.sh (it refuses while a cloud backfill runner is alive - wait or pause the runner, never delete the Redis keys). Do this BEFORE rebuilding any container: the new scoring code writes the new columns. Verify read-only: SELECT version_num FROM alembic_version; returns e6f7a8b9c0d1, and SELECT count(*) FROM metrics_scoring WHERE percentile_evaluated_at IS NOT NULL; returns 0.
+- Rebuild and restart the primary stack so the API and workers run the merged scoring code: ./scripts/restart.sh --build. Verify: the api, worker and beat containers are up and GET http://localhost:8000/health answers.
+- Straight after the rebuild, recalculate the stored scores (one request, one transaction; it took 62 minutes before this story; the stage's statement now runs in 7.8 s on the primary and the whole request is expected to take minutes, not measured end to end): curl --max-time 5400 -X POST http://localhost:8000/admin/scoring/recalculate -H 'X-API-Key: <the API key>'. Verify: the response carries stat_rows_updated close to 200,000. Note the run time.
+- Run the two step 4 queries in docs/features/v0.14-s1.6-cohort-price-per-m2-percentiles.md against the primary (read-only: docker exec -i imoveis-postgres-1 sh -c 'PGOPTIONS="-c default_transaction_read_only=on" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < query.sql). Expect about 109,000 rent and 123,000 sale rows with a value, about 4,500 and 3,700 suppressed, cheapest-quarter counts a little under a quarter of the rows with a value (about 26,500 rent and 30,100 sale), and 0 cohort members never evaluated apart from Properties first seen while the recalculation ran.
+- Run the two step 5 queries in the same doc (read-only). The first must return 0; the second returns one row per listing type: wrong must be 0 in both, checked about 113,600 for rent and 126,700 for sale.
+- Record the run time of the recalculation and the result rows of steps 4 and 5 in that doc under a new heading 'Operator steps applied on the primary (<date>)' placed after 'Operator steps (primary stack)', set the doc's Status line to done, and commit it as docs(v0.14-s1.6).
+
+_Appended by hand in place of `bmad-loop confirm` (the loop was not in use that day): the agent operator carried these actions out and recorded the evidence in the feature doc, and the story was advanced from `awaiting-operator` to `done`._

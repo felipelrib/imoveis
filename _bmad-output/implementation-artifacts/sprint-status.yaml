@@ -72,7 +72,7 @@ development_status:
   1-3-one-cohort-price-basis-for-rent: done
   1-4-primary-migration-cannot-bypass-the-backfill-guard: done
   1-5-corpus-repair-applied-and-verified: done
-  1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline: awaiting-operator
+  1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline: done
   1-7-percentile-badge-on-cards-and-percentile-filter: backlog
   1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow: backlog
   1-9-saved-search-new-match-detection-on-the-pipeline: backlog
