@@ -70,7 +70,8 @@ origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-migration-bac
 location: scripts/agent/migrate-primary.sh:64-67 (`REDIS_HOST`, `db=0`, `HEARTBEAT_KEY`, `MIGRATE_LOCK_KEY`) vs src/infra/config.py (`redis.url`, `backfill.redis_prefix`)
 source_spec: `_bmad-output/implementation-artifacts/spec-dw-migration-backfill-mutual-exclusion.md`
 reason: The script talks to `localhost:${REDIS_PORT}` db 0 with the literal keys `backfill:gemma:active` / `backfill:gemma:migrating`; the runner resolves its client from `REDIS_URL` and its keys from `backfill.redis_prefix`. Point `REDIS_URL` at another host or a non-zero db — or change the prefix — and the two write into different keyspaces: neither side ever sees the other's key, both proceed, and every test stays green (the parity test added in v0.13-fu6 pins only the *prefix default*, not the endpoint). Pre-existing for `:active` since the guard was written; the new `:migrating` key inherits it. Fixing it means giving the shell script the same config resolution the runner uses (or having it refuse when the two disagree), which is a change to how agent scripts read app config — deliberately outside the fu6 patch scope.
-status: open
+status: resolved
+resolution: resolved by Story 1.4 (`v0.14-s1.4`, spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md). `scripts/agent/migrate-primary.sh` no longer writes a host, db or key name: it resolves the endpoint and the prefix once through `infra.config.load_config()` (`cfg.redis.url`, `cfg.backfill.redis_prefix`) after sourcing `.env.local`, builds every client with `redis.Redis.from_url`, derives `<prefix>:migrating` / `<prefix>:active`, and refuses before any Redis call (dry run included) when the resolution fails. `REDIS_PORT` is no longer an input; a value that disagrees with the runner's endpoint is a warning. `src/tests/unit/test_migrate_primary_guard.py` proves both directions on db 7 with prefix `backfill:alt` against the runner's real `get_redis` / `Heartbeat` / `MigrationGate`; the literal-pinning parity test is replaced by one in `src/tests/unit/test_migrate_primary_only_path.py` that fails on a hardcoded host, db or key.
 
 ### DW-9: The `:active` heartbeat is beaten only per completed row, so a single slow enrichment lets it lapse under a live writer and migrate-primary.sh reads "idle"
 origin: review-defer (bmad-dev-auto follow-up review pass, spec-dw-migration-backfill-mutual-exclusion.md), 2026-08-11
@@ -291,7 +292,8 @@ location: scripts/start.sh:60-63 (`compose_cmd run --rm api python -m alembic up
 source_spec: n/a (pre-dates the scripts/agent safety regime; surfaced while verifying story 3-1's operator handoff)
 severity: high
 reason: `start.sh` runs `alembic upgrade head` inside the api container against whatever `COMPOSE_PROJECT_NAME` resolves to — for the primary checkout that is `imoveis`, i.e. the primary `realestate` database. CLAUDE.md states the opposite twice: "Migrating the primary `realestate` DB is an explicit operator step: `bash scripts/agent/migrate-primary.sh`" and "Nothing migrates primary automatically". `migrate-primary.sh` takes the `backfill:gemma:migrating` key with set-then-check *before* refusing on the runner's live `backfill:gemma:active` heartbeat — the mutual exclusion v0.13-fu6 built to close DW-3/DW-4. `start.sh` has none of it: no heartbeat probe, no migration lock, no refusal. Starting the dev stack during a multi-day backfill with a pending migration would run `ALTER TABLE` under a live writer, which is exactly the race fu6 closed through the other door. Observed harmless on 2026-08-12 (schema already at head `b65411932ef9`, backfill finished, lease free) — the gap is structural, not a live incident. Same family as v0.13-fu5 (the `--volumes` paths in stop.sh/clean.sh): the `scripts/*.sh` dev helpers pre-date the `scripts/agent/` regime and were never audited against it. Fixing it is a decision about what `start.sh` should do when migrations are pending — refuse and point at `migrate-primary.sh`, or delegate to it — plus an audit of the remaining `scripts/*.sh` helpers for other primary-stack mutations, which is more than a patch.
-status: open
+status: resolved
+resolution: resolved by Story 1.4 (`v0.14-s1.4`, spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md) — refuse and point, not delegate. On the primary compose project (`${PRIMARY_COMPOSE_PROJECT:-imoveis}`, which a checkout without `.env.local` also resolves to) `scripts/start.sh` runs no schema-changing alembic command: it reads `alembic_version` against the script heads, reports, and on a pending or unreadable state warns with `bash scripts/agent/migrate-primary.sh`; the stack still starts and the exit code stays 0. Isolated compose projects keep migrating their own database (`migrate_isolated_project`). The hand-run `stamp head` advice is gone. `scripts/agent/run-services.sh`, named in the location above, no longer exists (retired with ADR 0007). `src/tests/unit/test_migrate_primary_only_path.py` drives the real `start.sh` against stub `docker`/`curl` and scans `scripts/`, `.claude/hooks/`, `deploy/`, the compose files and the Dockerfiles for a mutating alembic invocation outside the allowlist. The `scripts/*.sh` audit is recorded in docs/features/v0.14-s1.4-primary-migration-cannot-bypass-the-backfill-guard.md; it found no other path that changes the primary schema. Closes `epic-3-retro-item-3`.
 
 ### DW-33: .env.local is dual-purpose — the systemd runner's EnvironmentFile is also sourced into the pytest environment, so operator env silently breaks the test gate
 origin: operator-verification (landing v0.13-fu5, 2026-08-12)
@@ -445,4 +447,44 @@ location: src/adapters/metrics/scoring.py:617
 source_spec: `spec-1-3-one-cohort-price-basis-for-rent.md`
 severity: low
 reason: Pre-existing, unchanged by this story. compute_neighborhood_stats uses the fallback when the Property has no active priced rent/sale Listing (NOT EXISTS in has_listing); get_neighborhood_stats_cached uses it only when the Property has no active Listing at all. A Property whose only active Listing has price 0 is scored from properties.price by the bulk path and left out of the cohort by the cached path, so the single-property z-score is computed against a slightly different cohort.
+status: open
+
+### DW-40: migrate-primary.sh and a backfill runner agree on the Redis endpoint and key prefix only when both resolve from the same environment; a runner installed with another env file or started by hand from a shell with different exports is outside what the script can see.
+origin: spec-deferred 40114c916b96
+location: scripts/agent/migrate-primary.sh:44-52,97-131
+source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
+severity: medium
+reason: The script resolves through infra.config in its shell environment plus $REPO_ROOT/.env.local (bash source). scripts/install-backfill-runner.sh and .ps1 accept --env-file, and scripts/windows/backfill_host.py reads its file literally with no shell expansion; scripts/dev/backfill_gemma.py started by hand reads no env file at all. An exported REDIS_URL or IMOVEIS_BACKFILL__REDIS_PREFIX in the operator's shell that is not in .env.local moves the script and not an installed runner. Before this story any non-default value split the two sides; what is left is a mismatch between env sources. Not checked: how the runner on this host is started today. A fix needs a decision on which source is authoritative (refuse when a guard-relevant variable comes from the shell and not the file, or have the runner publish its resolved prefix for the script to compare).
+status: open
+
+### DW-41: The behavioural regression tests for start.sh and migrate-primary.sh are harness-marked, and a forced `validate.py --tier backend` run (the bmad-loop verify) neither runs the harness gate nor records that it was skipped in the stamp.
+origin: spec-deferred 3f157581f4c1
+location: scripts/agent/validate.py:392,591-623
+source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
+severity: medium
+reason: scripts/agent/validate.py fills `extras` only for the auto tier, runs the harness gate only when "harness" is in extras or the tier is full, deselects the marker in the unit step, and check_stamp compares tier rank only. A change to scripts/ merged on a forced backend run is stamped without any test that spawns these scripts. Predates this story. This story moved the pure-Python checks (the migration scan, the schema-check execution, the two static script checks) out of the harness mark so they run in every tier; the tests that spawn the shell scripts still depend on the harness gate.
+status: open
+
+### DW-42: Eight harness tests in test_windows_backfill_host.py cannot pass when the gate runs from a linked git worktree, so the harness gate was red in every story worktree; they are now skipped there instead of fixed.
+origin: spec-deferred aeeb9fd93b8d
+location: src/tests/unit/test_windows_backfill_host.py:98
+source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
+severity: low
+reason: The tests pass the real checkout as --repo-root, and scripts/windows/backfill_host.py:148 refuses a checkout whose .git is not a directory ("Install from the permanent primary checkout, not a linked worktree"). Reproduced on the unchanged files in this worktree: 5 failed, 12 passed. This story added a skipif on a linked worktree to the three test functions (8 cases) so the gate can pass here; from the primary checkout they run as before. A real fix builds a fixture checkout with a .git directory for these tests, as the other tests in the file already do, so they run everywhere.
+status: open
+
+### DW-43: scripts/test.sh runs pytest inside the primary project's api container, whose DATABASE_URL and REDIS_URL are the primary ones.
+origin: spec-deferred ae41cffb7ddc
+location: scripts/test.sh:37
+source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
+severity: low (unverified)
+reason: scripts/test.sh:37-47 uses compose_cmd run --rm api python -m pytest for unit, integration and e2e scopes. src/tests/integration/conftest.py refuses a database that is not wipe-safe (src/tests/db_isolation.py:44), so the integration scope should fail fast on the primary instead of wiping it. Read, not run: whether every unit test that touches Redis is equally guarded inside that container was not checked. validate.py is the supported gate.
+status: open
+
+### DW-44: stop.sh, restart.sh and clean.sh take the primary containers down without checking the backfill heartbeat.
+origin: spec-deferred f10184983941
+location: scripts/stop.sh:40
+source_spec: `spec-1-4-primary-migration-cannot-bypass-the-backfill-guard.md`
+severity: low
+reason: scripts/stop.sh:40 and scripts/clean.sh:71,79 call compose down for whatever project the checkout names; restart.sh calls stop.sh. A host-side runner in the middle of a pass loses Postgres and Redis. No schema or data change and volumes are kept, so this is an interruption, not corruption. Found by the scripts audit of this story (DW-32 asked for it).
 status: open

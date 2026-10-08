@@ -15,9 +15,10 @@ For development in `C:\Workfolder\imoveis`, install Git for Windows, Python
 **3.11**, Node.js, Docker Desktop using Linux containers, and Ollama. Use the
 existing private configuration and Docker volumes when migrating an installation;
 [the migration record](windows-migration.md) identifies the state Git cannot carry.
-Do not run the initial full-stack setup/start scripts over an existing primary
-installation: they include automatic migrations. Agent validation uses its own
-throwaway database; primary migration has a separate operator procedure.
+The setup/start scripts never migrate the primary database: on the primary
+compose project `scripts/start.sh` only reports whether the schema is at head
+and names the operator step, `bash scripts/agent/migrate-primary.sh`. Agent
+validation uses its own throwaway database.
 
 From PowerShell in the checkout:
 
@@ -95,7 +96,11 @@ This will:
 2. Install frontend dependencies
 3. Build Docker images (postgres, redis, api, workers)
 4. Start the full stack with health checks (API + background Vite on :5173)
-5. Run Alembic database migrations
+5. Report the database schema state. On the primary compose project (`imoveis`, the
+   default) nothing is migrated: apply migrations with the operator step
+   `bash scripts/agent/migrate-primary.sh`, which takes the migration lock and refuses
+   under a live backfill runner. A fresh install always needs it once. A checkout whose
+   `.env.local` names another (isolated) compose project is migrated by `start.sh` itself.
 
 ### Local API key (required for the SPA)
 
@@ -130,7 +135,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 
 | Script | What it does |
 |--------|-------------|
-| `./scripts/start.sh` | Start stack + background Vite on :5173 (migrations included) |
+| `./scripts/start.sh` | Start stack + background Vite on :5173. Primary project: reports the schema state, never migrates (pending → `bash scripts/agent/migrate-primary.sh`). Isolated project: migrates its own database |
 | `./scripts/stop.sh` | Stop containers and the background Vite process |
 | `./scripts/restart.sh` | Stop + start (`--build` rebuilds images; Vite comes back up) |
 | `./scripts/test.sh` | Run tests (`unit`, `integration`, `e2e`, or `all`) |

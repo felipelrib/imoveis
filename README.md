@@ -75,7 +75,7 @@ cd imoveis
 ./scripts/setup.sh
 ```
 
-This creates `.env.local` (if missing), builds/starts Docker services, runs migrations, and installs frontend deps.
+This creates `.env.local` (if missing), installs frontend deps and builds/starts Docker services. It does not migrate the primary database: `start.sh` reports the schema state, and on a fresh install (or after a pull that carries a migration) you apply it with `bash scripts/agent/migrate-primary.sh`.
 
 ### 2. Set a local API key (required for the SPA)
 
@@ -131,7 +131,7 @@ curl -s -H "X-API-Key: local-dev-api-key" http://localhost:8000/admin/health
 
 | Script               | What it does                                          |
 |----------------------|-------------------------------------------------------|
-| `./scripts/start.sh` | Start stack + background Vite on :5173 (migrations; `--no-frontend` for backend only; service names to start a subset) |
+| `./scripts/start.sh` | Start stack + background Vite on :5173 (`--no-frontend` for backend only; service names to start a subset). Never migrates the primary database: it reports the schema state and points at `bash scripts/agent/migrate-primary.sh` |
 | `./scripts/stop.sh`  | Stop containers and background Vite                   |
 | `./scripts/restart.sh`| Stop + start (`--build` to rebuild images)           |
 | `./scripts/test.sh`  | Run tests (`unit`, `integration`, `e2e`, or `all`) — prefer `scripts/agent/validate.py` for the real gate |

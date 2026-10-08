@@ -22,6 +22,15 @@ HOST = ROOT / "scripts/windows/backfill_host.py"
 INSTALLER = ROOT / "scripts/install-backfill-runner.ps1"
 pytestmark = [pytest.mark.unit, pytest.mark.harness]
 
+# These tests hand the real checkout to the host as ``--repo-root``. The host
+# refuses a linked git worktree by design ("Install from the permanent primary
+# checkout"), so from one (a bmad-loop story worktree, for example) they cannot
+# pass whatever the code does. They run from the primary checkout.
+_needs_primary_checkout = pytest.mark.skipif(
+    not (ROOT / ".git").is_dir(),
+    reason="the backfill host refuses a linked git worktree by design; run from the primary checkout",
+)
+
 
 def _module():
     spec = importlib.util.spec_from_file_location("windows_backfill_host", HOST)
@@ -86,6 +95,7 @@ def test_linked_checkout_refused_before_loading_env(host, tmp_path):
         host.bootstrap(tmp_path, tmp_path / "missing-env")
 
 
+@_needs_primary_checkout
 @pytest.mark.parametrize("routes,ok", [
     ([], False),
     (["gemma", "gemma", "gemini"], False),
@@ -108,6 +118,7 @@ def test_real_config_preflight_rejects_bad_routing_without_contacting_services(c
         assert "services were not contacted" in result.stdout
 
 
+@_needs_primary_checkout
 @pytest.mark.parametrize("database,warn", [("imoveis", True), ("realestate", False), ("custom_corpus", False)])
 def test_check_warns_only_for_config_default_database_without_exposing_values(checkout, database, warn):
     _repo, env = checkout
@@ -268,6 +279,7 @@ def test_stop_timeout_preserves_owner_and_nonce(host, checkout):
         assert json.loads((host.state_dir(repo) / "stop.json").read_text())["nonce"] == "fixture"
 
 
+@_needs_primary_checkout
 @pytest.mark.skipif(sys.platform != "win32", reason="native Task Scheduler rendering requires Windows")
 def test_task_plan_uses_pythonw_and_safe_signin_settings():
     powershell = shutil.which("powershell.exe")

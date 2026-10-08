@@ -38,8 +38,10 @@ No completion status changes as part of this migration.
 - **2-7-corpus-repair-fabricated-scores:** `awaiting-operator`. Code is merged;
   corpus-repair application and re-admission evidence remain unconfirmed. Follow
   the [operator procedure](features/v0.13-s2.7-corpus-repair-fabricated-scores.md).
-- **DW-32 / epic-3-retro-item-3:** open. Automatic primary migration in
-  `scripts/start.sh` remains a blocker before Story 2.1.
+- **DW-32 / epic-3-retro-item-3:** closed on 2026-10-08 by story `v0.14-s1.4`
+  ([feature doc](features/v0.14-s1.4-primary-migration-cannot-bypass-the-backfill-guard.md)):
+  `scripts/start.sh` no longer migrates the primary compose project. It was open,
+  and a blocker before Story 2.1, when this record was written.
 - **Stories 2-1 through 2-5:** backlog. Existing order: 2.7 operator completion +
   DW-32 → 2.1 → (2.2 and 2.3) → (2.4 and 2.5), subject to each story's explicit
   gates. Story 2.6 is done.
