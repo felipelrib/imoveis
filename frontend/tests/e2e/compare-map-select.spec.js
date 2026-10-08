@@ -110,13 +110,13 @@ test.describe("Map-view multi-select for comparison", () => {
     await expect(page.getByTestId("map-compare-select-1")).toHaveCount(0);
   });
 
-  test("map compare select does not open the property modal", async ({ page }) => {
+  test("map compare select does not open the detail panel", async ({ page }) => {
     await openMapView(page);
     await enterCompareMode(page);
     await waitForMapCompareHits(page);
 
     await page.getByTestId("map-compare-select-1").click();
-    await expect(page.locator(".modal")).toHaveCount(0);
+    await expect(page.getByTestId("detail-panel")).toHaveCount(0);
     await expect(page.getByTestId("compare-bar")).toBeVisible();
   });
 });

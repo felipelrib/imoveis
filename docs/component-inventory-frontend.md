@@ -15,7 +15,9 @@
 | Component | Category | Notes |
 |---|---|---|
 | `MapView.tsx` | Display/Geo | maplibre-gl 6 map with property markers, multi-select (BIN-115) |
-| `PropertyModal.tsx` | Display | Detail modal; fallback platform link (BIN-158); fetch-crash fix (BIN-153) |
+| `detail/PropertyDetailPanel.tsx` | Display | Right-side detail panel (v0.14-s1.8): scrim, fetch, `Esc`, focus, header, ordered section list; error state instead of a crash (BIN-153) |
+| `detail/PanelSection.tsx` | Display | Section frame and the `DetailSectionProps` every section takes |
+| `detail/*Section.tsx` | Display | One file per section: verdict (percentile sentence), monthly cost, price by platform (fallback platform link, BIN-158), price history, facts, neighbourhood, description |
 | `CompareView.tsx` | Display | Side-by-side compare of selected properties |
 | `CredentialGate.tsx` | Auth | API-key entry gate wrapping the app |
 | `SearchableMultiSelect.tsx` | Form | ARIA-compliant multi-select (BIN-157) |

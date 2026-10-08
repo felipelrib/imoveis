@@ -18,21 +18,49 @@ export type PriceType = 'rent' | 'sale'
 export type SortDir = 'asc' | 'desc'
 export type ExportFormat = 'csv' | 'json'
 
+// Total Monthly Cost vocabulary (v0.14-s1.2). English on the wire.
+export type CostRentState = 'known' | 'unknown' | 'not-applicable'
+export type CostFeeState = 'known' | 'bundled' | 'unknown'
+export type CostTotalState = 'complete' | 'bundled' | 'incomplete' | 'not-applicable'
+export type IptuPeriodicitySource = 'monthly' | 'annual' | 'unknown'
+export type DecidingRule = 'lowest-complete-total' | 'lowest-headline-price'
+
+/**
+ * Stored cost components of one Listing — see api.schemas.ListingCostModel.
+ * `null` means the platform did not publish the component; it is never zero.
+ * A bundled fee is one combined published figure held in `condo_fee_monthly`.
+ */
+export interface ListingCost {
+  rent_monthly?: number | null
+  rent_state: CostRentState
+  condo_fee_monthly?: number | null
+  condo_fee_state: CostFeeState
+  iptu_monthly?: number | null
+  iptu_state: CostFeeState
+  iptu_periodicity_source?: IptuPeriodicitySource
+  fees_bundled?: boolean
+  total_monthly_cost?: number | null
+  total_state: CostTotalState
+  cost_complete?: boolean
+}
+
+/**
+ * One Listing of a Property — see api.schemas.PropertyListingModel. The wire
+ * also carries the legacy `condo_fee` / `iptu` / `base_price` / `fees_bundled`
+ * values; nothing in the frontend reads them (cost comes from `cost`).
+ */
 export interface PropertyListing {
+  /** `property_listings.id`; what `deciding_listing_id` points at. */
+  id?: string | null
   platform: string
   platform_listing_id: string
-  // Some payloads carry a legacy `platform_id` fallback (used only for React keys).
-  platform_id?: string | null
   listing_type: string
   price: number
   currency: string
   url: string
   is_furnished?: boolean | null
   accepts_pets?: boolean | null
-  condo_fee?: number | null
-  iptu?: number | null
-  base_price?: number | null
-  fees_bundled?: boolean | null
+  cost?: ListingCost | null
 }
 
 export interface NeighbourhoodQuality {
@@ -70,7 +98,7 @@ export interface Property {
   price_per_m2?: number | null
   neighborhood_mean?: number | null
   // Listing-type-aware statistical fields (BIN-83 / v0.7). Present when the
-  // property is scored per rent/sale; consumed by PropertyModal / CompareView / MapView.
+  // property is scored per rent/sale; consumed by the detail panel / CompareView / MapView.
   combined_score_rent?: number | null
   combined_score_sale?: number | null
   stat_score_rent?: number | null
@@ -111,6 +139,12 @@ export interface Property {
   sentiment_reasoning?: string | null
   listings: PropertyListing[]
   primary_listing?: PropertyListing | null
+  // Rent decisioning (v0.14-s1.2): the one Listing that decides this Property's
+  // monthly cost, the rule that chose it, and that Listing's stored total
+  // (null under `lowest-headline-price`, where no Listing has a total).
+  deciding_listing_id?: string | null
+  deciding_rule?: DecidingRule | null
+  total_monthly_cost?: number | null
   neighbourhood_quality?: NeighbourhoodQuality | null
 }
 

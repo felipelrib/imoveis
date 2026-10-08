@@ -137,7 +137,7 @@ test.describe("Locale-aware filters (BIN-100)", () => {
 
     await page.getByRole("button", { name: /Salvar filtros atuais/i }).click();
     await page.getByPlaceholder(/Dê um nome a esta busca/i).fill("Aluguel Savassi");
-    await page.locator(".modal").getByRole("button", { name: /^Salvar$/i }).click();
+    await page.locator(".dialog").getByRole("button", { name: /^Salvar$/i }).click();
 
     await expect
       .poll(() => store.length)

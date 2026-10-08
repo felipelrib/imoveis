@@ -245,15 +245,15 @@ test.describe("Properties critical path", () => {
       .toBeTruthy();
   });
 
-  test("opens property modal with detail", async ({ page }) => {
+  test("opens the detail panel with the property", async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, PROPERTIES_PAGE);
     await mockPropertyDetail(page, SAMPLE_PROPERTY);
     await page.goto("/properties");
     await page.locator("text=2BR Apartment Savassi").click();
-    await expect(page.locator(".modal")).toBeVisible();
-    await expect(page.locator(".modal")).toContainText("2BR Apartment Savassi");
-    await expect(page.locator(".modal")).toContainText("3.500");
+    await expect(page.getByTestId("detail-panel")).toBeVisible();
+    await expect(page.getByTestId("detail-panel")).toContainText("2BR Apartment Savassi");
+    await expect(page.getByTestId("detail-panel")).toContainText("3.500");
   });
 });
 

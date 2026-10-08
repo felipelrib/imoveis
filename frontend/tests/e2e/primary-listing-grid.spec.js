@@ -7,7 +7,6 @@ import {
   bestListingForType,
   decisioningPrice,
   groupListings,
-  isPrimaryListingRow,
 } from "../../src/utils/primaryListing.js";
 import {
   installCommonMocks,
@@ -17,7 +16,7 @@ import {
   SAMPLE_PROPERTY,
 } from "./helpers/apiMocks.js";
 
-/** Stale top-level price must lose to primary_listing on card + modal. */
+/** Stale top-level price must lose to primary_listing on card + detail panel. */
 const STALE_PRICE_PROPERTY = {
   ...SAMPLE_PROPERTY,
   id: "stale-price-uuid-1",
@@ -70,12 +69,10 @@ test.describe("primaryListing helpers (BIN-125)", () => {
     ]);
     expect(bestListingForType(property, "rent", grouped)).toEqual(property.primary_listing);
     expect(bestListingForType(property, "sale", grouped)?.price).toBe(500000);
-    expect(isPrimaryListingRow(property.primary_listing, property)).toBe(true);
-    expect(isPrimaryListingRow(grouped.sale[0], property)).toBe(false);
   });
 });
 
-test.describe("Grid/modal prefer primary_listing (BIN-125)", () => {
+test.describe("Grid and detail panel prefer primary_listing (BIN-125)", () => {
   test.beforeEach(async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, {
@@ -88,16 +85,16 @@ test.describe("Grid/modal prefer primary_listing (BIN-125)", () => {
     await expect(page.getByText("Primary Listing Prefer Flat")).toBeVisible();
   });
 
-  test("card and modal show primary price, not stale top-level price", async ({ page }) => {
+  test("card and detail panel show primary price, not stale top-level price", async ({ page }) => {
     const card = page.locator(".property-card").filter({ hasText: "Primary Listing Prefer Flat" });
     await expect(card.getByTestId("card-price-rows")).toContainText("R$ 3.500");
     await expect(card.getByTestId("card-price-rows")).not.toContainText("9.999");
 
     await card.click();
-    const modal = page.locator(".modal");
-    await expect(modal).toBeVisible();
-    await expect(modal.locator(".modal-header")).toContainText("R$ 3.500");
-    await expect(modal.locator(".modal-header")).not.toContainText("9.999");
+    const panel = page.getByTestId("detail-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("detail-header")).toContainText("R$ 3.500");
+    await expect(panel.getByTestId("detail-header")).not.toContainText("9.999");
     await expect(page.getByTestId("listings-by-platform")).toBeVisible();
     await expect(page.getByTestId("listings-by-platform")).toContainText("R$ 3.500");
   });

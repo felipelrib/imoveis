@@ -174,13 +174,13 @@ export default function CompareView({ ids, onClose, onClearSelection }: CompareV
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
-  // Initial focus management: move focus into the dialog on open (mirrors PropertyModal).
+  // Initial focus management: move focus into the dialog on open (as the detail panel does).
   useEffect(() => {
     const first = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
     first?.focus()
   }, [])
 
-  // Escape-to-close + Tab focus trap (mirrors PropertyModal.tsx's Escape handling).
+  // Escape-to-close + Tab focus trap (Escape as in the detail panel).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

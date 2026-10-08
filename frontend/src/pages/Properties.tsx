@@ -8,7 +8,7 @@ import {
   type SavedSearchItem, type Neighborhood, type City, type ExportFormat,
   type SortDir, type PriceType, type ListingType,
 } from '../api.js'
-import PropertyModal from '../components/PropertyModal.jsx'
+import PropertyDetailPanel from '../components/detail/PropertyDetailPanel.jsx'
 import CompareView from '../components/CompareView.jsx'
 import { useToast } from '../components/ToastProvider.jsx'
 import MapView from '../components/MapView.jsx'
@@ -43,6 +43,10 @@ export default function Properties() {
   const isFavouritesRoute = location.pathname === FAVOURITES_PATH
     || location.pathname.startsWith(`${FAVOURITES_PATH}/`)
   const isCompareRoute = location.pathname.startsWith('/compare/')
+  // A detail panel opened from Favoritos lives at /properties/:id; the view
+  // behind it stays Favoritos (no list reload, no heading flip) until it closes.
+  const inFavouritesView = isFavouritesRoute
+    || (routePropertyId != null && location.state?.returnTo === FAVOURITES_PATH)
 
   const [data, setData] = useState<PaginatedProperties | null>(null)
   const [loading, setLoading] = useState(true)
@@ -95,7 +99,7 @@ export default function Properties() {
     initialIds: isCompareRoute ? routeCompareIds : (location.state?.compareIds || []),
   })
 
-  const listReturnPath = isFavouritesRoute ? FAVOURITES_PATH : PROPERTIES_PATH
+  const listReturnPath = inFavouritesView ? FAVOURITES_PATH : PROPERTIES_PATH
   const returnToRef = useRef(listReturnPath)
 
   const openProperty = useCallback((propertyOrId: Property | string | number) => {
@@ -103,9 +107,9 @@ export default function Properties() {
       ? linkIdForProperty(propertyOrId)
       : (parsePropertyId(String(propertyOrId)) || String(propertyOrId))
     if (!linkId) return
-    returnToRef.current = isFavouritesRoute ? FAVOURITES_PATH : PROPERTIES_PATH
+    returnToRef.current = inFavouritesView ? FAVOURITES_PATH : PROPERTIES_PATH
     navigate(propertyPath(linkId), { state: { returnTo: returnToRef.current, compareIds } })
-  }, [navigate, isFavouritesRoute, compareIds])
+  }, [navigate, inFavouritesView, compareIds])
 
   const handleToggleCompare = useCallback((e: SyntheticEvent, property: Property) => {
     e.stopPropagation()
@@ -154,7 +158,7 @@ export default function Properties() {
   const [saveName, setSaveName] = useState('')
 
   // View mode derived from URL: 'all' | 'favourites'
-  const viewMode = isFavouritesRoute ? 'favourites' : 'all'
+  const viewMode = inFavouritesView ? 'favourites' : 'all'
   const [favouritesData, setFavouritesData] = useState<{ items: FavouriteWithProperty[]; total: number }>({ items: [], total: 0 })
 
   // Dynamic neighborhoods / cities from backend
@@ -371,6 +375,38 @@ export default function Properties() {
     load(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
   }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, maxPricePerM2Percentile, neighborhood, city, viewMode, q])
+
+  // A favourite changed inside the detail panel: the star set follows at once;
+  // the Favoritos list behind the panel is reloaded when the panel closes, not
+  // while it is open (the list must not move under an open panel).
+  const favouritesChangedRef = useRef(false)
+  const handlePanelFavouriteChange = useCallback((propertyId: string, favourited: boolean) => {
+    favouritesChangedRef.current = true
+    setFavouriteIds((prev) => {
+      const next = new Set(prev)
+      if (favourited) next.add(propertyId)
+      else next.delete(propertyId)
+      return next
+    })
+  }, [])
+
+  // The bell set follows a watch change made in the panel, like the star set.
+  const handlePanelWatchChange = useCallback((propertyId: string, watched: boolean) => {
+    setWatchedIds((prev) => {
+      const next = new Set(prev)
+      if (watched) next.add(propertyId)
+      else next.delete(propertyId)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (selectedId || !favouritesChangedRef.current) return
+    favouritesChangedRef.current = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
+    if (viewMode === 'favourites') load(page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
+  }, [selectedId])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
@@ -642,8 +678,8 @@ export default function Properties() {
 
       {/* Save search dialog */}
       {showSaveDialog && (
-        <div className="modal-overlay" onClick={() => setShowSaveDialog(false)}>
-          <div className="modal" style={{ maxWidth: 400, padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div className="dialog-overlay" onClick={() => setShowSaveDialog(false)}>
+          <div className="dialog" data-testid="save-search-dialog" onClick={e => e.stopPropagation()}>
             <h3 style={{ marginBottom: 16, fontSize: 18 }}>{t('properties.saveDialogTitle')}</h3>
             <input
               className="form-input"
@@ -662,7 +698,15 @@ export default function Properties() {
         </div>
       )}
 
-      {selectedId && <PropertyModal id={selectedId} onClose={closeProperty} />}
+      {selectedId && (
+        <PropertyDetailPanel
+          id={selectedId}
+          onClose={closeProperty}
+          viewType={viewType}
+          onFavouriteChange={handlePanelFavouriteChange}
+          onWatchChange={handlePanelWatchChange}
+        />
+      )}
 
       {compareOpen && (
         <CompareView

@@ -44,7 +44,7 @@ const AI_PROPERTY = {
 };
 
 test.describe("AI tags & score copy locale (BIN-101)", () => {
-  test("PT locale localizes closed-vocab AI labels in the modal", async ({
+  test("PT locale localizes closed-vocab AI labels in the detail panel", async ({
     page,
   }) => {
     /** @type {string[]} */

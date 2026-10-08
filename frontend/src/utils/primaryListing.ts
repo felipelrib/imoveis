@@ -53,21 +53,3 @@ export function bestListingForType(
   }
   return grouped[type]?.[0] || null
 }
-
-/** Whether a listing row matches the property's primary_listing. */
-export function isPrimaryListingRow(
-  listing: ListingLike | null | undefined,
-  property: PropertyLike | null | undefined,
-): boolean {
-  const primary = property?.primary_listing
-  if (!primary || !listing) return false
-  const listingType = listing.listing_type || 'sale'
-  const primaryType = primary.listing_type || 'sale'
-  return (
-    listingType === primaryType
-    && listing.platform === primary.platform
-    && listing.price != null
-    && primary.price != null
-    && Number(listing.price) === Number(primary.price)
-  )
-}

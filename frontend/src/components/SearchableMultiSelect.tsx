@@ -126,6 +126,9 @@ export default function SearchableMultiSelect({
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
+      // Only an Esc that closes the dropdown is consumed here; with nothing
+      // open the key is left to the page (it closes the detail panel).
+      if (!open) return
       e.preventDefault()
       setOpen(false)
       setSearch('')

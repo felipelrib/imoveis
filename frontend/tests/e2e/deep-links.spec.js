@@ -24,21 +24,21 @@ test.describe("Shareable deep links (BIN-82)", () => {
 
     await page.locator("text=2BR Apartment Savassi").click();
     await expect(page).toHaveURL(/\/properties\/1$/);
-    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Fechar painel" })).toBeVisible();
   });
 
-  test("loading /properties/:id opens the property modal", async ({ page }) => {
+  test("loading /properties/:id opens the detail panel", async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, PROPERTIES_PAGE);
     await mockPropertyDetail(page, SAMPLE_PROPERTY);
     await page.goto("/properties/1");
 
-    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Fechar painel" })).toBeVisible();
     await expect(page).toHaveURL(/\/properties\/1$/);
 
-    await page.getByRole("button", { name: "Fechar modal" }).click();
+    await page.getByRole("button", { name: "Fechar painel" }).click();
     await expect(page).toHaveURL(/\/properties$/);
-    await expect(page.getByRole("button", { name: "Fechar modal" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Fechar painel" })).toHaveCount(0);
   });
 
   test("favourites has its own URL and restores the favourites view", async ({ page }) => {

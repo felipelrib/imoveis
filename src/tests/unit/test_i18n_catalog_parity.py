@@ -299,8 +299,9 @@ def test_no_call_site_still_names_a_retired_key():
 #
 # The badge sentence is the contract's microcopy and is pinned verbatim. The
 # strings this story added must say "cheaper is better" in plain words: no
-# statistics jargon and no comparison sign. Keys that predate the story (the
-# modal's legacy `percentile*` labels, owned by Story 1.8) are not in scope.
+# statistics jargon and no comparison sign. Story 1.8 removed the legacy
+# `percentile*` labels and widened the wording rule to every catalog value
+# (see the Story 1.8 block at the end of this file).
 
 _PERCENTILE_FILTER_PINS: dict[str, dict[str, str]] = {
     "en": {
@@ -365,3 +366,132 @@ def test_badge_and_filter_options_share_one_sentence():
         path.name for path in _frontend_sources() if call.search(path.read_text(encoding="utf-8"))
     )
     assert {"PropertiesFilterBar.tsx", "PropertyCard.tsx"} <= set(users)
+
+
+# --- v0.14-s1.8: detail side panel (UX-DR4, UX-DR8) ---------------------------
+#
+# The panel states the Story 1.7 percentile as a sentence: the badge sentence
+# plus `do bairro`, naming the cohort type when the Property has Listings of
+# both types. The centered detail overlay and its legacy `Percentil` labels are
+# gone, so the wording rule now holds for the whole catalog.
+
+_PERCENTILE_SENTENCE_PINS: dict[str, dict[str, str]] = {
+    "en": {
+        "detail.percentileSentence": "among the {n}% cheapest in the neighbourhood",
+        "detail.percentileSentenceRent": "among the {n}% cheapest rentals in the neighbourhood",
+        "detail.percentileSentenceSale": "among the {n}% cheapest sales in the neighbourhood",
+    },
+    "pt-BR": {
+        "detail.percentileSentence": "entre os {n}% mais baratos do bairro",
+        "detail.percentileSentenceRent": "entre os {n}% mais baratos dos aluguéis do bairro",
+        "detail.percentileSentenceSale": "entre os {n}% mais baratos das vendas do bairro",
+    },
+}
+
+# Cost wording of the panel: an unpublished component is said in words.
+_COST_COPY_PINS: dict[str, dict[str, str]] = {
+    "en": {
+        "detail.costUnknown": "not published",
+        "detail.costIncompleteNote": "a value was not published",
+        "detail.costIncomplete": "incomplete",
+    },
+    "pt-BR": {
+        "detail.costRent": "Aluguel",
+        "detail.costCondo": "Condomínio",
+        "detail.costIptu": "IPTU",
+        "detail.costTotal": "Total mensal",
+        "detail.costCondoIptuBundled": "Condomínio + IPTU",
+        "detail.costUnknown": "não informado",
+        "detail.costBundledNote": "valor único publicado pela plataforma",
+        "detail.costIncomplete": "incompleto",
+        "detail.costIncompleteNote": "há valor não informado",
+        "detail.costDeciding": "menor custo total",
+    },
+}
+
+# Lower-cased substrings no catalog value may contain (UX-DR8).
+_FORBIDDEN_CATALOG_COPY = ("p25", "percentil", "≤")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", sorted(_PERCENTILE_SENTENCE_PINS))
+def test_percentile_sentences_are_pinned(locale: str):
+    """The three panel sentences read exactly as the contract says."""
+    catalog = _catalog(locale)
+    for key, expected in _PERCENTILE_SENTENCE_PINS[locale].items():
+        assert catalog.get(key) == expected, f"{locale}.{key} must read exactly {expected!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", _locales())
+def test_percentile_sentences_start_with_the_badge_sentence(locale: str):
+    """Card badge and panel sentence are one statement, the sentence only longer."""
+    catalog = _catalog(locale)
+    badge = catalog["properties.amongCheapest"]
+    for key in _PERCENTILE_SENTENCE_PINS[_REFERENCE_LOCALE]:
+        assert key in catalog, f"{locale}: {key} is missing"
+        assert catalog[key].startswith(badge), (
+            f"{locale}.{key} = {catalog[key]!r} must start with the badge sentence {badge!r}"
+        )
+        assert len(catalog[key]) > len(badge), f"{locale}.{key} adds nothing to the badge sentence"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", sorted(_COST_COPY_PINS))
+def test_cost_breakdown_copy_is_pinned(locale: str):
+    """An unknown component is never a zero or a dash: the words are the contract."""
+    catalog = _catalog(locale)
+    for key, expected in _COST_COPY_PINS[locale].items():
+        assert catalog.get(key) == expected, f"{locale}.{key} must read exactly {expected!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", _locales())
+def test_no_catalog_value_uses_statistics_jargon(locale: str):
+    """No string anywhere says `P25`, `percentil(e)` or uses `≤` (UX-DR8)."""
+    catalog = _catalog(locale)
+    offenders = [
+        f"{key}: {value!r} contains {token!r}"
+        for key, value in sorted(catalog.items())
+        for token in _FORBIDDEN_CATALOG_COPY
+        if token in value.lower()
+    ]
+    assert not offenders, f"{locale}: forbidden wording in the catalog:\n" + "\n".join(offenders)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", _locales())
+def test_no_modal_namespace_remains(locale: str):
+    """The detail surface is the side panel; its strings live under `detail.`."""
+    catalog = _catalog(locale)
+    leftovers = sorted(key for key in catalog if key.startswith("modal.") or key == "modal")
+    assert not leftovers, f"{locale}: `modal.` keys remain: {leftovers}"
+    assert any(key.startswith("detail.") for key in catalog), f"{locale}: no `detail.` keys"
+
+
+@pytest.mark.unit
+def test_panel_sentence_and_badge_share_one_rule():
+    """The panel builds its sentence from the same helper as the card badge.
+
+    `percentileSentences` (utils/percentile.ts) is built on `badgePercent`; a
+    panel that computed its own N could say 20% beside a card that says 21%.
+    A source scan, because no frontend unit runner exists.
+    """
+    helper = (_REPO / "frontend" / "src" / "utils" / "percentile.ts").read_text(encoding="utf-8")
+    body = helper.split("export function percentileSentences", 1)
+    assert len(body) == 2, "percentileSentences is missing from utils/percentile.ts"
+    assert "badgePercent(" in body[1].split("\nexport ", 1)[0]
+
+    detail_dir = _REPO / "frontend" / "src" / "components" / "detail"
+    users = sorted(
+        path.name
+        for path in detail_dir.glob("*.tsx")
+        if "percentileSentences(" in path.read_text(encoding="utf-8")
+    )
+    assert "VerdictSection.tsx" in users
+    # A property access, so a comment naming the fields does not count.
+    legacy = re.compile(r"\.percentile_rank")
+    offenders = sorted(
+        path.name for path in detail_dir.rglob("*.ts*") if legacy.search(path.read_text(encoding="utf-8"))
+    )
+    assert not offenders, f"the detail panel reads the legacy percentile_rank fields: {offenders}"

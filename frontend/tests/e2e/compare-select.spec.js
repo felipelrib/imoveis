@@ -96,10 +96,10 @@ test.describe("Properties multi-select for comparison", () => {
     await expect(page.getByTestId("compare-select-1")).toHaveCount(0);
   });
 
-  test("checkbox click does not open the property modal", async ({ page }) => {
+  test("checkbox click does not open the detail panel", async ({ page }) => {
     await enterCompareMode(page);
     await page.getByTestId("compare-select-1").check();
-    await expect(page.locator(".modal")).toHaveCount(0);
+    await expect(page.getByTestId("detail-panel")).toHaveCount(0);
     await expect(page.getByTestId("compare-bar")).toBeVisible();
   });
 

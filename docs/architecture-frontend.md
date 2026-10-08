@@ -22,7 +22,7 @@ Single-page React 19 application built with Vite 8 and TypeScript (fully migrate
 ## Structure & patterns
 
 - **Pages** (`src/pages/`): `Dashboard.tsx` (score-coloured deal grid + telemetry widgets), `Properties.tsx` (search/filter/compare, split into `components/properties/*` per BIN-141), `ScraperControl.tsx` (admin scrape/enrichment controls).
-- **Components** (`src/components/`): `MapView` (maplibre), `PropertyModal`, `CompareView`, `CredentialGate` (API-key entry), `SearchableMultiSelect`, `ToastProvider` (ARIA-compliant), `ErrorBoundary`; `properties/` holds FilterBar, ResultsGrid, PropertyCard, Pagination.
+- **Components** (`src/components/`): `MapView` (maplibre), `detail/PropertyDetailPanel` (right-side detail panel built from one section component per file, v0.14-s1.8), `CompareView`, `CredentialGate` (API-key entry), `SearchableMultiSelect`, `ToastProvider` (ARIA-compliant), `ErrorBoundary`; `properties/` holds FilterBar, ResultsGrid, PropertyCard, Pagination.
 - **Hooks** (`src/hooks/`): `useAlerts`, `useSystemStatus` (polls system status incl. locale), `usePropertiesFiltersState`, `usePropertiesPagination`, `useCompareSelection` — state lives in hooks, components stay presentational.
 - **i18n** (`src/i18n/`): locale files (pt-BR/en); money/date formatters locale-aware (BIN-116); AI tags/verdicts localized server-side (BIN-101).
 - **Routing** (`src/routes/propertyPaths.ts`): property URLs use `public_id`, not UUID (BIN-82).

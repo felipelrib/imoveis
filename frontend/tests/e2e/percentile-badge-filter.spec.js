@@ -447,8 +447,8 @@ test.describe("`Preço no bairro` filter (v0.14-s1.7)", () => {
     await expect(page.getByTestId("filter-chip-price-percentile")).toBeVisible();
 
     await page.getByRole("button", { name: /Salvar filtros atuais/i }).click();
-    await page.locator(".modal input").fill("Quarto mais barato");
-    await page.locator(".modal .btn-primary").click();
+    await page.locator(".dialog input").fill("Quarto mais barato");
+    await page.locator(".dialog .btn-primary").click();
 
     await expect.poll(() => store.length).toBe(1);
     expect(Number(store[0].filters[PARAM])).toBe(0.25);

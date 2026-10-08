@@ -66,7 +66,7 @@ test.describe("Saved-search price_type casing (BIN-109)", () => {
 
     await page.getByRole("button", { name: /Save Current Filters/i }).click();
     await page.getByPlaceholder(/Name this search/i).fill("Sale budget BH");
-    await page.locator(".modal").getByRole("button", { name: /^Save$/i }).click();
+    await page.locator(".dialog").getByRole("button", { name: /^Save$/i }).click();
 
     await expect.poll(() => store.length).toBe(1);
     expect(store[0].filters).toMatchObject({

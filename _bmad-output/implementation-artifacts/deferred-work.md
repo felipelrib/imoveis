@@ -505,12 +505,12 @@ severity: medium
 reason: _COHORT_KEY_SQL is COALESCE(n.name, props_json->>'neighborhood', 'Unknown'). Read-only on the primary, 2026-10-08: no Property has a neighborhood_id; 97 labels occur in more than one of the 3 cities and hold 16,477 active Properties; 537 city x label spellings fold into 268 neighbourhoods holding 22,845 active Properties. Those Properties get a stat score against a cohort that is not their neighbourhood. This story left the stat key alone because changing it moves stat_score and combined_score for existing rows. A card can therefore show a stat band and a percentile computed on two different cohorts.
 status: open
 
-### DW-47: The legacy percentile_rank, percentile_rank_rent and percentile_rank_sale are still served by the API, the export and the modal, including the fabricated 0.5 the single-property path writes.
+### DW-47: The legacy percentile_rank, percentile_rank_rent and percentile_rank_sale are still served by the API and the export, including the fabricated 0.5 the single-property path writes.
 origin: spec-deferred 1a497de7ea12
 location: src/core/property_projection.py:30
 source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.md`
 severity: low
-reason: core/property_projection.py selects and maps the three legacy columns and frontend/src/components/PropertyModal.tsx renders them as a percentile. On the primary (2026-10-08) percentile_rank_rent is exactly 0.5 on 1,007 rows and percentile_rank_sale on 817. _compute_type_scores defaults a missing rank to 0.5 and score_single_property passes 0.5. This story stores the trustworthy value in new columns and does not touch the wire; Story 1.7 (badge, filter) and Story 1.8 (panel) are where the legacy fields can be replaced and then dropped. test_percentile_characterization_lock.py pins the legacy behaviour and has to be edited by the story that removes it.
+reason: core/property_projection.py selects and maps the three legacy columns and frontend/src/components/PropertyModal.tsx renders them as a percentile. On the primary (2026-10-08) percentile_rank_rent is exactly 0.5 on 1,007 rows and percentile_rank_sale on 817. _compute_type_scores defaults a missing rank to 0.5 and score_single_property passes 0.5. This story stores the trustworthy value in new columns and does not touch the wire; Story 1.7 (badge, filter) and Story 1.8 (panel) are where the legacy fields can be replaced and then dropped. test_percentile_characterization_lock.py pins the legacy behaviour and has to be edited by the story that removes it. Update 2026-10-08, Story 1.8 (`v0.14-s1.8`): The frontend no longer renders the three fields: `PropertyModal.tsx` is deleted, the detail panel (`frontend/src/components/detail/`) states the `price_per_m2_percentile_*` sentence instead, and the catalog labels are gone (`test_no_catalog_value_uses_statistics_jargon`). What still reads or carries them: the writer `src/adapters/metrics/scoring.py` and the columns in `src/adapters/db/models.py`; the projection `src/core/property_projection.py`; the detail SQL in `src/api/properties.py`; `src/api/schemas.py` (`PropertyModel`, `PropertyDetailModel`); the CSV columns in `src/api/property_export.py`; `docs/api.md`; the TypeScript wire types in `frontend/src/api.ts` (declared, read by no component); and the tests that pin them (`src/tests/contract/test_api_contract.py`, `test_percentile_characterization_lock.py`, `test_scoring_characterization_lock.py`, `test_property_projection.py`, `test_property_export.py`, `test_properties_response_schema.py`). Also checked: saved searches do not reference the fields (`src/api/saved_searches.py` has no occurrence); `docs/data-models-api.md` documents them in the `metrics_scoring` row; `src/tests/unit/test_top_deals_digest.py` carries `percentile_rank` as a fixture key; and `src/tests/integration/test_cohort_percentiles.py` and `test_scoring_price_basis.py` assert the stored `percentile_rank_rent` / `_sale` columns. Removing them is now an API and export change only; Story 1.8 was frontend-only and left the wire as it is.
 status: open
 
 ### DW-48: The single-property path spends about one second of database time per scored Property on its cohort count, because the folded cohort key cannot use an index.
@@ -527,7 +527,8 @@ location: src/core/property_projection.py:48
 source_spec: `spec-1-7-percentile-badge-on-cards-and-percentile-filter.md`
 severity: low
 reason: Story 1.7 added price_per_m2_percentile_rent/_sale to list, batch, detail and export and left the legacy fields in place (core/property_projection.py, api/schemas.py, api/property_export.py); no AC of the story asks for their removal and the modal that renders them belongs to Story 1.8. Two numbers called percentile are therefore on the wire with different definitions (legacy: PERCENT_RANK, cheapest = 0, rounded to 3 places, fabricated 0.5 on the single-property path). frontend/src/components/PropertyModal.tsx:204-224 renders the legacy ones through the pt-BR strings "percentil {n}", "Percentil no bairro", "Percentil (Aluguel)", "Percentil (Venda)", which UX-DR8 forbids. docs/api.md now says which field to use. Same subject as ledger entry DW-47; Story 1.8 is where the modal and then the fields can go, and test_percentile_characterization_lock.py has to be edited by that story.
-status: open
+status: resolved
+resolution: Story 1.8 (`v0.14-s1.8`, spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md) deleted `PropertyModal.tsx` and replaced it with the right-side detail panel, which reads only `price_per_m2_percentile_rent` / `_sale` and states them as a sentence. The catalog keys `common.percentile`, `attr.percentileInNeighbourhood`, `attr.percentileRent` and `attr.percentileSale` are removed from both catalogs, and `src/tests/unit/test_i18n_catalog_parity.py` now forbids `percentil`, `P25` and `≤` in every catalog value. No user-facing surface labels the legacy number any more. The fields themselves stay on the wire (the story was frontend-only); their removal is tracked by DW-47, which lists what still reads them. `test_percentile_characterization_lock.py` was not edited, because no served value changed.
 
 ### DW-50: On the current card the percentile badge wraps under the price instead of sitting beside it, and the price line is only partly the display-price of the UX contract.
 origin: spec-deferred 222b3bab5ed7
@@ -543,4 +544,60 @@ location: scripts/agent/validate.py:488
 source_spec: `spec-1-7-percentile-badge-on-cards-and-percentile-filter.md`
 severity: medium
 reason: 2026-10-08: validate.py --tier full fails at "e2e: playwright" with chrome-headless-shell.exe missing; C:/Users/Felipe/AppData/Local/ms-playwright does not exist; .run/validated in the primary checkout holds backend, docs and fast stamps only, never frontend or full. .bmad-loop/policy.toml runs validate.py --tier backend as [verify] (scripts/agent/validate.py:608 runs the frontend steps only for frontend / full). For this story the whole e2e suite was run against the installed Chrome through a temporary uncommitted config. Fix: npx playwright install chromium in frontend/ on the host (a download the dev session had no permission to make), then decide whether [verify] should be the full tier for stories that touch frontend/.
+status: open
+
+### DW-52: The split grid / map layout of DESIGN.md does not exist, so the contract state "grid dimmed under the scrim with the map rail visible beside the panel" cannot occur.
+origin: spec-deferred db0d79ab0524
+location: frontend/src/pages/Properties.tsx:571
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: medium
+reason: frontend/src/pages/Properties.tsx shows the grid or the map (viewType toggle), never both. DESIGN.md (ux-imoveis-2026-08-05, "Layout" and line 219) describes a split front door and a scrim that covers the grid only. Story 1.8 delivers the panel on the layout that exists: in grid view the scrim dims the grid and no map is on screen; in map view there is no scrim and the panel covers the right part of the map (including its zoom control). No story in epics.md owns the split layout.
+status: open
+
+### DW-53: Map points probably do not draw since the maplibre-gl 6 upgrade: the worker script the library loads is not served by the Vite dev server and is not emitted by the production build.
+origin: spec-deferred a48f301c0daa
+location: frontend/src/components/MapView.tsx:387
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: high (unverified)
+reason: Unverified at runtime in production. Observed by the dev session under the Vite dev server: GET /node_modules/.vite/deps/maplibre-gl-worker.mjs answers 404 and the GeoJSON point layer never renders (raster tiles and the HTML compare markers do). Read in frontend/node_modules/.vite/deps/maplibre-gl.js:18442-18447: the worker URL is built at run time as new URL('./maplibre-gl-worker.mjs', import.meta.url), which a bundler cannot see. frontend/dist/assets after `vite build` holds no worker file. What would settle it: open the map view on the primary stack and look for points and for a 404 on maplibre-gl-worker.mjs. If confirmed, clicking a point (one of the three ways into the detail panel) is unavailable. Not caused by Story 1.8 (MapView.tsx and vite.config.js untouched; upgrade was 6b57551e).
+status: open
+
+### DW-54: A favourite's card shows no percentile badge while its detail panel states the sentence, because the favourites endpoint does not serve the price_per_m2_percentile fields.
+origin: spec-deferred 29a1cbeaef71
+location: frontend/src/pages/Properties.tsx:450
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: low
+reason: Properties.tsx builds Favoritos cards from GET /favourites items (a partial Property without price_per_m2_percentile_rent/_sale); the panel reads GET /properties/{id}, which has them. The rule "sentence exactly when the card has a badge" therefore holds on the Imóveis grid and not on Favoritos. Story 1.7 noted the missing fields; Story 5.10 owns the Favoritos columns. Fixing it is an API change (favourites projection), outside this frontend story.
+status: open
+
+### DW-55: The save-search dialog and the compare view are still centered or full-screen overlays, while DESIGN.md says the system has no centered modals.
+origin: spec-deferred 02e808d581f5
+location: frontend/src/pages/Properties.tsx:668
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: low
+reason: Story 1.8 retired the detail modal only. The save-search dialog (Properties.tsx, classes .dialog-overlay / .dialog, legacy glass palette) is a centered dialog, and CompareView.tsx is a full-screen role="dialog" aria-modal overlay. DESIGN.md line 219: "there are no centered modals in the system". Story 1.10 (saved-search alert management UI) touches the saved-search surface; no story names the compare view.
+status: open
+
+### DW-56: validate.py accepts a backend stamp for a diff that requires the frontend tier, so a frontend-only change can be pushed without eslint, the Vite build or the e2e suite having run.
+origin: spec-deferred 257580d186ef
+location: scripts/agent/validate.py:326
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: medium
+reason: scripts/agent/validate.py:58 orders TIERS docs < fast < frontend < backend < full and check_stamp (lines 326-332) accepts any stamp of equal or higher rank; the backend tier does not run gate.frontend() (lines 605-609). .bmad-loop/policy.toml runs the backend tier as [verify]. Same family as DW-51, which records the loop's verify tier; this is the stamp rule itself. Not caused by Story 1.8, whose diff requires and was validated at the full tier.
+status: open
+
+### DW-57: In the grid view the page under the detail panel's scrim is dimmed and closed to the pointer but still reachable with the keyboard, so focus can sit on a card or filter that is hard to see.
+origin: spec-deferred 3c38917084ce
+location: frontend/src/components/detail/PropertyDetailPanel.tsx:98
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: low
+reason: frontend/src/components/detail/PropertyDetailPanel.tsx renders the scrim as an aria-hidden div and makes nothing inert (a recorded decision: the panel is not a dialog, and in the map view the page must stay usable). The scrim ink is #0e1220d9 (85% opaque). Shift+Tab from the panel moves focus to the last control of the page under it; Enter on a card there swaps the panel content. Nothing is trapped and Esc still closes. A fix makes the grid and the saved-search sidebar inert while the scrim is drawn (grid view only), which changes the recorded "nothing is made inert" decision and the focus-restore timing, so it is not a patch. Found by the follow-up review of Story 1.8.
+status: open
+
+### DW-58: The price-history chart labels its Y axis in whole thousands, so a rent series between R$ 3.000 and R$ 3.200 shows the same tick text (R$3k) on every tick.
+origin: spec-deferred b5900a2c1fac
+location: frontend/src/components/detail/PriceHistorySection.tsx:60
+source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow.md`
+severity: low
+reason: frontend/src/components/detail/PriceHistorySection.tsx: tickFormatter is `R$${(v / 1000).toFixed(0)}k`, carried over unchanged from the retired PropertyModal.tsx (main, line 690), so the defect predates Story 1.8. CompareView.tsx has its own chart. The mock (key-detail-panel.html) labels the axis R$ 2.9k / R$ 2.65k / R$ 2.45k. The tooltip shows the exact value. A fix formats values below 10.000 in full or with decimals and has to check the axis width for sale prices.
 status: open

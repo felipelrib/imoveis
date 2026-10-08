@@ -43,7 +43,8 @@ imoveis/
 ├── frontend/                     # Part: frontend (React 19 + Vite 8 + TS)
 │   └── src/
 │       ├── pages/                # Dashboard, Properties, ScraperControl
-│       ├── components/           # MapView, PropertyModal, CompareView, CredentialGate, …
+│       ├── components/           # MapView, CompareView, CredentialGate, …
+│       │   ├── detail/           # PropertyDetailPanel + one file per panel section
 │       │   └── properties/       # FilterBar, ResultsGrid, PropertyCard, Pagination
 │       ├── hooks/                # useAlerts, useSystemStatus, filters/pagination/compare state
 │       ├── i18n/                 # Locale files (pt/en)

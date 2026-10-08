@@ -55,7 +55,7 @@ test.describe("Neighbourhood quality vs ad claims labels (BIN-94)", () => {
     await expect(page.getByTestId("card-ad-claims")).toContainText("near metro");
   });
 
-  test("modal separates neighbourhood quality from ad claims", async ({ page }) => {
+  test("detail panel separates neighbourhood quality from ad claims", async ({ page }) => {
     await page.locator("text=Nhood Quality Flat").click();
     await expect(page.getByTestId("neighbourhood-quality-section")).toBeVisible();
     await expect(page.getByTestId("neighbourhood-quality-section")).toContainText(

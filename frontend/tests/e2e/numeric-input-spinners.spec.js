@@ -30,7 +30,7 @@ test.describe("Numeric-input spinners hidden (BIN-155)", () => {
     await page.goto("/properties");
     await page.locator(`text=${SAMPLE_PROPERTY.title}`).first().click();
 
-    const dropPct = page.getByTestId("modal-drop-pct-input");
+    const dropPct = page.getByTestId("detail-drop-pct-input");
     await expect(dropPct).toBeVisible();
     await expect(dropPct).toHaveAttribute("type", "text");
     await expect(dropPct).toHaveAttribute("inputMode", "numeric");

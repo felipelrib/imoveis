@@ -51,6 +51,40 @@ export function pricePercentileForType(
   return null
 }
 
+/** One percentile sentence of the detail panel (v0.14-s1.8). */
+export interface PercentileSentence {
+  /** Cohort listing type the sentence is about. */
+  type: 'rent' | 'sale'
+  /** N of `entre os N% mais baratos`; the same N the card badge shows. */
+  n: number
+  /** The Property has Listings of both types, so the sentence names the cohort. */
+  dual: boolean
+}
+
+const SENTENCE_TYPES: readonly ('rent' | 'sale')[] = ['rent', 'sale']
+
+/**
+ * Sentences the detail panel states for a Property, rent before sale.
+ *
+ * `listingTypes` are the listing types of the Property's Listings: the card
+ * draws one price line per type and a badge only on those lines, so a type
+ * without a Listing gets no sentence either. Built on `badgePercent`, which
+ * makes "the panel has a sentence" and "the card has a badge" one rule.
+ */
+export function percentileSentences(
+  property: PricePercentiles,
+  listingTypes: readonly string[],
+): PercentileSentence[] {
+  const present = SENTENCE_TYPES.filter((type) => listingTypes.includes(type))
+  const dual = present.length > 1
+  const sentences: PercentileSentence[] = []
+  for (const type of present) {
+    const n = badgePercent(pricePercentileForType(property, type))
+    if (n != null) sentences.push({ type, n, dual })
+  }
+  return sentences
+}
+
 /**
  * Percent shown for a filter cap (select option, chip). The two offered caps
  * read 25 and 50; another cap (a saved search written through the API) reads

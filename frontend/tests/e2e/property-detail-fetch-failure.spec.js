@@ -13,10 +13,10 @@ import {
  * `loading` still flipped to false, so the non-loading render branch
  * dereferenced `p.platform` etc. without optional chaining and threw —
  * caught by the app-wide ErrorBoundary, blanking the entire Properties page
- * (grid, filters, sidebar), not just the modal.
+ * (grid, filters, sidebar), not just the detail surface.
  */
 async function mockFailedPropertyDetail(page, status) {
-  // Seed benign responses for the sibling requests the modal also fires
+  // Seed benign responses for the sibling requests the panel also fires
   // (watchlist/favourite checks, price history) so only the detail fetch fails.
   await mockPropertyDetail(page, SAMPLE_PROPERTY);
   // Re-register the detail route last so it wins over the success stub above
@@ -34,7 +34,7 @@ async function mockFailedPropertyDetail(page, status) {
   });
 }
 
-test.describe("Property modal fetch failure (BIN-153)", () => {
+test.describe("Property detail fetch failure (BIN-153)", () => {
   test.beforeEach(async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, PROPERTIES_PAGE);
@@ -47,11 +47,11 @@ test.describe("Property modal fetch failure (BIN-153)", () => {
     await expect(page.locator(`text=${SAMPLE_PROPERTY.title}`)).toBeVisible();
     await page.locator(`text=${SAMPLE_PROPERTY.title}`).click();
 
-    await expect(page.getByTestId("property-modal-error")).toBeVisible();
+    await expect(page.getByTestId("property-detail-error")).toBeVisible();
     await expect(page.getByText("Não foi possível carregar este imóvel")).toBeVisible();
 
     // The rest of the page must stay intact — no top-level ErrorBoundary blank-out.
-    await page.getByLabel("Fechar modal").click();
+    await page.getByLabel("Fechar painel").click();
     await expect(page.locator(`text=${SAMPLE_PROPERTY.title}`)).toBeVisible();
   });
 
@@ -61,7 +61,7 @@ test.describe("Property modal fetch failure (BIN-153)", () => {
     await page.goto("/properties");
     await page.locator(`text=${SAMPLE_PROPERTY.title}`).click();
 
-    await expect(page.getByTestId("property-modal-error")).toBeVisible();
+    await expect(page.getByTestId("property-detail-error")).toBeVisible();
     await expect(page.getByText("Não foi possível carregar este imóvel")).toBeVisible();
     await expect(page.locator(`text=${SAMPLE_PROPERTY.title}`)).toBeVisible();
   });

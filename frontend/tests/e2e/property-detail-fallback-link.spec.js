@@ -35,7 +35,7 @@ const QA_NO_LISTINGS = {
   listings: [],
 };
 
-test.describe("Property modal fallback link (BIN-158)", () => {
+test.describe("Property detail fallback link (BIN-158)", () => {
   test("OLX property with no listings gets no QuintoAndar fallback link", async ({ page }) => {
     await installCommonMocks(page);
     await mockPropertiesList(page, {
@@ -47,9 +47,9 @@ test.describe("Property modal fallback link (BIN-158)", () => {
     await page.goto("/properties");
     await page.locator("text=OLX No-Listings Flat").first().click();
 
-    // Modal is open but the wrong-platform fallback is suppressed.
-    await expect(page.getByRole("button", { name: "Fechar modal" })).toBeVisible();
-    await expect(page.getByTestId("modal-fallback-link")).toHaveCount(0);
+    // The panel is open but the wrong-platform fallback is suppressed.
+    await expect(page.getByRole("button", { name: "Fechar painel" })).toBeVisible();
+    await expect(page.getByTestId("detail-fallback-link")).toHaveCount(0);
     await expect(page.locator('a[href*="quintoandar.com.br"]')).toHaveCount(0);
   });
 
@@ -64,11 +64,54 @@ test.describe("Property modal fallback link (BIN-158)", () => {
     await page.goto("/properties");
     await page.locator("text=QuintoAndar No-Listings Flat").first().click();
 
-    const link = page.getByTestId("modal-fallback-link");
+    const link = page.getByTestId("detail-fallback-link");
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute(
       "href",
       "https://www.quintoandar.com.br/imovel/895549038",
     );
+  });
+
+  test("a listing link on a look-alike host is not rendered as a link", async ({ page }) => {
+    // `evilolx.com.br` ends with `olx.com.br` but is not that host or a subdomain of it.
+    const lookAlike = {
+      ...SAMPLE_PROPERTY,
+      id: "look-alike-1",
+      public_id: 93,
+      title: "Look-Alike Host Flat",
+      listings: [
+        {
+          platform: "olx",
+          platform_listing_id: "111",
+          listing_type: "rent",
+          price: 3500,
+          currency: "BRL",
+          url: "https://evilolx.com.br/imovel/111",
+        },
+        {
+          platform: "zapimoveis",
+          platform_listing_id: "222",
+          listing_type: "rent",
+          price: 3600,
+          currency: "BRL",
+          url: "https://www.zapimoveis.com.br/imovel/222",
+        },
+      ],
+    };
+    await installCommonMocks(page);
+    await mockPropertiesList(page, { ...PROPERTIES_PAGE, properties: [lookAlike], total: 1 });
+    await mockPropertyDetail(page, lookAlike);
+    await page.goto("/properties");
+    await page.locator("text=Look-Alike Host Flat").first().click();
+
+    const platforms = page.getByTestId("listings-by-platform");
+    await expect(platforms.getByTestId("platform-row")).toHaveCount(2);
+    await expect(platforms.getByRole("link")).toHaveCount(1);
+    await expect(platforms.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://www.zapimoveis.com.br/imovel/222",
+    );
+    await expect(platforms.getByText("Link indisponível")).toHaveCount(1);
+    await expect(page.locator('a[href*="evilolx"]')).toHaveCount(0);
   });
 });

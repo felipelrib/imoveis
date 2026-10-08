@@ -12,7 +12,7 @@ import {
 const VALID_KEY = "e2e-test-api-key";
 
 test.describe("Full UI string catalog (BIN-99)", () => {
-  test("pt-BR chrome on Dashboard, Properties, and property modal", async ({
+  test("pt-BR chrome on Dashboard, Properties, and the detail panel", async ({
     page,
   }) => {
     /** @type {string[]} */
@@ -37,12 +37,12 @@ test.describe("Full UI string catalog (BIN-99)", () => {
     ).toBeVisible();
 
     await page.locator("text=2BR Apartment Savassi").click();
-    await expect(page.locator(".modal")).toBeVisible();
+    await expect(page.getByTestId("detail-panel")).toBeVisible();
     await expect(page.getByTestId("neighbourhood-quality-section")).toContainText(
       "Qualidade do bairro"
     );
     await expect(
-      page.getByRole("button", { name: "Fechar modal" })
+      page.getByRole("button", { name: "Fechar painel" })
     ).toBeVisible();
   });
 });
