@@ -479,6 +479,17 @@ export async function installCommonMocks(page, opts = {}) {
     })
   );
 
+  // The Dashboard reads its alert list from `/system/alerts` (`fetchAlerts`),
+  // which the `/api/alerts**` route above does not match; left unmocked it was
+  // proxied to whatever listens on the API port.
+  await page.route("**/api/system/alerts**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    })
+  );
+
   await page.route("**/api/watchlist**", (route) =>
     route.fulfill({
       status: 200,

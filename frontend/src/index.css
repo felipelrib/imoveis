@@ -631,7 +631,7 @@ body {
 }
 .compare-bar {
   position: fixed;
-  bottom: 24px;
+  bottom: var(--compare-bar-bottom);
   left: 50%;
   transform: translateX(-50%);
   z-index: 900;
@@ -645,6 +645,12 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
   min-width: 280px;
+  /* v0.14-s1.11: the height is a token because the toast stack is offset by
+     it (see `.toast-stack`); the bar never grows past the viewport and keeps
+     its content on one line. */
+  height: var(--compare-bar-height);
+  max-width: calc(100vw - 32px);
+  white-space: nowrap;
 }
 .compare-bar-count {
   font-size: 14px;
@@ -1223,6 +1229,36 @@ body {
   /* 640px is the Painel mock at 1440px. */
   --detail-panel-width:  clamp(440px, 46vw, 640px);
   --nav-sidebar-width:   240px;
+
+  /* v0.14-s1.11: the shared bottom strip (closes v0.13-fu13). */
+  --toast-stack-bottom:  16px;
+  --compare-bar-bottom:  24px;
+  /* The bar's measured natural height: 12px padding + a `btn-sm` + 1px borders. */
+  --compare-bar-height:  57px;
+}
+
+/* ── Shared bottom strip (v0.14-s1.11) ─────────────────────────
+   The toast stack and the compare bar are both anchored to the bottom of the
+   viewport. The compare bar owns the strip: while it is in the document the
+   stack starts above it, at every width; otherwise the stack rests on the
+   16px inset. It is one rule, not a breakpoint — the bar is content-sized and
+   its width depends on the locale, so no pixel threshold is right for both.
+   `:has()` keeps `ToastProvider` and the page ignorant of each other.
+   ──────────────────────────────────────────────────────────── */
+:root:has(.compare-bar) {
+  --toast-stack-bottom: calc(var(--compare-bar-bottom) + var(--compare-bar-height) + 8px);
+}
+.toast-stack {
+  position: fixed;
+  bottom: var(--toast-stack-bottom);
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Never wider than the viewport less the two 16px insets. */
+  max-width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
 }
 
 .meia {

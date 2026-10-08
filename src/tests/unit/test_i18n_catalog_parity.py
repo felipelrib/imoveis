@@ -83,6 +83,15 @@ _RETIRED_KEYS = (
     "properties.countProperties",
     "properties.countFavourited",
     "properties.compareSelected",
+    # v0.14-s1.11 (closes v0.13-fu12): five dashboard keys split into pairs,
+    # two deleted because no call site named them.
+    "dashboard.modelsLoaded",
+    "dashboard.enrichResultOk",
+    "dashboard.enrichResultOkSkipped",
+    "dashboard.rerunSkipPhotoGate",
+    "dashboard.verbQueued",
+    "dashboard.rerunWouldQueue",
+    "dashboard.rerunQueued",
 )
 
 
@@ -596,3 +605,97 @@ def test_nothing_is_switched_on_from_the_save_dialog():
     save = api.split("export async function saveSearch", 1)[1].split("\nexport ", 1)[0]
     assert "body: { name, filters }" in save
     assert "notify_new_matches" not in save and "min_price_drop" not in save
+
+
+# --- v0.14-s1.11: dashboard count strings (closes v0.13-fu12) -----------------
+#
+# The dashboard interpolated a count into a fixed plural (`1 enfileirados`) or
+# dodged agreement with `modelo(s)`. Every live count key is now a One/Many
+# pair selected with `n === 1` in `Dashboard.tsx`; the skip note of the
+# enrich-missing line is its own pair, because it carries a second count. Two
+# keys no call site named (`rerunWouldQueue`, `rerunQueued`) were deleted, not
+# split. In `en` a pair may hold the same text twice.
+
+_DASHBOARD_PLURAL_PINS: dict[str, dict[str, str]] = {
+    "en": {
+        "dashboard.modelsLoadedOne": "{n} model loaded",
+        "dashboard.modelsLoadedMany": "{n} models loaded",
+        "dashboard.enrichResultOkOne": "✔ Queued {n} for enrichment",
+        "dashboard.enrichResultOkMany": "✔ Queued {n} for enrichment",
+        "dashboard.enrichResultOkSkippedOne": "✔ Queued {n} for enrichment ({skipNote})",
+        "dashboard.enrichResultOkSkippedMany": "✔ Queued {n} for enrichment ({skipNote})",
+        "dashboard.enrichSkippedNoImagesOne": "{n} skipped — no images",
+        "dashboard.enrichSkippedNoImagesMany": "{n} skipped — no images",
+        "dashboard.rerunSkipPhotoGateOne": "{n} blocked by photo gate",
+        "dashboard.rerunSkipPhotoGateMany": "{n} blocked by photo gate",
+        "dashboard.verbQueuedOne": "Queued",
+        "dashboard.verbQueuedMany": "Queued",
+    },
+    "pt-BR": {
+        "dashboard.modelsLoadedOne": "{n} modelo carregado",
+        "dashboard.modelsLoadedMany": "{n} modelos carregados",
+        "dashboard.enrichResultOkOne": "✔ {n} enfileirado para enriquecimento",
+        "dashboard.enrichResultOkMany": "✔ {n} enfileirados para enriquecimento",
+        "dashboard.enrichResultOkSkippedOne": "✔ {n} enfileirado para enriquecimento ({skipNote})",
+        "dashboard.enrichResultOkSkippedMany": "✔ {n} enfileirados para enriquecimento ({skipNote})",
+        "dashboard.enrichSkippedNoImagesOne": "{n} pulado — sem imagens",
+        "dashboard.enrichSkippedNoImagesMany": "{n} pulados — sem imagens",
+        "dashboard.rerunSkipPhotoGateOne": "{n} bloqueado pelo filtro de fotos",
+        "dashboard.rerunSkipPhotoGateMany": "{n} bloqueados pelo filtro de fotos",
+        "dashboard.verbQueuedOne": "Enfileirado",
+        "dashboard.verbQueuedMany": "Enfileirados",
+    },
+}
+
+# An `(s)` in a value is the agreement dodge `modelsLoaded` used.
+_PLURAL_DODGE = re.compile(r"\(s\)|\(es\)", re.IGNORECASE)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", sorted(_DASHBOARD_PLURAL_PINS))
+def test_dashboard_count_keys_are_split_into_singular_and_plural(locale: str):
+    """Each dashboard count renders a noun and a participle that agree, verbatim."""
+    catalog = _catalog(locale)
+    for key, expected in _DASHBOARD_PLURAL_PINS[locale].items():
+        assert catalog.get(key) == expected, f"{locale}.{key} must read exactly {expected!r}"
+
+
+@pytest.mark.unit
+def test_dashboard_plural_pins_cover_the_same_keys_in_every_locale():
+    """A pair pinned in one catalog only would let the other drift unseen."""
+    key_sets = {locale: set(pins) for locale, pins in _DASHBOARD_PLURAL_PINS.items()}
+    assert set(key_sets) == set(_locales())
+    assert len({frozenset(keys) for keys in key_sets.values()}) == 1, key_sets
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", _locales())
+def test_no_catalog_value_dodges_agreement(locale: str):
+    """No string writes `modelo(s)` instead of choosing a form.
+
+    Catalog-wide: `dashboard.modelsLoaded` was the only such value when this
+    landed, so the wider net costs nothing and catches the next one anywhere.
+    """
+    catalog = _catalog(locale)
+    offenders = [
+        f"{key}: {value!r}" for key, value in sorted(catalog.items()) if _PLURAL_DODGE.search(value)
+    ]
+    assert not offenders, f"{locale}: `(s)` in a catalog string:\n" + "\n".join(offenders)
+
+
+@pytest.mark.unit
+def test_the_dashboard_names_every_split_key():
+    """Each new key is named by `Dashboard.tsx` (a source scan).
+
+    A key no call site names is dead copy, and a pair with one arm missing
+    from the source cannot be selected. This does not check *which* count
+    selects an arm: the rendered lines in `frontend/tests/e2e/dashboard.spec.js`
+    do, with rows where the two counts of one sentence differ.
+    """
+    source = (_REPO / "frontend" / "src" / "pages" / "Dashboard.tsx").read_text(encoding="utf-8")
+    named = set(re.findall(r"""['"](dashboard\.[A-Za-z]+)['"]""", source))
+
+    pinned = set(_DASHBOARD_PLURAL_PINS[_REFERENCE_LOCALE])
+    assert pinned <= named, f"pinned but not named by the dashboard: {sorted(pinned - named)}"
+    catalog = _catalog(_REFERENCE_LOCALE)
+    assert named <= set(catalog), f"named by the dashboard but in no catalog: {sorted(named - set(catalog))}"

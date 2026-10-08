@@ -4,6 +4,7 @@ import {
   EMPTY_PROPERTIES,
   PROPERTIES_PAGE,
   SAMPLE_PROPERTY,
+  SYSTEM_STATUS,
   installCommonMocks,
   mockAdminHealth,
   mockPlatforms,
@@ -91,6 +92,112 @@ test.describe("Dashboard page", () => {
     );
     await expect.poll(() => enrichCalled).toBeTruthy();
   });
+
+  // v0.14-s1.11 (closes v0.13-fu12): every dashboard count picks its own
+  // singular or plural form — the queued count and the skipped count apart.
+  for (const row of [
+    { queued: 1, skipped: 0, line: "✔ 1 enfileirado para enriquecimento" },
+    { queued: 3, skipped: 0, line: "✔ 3 enfileirados para enriquecimento" },
+    { queued: 0, skipped: 0, line: "✔ 0 enfileirados para enriquecimento" },
+    {
+      queued: 3,
+      skipped: 1,
+      line: "✔ 3 enfileirados para enriquecimento (1 pulado — sem imagens)",
+    },
+    {
+      queued: 1,
+      skipped: 2,
+      line: "✔ 1 enfileirado para enriquecimento (2 pulados — sem imagens)",
+    },
+  ]) {
+    test(`enrich-missing result agrees with its counts: ${row.queued} queued, ${row.skipped} skipped`, async ({
+      page,
+    }) => {
+      await installCommonMocks(page);
+      await page.route("**/api/admin/enrichment/missing", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            queued_enrichments: row.queued,
+            skipped_no_images: row.skipped,
+          }),
+        })
+      );
+      await page.goto("/");
+      await page.getByTestId("enrich-missing").click();
+      await expect(page.getByTestId("enrich-missing-result")).toHaveText(row.line);
+    });
+  }
+
+  for (const row of [
+    {
+      queued: 1,
+      photoGated: 1,
+      line: "✔ Enfileirado 1 (1 bloqueado pelo filtro de fotos)",
+    },
+    {
+      queued: 2,
+      photoGated: 3,
+      line: "✔ Enfileirados 2 (3 bloqueados pelo filtro de fotos)",
+    },
+    // Mixed rows: a selection wired to the wrong count passes the two above.
+    {
+      queued: 1,
+      photoGated: 2,
+      line: "✔ Enfileirado 1 (2 bloqueados pelo filtro de fotos)",
+    },
+    {
+      queued: 2,
+      photoGated: 1,
+      line: "✔ Enfileirados 2 (1 bloqueado pelo filtro de fotos)",
+    },
+  ]) {
+    test(`enrichment re-run result agrees with its counts: ${row.queued} queued, ${row.photoGated} photo-gated`, async ({
+      page,
+    }) => {
+      await installCommonMocks(page);
+      await page.route("**/api/admin/enrichment/rerun", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            mode: "missing",
+            stages: "all",
+            dry_run: false,
+            queued: row.queued,
+            would_queue: row.queued,
+            skipped_no_images: 0,
+            skipped_too_few_photos: row.photoGated,
+            skipped_missing_prior_enrichment: 0,
+            filters: {},
+          }),
+        })
+      );
+      await page.goto("/");
+      await page.getByTestId("enrichment-rerun-run").click();
+      await expect(page.getByTestId("enrichment-rerun-result")).toHaveText(row.line);
+      // The toast takes the same verb (`toastRerunOk`).
+      await expect(page.getByTestId("toast")).toContainText(
+        `${row.queued === 1 ? "Enfileirado" : "Enfileirados"} ${row.queued} para enriquecimento de IA`
+      );
+    });
+  }
+
+  for (const row of [
+    { models: ["llava"], line: "1 modelo carregado" },
+    { models: ["llava", "gemma"], line: "2 modelos carregados" },
+    { models: [], line: "0 modelos carregados" },
+  ]) {
+    test(`Ollama service line agrees with ${row.models.length} loaded model(s)`, async ({ page }) => {
+      await installCommonMocks(page, {
+        status: { ...SYSTEM_STATUS, ollama: { status: "ok", models: row.models } },
+      });
+      await page.goto("/");
+      await expect(page.locator("text=Status dos serviços")).toBeVisible();
+      await expect(page.getByText(row.line, { exact: true })).toBeVisible();
+    });
+  }
 
   test("dry-run enrichment re-run posts body and shows would_queue (BIN-95)", async ({
     page,

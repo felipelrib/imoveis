@@ -738,4 +738,45 @@ location: frontend/vite.config.js (dev-server `proxy`), frontend/playwright.conf
 source_spec: `spec-1-18-periodic-tasks-not-blocked-by-scrapes.md`
 severity: medium (unverified)
 reason: Every e2e spec mocks the calls it knows about with `page.route`; a call a spec forgets to mock is forwarded by the Vite dev server's proxy to the configured API target. On this host that target is the live primary API on :8000, so a forgotten mock of a write (a favourite, a saved search, `POST /scrape`) would act on real data, the same class of leak as the raw-pytest incident of 2026-10-08 that the Redis connection guard closed for the backend. Not checked: which target the gate's e2e run actually resolves, and whether any current spec leaves a write unmocked. A fix points the e2e dev server at a closed port or a stub that fails loudly on an unmocked call.
+status: resolved
+resolution: duplicate of DW-76 (same finding, recorded by the story 1-11 dev pass with the `/system/alerts` evidence); tracked there.
+
+### DW-76: The e2e suite has no catch-all for unmocked /api calls, so a spec that forgets a mock silently sends the request through the Vite proxy to whatever listens on API_PORT.
+origin: spec-deferred aabe646b205c
+location: frontend/tests/e2e/helpers/apiMocks.js:415
+source_spec: `spec-1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip.md`
+severity: medium
+reason: frontend/vite.config.js proxies /api to http://localhost:${API_PORT || 8000}, and frontend/tests/e2e/helpers/apiMocks.js installCommonMocks registers one route per endpoint with no fallback. Found on this story: every Dashboard case issued GET /api/system/alerts (frontend/src/api.ts fetchAlerts) unmocked, because the common mock matched /api/alerts** only; Vite logged proxy errors for it in an isolated run with API_PORT set to a dead port. That one read is mocked now. On this host port 8000 is the live primary API, and scripts/agent/validate.py passes API_PORT through its .env.local allowlist, so an unmocked write in a future spec could reach real data. Fix: a first-registered page.route("**/api/**") that fails the test (or aborts the request) for anything no later route claims.
+status: open
+
+### DW-77: In a window narrower than about 460px the compare bar's buttons overflow the bar's right edge.
+origin: spec-deferred 70077bea225a
+location: frontend/src/index.css:632
+source_spec: `spec-1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip.md`
+severity: low
+reason: frontend/src/index.css .compare-bar now has max-width: calc(100vw - 32px), white-space: nowrap and a fixed height, and its pt-BR content with four selected is about 428px wide on one line; nothing wraps or shrinks. Before this story the bar had no max-width and ran off both sides of such a window instead, so the width was never supported; the product is desktop-only (EXPERIENCE.md) and the narrowest e2e width is 640px. Not covered by DW-55, which is about the save-search dialog and the compare view. A fix lets .compare-bar-actions shrink or wrap and makes the toast offset follow the bar's real height.
+status: open
+
+### DW-78: A toast can cover the lower right of the detail side panel for the four seconds it is up; the bottom-strip rule covers toast against compare bar only.
+origin: spec-deferred fe91b58e584b
+location: frontend/src/index.css:1252
+source_spec: `spec-1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip.md`
+severity: low
+reason: .toast-stack is fixed at right: 16px with z-index 9999 and each toast takes pointer events; .detail-panel is z-index 500 and reaches the bottom of the viewport on the right (full content width at 900px and below). This has been so since the panel shipped (Story 1.8); with the compare bar on screen the stack now sits 65px higher over the panel. A click dismisses the toast. Whether toasts should move left of the panel or the panel should reserve the strip is a UX decision.
+status: open
+
+### DW-79: DESIGN.md's toast line does not state the bottom-strip sharing rule; it still says only that a toast never covers the filter bar.
+origin: spec-deferred a866a9f0448d
+location: _bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/DESIGN.md:243
+source_spec: `spec-1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip.md`
+severity: low
+reason: _bmad-output/planning-artifacts/ux-designs/ux-imoveis-2026-08-05/DESIGN.md line 243. The rule chosen by Story 1.11 (the compare bar owns the strip; the stack starts 8px above it while it is on screen, at every width) is recorded in docs/features/v0.14-s1.11-ui-follow-ups-plurals-and-bottom-strip.md, in the index.css comment block and in the toast-contract e2e header. Editing a planning artifact from a story branch also invalidates the cached epic context for stories running in parallel.
+status: open
+
+### DW-80: Scraper Control still interpolates counts into fixed plurals (1 processados, 1 pulados, 1 erros).
+origin: spec-deferred fa0ee0f872dd
+location: frontend/src/i18n/locales/pt-BR.json:405
+source_spec: `spec-1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip.md`
+severity: low
+reason: frontend/src/i18n/locales/pt-BR.json scraper.activeProgress ("— {processed} processados, {skipped} pulados, {errors} erros") and scraper.logCounts ("{processed} processados, {skipped} pulados, {errors} falharam") carry three counts each with no One/Many selection. Outside Story 1.11, which names the dashboard keys; the same fragment-per-count split used for dashboard.enrichSkippedNoImages applies. locale-stale-polling.spec.js pins the plural form of logCounts.
 status: open

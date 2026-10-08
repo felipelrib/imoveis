@@ -117,23 +117,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={showToast}>
       {children}
-      {/* Toast container — bottom-anchored, right-offset so it clears the
-          centred `.compare-bar` (fixed, bottom: 24px) without either surface
-          knowing about the other. */}
-      <div
-        data-testid="toast-container"
-        style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          zIndex: 9999,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          maxWidth: 380,
-          pointerEvents: 'none',
-        }}
-      >
+      {/* Toast container — bottom-anchored. Its position is the `.toast-stack`
+          rule in index.css, which also lifts the stack above the compare bar
+          while that bar is on screen; neither component imports the other. */}
+      <div className="toast-stack" data-testid="toast-container">
         {toasts.map(t => {
           const s = TOAST_STYLES[t.type] || TOAST_STYLES.info
           return (

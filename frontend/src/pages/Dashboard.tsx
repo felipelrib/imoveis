@@ -86,7 +86,11 @@ const SERVICES: ServiceDef[] = [
   },
   {
     key: 'ollama', icon: '🤖', labelKey: 'dashboard.svcOllama',
-    sub: (s, t) => s?.ollama?.status === 'ok' ? t('dashboard.modelsLoaded', { n: (s?.ollama?.models || []).length }) : t('dashboard.offline'),
+    sub: (s, t) => {
+      if (s?.ollama?.status !== 'ok') return t('dashboard.offline')
+      const n = (s?.ollama?.models || []).length
+      return t(n === 1 ? 'dashboard.modelsLoadedOne' : 'dashboard.modelsLoadedMany', { n })
+    },
   },
   {
     key: 'workers', icon: '⚙️', labelKey: 'dashboard.svcCelery',
@@ -268,9 +272,19 @@ export default function Dashboard({ status, loading }: DashboardProps) {
     try {
       const r = await enrichMissing() as EnrichMissingResult
       const skipped = r.skipped_no_images || 0
+      // Each count picks its own form: the verb agrees with the queued count,
+      // the skip note with the skipped one.
+      const n = r.queued_enrichments
+      const one = n === 1
       const msg = skipped
-        ? t('dashboard.enrichResultOkSkipped', { n: r.queued_enrichments, skipped })
-        : t('dashboard.enrichResultOk', { n: r.queued_enrichments })
+        ? t(one ? 'dashboard.enrichResultOkSkippedOne' : 'dashboard.enrichResultOkSkippedMany', {
+            n,
+            skipNote: t(
+              skipped === 1 ? 'dashboard.enrichSkippedNoImagesOne' : 'dashboard.enrichSkippedNoImagesMany',
+              { n: skipped },
+            ),
+          })
+        : t(one ? 'dashboard.enrichResultOkOne' : 'dashboard.enrichResultOkMany', { n })
       setEnrichResult(msg)
       showToast(t('dashboard.toastEnrichQueued'), { type: 'success' })
     } catch (e) {
@@ -299,10 +313,17 @@ export default function Dashboard({ status, loading }: DashboardProps) {
       }
       const r = await enrichmentRerun(payload) as RerunResult
       const n = dryRun ? r.would_queue : r.queued
-      const verb = dryRun ? t('dashboard.verbWouldQueue') : t('dashboard.verbQueued')
+      const verb = dryRun
+        ? t('dashboard.verbWouldQueue')
+        : t(n === 1 ? 'dashboard.verbQueuedOne' : 'dashboard.verbQueuedMany')
       const skips = [
         r.skipped_no_images ? t('dashboard.rerunSkipNoImages', { n: r.skipped_no_images }) : null,
-        r.skipped_too_few_photos ? t('dashboard.rerunSkipPhotoGate', { n: r.skipped_too_few_photos }) : null,
+        r.skipped_too_few_photos
+          ? t(
+              r.skipped_too_few_photos === 1 ? 'dashboard.rerunSkipPhotoGateOne' : 'dashboard.rerunSkipPhotoGateMany',
+              { n: r.skipped_too_few_photos },
+            )
+          : null,
         r.skipped_missing_prior_enrichment ? t('dashboard.rerunSkipMissingPrior', { n: r.skipped_missing_prior_enrichment }) : null,
       ].filter(Boolean)
       const skipNote = skips.length ? ` (${skips.join(', ')})` : ''
