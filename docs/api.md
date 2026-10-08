@@ -37,9 +37,10 @@ Query parameters:
 | `sort_dir` | string | `asc` or `desc` (default) |
 | `max_total_monthly_cost` | number ≥ 0 | Keep Properties that have an active rent Listing with `total_monthly_cost` at or under the cap |
 | `include_incomplete_totals` | bool | Only with `max_total_monthly_cost`: also keep Properties that have an active rent Listing but none with a total. No effect alone |
+| `max_price_per_m2_percentile` | number, > 0 and ≤ 1 | Keep Properties whose stored cohort price/m² percentile is at or under the value (`0.25` = among the 25% cheapest of the neighbourhood). Outside the range or not a number: `422` |
 
-`GET /properties/export` accepts the same `sort_by`, `max_total_monthly_cost` and
-`include_incomplete_totals`.
+`GET /properties/export` accepts the same `sort_by`, `max_total_monthly_cost`,
+`include_incomplete_totals` and `max_price_per_m2_percentile`.
 
 #### Total Monthly Cost (FR-31)
 
@@ -87,8 +88,39 @@ nested `cost` object.
 - **A sale-only Property never passes the cap**, with or without
   `include_incomplete_totals`: totals exist for rent Listings only.
 - CSV export: `deciding_listing_id`, `deciding_rule` and `total_monthly_cost`
-  are the last three columns; per-Listing `cost` is inside the `listings` JSON
-  cell.
+  are appended after the original columns (followed by the two percentile
+  columns below); per-Listing `cost` is inside the `listings` JSON cell.
+
+#### Cohort price/m² percentile (FR-30)
+
+The same serializer adds two fields to every Property on the list, batch,
+export and detail endpoints:
+
+| Field | Meaning |
+|-------|---------|
+| `price_per_m2_percentile_rent` | Share of the Property's city × neighbourhood rent cohort priced at or below it, in (0, 1]; lower is cheaper. `0.25` reads "among the 25% cheapest". `null` when there is no value |
+| `price_per_m2_percentile_sale` | The same for the sale cohort |
+
+- **Stored, not computed.** The values are `metrics_scoring` columns written by
+  the scoring stage (see `docs/features/v0.14-s1.6-cohort-price-per-m2-percentiles.md`)
+  and are served unrounded, so "the value is ≤ 0.25" and "passes
+  `max_price_per_m2_percentile=0.25`" are the same test.
+- **`null` is "no percentile", never a default.** The cohort is below the
+  minimum size, the Property is not a cohort member (no area, no neighbourhood,
+  no Listing price) or it has no scoring row. A `null` never matches the filter.
+- **The filter follows `listing_type`.** `rent` compares the rent field, `sale`
+  the sale field; `both` or no `listing_type` keeps a Property when either field
+  qualifies. A field only counts while the Property has an active Listing of
+  that type (the stored value outlives a deactivated Listing until the next
+  scoring run).
+- **Not `percentile_rank*`.** The legacy `percentile_rank`, `percentile_rank_rent`
+  and `percentile_rank_sale` are still served with their old definition (SQL
+  `PERCENT_RANK`, rounded to three places, cheapest = 0). Use the fields above
+  for "how cheap in its neighbourhood".
+- CSV export: `price_per_m2_percentile_rent` and `price_per_m2_percentile_sale`
+  are the last two columns; an empty cell is `null`.
+- Saved searches store the filter as `max_price_per_m2_percentile` in `filters`
+  (same range; out of range is a `422` on save).
 
 ### Get Property
 

@@ -23,6 +23,7 @@ const CAMEL_TO_SNAKE: Record<string, string> = {
   city: 'city',
   isFurnished: 'is_furnished',
   acceptsPets: 'accepts_pets',
+  maxPricePerM2Percentile: 'max_price_per_m2_percentile',
   q: 'q',
 }
 
@@ -111,6 +112,15 @@ export function fromSavedSearchWire(filters: FilterMap): FilterMap {
 
   const acceptsPets = pick(filters, 'accepts_pets', 'acceptsPets', 'pets')
   if (acceptsPets !== undefined) out.acceptsPets = Boolean(acceptsPets)
+
+  const maxPricePerM2Percentile = pick(
+    filters,
+    'max_price_per_m2_percentile',
+    'maxPricePerM2Percentile',
+  )
+  if (maxPricePerM2Percentile !== undefined) {
+    out.maxPricePerM2Percentile = maxPricePerM2Percentile
+  }
 
   const q = pick(filters, 'q')
   if (q !== undefined) out.q = q

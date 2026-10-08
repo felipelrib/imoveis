@@ -88,6 +88,13 @@ class PropertyModel(BaseModel):
     percentile_rank_sale: Optional[float] = None
     combined_score_rent: Optional[float] = None
     combined_score_sale: Optional[float] = None
+    # Cohort price/m2 percentile per listing type (v0.14-s1.7, FR-30): the
+    # stored share of the neighbourhood cohort priced at or below this Property,
+    # unrounded, in (0, 1] - 0.25 reads "among the 25% cheapest". ``null`` when
+    # the cohort is too small or the Property is not a member; never defaulted.
+    # Not the legacy ``percentile_rank*`` (a different definition).
+    price_per_m2_percentile_rent: Optional[float] = None
+    price_per_m2_percentile_sale: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     city: Optional[str] = None
@@ -222,6 +229,13 @@ class PropertyDetailModel(BaseModel):
     percentile_rank_sale: Optional[float] = None
     combined_score_rent: Optional[float] = None
     combined_score_sale: Optional[float] = None
+    # Cohort price/m2 percentile per listing type (v0.14-s1.7, FR-30): the
+    # stored share of the neighbourhood cohort priced at or below this Property,
+    # unrounded, in (0, 1] - 0.25 reads "among the 25% cheapest". ``null`` when
+    # the cohort is too small or the Property is not a member; never defaulted.
+    # Not the legacy ``percentile_rank*`` (a different definition).
+    price_per_m2_percentile_rent: Optional[float] = None
+    price_per_m2_percentile_sale: Optional[float] = None
     neighborhood_id: Optional[str] = None
     neighborhood_name: Optional[str] = None
     city: Optional[str] = None

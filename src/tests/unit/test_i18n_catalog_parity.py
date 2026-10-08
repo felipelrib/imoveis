@@ -293,3 +293,75 @@ def test_no_call_site_still_names_a_retired_key():
         "Call sites still name a retired count key — they would render the raw "
         "dotted key. Select the `…One`/`…Many` pair with `n === 1`:\n" + "\n".join(offenders)
     )
+
+
+# --- v0.14-s1.7: percentile badge and `Preço no bairro` filter (UX-DR8) -------
+#
+# The badge sentence is the contract's microcopy and is pinned verbatim. The
+# strings this story added must say "cheaper is better" in plain words: no
+# statistics jargon and no comparison sign. Keys that predate the story (the
+# modal's legacy `percentile*` labels, owned by Story 1.8) are not in scope.
+
+_PERCENTILE_FILTER_PINS: dict[str, dict[str, str]] = {
+    "en": {
+        "properties.amongCheapest": "among the {n}% cheapest",
+        "properties.priceInNeighbourhood": "Price in neighbourhood",
+        "properties.anyPrice": "any price",
+    },
+    "pt-BR": {
+        "properties.amongCheapest": "entre os {n}% mais baratos",
+        "properties.priceInNeighbourhood": "Preço no bairro",
+        "properties.anyPrice": "qualquer preço",
+    },
+}
+
+# Every catalog key Story 1.7 added.
+_STORY_1_7_KEYS = (
+    "properties.amongCheapest",
+    "properties.priceInNeighbourhood",
+    "properties.anyPrice",
+    "properties.activeFilters",
+    "properties.removeFilter",
+)
+
+_FORBIDDEN_PERCENTILE_COPY = ("p25", "percentil", "percentile", "≤")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", sorted(_PERCENTILE_FILTER_PINS))
+def test_percentile_badge_and_filter_copy_is_pinned(locale: str):
+    """Badge, filter label and the default option read exactly as the contract says."""
+    catalog = _catalog(locale)
+    for key, expected in _PERCENTILE_FILTER_PINS[locale].items():
+        assert catalog.get(key) == expected, f"{locale}.{key} must read exactly {expected!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", _locales())
+def test_story_1_7_strings_carry_no_statistics_jargon(locale: str):
+    """No new string says `P25`, `percentil(e)` or uses `≤` (UX-DR8)."""
+    catalog = _catalog(locale)
+    missing = [key for key in _STORY_1_7_KEYS if key not in catalog]
+    assert not missing, f"{locale}: Story 1.7 keys missing: {missing}"
+    offenders = [
+        f"{key}: {catalog[key]!r} contains {token!r}"
+        for key in _STORY_1_7_KEYS
+        for token in _FORBIDDEN_PERCENTILE_COPY
+        if token in catalog[key].lower()
+    ]
+    assert not offenders, f"{locale}: forbidden wording in new strings:\n" + "\n".join(offenders)
+
+
+@pytest.mark.unit
+def test_badge_and_filter_options_share_one_sentence():
+    """The card badge, the select options and the chip render one catalog key.
+
+    Three spellings of the same sentence would let the badge and the filter
+    that returns it drift apart. A source scan, because no frontend unit
+    runner exists.
+    """
+    call = re.compile(r"""t\(\s*['"]properties\.amongCheapest['"]""")
+    users = sorted(
+        path.name for path in _frontend_sources() if call.search(path.read_text(encoding="utf-8"))
+    )
+    assert {"PropertiesFilterBar.tsx", "PropertyCard.tsx"} <= set(users)

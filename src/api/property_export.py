@@ -96,11 +96,21 @@ _DECIDING_COLUMNS: tuple[str, ...] = (
     "total_monthly_cost",
 )
 
+# Cohort price/m2 percentiles (v0.14-s1.7), stored value unrounded. Appended
+# last for the same reason.
+_PERCENTILE_COLUMNS: tuple[str, ...] = (
+    "price_per_m2_percentile_rent",
+    "price_per_m2_percentile_sale",
+)
+
+# Columns appended after the original set, in the order they were added.
+_APPENDED_COLUMNS: tuple[str, ...] = (*_DECIDING_COLUMNS, *_PERCENTILE_COLUMNS)
+
 CSV_COLUMNS: tuple[str, ...] = (
     *_CSV_SCALAR_COLUMNS,
     *(_JSON_LIST_COLUMNS),
     *(f"primary_listing_{c}" for c in _PRIMARY_LISTING_COLUMNS),
-    *_DECIDING_COLUMNS,
+    *_APPENDED_COLUMNS,
 )
 
 
@@ -143,7 +153,7 @@ def _row_from_projection(item: Mapping[str, Any]) -> Dict[str, str]:
             row[key] = ""
         else:
             row[key] = _cell(primary.get(col))
-    for col in _DECIDING_COLUMNS:
+    for col in _APPENDED_COLUMNS:
         row[col] = _cell(item.get(col))
     return row
 

@@ -106,6 +106,15 @@ class SavedSearchFilters(BaseModel):
     min_score: Optional[float] = Field(
         None, validation_alias=AliasChoices("min_score", "minScore")
     )
+    # Cohort price/m2 percentile cap (v0.14-s1.7); same range as GET /properties.
+    max_price_per_m2_percentile: Optional[float] = Field(
+        None,
+        gt=0,
+        le=1,
+        validation_alias=AliasChoices(
+            "max_price_per_m2_percentile", "maxPricePerM2Percentile"
+        ),
+    )
     q: Optional[str] = Field(None, validation_alias=AliasChoices("q"))
 
     @field_validator(
@@ -137,6 +146,7 @@ class SavedSearchFilters(BaseModel):
         "min_bedrooms",
         "max_bedrooms",
         "min_parking",
+        "max_price_per_m2_percentile",
         mode="before",
     )
     @classmethod

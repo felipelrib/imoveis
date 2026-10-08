@@ -21,6 +21,7 @@ import { usePropertiesPagination } from '../hooks/usePropertiesPagination.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import { formatNumber } from '../i18n/format.js'
 import { toSavedSearchWire } from '../savedSearchFilters.js'
+import { parsePricePercentileFilter } from '../utils/percentile.js'
 import {
   PROPERTIES_PATH,
   FAVOURITES_PATH,
@@ -62,6 +63,7 @@ export default function Properties() {
     city, setCity,
     isFurnished, setIsFurnished,
     acceptsPets, setAcceptsPets,
+    maxPricePerM2Percentile, setMaxPricePerM2Percentile,
     q, setQ,
     qDraft, setQDraft,
     currentFilters,
@@ -229,6 +231,7 @@ export default function Properties() {
         platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
+        maxPricePerM2Percentile: parsePricePercentileFilter(maxPricePerM2Percentile),
         bbox: bboxStr,
         q: q || undefined,
       })
@@ -238,7 +241,7 @@ export default function Properties() {
     } finally {
       setMapLoading(false)
     }
-  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, maxPricePerM2Percentile, q])
 
   const load = async (p = page) => {
     const isPriceDesc = sortBy === 'price_desc'
@@ -279,6 +282,7 @@ export default function Properties() {
         platform: platform || undefined,
         isFurnished: isFurnished ? true : undefined,
         acceptsPets: acceptsPets ? true : undefined,
+        maxPricePerM2Percentile: parsePricePercentileFilter(maxPricePerM2Percentile),
         q: q || undefined,
       })
       setData(res)
@@ -366,7 +370,7 @@ export default function Properties() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- see BIN-141 note above
     load(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see BIN-141 note above
-  }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, neighborhood, city, viewMode, q])
+  }, [sortBy, listingType, propertyType, platform, maxPrice, priceType, minBedrooms, minParking, minScore, isFurnished, acceptsPets, maxPricePerM2Percentile, neighborhood, city, viewMode, q])
 
   // Always load on page change — including returning to page 1 via pagination (BIN-57).
   // Filter effect above owns the initial/filter-driven page-1 fetch; this also re-fetches
@@ -536,6 +540,9 @@ export default function Properties() {
           setIsFurnished={setIsFurnished}
           acceptsPets={acceptsPets}
           setAcceptsPets={setAcceptsPets}
+          maxPricePerM2Percentile={maxPricePerM2Percentile}
+          setMaxPricePerM2Percentile={setMaxPricePerM2Percentile}
+          filtersApplied={viewMode === 'all'}
           citiesLoading={citiesLoading}
           cities={cities}
           city={city}

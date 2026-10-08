@@ -357,6 +357,9 @@ _PROJECTION_KEYS = (
     "deciding_listing_id",
     "deciding_rule",
     "total_monthly_cost",
+    # v0.14-s1.7 - cohort price/m2 percentile per listing type (FR-30)
+    "price_per_m2_percentile_rent",
+    "price_per_m2_percentile_sale",
 )
 
 # v0.14-s1.2 — per-Listing ``cost`` object and its state vocabulary (FR-31).
@@ -457,6 +460,9 @@ def _assert_projection_keys(item: dict) -> None:
     for listing in item["listings"]:
         _assert_listing_cost(listing)
     _assert_deciding_listing(item)
+    for key in ("price_per_m2_percentile_rent", "price_per_m2_percentile_sale"):
+        value = item[key]
+        assert value is None or (isinstance(value, (int, float)) and 0 < value <= 1), key
 
 
 class TestPropertyProjectionContract:
@@ -594,6 +600,64 @@ class TestPropertyProjectionContract:
             client.get("/properties?include_incomplete_totals=maybe").status_code == 422
         )
 
+    # --- v0.14-s1.7: cohort price/m2 percentile fields and cap ---------------
+
+    def test_schema_models_declare_the_price_percentile_fields(self):
+        """``extra="ignore"`` models drop undeclared fields silently."""
+        from api.schemas import PropertyDetailModel
+
+        for model in (PropertyModel, PropertyDetailModel):
+            assert {
+                "price_per_m2_percentile_rent",
+                "price_per_m2_percentile_sale",
+                # The legacy fields stay on the wire.
+                "percentile_rank",
+                "percentile_rank_rent",
+                "percentile_rank_sale",
+            } <= set(model.model_fields)
+
+    def test_openapi_declares_the_price_percentile_cap_on_list_and_export(self, client):
+        spec = client.get("/openapi.json").json()
+        for path in ("/properties", "/properties/export"):
+            params = {p["name"]: p for p in spec["paths"][path]["get"]["parameters"]}
+            assert "max_price_per_m2_percentile" in params, path
+            schema = params["max_price_per_m2_percentile"]["schema"]
+            bounds = [schema, *schema.get("anyOf", [])]
+            assert any(b.get("exclusiveMinimum") == 0 for b in bounds), path
+            assert any(b.get("maximum") == 1 for b in bounds), path
+            assert params["max_price_per_m2_percentile"].get("required") is not True
+
+    @pytest.mark.parametrize("listing_type", ["rent", "sale"])
+    def test_price_percentile_cap_follows_the_listing_type_column(
+        self, client, listing_type
+    ):
+        response = client.get(
+            "/properties?page=1&page_size=50&max_price_per_m2_percentile=0.25"
+            f"&listing_type={listing_type}"
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties percentile cap")
+        for item in response.json()["properties"]:
+            _assert_projection_keys(item)
+            value = item[f"price_per_m2_percentile_{listing_type}"]
+            assert value is not None and value <= 0.25
+
+    def test_price_percentile_cap_without_a_type_accepts_either_column(self, client):
+        response = client.get(
+            "/properties?page=1&page_size=50&max_price_per_m2_percentile=0.5"
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties percentile cap")
+        for item in response.json()["properties"]:
+            values = [
+                item["price_per_m2_percentile_rent"],
+                item["price_per_m2_percentile_sale"],
+            ]
+            assert any(v is not None and v <= 0.5 for v in values)
+
+    @pytest.mark.parametrize("value", ["0", "1.5", "abc", "-0.25"])
+    def test_price_percentile_cap_is_validated(self, client, value):
+        response = client.get(f"/properties?max_price_per_m2_percentile={value}")
+        assert response.status_code == 422
+
 
 class TestPropertyExportContract:
     def test_export_rejects_invalid_format(self, client, admin_headers):
@@ -663,7 +727,34 @@ class TestPropertyExportContract:
         response = client.get("/properties/export?format=csv", headers=admin_headers)
         _assert_ok_or_skip_infra(response, endpoint="GET /properties/export csv")
         header = response.text.splitlines()[0].split(",")
-        assert header[-3:] == ["deciding_listing_id", "deciding_rule", "total_monthly_cost"]
+        assert header[-5:-2] == ["deciding_listing_id", "deciding_rule", "total_monthly_cost"]
+        # v0.14-s1.7: the cohort percentiles are the last two columns.
+        assert header[-2:] == [
+            "price_per_m2_percentile_rent",
+            "price_per_m2_percentile_sale",
+        ]
+
+    def test_export_accepts_the_price_percentile_cap(self, client, admin_headers):
+        response = client.get(
+            "/properties/export?format=json&listing_type=rent"
+            "&max_price_per_m2_percentile=0.25",
+            headers=admin_headers,
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties/export percentile")
+        for item in response.json()["properties"]:
+            _assert_projection_keys(item)
+            value = item["price_per_m2_percentile_rent"]
+            assert value is not None and value <= 0.25
+
+    @pytest.mark.parametrize("value", ["0", "1.5", "abc"])
+    def test_export_rejects_an_out_of_range_price_percentile_cap(
+        self, client, admin_headers, value
+    ):
+        response = client.get(
+            f"/properties/export?max_price_per_m2_percentile={value}",
+            headers=admin_headers,
+        )
+        assert response.status_code == 422
 
     def test_export_requires_key_when_configured(self, client):
         response = client.get("/properties/export?format=json")

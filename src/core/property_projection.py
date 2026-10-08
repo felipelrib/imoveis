@@ -27,8 +27,19 @@ def _round_or_none(value: Any, digits: int) -> Optional[float]:
     return round(float(value), digits) if value is not None else None
 
 
+def _stored_float(value: Any) -> Optional[float]:
+    """A stored number as it is: no rounding (Story 1.7)."""
+    return float(value) if value is not None else None
+
+
 def _dual_score_fields(row: Mapping[str, Any]) -> Dict[str, Optional[float]]:
-    """Map rent/sale score columns from a DB row (BIN-83)."""
+    """Map rent/sale score columns from a DB row (BIN-83).
+
+    ``price_per_m2_percentile_*`` (Story 1.6 columns) go out unrounded: the
+    badge (``ceil(value * 100)``) and the ``<=`` filter must read the same
+    number, and rounding a share such as 501/2000 moves it across a whole
+    percent. NULL stays null - never defaulted.
+    """
     return {
         "stat_score_rent": _round_or_none(row.get("stat_score_rent"), 3),
         "stat_score_sale": _round_or_none(row.get("stat_score_sale"), 3),
@@ -38,6 +49,12 @@ def _dual_score_fields(row: Mapping[str, Any]) -> Dict[str, Optional[float]]:
         "percentile_rank_sale": _round_or_none(row.get("percentile_rank_sale"), 3),
         "combined_score_rent": _round_or_none(row.get("combined_score_rent"), 3),
         "combined_score_sale": _round_or_none(row.get("combined_score_sale"), 3),
+        "price_per_m2_percentile_rent": _stored_float(
+            row.get("price_per_m2_percentile_rent")
+        ),
+        "price_per_m2_percentile_sale": _stored_float(
+            row.get("price_per_m2_percentile_sale")
+        ),
     }
 
 
@@ -506,6 +523,8 @@ LIST_SELECT_COLUMNS = (
                 ms.percentile_rank_sale,
                 ms.combined_score_rent,
                 ms.combined_score_sale,
+                ms.price_per_m2_percentile_rent,
+                ms.price_per_m2_percentile_sale,
                 ms.meta,
                 p.neighborhood_id,
                 n.name AS neighborhood_name,

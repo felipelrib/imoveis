@@ -709,3 +709,74 @@ class TestMapPropertyCostProjection:
         mapped["deciding_rule"] = "cheapest"
         with pytest.raises(ValidationError):
             PropertyModel.model_validate(mapped)
+
+
+# ---------------------------------------------------------------------------
+# Story 1.7 (v0.14) - cohort price/m2 percentiles in the projection (FR-30)
+# ---------------------------------------------------------------------------
+
+_PERCENTILE_FIELDS = ("price_per_m2_percentile_rent", "price_per_m2_percentile_sale")
+
+
+class TestMapPropertyPricePercentiles:
+    def _row(self, **overrides):
+        return TestMapPropertyProjection()._row(**overrides)
+
+    @pytest.mark.parametrize("mapper", [map_property_list_item, map_property_detail])
+    def test_stored_values_go_out_unrounded(self, mapper):
+        mapped = mapper(
+            self._row(
+                price_per_m2_percentile_rent=501 / 2000,
+                price_per_m2_percentile_sale=1 / 3,
+            )
+        )
+        # 501/2000 rounded to three places would read 0.25 and pass a 25% cap.
+        assert mapped["price_per_m2_percentile_rent"] == 501 / 2000
+        assert mapped["price_per_m2_percentile_rent"] != 0.25
+        assert mapped["price_per_m2_percentile_sale"] == 1 / 3
+
+    @pytest.mark.parametrize("mapper", [map_property_list_item, map_property_detail])
+    def test_null_and_missing_columns_read_null_never_a_default(self, mapper):
+        stored_null = mapper(
+            self._row(price_per_m2_percentile_rent=None, price_per_m2_percentile_sale=None)
+        )
+        no_scoring_row = mapper(self._row())
+        for mapped in (stored_null, no_scoring_row):
+            for field in _PERCENTILE_FIELDS:
+                assert field in mapped
+                assert mapped[field] is None
+
+    @pytest.mark.parametrize("mapper", [map_property_list_item, map_property_detail])
+    def test_one_type_can_have_a_value_while_the_other_is_null(self, mapper):
+        mapped = mapper(
+            self._row(price_per_m2_percentile_rent=0.2, price_per_m2_percentile_sale=None)
+        )
+        assert mapped["price_per_m2_percentile_rent"] == 0.2
+        assert mapped["price_per_m2_percentile_sale"] is None
+
+    @pytest.mark.parametrize("mapper", [map_property_list_item, map_property_detail])
+    def test_the_legacy_percentile_rank_is_untouched(self, mapper):
+        mapped = mapper(
+            self._row(price_per_m2_percentile_rent=0.1, price_per_m2_percentile_sale=0.9)
+        )
+        assert mapped["percentile_rank"] == 0.8
+        assert mapped["percentile_rank_rent"] == 0.2
+        assert mapped["percentile_rank_sale"] == 0.9
+
+    def test_the_list_select_reads_the_two_stored_columns(self):
+        from core.property_projection import LIST_SELECT_COLUMNS
+
+        assert "ms.price_per_m2_percentile_rent," in LIST_SELECT_COLUMNS
+        assert "ms.price_per_m2_percentile_sale," in LIST_SELECT_COLUMNS
+
+    def test_both_schema_models_keep_the_values(self):
+        from api.schemas import PropertyDetailModel, PropertyModel
+
+        row = self._row(
+            price_per_m2_percentile_rent=501 / 2000, price_per_m2_percentile_sale=None
+        )
+        item = PropertyModel.model_validate(map_property_list_item(row))
+        detail = PropertyDetailModel.model_validate(map_property_detail(row))
+        for model in (item, detail):
+            assert model.price_per_m2_percentile_rent == 501 / 2000
+            assert model.price_per_m2_percentile_sale is None

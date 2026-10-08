@@ -388,8 +388,9 @@ def test_export_accepts_the_same_params(client, seeded, monkeypatch):
         get_config.cache_clear()
     assert csv_response.status_code == 200, csv_response.text
     rows = list(csv.reader(io.StringIO(csv_response.text)))
-    assert rows[0][-3:] == ["deciding_listing_id", "deciding_rule", "total_monthly_cost"]
+    # v0.14-s1.7 appended the two cohort percentile columns after these.
+    assert rows[0][-5:-2] == ["deciding_listing_id", "deciding_rule", "total_monthly_cost"]
     (p1_row,) = [row for row in rows[1:] if row[0] == seeded["P1"]]
-    assert p1_row[-3:-1] == [seeded["P1_B"], "lowest-complete-total"]
+    assert p1_row[-5:-3] == [seeded["P1_B"], "lowest-complete-total"]
     # Postgres JSON renders the stored float 3900 without a fraction.
-    assert float(p1_row[-1]) == 3900.0
+    assert float(p1_row[-3]) == 3900.0

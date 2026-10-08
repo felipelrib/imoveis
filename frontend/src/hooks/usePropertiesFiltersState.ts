@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { fromSavedSearchWire } from '../savedSearchFilters.js'
+import { parsePricePercentileFilter } from '../utils/percentile.js'
 import type { PropertyFilterOptions, ListingType, PriceType, SortDir } from '../api.js'
 
 export const DEFAULT_FILTERS = {
@@ -17,6 +18,8 @@ export const DEFAULT_FILTERS = {
   city: '',
   isFurnished: false,
   acceptsPets: false,
+  // `Preço no bairro` (v0.14-s1.7): '' = any price, else a share as text ('0.25').
+  maxPricePerM2Percentile: '',
   q: '',
 }
 
@@ -48,12 +51,16 @@ export function usePropertiesFiltersState() {
   const [city, setCity] = useState(DEFAULT_FILTERS.city)
   const [isFurnished, setIsFurnished] = useState(DEFAULT_FILTERS.isFurnished)
   const [acceptsPets, setAcceptsPets] = useState(DEFAULT_FILTERS.acceptsPets)
+  const [maxPricePerM2Percentile, setMaxPricePerM2Percentile] = useState(
+    DEFAULT_FILTERS.maxPricePerM2Percentile,
+  )
   const [q, setQ] = useState(DEFAULT_FILTERS.q)
   const [qDraft, setQDraft] = useState(DEFAULT_FILTERS.q)
 
   const currentFilters = {
     sortBy, sortDir, listingType, propertyType, platform, maxPrice, priceType,
-    minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets, q,
+    minBedrooms, minParking, minScore, neighborhood, city, isFurnished, acceptsPets,
+    maxPricePerM2Percentile, q,
   }
 
   const buildListQueryFilters = useCallback((): PropertyFilterOptions => {
@@ -75,9 +82,10 @@ export function usePropertiesFiltersState() {
       platform: platform || undefined,
       isFurnished: isFurnished ? true : undefined,
       acceptsPets: acceptsPets ? true : undefined,
+      maxPricePerM2Percentile: parsePricePercentileFilter(maxPricePerM2Percentile),
       q: q || undefined,
     }
-  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, q])
+  }, [sortBy, sortDir, maxPrice, priceType, minBedrooms, minScore, minParking, neighborhood, city, listingType, propertyType, platform, isFurnished, acceptsPets, maxPricePerM2Percentile, q])
 
   const applyFilters = useCallback((rawFilters: Record<string, unknown>) => {
     const filters = fromSavedSearchWire(rawFilters)
@@ -95,6 +103,12 @@ export function usePropertiesFiltersState() {
     if (filters.city !== undefined) setCity(filters.city as string)
     if (filters.isFurnished !== undefined) setIsFurnished(Boolean(filters.isFurnished))
     if (filters.acceptsPets !== undefined) setAcceptsPets(Boolean(filters.acceptsPets))
+    if (filters.maxPricePerM2Percentile !== undefined) {
+      // Keep only a usable share: anything else would count as an active
+      // filter while no chip, option or query parameter shows it.
+      const share = parsePricePercentileFilter(String(filters.maxPricePerM2Percentile))
+      setMaxPricePerM2Percentile(share === undefined ? '' : String(share))
+    }
     if (filters.q !== undefined) {
       setQ(filters.q as string)
       setQDraft(filters.q as string)
@@ -108,6 +122,7 @@ export function usePropertiesFiltersState() {
     setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both')
     setPlatform('')
     setIsFurnished(false); setAcceptsPets(false)
+    setMaxPricePerM2Percentile('')
     setQ(''); setQDraft('')
   }, [])
 
@@ -118,6 +133,7 @@ export function usePropertiesFiltersState() {
     setNeighborhood(''); setCity(''); setPropertyType(''); setListingType('both')
     setPlatform('')
     setIsFurnished(false); setAcceptsPets(false)
+    setMaxPricePerM2Percentile('')
   }, [])
 
   const hasActiveFilters = Object.entries(currentFilters).some(([key, value]) => {
@@ -143,6 +159,7 @@ export function usePropertiesFiltersState() {
     city, setCity,
     isFurnished, setIsFurnished,
     acceptsPets, setAcceptsPets,
+    maxPricePerM2Percentile, setMaxPricePerM2Percentile,
     q, setQ,
     qDraft, setQDraft,
     currentFilters,

@@ -73,7 +73,7 @@ development_status:
   1-4-primary-migration-cannot-bypass-the-backfill-guard: done
   1-5-corpus-repair-applied-and-verified: done
   1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline: done
-  1-7-percentile-badge-on-cards-and-percentile-filter: backlog
+  1-7-percentile-badge-on-cards-and-percentile-filter: done
   1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow: backlog
   1-9-saved-search-new-match-detection-on-the-pipeline: backlog
   1-10-saved-search-alert-management-ui: backlog

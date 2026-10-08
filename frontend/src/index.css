@@ -758,6 +758,10 @@ body {
 }
 .property-body { padding: 16px; }
 .property-price {
+  /* DESIGN.md `typography.display-price`: the serif is the price's voice;
+     numerals are tabular (v0.14-s1.7). */
+  font-family: var(--font-display-price);
+  font-variant-numeric: tabular-nums;
   font-size: 20px;
   font-weight: 800;
   background: var(--grad-primary);
@@ -1394,7 +1398,14 @@ body {
   --surface-health-chip: #121626;
   --border-hairline:     #2b3350;
   --health-warn:         #d98d3f;
+  /* v0.14-s1.7: percentile badge (UX-DR9). */
+  --price-drop:          #74bd82;
+  --price-drop-tint-12:  #74bd821f;
+  --price-drop-tint-35:  #74bd8259;
 
+  --font-display-price: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+
+  --radius-meia-sm: 7px;
   --radius-meia-md: 9px;
   --radius-meia-lg: 12px;
 }
@@ -1404,6 +1415,77 @@ body {
   --text-secondary: #a3a5ad;
   --text-muted:     #82859a;
   --accent:         #4da3ff;
+}
+
+/* ── Percentile badge on the card price line (v0.14-s1.7, UX-DR9) ──────
+   DESIGN.md `components.percentile-badge`; metrics from the Painel mock
+   (`.pctl`). `margin-left: auto` right-aligns it on its price line; when the
+   line is too narrow the badge wraps under it and stays on the right. */
+.property-price-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
+.percentile-badge {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--price-drop);
+  background: var(--price-drop-tint-12);
+  border: 1px solid var(--price-drop-tint-35);
+  border-radius: var(--radius-meia-sm);
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+/* ── Active-filter chip strip (v0.14-s1.7, UX-DR9 filter-chip) ─────────
+   Never taller than two chip lines: 2 × 30px chips + one 6px row gap. */
+.filter-chip-strip {
+  --filter-chip-height: 30px;
+  --filter-chip-gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--filter-chip-gap);
+  width: 100%;
+  max-height: calc(2 * var(--filter-chip-height) + var(--filter-chip-gap));
+  overflow: hidden;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--filter-chip-height);
+  padding: 0 6px 0 13px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-md);
+}
+.filter-chip--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.filter-chip-remove {
+  margin-left: 4px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.filter-chip-remove:hover,
+.filter-chip-remove:focus-visible {
+  color: var(--text-primary);
 }
 
 /* ── Operações cards (UX-DR5 / UX-DR6) ─────────────────────────

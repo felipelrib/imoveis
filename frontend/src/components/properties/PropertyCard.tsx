@@ -10,6 +10,7 @@ import {
   decisioningPrice,
   groupListings,
 } from '../../utils/primaryListing.js'
+import { badgePercent, pricePercentileForType } from '../../utils/percentile.js'
 import { formatPlatform } from '../../labels.js'
 import { formatNumber, formatCurrency } from '../../i18n/format.js'
 import { linkIdForProperty } from '../../routes/propertyPaths.js'
@@ -130,15 +131,18 @@ export default function PropertyCard({
       <div className="property-image-placeholder" style={{ display: img ? 'none' : 'flex' }}>🏠</div>
 
       <div className="property-body">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             {hasListings ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }} data-testid="card-price-rows">
                 {groupKeys.map(type => {
                   const best = bestListingForType(p, type, groups)
                   const colors = listingTypeColor(type)
+                  // Stored cohort percentile of this line's listing type; no
+                  // element at all when it is null or above the badge cutoff.
+                  const cheapestN = badgePercent(pricePercentileForType(p, type))
                   return (
-                    <div key={type} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <div key={type} className="property-price-row" data-testid={`card-price-row-${type}`}>
                       <span className="property-price" style={{ fontSize: groupKeys.length > 1 ? 16 : 20 }}>
                         {best?.price ? formatCurrency(best.price, locale) : t('common.emDash')}
                       </span>
@@ -151,6 +155,11 @@ export default function PropertyCard({
                       {groups[type].length > 1 && (
                         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
                           ({groups[type].length})
+                        </span>
+                      )}
+                      {cheapestN != null && (
+                        <span className="percentile-badge" data-testid={`card-percentile-badge-${type}`}>
+                          {t('properties.amongCheapest', { n: cheapestN })}
                         </span>
                       )}
                     </div>

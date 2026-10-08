@@ -75,6 +75,8 @@ LIST_ITEM_KEYS = frozenset(
         "percentile_rank_sale",
         "combined_score_rent",
         "combined_score_sale",
+        "price_per_m2_percentile_rent",
+        "price_per_m2_percentile_sale",
         "neighborhood_id",
         "neighborhood_name",
         "city",
@@ -103,7 +105,15 @@ LIST_ITEM_KEYS = frozenset(
         "neighbourhood_quality",
     }
 )
-PERCENTILE_KEYS = frozenset({"percentile_rank", "percentile_rank_rent", "percentile_rank_sale"})
+PERCENTILE_KEYS = frozenset(
+    {
+        "percentile_rank",
+        "percentile_rank_rent",
+        "percentile_rank_sale",
+        "price_per_m2_percentile_rent",
+        "price_per_m2_percentile_sale",
+    }
+)
 
 
 @pytest.fixture(scope="function")

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from api.main import app
 from api.saved_searches import SavedSearchFilters
@@ -110,6 +111,30 @@ def test_empty_strings_excluded_from_wire():
     assert "q" not in wire
 
 
+def test_price_percentile_cap_round_trips_under_its_wire_key():
+    for payload in (
+        {"max_price_per_m2_percentile": 0.25},
+        {"maxPricePerM2Percentile": "0.25"},
+    ):
+        wire = SavedSearchFilters.model_validate(payload).to_wire()
+        assert wire == {"max_price_per_m2_percentile": 0.25}
+        # What was stored reads back unchanged.
+        assert SavedSearchFilters.model_validate(wire).to_wire() == wire
+
+
+def test_blank_price_percentile_cap_is_omitted_from_the_wire():
+    wire = SavedSearchFilters.model_validate(
+        {"listingType": "rent", "maxPricePerM2Percentile": ""}
+    ).to_wire()
+    assert wire == {"listing_type": "rent"}
+
+
+@pytest.mark.parametrize("value", [0, -0.25, 1.5, 25, "abc"])
+def test_price_percentile_cap_outside_the_range_is_rejected(value):
+    with pytest.raises(ValidationError):
+        SavedSearchFilters.model_validate({"max_price_per_m2_percentile": value})
+
+
 class _InsertCapturingSession:
     """Minimal session that records INSERT filter JSON for create assertions."""
 
@@ -190,3 +215,71 @@ def test_create_saved_search_accepts_camel_case_price_type(
     assert store.inserted_filters["max_price"] == 500000.0
     assert store.inserted_filters["price_type"] == "sale"
     assert "priceType" not in store.inserted_filters
+
+
+@pytest.mark.unit
+def test_create_saved_search_keeps_or_rejects_the_price_percentile_cap(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """v0.14-s1.7: the cap is stored under its wire key; out of range is a 422."""
+    store = _InsertCapturingSession()
+    monkeypatch.setattr("api.saved_searches.SessionLocal", lambda: store)
+
+    cfg = MagicMock()
+    cfg.auth = AuthConfig(
+        api_key="key-a",
+        jwt_secret="test-jwt-secret",
+        principal_id="alice",
+        admin_user="admin",
+        admin_pass="admin",
+    )
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    created = client.post(
+        "/saved-searches",
+        headers={"X-API-Key": "key-a"},
+        json={
+            "name": "Cheapest quarter, rent",
+            "filters": {"listing_type": "rent", "max_price_per_m2_percentile": 0.25},
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["filters"] == {
+        "listing_type": "rent",
+        "max_price_per_m2_percentile": 0.25,
+    }
+    assert store.inserted_filters == {
+        "listing_type": "rent",
+        "max_price_per_m2_percentile": 0.25,
+    }
+
+    store.inserted_filters = None
+    store.committed = False
+    rejected = client.post(
+        "/saved-searches",
+        headers={"X-API-Key": "key-a"},
+        json={"name": "Bad", "filters": {"max_price_per_m2_percentile": 1.5}},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert store.inserted_filters is None
+    assert store.committed is False
+
+
+def test_update_saved_search_body_keeps_or_rejects_the_price_percentile_cap():
+    """PATCH validates filters through the same model as POST."""
+    from pydantic import ValidationError
+
+    from api.saved_searches import SavedSearchUpdate
+
+    body = SavedSearchUpdate.model_validate(
+        {"filters": {"maxPricePerM2Percentile": "0.5"}}
+    )
+    assert body.filters is not None
+    assert body.filters.to_wire() == {"max_price_per_m2_percentile": 0.5}
+    for value in (0, 1.5, 25):
+        with pytest.raises(ValidationError):
+            SavedSearchUpdate.model_validate(
+                {"filters": {"max_price_per_m2_percentile": value}}
+            )

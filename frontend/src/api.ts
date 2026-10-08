@@ -83,6 +83,11 @@ export interface Property {
   price_per_m2_sale?: number | null
   neighborhood_mean_rent?: number | null
   neighborhood_mean_sale?: number | null
+  // Cohort price/m² percentile per listing type (v0.14-s1.7): stored share of
+  // the neighbourhood cohort priced at or below this Property, unrounded, in
+  // (0, 1]; null when suppressed. Not the legacy `percentile_rank*`.
+  price_per_m2_percentile_rent?: number | null
+  price_per_m2_percentile_sale?: number | null
   neighborhood_id?: string | null
   neighborhood_name?: string | null
   city?: string | null
@@ -398,6 +403,8 @@ export interface PropertyFilterOptions {
   propertyType?: string
   isFurnished?: boolean
   acceptsPets?: boolean
+  /** Cohort price/m² percentile cap in (0, 1]; 0.25 = among the 25% cheapest. */
+  maxPricePerM2Percentile?: number
   sortBy?: string
   sortDir?: SortDir
   bbox?: string
@@ -577,6 +584,7 @@ function buildPropertyFilterParams({
   propertyType,
   isFurnished,
   acceptsPets,
+  maxPricePerM2Percentile,
   sortBy = 'combined_score',
   sortDir = 'desc',
   bbox,
@@ -600,6 +608,9 @@ function buildPropertyFilterParams({
   if (propertyType) params.set('property_type', propertyType)
   if (isFurnished) params.set('is_furnished', 'true')
   if (acceptsPets) params.set('accepts_pets', 'true')
+  if (maxPricePerM2Percentile != null) {
+    params.set('max_price_per_m2_percentile', String(maxPricePerM2Percentile))
+  }
   if (bbox) params.set('bbox', bbox)
   if (q && String(q).trim()) params.set('q', String(q).trim())
   return params

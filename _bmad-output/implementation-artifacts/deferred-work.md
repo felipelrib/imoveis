@@ -520,3 +520,27 @@ source_spec: `spec-1-6-cohort-price-per-m2-percentiles-computed-in-the-pipeline.
 severity: low
 reason: Read-only on the primary, 2026-10-08, the second statement of _single_property_percentile_counts for a Property of the Savassi cohort (309 rent, 1,429 sale members): 0.9 to 1.1 s; plan = sequential scan of property_listings (288,028 rows, aggregated) and a parallel sequential scan of properties with the fold evaluated for every active row (66,043 x 3 removed by the filter). It was 386 ms before the key was folded. The first statement takes 4 ms. It runs once per enrichment, next to a cached stat query of 262 ms per listing type and an LLM call of seconds, so it is tolerable today. A fix needs an expression index on the folded label and city (a migration, and the fold becomes part of the schema) or a stored folded key; neither is a contained change.
 status: open
+
+### DW-49: The legacy percentile_rank, percentile_rank_rent and percentile_rank_sale are still served beside the new price_per_m2_percentile fields, and the modal still labels them "Percentil".
+origin: spec-deferred cf447c30b3f7
+location: src/core/property_projection.py:48
+source_spec: `spec-1-7-percentile-badge-on-cards-and-percentile-filter.md`
+severity: low
+reason: Story 1.7 added price_per_m2_percentile_rent/_sale to list, batch, detail and export and left the legacy fields in place (core/property_projection.py, api/schemas.py, api/property_export.py); no AC of the story asks for their removal and the modal that renders them belongs to Story 1.8. Two numbers called percentile are therefore on the wire with different definitions (legacy: PERCENT_RANK, cheapest = 0, rounded to 3 places, fabricated 0.5 on the single-property path). frontend/src/components/PropertyModal.tsx:204-224 renders the legacy ones through the pt-BR strings "percentil {n}", "Percentil no bairro", "Percentil (Aluguel)", "Percentil (Venda)", which UX-DR8 forbids. docs/api.md now says which field to use. Same subject as ledger entry DW-47; Story 1.8 is where the modal and then the fields can go, and test_percentile_characterization_lock.py has to be edited by that story.
+status: open
+
+### DW-50: On the current card the percentile badge wraps under the price instead of sitting beside it, and the price line is only partly the display-price of the UX contract.
+origin: spec-deferred 222b3bab5ed7
+location: frontend/src/components/properties/PropertyCard.tsx:145
+source_spec: `spec-1-7-percentile-badge-on-cards-and-percentile-filter.md`
+severity: low
+reason: UX-DR9 puts the badge right-aligned on the serif price line. The price line of the card also holds the listing-type tag, the platform and the favourite / watchlist icons (in the Painel mock those are on the photo and in the meta line). Measured with Chrome at 1440x900: card 438px wide, badge about 170px; the badge wraps inside its price row and stays right-aligned (screenshot taken during review). The e2e test accepts beside or under. .property-price got the Georgia family and tabular numerals only; it keeps 20px / weight 800 / gradient fill where DESIGN.md says 26px / 400 / plain ink. No story in epics.md owns the card anatomy restyle (verdict label, serif price line, on-photo actions).
+status: open
+
+### DW-51: The full validation tier cannot pass on the Windows host: the Playwright-managed Chromium is not installed, and the pre-merge verify of the loop runs the backend tier only, so no frontend story is checked by eslint, the Vite build or e2e before its merge.
+origin: spec-deferred 906e6891150d
+location: scripts/agent/validate.py:488
+source_spec: `spec-1-7-percentile-badge-on-cards-and-percentile-filter.md`
+severity: medium
+reason: 2026-10-08: validate.py --tier full fails at "e2e: playwright" with chrome-headless-shell.exe missing; C:/Users/Felipe/AppData/Local/ms-playwright does not exist; .run/validated in the primary checkout holds backend, docs and fast stamps only, never frontend or full. .bmad-loop/policy.toml runs validate.py --tier backend as [verify] (scripts/agent/validate.py:608 runs the frontend steps only for frontend / full). For this story the whole e2e suite was run against the installed Chrome through a temporary uncommitted config. Fix: npx playwright install chromium in frontend/ on the host (a download the dev session had no permission to make), then decide whether [verify] should be the full tier for stories that touch frontend/.
+status: open

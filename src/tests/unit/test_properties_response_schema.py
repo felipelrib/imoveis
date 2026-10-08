@@ -344,3 +344,66 @@ class TestTotalMonthlyCostFilterBuilder:
         assert params["max_total_monthly_cost"] == 4000
         assert "NOT EXISTS" in where
         assert order.endswith("ASC NULLS LAST, p.id")
+
+
+@pytest.mark.unit
+class TestPricePercentileThroughTheRoute:
+    """v0.14-s1.7: the stored percentiles survive response_model validation."""
+
+    @staticmethod
+    def _get(path: str, row: dict):
+        session = MagicMock()
+        session.__enter__ = MagicMock(return_value=session)
+        session.__exit__ = MagicMock(return_value=False)
+        session.execute.side_effect = [
+            SimpleNamespace(scalar=lambda: 1),
+            SimpleNamespace(mappings=lambda: SimpleNamespace(fetchall=lambda: [row])),
+        ]
+
+        def _bypass_rate_limit(self, request, endpoint, *args, **kwargs):
+            request.state.view_rate_limit = []
+
+        with (
+            patch("api.properties.SessionLocal", return_value=session),
+            patch("slowapi.extension.Limiter._check_request_limit", _bypass_rate_limit),
+        ):
+            client = TestClient(app, raise_server_exceptions=True)
+            return client.get(path), session
+
+    def test_list_item_carries_the_unrounded_value_and_null(self):
+        row = _ai_enriched_row(
+            price_per_m2_percentile_rent=501 / 2000,
+            price_per_m2_percentile_sale=None,
+        )
+        response, session = self._get(
+            "/properties?page=1&page_size=1&listing_type=rent"
+            "&max_price_per_m2_percentile=0.5",
+            row,
+        )
+        assert response.status_code == 200, response.text
+        prop = response.json()["properties"][0]
+        assert prop["price_per_m2_percentile_rent"] == 501 / 2000
+        assert prop["price_per_m2_percentile_sale"] is None
+        # The legacy field is still served.
+        assert prop["percentile_rank"] == pytest.approx(0.8)
+        # The value reached the query as a bound parameter.
+        count_sql, count_params = session.execute.call_args_list[0].args
+        assert count_params["max_price_per_m2_percentile"] == 0.5
+        assert "<= 0.5" not in str(count_sql)
+        assert (
+            "ms.price_per_m2_percentile_rent <= :max_price_per_m2_percentile"
+            in str(count_sql)
+        )
+
+    def test_a_row_without_the_columns_reads_null(self):
+        response, _session = self._get("/properties?page=1&page_size=1", _ai_enriched_row())
+        assert response.status_code == 200, response.text
+        prop = response.json()["properties"][0]
+        assert prop["price_per_m2_percentile_rent"] is None
+        assert prop["price_per_m2_percentile_sale"] is None
+
+    @pytest.mark.parametrize("value", ["0", "1.5", "abc", "-0.25"])
+    def test_out_of_range_is_a_422(self, value):
+        client = TestClient(app, raise_server_exceptions=True)
+        response = client.get(f"/properties?max_price_per_m2_percentile={value}")
+        assert response.status_code == 422

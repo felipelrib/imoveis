@@ -171,6 +171,38 @@ _TOTAL_MONTHLY_COST_INCOMPLETE = (
 )
 
 
+# Cohort price/m2 percentile cap (v0.14-s1.7, FR-30). Static SQL over the
+# stored ``metrics_scoring`` columns of Story 1.6; the only value is a bound
+# parameter and the listing types are literals (BIN-135). A NULL percentile
+# (suppressed cohort, not a member, no scoring row) makes the comparison NULL,
+# so it never matches. With a listing type only that type's column is read (no
+# cross-type leakage, BIN-77); with ``both`` or none, a Property qualifies when
+# either of its price lines does. A column only counts while the Property has
+# an active Listing of that type: the stored value outlives a deactivated
+# Listing until the next scoring run, and the card has no price line (so no
+# badge) for a type without one. The legacy ``percentile_rank*`` columns are
+# never read here.
+_PRICE_PERCENTILE_CAP_RENT = (
+    "(ms.price_per_m2_percentile_rent <= :max_price_per_m2_percentile "
+    "AND EXISTS (SELECT 1 FROM property_listings pl "
+    "WHERE pl.property_id = p.id AND pl.active = true "
+    "AND pl.listing_type = 'rent'))"
+)
+_PRICE_PERCENTILE_CAP_SALE = (
+    "(ms.price_per_m2_percentile_sale <= :max_price_per_m2_percentile "
+    "AND EXISTS (SELECT 1 FROM property_listings pl "
+    "WHERE pl.property_id = p.id AND pl.active = true "
+    "AND pl.listing_type = 'sale'))"
+)
+_PRICE_PERCENTILE_CAP_BY_LISTING_TYPE = {
+    "rent": _PRICE_PERCENTILE_CAP_RENT,
+    "sale": _PRICE_PERCENTILE_CAP_SALE,
+}
+_PRICE_PERCENTILE_CAP_EITHER = (
+    "(" + _PRICE_PERCENTILE_CAP_RENT + " OR " + _PRICE_PERCENTILE_CAP_SALE + ")"
+)
+
+
 class PropertyListFilters(BaseModel):
     """Query filters for ``GET /properties`` (keeps FastAPI query params under the S107 limit)."""
 
@@ -191,6 +223,8 @@ class PropertyListFilters(BaseModel):
     # Total Monthly Cost cap (v0.14-s1.2): reads ``total_monthly_cost`` only.
     max_total_monthly_cost: Optional[float] = Field(None, ge=0)
     include_incomplete_totals: bool = False
+    # Cohort price/m2 percentile cap (v0.14-s1.7): 0.25 = "among the 25% cheapest".
+    max_price_per_m2_percentile: Optional[float] = Field(None, gt=0, le=1)
     sort_by: str = Field(
         "combined_score",
         pattern="^(combined_score|price|total_monthly_cost|first_seen|created_at|area_m2)$",
@@ -219,6 +253,8 @@ class PropertyExportFilters(BaseModel):
     # Total Monthly Cost cap (v0.14-s1.2): reads ``total_monthly_cost`` only.
     max_total_monthly_cost: Optional[float] = Field(None, ge=0)
     include_incomplete_totals: bool = False
+    # Cohort price/m2 percentile cap (v0.14-s1.7): 0.25 = "among the 25% cheapest".
+    max_price_per_m2_percentile: Optional[float] = Field(None, gt=0, le=1)
     sort_by: str = Field(
         "combined_score",
         pattern="^(combined_score|price|total_monthly_cost|first_seen|created_at|area_m2)$",
@@ -389,6 +425,13 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         else:
             filters.append(_TOTAL_MONTHLY_COST_CAP)
         params["max_total_monthly_cost"] = filters_in.max_total_monthly_cost
+    if filters_in.max_price_per_m2_percentile is not None:
+        filters.append(
+            _PRICE_PERCENTILE_CAP_BY_LISTING_TYPE.get(
+                filters_in.listing_type or "", _PRICE_PERCENTILE_CAP_EITHER
+            )
+        )
+        params["max_price_per_m2_percentile"] = filters_in.max_price_per_m2_percentile
     if filters_in.min_bedrooms is not None:
         filters.append("p.bedrooms >= :min_bedrooms")
         params["min_bedrooms"] = filters_in.min_bedrooms
@@ -735,6 +778,7 @@ def get_property(property_id: str) -> Dict[str, Any]:
             "ms.z_score_rent, ms.z_score_sale, "
             "ms.percentile_rank_rent, ms.percentile_rank_sale, "
             "ms.combined_score_rent, ms.combined_score_sale, "
+            "ms.price_per_m2_percentile_rent, ms.price_per_m2_percentile_sale, "
             "ms.meta, "
             "p.neighborhood_id, "
             "n.name AS neighborhood_name, "

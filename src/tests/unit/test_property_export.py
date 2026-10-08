@@ -149,10 +149,15 @@ def test_export_csv_null_primary_listing_leaves_prefixed_empty():
 @pytest.mark.unit
 def test_export_csv_deciding_columns_are_appended_last():
     """v0.14-s1.2: new columns never shift an existing column's position."""
-    assert CSV_COLUMNS[-3:] == (
+    assert CSV_COLUMNS[-5:-2] == (
         "deciding_listing_id",
         "deciding_rule",
         "total_monthly_cost",
+    )
+    # v0.14-s1.7: the two cohort percentiles come after them.
+    assert CSV_COLUMNS[-2:] == (
+        "price_per_m2_percentile_rent",
+        "price_per_m2_percentile_sale",
     )
     assert CSV_COLUMNS[0] == "id"
     assert len(set(CSV_COLUMNS)) == len(CSV_COLUMNS)
@@ -198,3 +203,24 @@ def test_export_csv_null_total_is_an_empty_cell_not_zero():
     assert first["total_monthly_cost"] == ""
     assert second["deciding_listing_id"] == ""
     assert second["deciding_rule"] == ""
+
+
+@pytest.mark.unit
+def test_export_csv_carries_the_stored_percentiles_unrounded_in_the_last_columns():
+    text = properties_to_csv(
+        [
+            _sample_item(
+                price_per_m2_percentile_rent=501 / 2000,
+                price_per_m2_percentile_sale=None,
+            ),
+            _sample_item(),
+        ]
+    )
+    rows = list(csv.reader(io.StringIO(text)))
+    assert rows[0][-2:] == ["price_per_m2_percentile_rent", "price_per_m2_percentile_sale"]
+    # A null percentile is an empty cell, never 0 or 0.5.
+    assert rows[1][-2:] == ["0.2505", ""]
+    assert rows[2][-2:] == ["", ""]
+    # The legacy column keeps its place and value.
+    assert rows[0].index("percentile_rank") == list(CSV_COLUMNS).index("percentile_rank")
+    assert rows[1][rows[0].index("percentile_rank")] == "0.9"

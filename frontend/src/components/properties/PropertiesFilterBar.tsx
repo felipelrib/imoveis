@@ -1,6 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
 import SearchableMultiSelect from '../SearchableMultiSelect.jsx'
 import { formatPlatform, PROPERTY_TYPE_OPTIONS } from '../../labels.js'
+import {
+  PRICE_PERCENTILE_FILTER_OPTIONS,
+  filterCapPercent,
+  parsePricePercentileFilter,
+} from '../../utils/percentile.js'
 import type { City, Neighborhood, ExportFormat } from '../../api.js'
 import type { TFunction } from '../../i18n/LocaleContext.jsx'
 
@@ -48,6 +53,10 @@ export interface PropertiesFilterBarProps {
   setIsFurnished: Dispatch<SetStateAction<boolean>>
   acceptsPets: boolean
   setAcceptsPets: Dispatch<SetStateAction<boolean>>
+  maxPricePerM2Percentile: string
+  setMaxPricePerM2Percentile: Dispatch<SetStateAction<string>>
+  /** False where the list ignores the filters (Favoritos): no chip is shown. */
+  filtersApplied?: boolean
   citiesLoading: boolean
   cities: City[]
   city: string
@@ -103,6 +112,9 @@ export default function PropertiesFilterBar({
   setIsFurnished,
   acceptsPets,
   setAcceptsPets,
+  maxPricePerM2Percentile,
+  setMaxPricePerM2Percentile,
+  filtersApplied = true,
   citiesLoading,
   cities,
   city,
@@ -113,6 +125,16 @@ export default function PropertiesFilterBar({
   setNeighborhood,
   onClearAdvanced,
 }: PropertiesFilterBarProps) {
+  // `Preço no bairro` (v0.14-s1.7). The select offers 25% and 50%; a saved
+  // search written through the API may hold another share, which is listed
+  // too so the control never shows a value it is not applying.
+  const activePercentile = parsePricePercentileFilter(maxPricePerM2Percentile)
+  const percentileOptions = activePercentile === undefined
+    || PRICE_PERCENTILE_FILTER_OPTIONS.includes(activePercentile)
+    ? PRICE_PERCENTILE_FILTER_OPTIONS
+    : [...PRICE_PERCENTILE_FILTER_OPTIONS, activePercentile].sort((a, b) => a - b)
+  const percentileLabel = (share: number) => t('properties.amongCheapest', { n: filterCapPercent(share) })
+
   return (
     <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
@@ -313,6 +335,22 @@ export default function PropertiesFilterBar({
               <option value="0.9">{t('properties.scorePlus', { n: 0.9 })}</option>
             </select>
           </div>
+          <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, margin: 0 }}>
+            <label className="form-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }} htmlFor="price-percentile-filter">{t('properties.priceInNeighbourhood')}</label>
+            <select
+              id="price-percentile-filter"
+              className="form-select"
+              style={{ width: 210 }}
+              value={activePercentile === undefined ? '' : String(activePercentile)}
+              onChange={e => setMaxPricePerM2Percentile(e.target.value)}
+              data-testid="price-percentile-filter"
+            >
+              <option value="">{t('properties.anyPrice')}</option>
+              {percentileOptions.map(share => (
+                <option key={share} value={String(share)}>{percentileLabel(share)}</option>
+              ))}
+            </select>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
               <input type="checkbox" checked={isFurnished} onChange={e => setIsFurnished(e.target.checked)} data-testid="furnished-filter" />
@@ -362,6 +400,30 @@ export default function PropertiesFilterBar({
             />
           </div>
           <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={onClearAdvanced}>{t('properties.clearAll')}</button>
+        </div>
+      )}
+
+      {/* Active-filter chips (UX-DR9 filter-chip). Only the percentile filter
+          renders one in this story; the strip is capped at two chip lines. */}
+      {filtersApplied && activePercentile !== undefined && (
+        <div
+          className="filter-chip-strip meia"
+          data-testid="filter-chip-strip"
+          role="group"
+          aria-label={t('properties.activeFilters')}
+        >
+          <span className="filter-chip filter-chip--active" data-testid="filter-chip-price-percentile">
+            <span className="filter-chip-label">{percentileLabel(activePercentile)}</span>
+            <button
+              type="button"
+              className="filter-chip-remove"
+              data-testid="filter-chip-price-percentile-remove"
+              aria-label={t('properties.removeFilter', { label: t('properties.priceInNeighbourhood') })}
+              onClick={() => setMaxPricePerM2Percentile('')}
+            >
+              ×
+            </button>
+          </span>
         </div>
       )}
     </div>
