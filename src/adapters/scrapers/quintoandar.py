@@ -18,6 +18,7 @@ from adapters.scrapers.listing_description import extract_quintoandar_descriptio
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
+from core.listing_cost import COST_SOURCE_KEY, PERIODICITY_MONTHLY, build_cost_source
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -469,6 +470,16 @@ class QuintoAndarScraper(BaseScraper):
             }
             if note:
                 details["fees_note"] = note
+            # Story 1.1: raw payload figures for the cost mapping. QuintoAndar
+            # itemizes monthly; ``totalCost - rentPrice`` is never stamped (it
+            # includes charges that are neither condo fee nor IPTU).
+            details[COST_SOURCE_KEY] = build_cost_source(
+                rent=raw.get("rentPrice") if kind == "rent" else None,
+                condo_fee=raw.get("condoFee"),
+                iptu=raw.get("iptu"),
+                fees_combined=raw.get("condoIptu"),
+                iptu_periodicity=PERIODICITY_MONTHLY,
+            )
             base_price = float(partial_price) if kind == "rent" and partial_price else None
             return {
                 **base,

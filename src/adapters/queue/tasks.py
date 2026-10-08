@@ -38,7 +38,7 @@ from adapters.queue.gpu_semaphore import GPUSemaphore
 from adapters.scrapers.checkpoint_store import CheckpointStore
 from adapters.scrapers.listing_description import candidate_listing_url
 from adapters.scrapers.registry import ScraperRegistry
-from core.dedupe import match_or_create_property
+from core.dedupe import match_or_create_property, repopulate_listing_costs
 from core.enrichment import EnrichmentTaskClass
 from core.entities import PropertyCandidate
 from core.exceptions import CircuitBreakerOpenError
@@ -1568,4 +1568,54 @@ def refresh_listing_claim_stats_task(self):
 
     payload = {"status": "ok", **stats}
     logger.info("listing_claim_stats_complete", **payload)
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Total Monthly Cost repopulation for stored Listings (Story 1.1, FR-31)
+# ---------------------------------------------------------------------------
+
+LISTING_COST_BACKFILL_BATCH_SIZE = 500
+
+
+@celery.task(
+    bind=True,
+    name="tasks.backfill_listing_costs",
+    max_retries=2,
+    default_retry_delay=60,
+)
+def backfill_listing_costs_task(self, batch_size: int = LISTING_COST_BACKFILL_BATCH_SIZE):
+    """Populate the cost columns of stored Listings from their stored figures.
+
+    Operator-triggered and idempotent: re-runs the normalize cost mapping over
+    every ``property_listings`` row in keyset batches, committing per batch. A
+    failure keeps the batches already committed; a rerun updates only the rows
+    that still differ.
+    """
+    scanned = updated = batches = 0
+    after_id = None
+    with SessionLocal() as session:
+        try:
+            while True:
+                stats = repopulate_listing_costs(session, after_id=after_id, batch_size=batch_size)
+                session.commit()
+                batches += 1
+                scanned += stats["scanned"]
+                updated += stats["updated"]
+                after_id = stats["last_id"]
+                if after_id is None:
+                    break
+        except Exception as exc:
+            session.rollback()
+            logger.error(
+                "listing_cost_backfill_failed",
+                error=str(exc),
+                scanned=scanned,
+                updated=updated,
+                batches=batches,
+            )
+            raise
+
+    payload = {"status": "ok", "scanned": scanned, "updated": updated, "batches": batches}
+    logger.info("listing_cost_backfill_complete", **payload)
     return payload

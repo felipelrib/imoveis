@@ -7,7 +7,7 @@
 | Table | Purpose |
 |---|---|
 | `properties` | Canonical deduped property: PostGIS `location` (GiST-indexed), `public_id` (external ref), 1024-dim pgvector `embedding`, `active` flag, nullable `owner` (single-user design) |
-| `property_listings` | Per-platform listing rows (QuintoAndar/OLX/Zap) with `listing_type` (rent/sale — dual listings supported), `base_price`, platform ids (unique per platform) |
+| `property_listings` | Per-platform listing rows (QuintoAndar/OLX/Zap) with `listing_type` (rent/sale — dual listings supported), `base_price`, platform ids (unique per platform). Total Monthly Cost columns (v0.14-s1.1, written only by `core/dedupe.py`): `rent_monthly`, `condo_fee_monthly`, `iptu_monthly`, `iptu_periodicity_source` (`monthly`/`annual`/`unknown`, CHECK), `fees_bundled`, `total_monthly_cost` (rent only; NULL when incomplete), `cost_complete`; `updated_at` moves only when a cost column or `active` changes. A NULL component means unknown, never zero |
 | `price_history` | Price points over time with `listing_type` + `platform`; interval-collision fixed (BIN-145) |
 | `metrics_scoring` | Deal scores per property; dual listing-type scores (rent & sale) |
 | `neighborhoods` | Neighbourhood geometries (constraints enforced) + quality profile columns |
@@ -30,4 +30,4 @@
 
 ## Migration strategy
 
-Alembic, 24 revisions from `b64c262168da_initial` through embedding resize (1024), owner-scoped personalization, dual listing-type scores, GiST location index, neighbourhood geometry constraints, price-per-m² rent/sale cohorts. Gates: `alembic check` after schema changes; rebuild API image before `validate.sh backend` when migrations changed (compose runs migrations from the image).
+Alembic, 25 revisions from `b64c262168da_initial` through embedding resize (1024), owner-scoped personalization, dual listing-type scores, GiST location index, neighbourhood geometry constraints, price-per-m² rent/sale cohorts, listing Total Monthly Cost columns (`c4d5e6f7a8b9`). Gates: `alembic check` after schema changes; rebuild API image before `scripts/agent/validate.py --tier backend` when migrations changed (compose runs migrations from the image).

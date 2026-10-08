@@ -292,6 +292,11 @@ def test_deactivate_listing_keeps_property_when_sibling_active():
     assert summary["property_deactivated"] is False
     assert summary["remaining_active_listings"] == 1
     assert session.execute.call_count == 3
+    # AD-19: leaving the active set moves the Listing's updated_at.
+    statement, params = session.execute.call_args_list[0].args
+    assert "active = false, updated_at = :now" in str(statement)
+    assert params["id"] == "listing-1"
+    assert params["now"] is not None
 
 
 def test_deactivate_listing_deactivates_property_when_none_left():

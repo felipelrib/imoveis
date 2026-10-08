@@ -236,6 +236,18 @@ class PropertyListing(Base):
     first_seen = Column(DateTime, server_default=sa.text(SQL_NOW))
     last_seen = Column(DateTime, server_default=sa.text(SQL_NOW), onupdate=sa.text(SQL_NOW))
     active = Column(Boolean, server_default=sa.text("true"))
+    # Total Monthly Cost (Story 1.1, FR-31, AD-3). Written only by
+    # core/dedupe.py from core.listing_cost; NULL component = unknown, never 0.
+    rent_monthly = Column(Float)
+    condo_fee_monthly = Column(Float)
+    iptu_monthly = Column(Float)
+    iptu_periodicity_source = Column(String, nullable=False, server_default=sa.text("'unknown'"))
+    fees_bundled = Column(Boolean, nullable=False, server_default=sa.text("false"))
+    total_monthly_cost = Column(Float)
+    cost_complete = Column(Boolean, nullable=False, server_default=sa.text("false"))
+    # AD-19: moves only when a cost column or ``active`` changes. The persist
+    # path uses raw SQL, so it is set explicitly there (no ORM onupdate).
+    updated_at = Column(DateTime, nullable=False, server_default=sa.text(SQL_NOW))
 
     __table_args__ = (
         sa.UniqueConstraint(
@@ -243,6 +255,10 @@ class PropertyListing(Base):
             "platform_listing_id",
             "listing_type",
             name="uq_platform_listing",
+        ),
+        sa.CheckConstraint(
+            "iptu_periodicity_source IN ('monthly', 'annual', 'unknown')",
+            name="ck_property_listings_iptu_periodicity_source",
         ),
     )
 

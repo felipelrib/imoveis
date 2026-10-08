@@ -236,6 +236,7 @@ class TestBuildBeatSchedule:
         assert app.conf.task_routes["tasks.refresh_transit_proximity"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.refresh_neighbourhood_access"] == {"queue": "scrapers"}
         assert app.conf.task_routes["tasks.refresh_listing_claim_stats"] == {"queue": "scrapers"}
+        assert app.conf.task_routes["tasks.backfill_listing_costs"] == {"queue": "scrapers"}
         assert app.conf.beat_schedule == {"scheduled": {}}
         build_schedule.assert_called_once()
 
@@ -281,6 +282,7 @@ class TestBuildBeatSchedule:
             "tasks.refresh_transit_proximity",
             "tasks.refresh_neighbourhood_access",
             "tasks.refresh_listing_claim_stats",
+            "tasks.backfill_listing_costs",
         ):
             assert routes.get(task_name) == {"queue": "scrapers"}, (
                 f"{task_name} must route to scrapers — workers do not consume default celery"

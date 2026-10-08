@@ -27,6 +27,7 @@ from adapters.scrapers.listing_description import extract_olx_description
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
+from core.listing_cost import COST_SOURCE_KEY, build_cost_source
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -509,8 +510,20 @@ class OLXScraper(BaseScraper):
             "accepts_pets": props.get("accepts_pets"),
             "condo_fee": props.get("condo_fee"),
             "iptu": props.get("iptu"),
-            "raw_json": {"fees_bundled": False},
         }
+
+        def listing_raw_json(rent: float | None) -> dict:
+            # Story 1.1: the labelled figures as published (``R$ 0`` stays 0 —
+            # the cost mapping reads it as unknown, unlike the summed headline).
+            return {
+                "fees_bundled": False,
+                COST_SOURCE_KEY: build_cost_source(
+                    rent=rent,
+                    condo_fee=props.get("condo_fee"),
+                    iptu=props.get("iptu"),
+                ),
+            }
+
         listings: list[dict] = []
         if rent_total is not None and rent_total > 0:
             listings.append(
@@ -519,6 +532,7 @@ class OLXScraper(BaseScraper):
                     "listing_type": "rent",
                     "price": rent_total,
                     "base_price": rent_base,
+                    "raw_json": listing_raw_json(rent_base),
                 }
             )
         if sale_price is not None and sale_price > 0:
@@ -528,6 +542,7 @@ class OLXScraper(BaseScraper):
                     "listing_type": "sale",
                     "price": sale_price,
                     "base_price": None,
+                    "raw_json": listing_raw_json(None),
                 }
             )
         if not listings:

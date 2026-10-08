@@ -463,14 +463,18 @@ def deactivate_listing_and_maybe_property(session: Any, listing_id: str) -> dict
 
     Returns a summary dict for logging / telemetry.
     """
+    from datetime import datetime, timezone
+
     from sqlalchemy import text
 
+    # ``updated_at`` moves with ``active`` (AD-19): the Fit sweep must see a
+    # Listing leave the active set. Raw SQL, so no ORM onupdate.
     session.execute(
         text(
-            "UPDATE property_listings SET active = false "
+            "UPDATE property_listings SET active = false, updated_at = :now "
             "WHERE id = :id AND active = true"
         ),
-        {"id": listing_id},
+        {"id": listing_id, "now": datetime.now(timezone.utc)},
     )
     row = session.execute(
         text("SELECT property_id FROM property_listings WHERE id = :id"),

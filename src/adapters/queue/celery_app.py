@@ -235,6 +235,7 @@ def make_celery() -> Celery:
         'tasks.refresh_transit_proximity': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_access': {'queue': 'scrapers'},
         'tasks.refresh_listing_claim_stats': {'queue': 'scrapers'},
+        'tasks.backfill_listing_costs': {'queue': 'scrapers'},
     }
 
     # Build and apply the beat schedule from config

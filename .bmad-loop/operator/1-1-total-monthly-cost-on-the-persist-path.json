@@ -1,0 +1,13 @@
+{
+  "actions": [
+    "Wait for the orchestrator to merge this story into main, then from the primary checkout in Git Bash run: bash scripts/agent/migrate-primary.sh (expect alembic_version c4d5e6f7a8b9; it refuses while a cloud backfill runner is alive - wait, never delete the Redis keys). Do this BEFORE rebuilding any container: the new code INSERTs the new columns.",
+    "Rebuild and restart the primary stack so the API and workers run the merged code: ./scripts/restart.sh --build",
+    "Populate the stored Listings: docker compose --env-file .env.local exec worker_scraper celery -A adapters.queue.tasks call tasks.backfill_listing_costs ; then read the result with: docker compose --env-file .env.local logs --since 30m worker_scraper | grep listing_cost_backfill (expect listing_cost_backfill_complete; a second run must report updated=0).",
+    "Run the step 4 query in docs/features/v0.14-s1.1-total-monthly-cost-on-the-persist-path.md against the primary (read-only) and record the per-platform complete / bundled / incomplete / rent_unknown / iptu_ambiguous counts in that doc.",
+    "Confirm or override the two product calls made in this story: IPTU periodicity is inferred by magnitude (monthly at <= 15% of rent, annual at >= 40%, unknown between; for sale 0.10% / 0.25% of price), and a published zero is treated as unknown. To change either, edit the constants in src/core/listing_cost.py and re-run the backfill."
+  ],
+  "parked_at": "2026-10-08",
+  "run_id": "20261008-005950-9056",
+  "spec_file": "_bmad-output/implementation-artifacts/spec-1-1-total-monthly-cost-on-the-persist-path.md",
+  "story_key": "1-1-total-monthly-cost-on-the-persist-path"
+}

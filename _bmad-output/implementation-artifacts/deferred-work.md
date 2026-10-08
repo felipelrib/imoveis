@@ -409,3 +409,24 @@ status: open
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-7-corpus-repair-fabricated-scores.md`
   summary: `migrate-primary.sh`'s "run this from the primary checkout" guard does not fire for a worktree that has no `.env.local` — the common state for a freshly created worktree.
   evidence: `scripts/agent/migrate-primary.sh:51-57` wraps the `COMPOSE_PROJECT_NAME` comparison in `if [ -f "$REPO_ROOT/.env.local" ]`, so the refusal only triggers when the file exists *and* names a non-primary project. A worktree without one — which is how `.claude/worktrees/` and the bmad-loop run worktrees are created, and the exact state CLAUDE.md warns about — falls through to the defaults at `:59-64` (`POSTGRES_HOST=localhost`, `POSTGRES_PORT=5432`, `POSTGRES_DB=realestate`) and would run `alembic upgrade head` against the **primary** database from whatever revision that checkout holds. Distinct from DW-32 (which is about `start.sh` bypassing the lock entirely): this one is about the sanctioned script itself accepting the wrong checkout. Surfaced while writing story 2.7's operator procedure, which asserted the refusal as a safety property; the doc has been corrected to say "run it from the primary checkout deliberately" rather than relying on the guard. The fix is to fail closed on a missing `.env.local`, or to compare against the primary checkout path rather than only the project name.
+
+### DW-35: A QuintoAndar sale payload that carries condo fee or IPTU but no totalCost makes the legacy normalizer emit a phantom rent Listing priced at condo + IPTU, and that figure becomes the Property price.
+origin: spec-deferred 9795de64b3de
+location: src/adapters/scrapers/quintoandar.py:421
+source_spec: `spec-1-1-total-monthly-cost-on-the-persist-path.md`
+reason: Pre-existing in QuintoAndarScraper._prices_and_fees: rent = partial + (condo or 0) + (iptu or 0) when totalCost is absent, so rentPrice 0 + condoFee 600 + iptu 150 yields rent 750 > 0. Reproduced in this run: normalize() of {rentPrice: 0, salePrice: 450000, condoFee: 600, iptu: 150} returns listings [('rent', 750.0), ('sale', 450000.0)] and price 750.0. Not verified: whether live QuintoAndar sale payloads have this shape (the rent search probe always carried totalCost). A probe of the sale search would settle it.
+status: open
+
+### DW-36: The Zap normalizer stamps `prices.rental.value` as monthly rent without reading `prices.rental.period`, so a non-monthly rental would get a "complete" Total Monthly Cost on a non-monthly figure.
+origin: review of story 1-1 (independent pass before branch adoption, 2026-10-08)
+location: src/adapters/scrapers/zapimoveis.py:641
+source_spec: `spec-1-1-total-monthly-cost-on-the-persist-path.md`
+reason: Every committed fixture and cassette publishes `period: "MONTHLY"`, so this is unverified against live data; the legacy `price` has the same blind spot, but the new `rent_monthly` column asserts the period. Fix: pass `rent=None` to `build_cost_source` when `period` is present and not `MONTHLY`, and add one labelled fixture.
+status: open
+
+### DW-37: Listing cost columns refresh only when `_is_unchanged` is false, and the cost backfill can lose a deadlock to a concurrent scrape with no retry.
+origin: review of story 1-1 (independent pass before branch adoption, 2026-10-08)
+location: src/core/dedupe.py:264
+source_spec: `spec-1-1-total-monthly-cost-on-the-persist-path.md`
+reason: (a) The noop check relies on every cost input being mirrored in `props_json` or `price` (true today for Zap, QuintoAndar and OLX; pinned by a test only for Zap) - state the invariant at `_is_unchanged` or compare `cost_source` there. (b) `backfill_listing_costs` locks each batch `FOR UPDATE` in id order (`src/core/dedupe.py:681`) while a scrape updates a candidate's rent then sale row in one transaction; a deadlock aborts the task and `max_retries=2` is dead config because nothing calls `self.retry`. A rerun is idempotent, so the cost today is an operator rerun.
+status: open

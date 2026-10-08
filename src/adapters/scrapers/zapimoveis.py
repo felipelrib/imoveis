@@ -27,6 +27,7 @@ from adapters.scrapers.funnel import bisect_price, listing_id_from_raw, unique_b
 from adapters.scrapers.redis_circuit_breaker import RedisCircuitBreaker
 from adapters.scrapers.registry import ScraperRegistry
 from core.exceptions import CircuitBreakerOpenError
+from core.listing_cost import COST_SOURCE_KEY, build_cost_source
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -822,6 +823,16 @@ class ZapImoveisScraper(BaseScraper):
             "condo_fee": condo_fee,
             "iptu": iptu,
         }
+
+        def raw_json(rent: float | None) -> dict:
+            # Story 1.1: the platform's cost figures as published. Zap's rental
+            # ``value`` is the unbundled rent; it declares no IPTU periodicity
+            # (``period`` describes the rent), so the cost mapping classifies it.
+            return {
+                "fees_bundled": False,
+                COST_SOURCE_KEY: build_cost_source(rent=rent, condo_fee=condo_fee, iptu=iptu),
+            }
+
         out: list[dict] = []
         if rent_price > 0:
             out.append(
@@ -830,7 +841,7 @@ class ZapImoveisScraper(BaseScraper):
                     "listing_type": "rent",
                     "price": float(rent_price),
                     "base_price": float(rent_price),
-                    "raw_json": {"fees_bundled": False},
+                    "raw_json": raw_json(float(rent_price)),
                 }
             )
         if sale_price > 0:
@@ -840,7 +851,7 @@ class ZapImoveisScraper(BaseScraper):
                     "listing_type": "sale",
                     "price": float(sale_price),
                     "base_price": float(sale_price),
-                    "raw_json": {"fees_bundled": False},
+                    "raw_json": raw_json(None),
                 }
             )
         return out

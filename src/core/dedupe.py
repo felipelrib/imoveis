@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.entities import PropertyCandidate
+from core.listing_cost import listing_cost_columns
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -476,6 +477,24 @@ def _check_watchlist_alerts(
                 )
 
 
+_COST_FLOAT_COLUMNS = ("rent_monthly", "condo_fee_monthly", "iptu_monthly", "total_monthly_cost")
+_COST_BOOL_COLUMNS = ("fees_bundled", "cost_complete")
+_COST_EPSILON = 0.005  # half a cent: stored floats vs freshly computed ones
+
+
+def _cost_columns_differ(stored, cost: dict) -> bool:
+    """True when a stored row's cost columns differ from ``cost``."""
+    for column in _COST_FLOAT_COLUMNS:
+        old, new = getattr(stored, column), cost[column]
+        if (old is None) != (new is None):
+            return True
+        if old is not None and abs(float(old) - float(new)) >= _COST_EPSILON:
+            return True
+    if any(bool(getattr(stored, column)) != cost[column] for column in _COST_BOOL_COLUMNS):
+        return True
+    return stored.iptu_periodicity_source != cost["iptu_periodicity_source"]
+
+
 def _upsert_listings(
     session: Session,
     property_id: str,
@@ -487,12 +506,20 @@ def _upsert_listings(
     row or insert a new one.  This keeps the property_listings table in sync with
     every scrape run.  Records price history per-listing (per platform + listing_type).
     Uses raw SQL for database-agnostic operation.
+
+    Sole writer of the Total Monthly Cost columns (AD-3): they come from
+    ``core.listing_cost.listing_cost_columns`` in both branches. ``updated_at``
+    (AD-19) is set on insert and moves only when a cost column or ``active``
+    changes — the ORM ``onupdate`` never fires for raw SQL.
     """
     for listing in listings:
+        cost = listing_cost_columns(listing)
         # Check if listing already exists
         check = session.execute(
             text(
-                "SELECT id, price FROM property_listings "
+                "SELECT id, price, active, rent_monthly, condo_fee_monthly, iptu_monthly, "
+                "iptu_periodicity_source, fees_bundled, total_monthly_cost, cost_complete "
+                "FROM property_listings "
                 "WHERE property_id = :pid "
                 "AND platform = :platform "
                 "AND platform_listing_id = :plid "
@@ -511,6 +538,7 @@ def _upsert_listings(
         if check:
             old_price = float(check.price) if check.price is not None else None
             new_price = float(listing["price"])
+            fact_changed = not bool(check.active) or _cost_columns_differ(check, cost)
 
             session.execute(
                 text(
@@ -519,10 +547,16 @@ def _upsert_listings(
                     "is_furnished = :is_furnished, accepts_pets = :accepts_pets, "
                     "condo_fee = :condo_fee, iptu = :iptu, base_price = :base_price, "
                     "raw_json = :raw_json, "
+                    "rent_monthly = :rent_monthly, condo_fee_monthly = :condo_fee_monthly, "
+                    "iptu_monthly = :iptu_monthly, "
+                    "iptu_periodicity_source = :iptu_periodicity_source, "
+                    "fees_bundled = :fees_bundled, total_monthly_cost = :total_monthly_cost, "
+                    "cost_complete = :cost_complete, "
                     "last_seen = :now, active = true "
                     "WHERE id = :id"
                 ),
                 {
+                    **cost,
                     "price": new_price,
                     "currency": listing.get("currency", "BRL"),
                     "url": listing.get("url"),
@@ -536,6 +570,12 @@ def _upsert_listings(
                     "id": str(check.id),
                 },
             )
+
+            if fact_changed:
+                session.execute(
+                    text("UPDATE property_listings SET updated_at = :now WHERE id = :id"),
+                    {"now": now, "id": str(check.id)},
+                )
 
             # Record price history only if price actually changed
             if old_price is None or old_price != new_price:
@@ -554,12 +594,17 @@ def _upsert_listings(
                     "INSERT INTO property_listings "
                     "(id, property_id, platform, platform_listing_id, listing_type, "
                     "price, currency, url, is_furnished, accepts_pets, condo_fee, iptu, "
-                    "base_price, raw_json, first_seen, last_seen, active) "
+                    "base_price, raw_json, rent_monthly, condo_fee_monthly, iptu_monthly, "
+                    "iptu_periodicity_source, fees_bundled, total_monthly_cost, cost_complete, "
+                    "first_seen, last_seen, updated_at, active) "
                     "VALUES (:id, :pid, :platform, :plid, :lt, "
                     ":price, :currency, :url, :is_furnished, :accepts_pets, :condo_fee, :iptu, "
-                    ":base_price, :raw_json, :now, :now, true)"
+                    ":base_price, :raw_json, :rent_monthly, :condo_fee_monthly, :iptu_monthly, "
+                    ":iptu_periodicity_source, :fees_bundled, :total_monthly_cost, :cost_complete, "
+                    ":now, :now, :now, true)"
                 ),
                 {
+                    **cost,
                     "id": listing_id,
                     "pid": property_id,
                     "platform": listing["platform"],
@@ -587,6 +632,87 @@ def _upsert_listings(
                 platform=listing["platform"],
                 property_listing_id=listing_id,
             )
+
+
+_REPOPULATE_COLUMNS = (
+    "id, platform, listing_type, price, base_price, condo_fee, iptu, raw_json, "
+    "rent_monthly, condo_fee_monthly, iptu_monthly, iptu_periodicity_source, "
+    "fees_bundled, total_monthly_cost, cost_complete"
+)
+_REPOPULATE_FIRST_BATCH = (
+    "SELECT " + _REPOPULATE_COLUMNS + " FROM property_listings ORDER BY id LIMIT :batch_size"
+)
+_REPOPULATE_NEXT_BATCH = (
+    "SELECT " + _REPOPULATE_COLUMNS + " FROM property_listings "
+    "WHERE id > :after_id ORDER BY id LIMIT :batch_size"
+)
+_REPOPULATE_ROW_LOCK = " FOR UPDATE"
+_REPOPULATE_UPDATE = (
+    "UPDATE property_listings SET "
+    "rent_monthly = :rent_monthly, condo_fee_monthly = :condo_fee_monthly, "
+    "iptu_monthly = :iptu_monthly, iptu_periodicity_source = :iptu_periodicity_source, "
+    "fees_bundled = :fees_bundled, total_monthly_cost = :total_monthly_cost, "
+    "cost_complete = :cost_complete, updated_at = :now "
+    "WHERE id = :id"
+)
+
+
+def repopulate_listing_costs(
+    session: Session,
+    after_id: Optional[str] = None,
+    batch_size: int = 500,
+) -> dict:
+    """Re-run the cost mapping over one keyset batch of stored Listings.
+
+    The normalize mapping re-applied to stored rows, not a second writer
+    (AD-3): each row's columns are recomputed by ``listing_cost_columns`` from
+    its stored figures and written only when they differ, so a second pass
+    updates nothing. Legacy ``price`` / ``base_price`` / ``condo_fee`` /
+    ``iptu`` / ``raw_json`` are never written. The caller commits.
+
+    Returns ``{"scanned", "updated", "last_id"}``; ``last_id`` is the keyset
+    cursor for the next batch and ``None`` once the table is exhausted.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    # Lock the batch on Postgres until the caller commits: a scrape that lands
+    # between this read and the UPDATE below would otherwise have its fresh
+    # columns overwritten with ones computed from the superseded figures.
+    lock = _REPOPULATE_ROW_LOCK if session.get_bind().dialect.name == "postgresql" else ""
+    if after_id is None:
+        rows = session.execute(
+            text(_REPOPULATE_FIRST_BATCH + lock), {"batch_size": batch_size}
+        ).fetchall()
+    else:
+        rows = session.execute(
+            text(_REPOPULATE_NEXT_BATCH + lock),
+            {"after_id": str(after_id), "batch_size": batch_size},
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for row in rows:
+        cost = listing_cost_columns(
+            {
+                "platform": row.platform,
+                "listing_type": row.listing_type,
+                "price": row.price,
+                "base_price": row.base_price,
+                "condo_fee": row.condo_fee,
+                "iptu": row.iptu,
+                "raw_json": row.raw_json,
+            }
+        )
+        if not _cost_columns_differ(row, cost):
+            continue
+        session.execute(text(_REPOPULATE_UPDATE), {**cost, "now": now, "id": str(row.id)})
+        updated += 1
+
+    return {
+        "scanned": len(rows),
+        "updated": updated,
+        "last_id": str(rows[-1].id) if len(rows) == batch_size else None,
+    }
 
 
 def find_candidates(

@@ -1,0 +1,652 @@
+{
+  "_comment": "Labelled raw platform payloads for the Total Monthly Cost rules (Story 1.1, FR-31). Each case is run through the real scraper normalize(); 'expected' is the hand-labelled cost of the listing of 'listing_type'; 'headline_price' is the legacy price the platform mapping must keep producing. Cases sharing 'home' are the same real-world home on several platforms.",
+  "cases": [
+    {
+      "id": "home-a-quintoandar",
+      "home": "home-a",
+      "platform": "quintoandar",
+      "listing_type": "rent",
+      "label": "itemized monthly fees; totalCost carries 35 of other charges that are not part of the total",
+      "raw": {
+        "id": "900000001",
+        "type": "Apartamento",
+        "neighbourhood": "Savassi",
+        "address": {
+          "address": "Rua Pernambuco",
+          "city": "Belo Horizonte"
+        },
+        "area": 75,
+        "bedrooms": 2,
+        "bathrooms": 1,
+        "parkingSpaces": 1,
+        "photos": [],
+        "location": {
+          "lat": -19.932,
+          "lon": -43.938
+        },
+        "rentPrice": 3500,
+        "condoFee": 400,
+        "iptu": 273,
+        "totalCost": 4208,
+        "salePrice": 0
+      },
+      "headline_price": 4208.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 400.0,
+        "iptu_monthly": 273.0,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": 4173.0,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "home-a-olx",
+      "home": "home-a",
+      "platform": "olx",
+      "listing_type": "rent",
+      "label": "labelled Condomínio and IPTU; headline is the platform's rent + fees sum",
+      "raw": {
+        "list_id": "900000002",
+        "subject": "Apartamento 2 quartos em Savassi",
+        "body": "Apartamento bem localizado.",
+        "value": 3500.0,
+        "location": {
+          "lat": -19.932,
+          "lon": -43.938,
+          "neighborhood": "Savassi",
+          "city": "Belo Horizonte"
+        },
+        "images": [],
+        "properties": [
+          {
+            "label": "Área",
+            "value": "75m²"
+          },
+          {
+            "label": "Quartos",
+            "value": "2"
+          },
+          {
+            "label": "Condomínio",
+            "value": "R$ 400"
+          },
+          {
+            "label": "IPTU",
+            "value": "R$ 273"
+          }
+        ],
+        "url": "https://www.olx.com.br/imovel/aluguel/apartamentos/mg/belo-horizonte/detalhes/900000002"
+      },
+      "headline_price": 4173.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 400.0,
+        "iptu_monthly": 273.0,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": 4173.0,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "home-a-zapimoveis",
+      "home": "home-a",
+      "platform": "zapimoveis",
+      "listing_type": "rent",
+      "label": "same home, IPTU published as the annual figure (3276 = 12 x 273)",
+      "raw": {
+        "id": "900000003",
+        "title": "Apartamento para alugar na Savassi",
+        "href": "https://www.zapimoveis.com.br/imovel/aluguel-apartamento-id-900000003/",
+        "prices": {
+          "rental": {
+            "value": 3500,
+            "condominium": 400,
+            "iptu": 3276,
+            "period": "MONTHLY"
+          },
+          "sale": null
+        },
+        "address": {
+          "city": "Belo Horizonte",
+          "stateAcronym": "MG",
+          "neighborhood": "Savassi",
+          "coordinates": {
+            "latitude": -19.932,
+            "longitude": -43.938
+          }
+        },
+        "amenities": {
+          "usableAreas": [
+            75
+          ],
+          "bedrooms": [
+            2
+          ],
+          "bathrooms": [
+            1
+          ]
+        },
+        "medias": {
+          "images": []
+        },
+        "unitType": "APARTMENT"
+      },
+      "headline_price": 3500.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 400.0,
+        "iptu_monthly": 273.0,
+        "iptu_periodicity_source": "annual",
+        "fees_bundled": false,
+        "total_monthly_cost": 4173.0,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "home-b-quintoandar",
+      "home": "home-b",
+      "platform": "quintoandar",
+      "listing_type": "rent",
+      "label": "publishes a condo fee 20 higher than ZapImóveis for the same home",
+      "raw": {
+        "id": "900000004",
+        "type": "Apartamento",
+        "neighbourhood": "Lourdes",
+        "address": {
+          "address": "Rua Curitiba",
+          "city": "Belo Horizonte"
+        },
+        "area": 42,
+        "bedrooms": 1,
+        "bathrooms": 1,
+        "parkingSpaces": 1,
+        "photos": [],
+        "location": {
+          "lat": -19.930459,
+          "lon": -43.93796
+        },
+        "rentPrice": 4700,
+        "condoFee": 500,
+        "iptu": 411.67,
+        "totalCost": 5650,
+        "salePrice": 0
+      },
+      "headline_price": 5650.0,
+      "expected": {
+        "rent_monthly": 4700.0,
+        "condo_fee_monthly": 500.0,
+        "iptu_monthly": 411.67,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": 5611.67,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "home-b-zapimoveis",
+      "home": "home-b",
+      "platform": "zapimoveis",
+      "listing_type": "rent",
+      "label": "Zap annual-IPTU regression: 4940 is a year of IPTU, not a month",
+      "raw": {
+        "id": "900000005",
+        "title": "Apartamento para alugar em Lourdes",
+        "href": "https://www.zapimoveis.com.br/imovel/aluguel-apartamento-id-900000005/",
+        "prices": {
+          "rental": {
+            "value": 4700,
+            "condominium": 480,
+            "iptu": 4940,
+            "period": "MONTHLY"
+          },
+          "sale": null
+        },
+        "address": {
+          "city": "Belo Horizonte",
+          "stateAcronym": "MG",
+          "neighborhood": "Lourdes",
+          "coordinates": {
+            "latitude": -19.930459,
+            "longitude": -43.93796
+          }
+        },
+        "amenities": {
+          "usableAreas": [
+            42
+          ],
+          "bedrooms": [
+            1
+          ],
+          "bathrooms": [
+            1
+          ]
+        },
+        "medias": {
+          "images": []
+        },
+        "unitType": "APARTMENT"
+      },
+      "headline_price": 4700.0,
+      "expected": {
+        "rent_monthly": 4700.0,
+        "condo_fee_monthly": 480.0,
+        "iptu_monthly": 411.67,
+        "iptu_periodicity_source": "annual",
+        "fees_bundled": false,
+        "total_monthly_cost": 5591.67,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "olx-zero-for-missing-fee",
+      "home": "home-c",
+      "platform": "olx",
+      "listing_type": "rent",
+      "label": "OLX regression: IPTU published as R$ 0 is unknown; the headline still sums it as zero",
+      "raw": {
+        "list_id": "900000006",
+        "subject": "Apartamento 2 quartos",
+        "body": "",
+        "value": 3500.0,
+        "location": {
+          "lat": -19.92,
+          "lon": -43.94,
+          "neighborhood": "Funcionários",
+          "city": "Belo Horizonte"
+        },
+        "images": [],
+        "properties": [
+          {
+            "label": "Condomínio",
+            "value": "R$ 650"
+          },
+          {
+            "label": "IPTU",
+            "value": "R$ 0"
+          }
+        ],
+        "url": "https://www.olx.com.br/imovel/aluguel/apartamentos/mg/belo-horizonte/detalhes/900000006"
+      },
+      "headline_price": 4150.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 650.0,
+        "iptu_monthly": null,
+        "iptu_periodicity_source": "unknown",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "olx-fee-not-published",
+      "home": "home-d",
+      "platform": "olx",
+      "listing_type": "rent",
+      "label": "no IPTU label at all",
+      "raw": {
+        "list_id": "900000007",
+        "subject": "Apartamento 2 quartos",
+        "body": "",
+        "value": 3500.0,
+        "location": {
+          "lat": -19.92,
+          "lon": -43.94,
+          "neighborhood": "Funcionários",
+          "city": "Belo Horizonte"
+        },
+        "images": [],
+        "properties": [
+          {
+            "label": "Condomínio",
+            "value": "650"
+          }
+        ],
+        "url": "https://www.olx.com.br/imovel/aluguel/apartamentos/mg/belo-horizonte/detalhes/900000007"
+      },
+      "headline_price": 4150.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 650.0,
+        "iptu_monthly": null,
+        "iptu_periodicity_source": "unknown",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "quintoandar-bundled",
+      "home": "home-e",
+      "platform": "quintoandar",
+      "listing_type": "rent",
+      "label": "search row: only the combined condoIptu is published",
+      "raw": {
+        "id": "900000008",
+        "type": "Apartamento",
+        "neighbourhood": "Alvorada",
+        "address": {
+          "address": "Rua Faria Pereira",
+          "city": "Belo Horizonte"
+        },
+        "area": 38,
+        "bedrooms": 1,
+        "bathrooms": 1,
+        "parkingSpaces": 0,
+        "photos": [],
+        "location": {
+          "lat": -19.9,
+          "lon": -43.9
+        },
+        "rentPrice": 800,
+        "condoIptu": 57,
+        "totalCost": 857,
+        "salePrice": 0
+      },
+      "headline_price": 857.0,
+      "expected": {
+        "rent_monthly": 800.0,
+        "condo_fee_monthly": 57.0,
+        "iptu_monthly": null,
+        "iptu_periodicity_source": "unknown",
+        "fees_bundled": true,
+        "total_monthly_cost": 857.0,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "quintoandar-remainder-only",
+      "home": "home-f",
+      "platform": "quintoandar",
+      "listing_type": "rent",
+      "label": "condoIptu 0: totalCost - rentPrice is other charges, never a fee",
+      "raw": {
+        "id": "900000009",
+        "type": "Apartamento",
+        "neighbourhood": "Alvorada",
+        "address": {
+          "address": "Rua Faria Pereira",
+          "city": "Belo Horizonte"
+        },
+        "area": 38,
+        "bedrooms": 1,
+        "bathrooms": 1,
+        "parkingSpaces": 0,
+        "photos": [],
+        "location": {
+          "lat": -19.9,
+          "lon": -43.9
+        },
+        "rentPrice": 780,
+        "condoIptu": 0,
+        "totalCost": 815,
+        "salePrice": 0
+      },
+      "headline_price": 815.0,
+      "expected": {
+        "rent_monthly": 780.0,
+        "condo_fee_monthly": null,
+        "iptu_monthly": null,
+        "iptu_periodicity_source": "unknown",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "zapimoveis-monthly-iptu",
+      "home": "home-g",
+      "platform": "zapimoveis",
+      "listing_type": "rent",
+      "label": "IPTU already monthly (7.8% of the rent)",
+      "raw": {
+        "id": "900000010",
+        "title": "Apartamento para alugar",
+        "href": "https://www.zapimoveis.com.br/imovel/aluguel-apartamento-id-900000010/",
+        "prices": {
+          "rental": {
+            "value": 3500,
+            "condominium": 400,
+            "iptu": 273,
+            "period": "MONTHLY"
+          },
+          "sale": null
+        },
+        "address": {
+          "city": "Belo Horizonte",
+          "stateAcronym": "MG",
+          "neighborhood": "Sion",
+          "coordinates": {
+            "latitude": -19.95,
+            "longitude": -43.93
+          }
+        },
+        "amenities": {
+          "usableAreas": [
+            70
+          ],
+          "bedrooms": [
+            2
+          ],
+          "bathrooms": [
+            1
+          ]
+        },
+        "medias": {
+          "images": []
+        },
+        "unitType": "APARTMENT"
+      },
+      "headline_price": 3500.0,
+      "expected": {
+        "rent_monthly": 3500.0,
+        "condo_fee_monthly": 400.0,
+        "iptu_monthly": 273.0,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": 4173.0,
+        "cost_complete": true
+      }
+    },
+    {
+      "id": "zapimoveis-ambiguous-iptu",
+      "home": "home-h",
+      "platform": "zapimoveis",
+      "listing_type": "rent",
+      "label": "IPTU at 25% of the rent: neither cluster, not divided",
+      "raw": {
+        "id": "900000011",
+        "title": "Apartamento para alugar",
+        "href": "https://www.zapimoveis.com.br/imovel/aluguel-apartamento-id-900000011/",
+        "prices": {
+          "rental": {
+            "value": 4000,
+            "condominium": 500,
+            "iptu": 1000,
+            "period": "MONTHLY"
+          },
+          "sale": null
+        },
+        "address": {
+          "city": "Belo Horizonte",
+          "stateAcronym": "MG",
+          "neighborhood": "Sion",
+          "coordinates": {
+            "latitude": -19.95,
+            "longitude": -43.93
+          }
+        },
+        "amenities": {
+          "usableAreas": [
+            70
+          ],
+          "bedrooms": [
+            2
+          ],
+          "bathrooms": [
+            1
+          ]
+        },
+        "medias": {
+          "images": []
+        },
+        "unitType": "APARTMENT"
+      },
+      "headline_price": 4000.0,
+      "expected": {
+        "rent_monthly": 4000.0,
+        "condo_fee_monthly": 500.0,
+        "iptu_monthly": null,
+        "iptu_periodicity_source": "unknown",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "zapimoveis-sale",
+      "home": "home-i",
+      "platform": "zapimoveis",
+      "listing_type": "sale",
+      "label": "sale Listing: carrying costs only, annual IPTU (0.41% of the price), no total",
+      "raw": {
+        "id": "900000012",
+        "title": "Apartamento à venda",
+        "href": "https://www.zapimoveis.com.br/imovel/venda-apartamento-id-900000012/",
+        "prices": {
+          "rental": null,
+          "sale": {
+            "value": 450000,
+            "condominium": 600,
+            "iptu": 1857
+          }
+        },
+        "address": {
+          "city": "Belo Horizonte",
+          "stateAcronym": "MG",
+          "neighborhood": "Savassi",
+          "coordinates": {
+            "latitude": -19.9,
+            "longitude": -43.9
+          }
+        },
+        "amenities": {
+          "usableAreas": [
+            100
+          ],
+          "bedrooms": [
+            3
+          ],
+          "bathrooms": [
+            2
+          ]
+        },
+        "medias": {
+          "images": []
+        },
+        "unitType": "APARTMENT"
+      },
+      "headline_price": 450000.0,
+      "expected": {
+        "rent_monthly": null,
+        "condo_fee_monthly": 600.0,
+        "iptu_monthly": 154.75,
+        "iptu_periodicity_source": "annual",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "quintoandar-sale",
+      "home": "home-j",
+      "platform": "quintoandar",
+      "listing_type": "sale",
+      "label": "sale Listing: QuintoAndar itemizes monthly carrying costs, no rent and no total",
+      "raw": {
+        "id": "900000013",
+        "type": "Apartamento",
+        "neighbourhood": "Savassi",
+        "address": {
+          "address": "Rua Pernambuco",
+          "city": "Belo Horizonte"
+        },
+        "area": 100,
+        "bedrooms": 3,
+        "bathrooms": 2,
+        "parkingSpaces": 1,
+        "photos": [],
+        "location": {
+          "lat": -19.932,
+          "lon": -43.938
+        },
+        "rentPrice": 0,
+        "salePrice": 450000,
+        "condoFee": 600,
+        "iptu": 150
+      },
+      "headline_price": 450000.0,
+      "expected": {
+        "rent_monthly": null,
+        "condo_fee_monthly": 600.0,
+        "iptu_monthly": 150.0,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    },
+    {
+      "id": "olx-sale",
+      "home": "home-k",
+      "platform": "olx",
+      "listing_type": "sale",
+      "label": "sale Listing: labelled fees, IPTU at 0.03% of the price reads as monthly, no total",
+      "raw": {
+        "list_id": "900000014",
+        "subject": "Apartamento 3 quartos à venda",
+        "body": "Apartamento à venda.",
+        "value": 450000.0,
+        "location": {
+          "lat": -19.932,
+          "lon": -43.938,
+          "neighborhood": "Savassi",
+          "city": "Belo Horizonte"
+        },
+        "images": [],
+        "properties": [
+          {
+            "label": "Área",
+            "value": "100m²"
+          },
+          {
+            "label": "Quartos",
+            "value": "3"
+          },
+          {
+            "label": "Condomínio",
+            "value": "R$ 600"
+          },
+          {
+            "label": "IPTU",
+            "value": "R$ 150"
+          }
+        ],
+        "url": "https://www.olx.com.br/imovel/venda/apartamentos/mg/belo-horizonte/detalhes/900000014"
+      },
+      "headline_price": 450000.0,
+      "expected": {
+        "rent_monthly": null,
+        "condo_fee_monthly": 600.0,
+        "iptu_monthly": 150.0,
+        "iptu_periodicity_source": "monthly",
+        "fees_bundled": false,
+        "total_monthly_cost": null,
+        "cost_complete": false
+      }
+    }
+  ]
+}
