@@ -602,3 +602,43 @@ source_spec: `spec-1-8-detail-side-panel-with-percentile-sentence-and-cost-break
 severity: low
 reason: frontend/src/components/detail/PriceHistorySection.tsx: tickFormatter is `R$${(v / 1000).toFixed(0)}k`, carried over unchanged from the retired PropertyModal.tsx (main, line 690), so the defect predates Story 1.8. CompareView.tsx has its own chart. The mock (key-detail-panel.html) labels the axis R$ 2.9k / R$ 2.65k / R$ 2.45k. The tooltip shows the exact value. A fix formats values below 10.000 in full or with decimals and has to check the axis width for sale prices.
 status: open
+
+### DW-59: No Property on the primary has received a deal verdict since 2026-08-13, so every new match stays held and no new-match email leaves.
+origin: spec-deferred 2bd244a3be1e
+location: src/adapters/queue/tasks.py:796
+source_spec: `spec-1-9-saved-search-new-match-detection-on-the-pipeline.md`
+severity: high
+reason: Read-only on the primary, 2026-10-08: 28,140 of 200,727 metrics_scoring rows carry meta.deal_verdict, newest meta.enriched_at 2026-08-13T16:47; of 23,229 active Properties first seen in the last 7 days (all with images) none is decidable; pipeline_metric_snapshots shows ai_queue 0 and enriched_properties flat at 26,947 while scraper_queue is about 10,400. All 199,840 percentile stamps come from the bulk run of 2026-10-08 10:10, none from the single-property path. The code path that releases a match exists and is tested (run_enrichment -> _persist_ai_scores -> score_single_property stamps, _write_deal_verdict stores the verdict, one transaction, no bulk recalculation). What is missing is enrichment actually running for new Properties. Why it stopped is not visible from Postgres (Redis pause flags, worker logs and Ollama were outside the allowed probe). A typical search (rent, up to R$ 4.000, 2+ bedrooms, cheapest half) would have had 1,234 candidates in 7 days. ai_enrich also gives up after 5 retries one minute apart, and nothing re-enqueues a Property whose enrichment was dropped except the operator endpoint POST /admin/enrichment/rerun (mode missing) and the backfill runner. Since review pass 2 a hold has no time limit: nothing expires, held_overdue reports the state, and the held Properties are alerted (20 per search per day, oldest first) once verdicts exist.
+status: open
+
+### DW-60: The saved-search filter wire accepts min_price and max_bedrooms, which neither the SPA nor GET /properties applies.
+origin: spec-deferred b46faa03d491
+location: src/api/saved_searches.py:72
+source_spec: `spec-1-9-saved-search-new-match-detection-on-the-pipeline.md`
+severity: low
+reason: src/api/saved_searches.py SavedSearchFilters declares both; frontend/src/savedSearchFilters.ts CAMEL_TO_SNAKE has neither and PropertyListFilters has no such parameter. A search stored through the API with them lists, and now alerts, as if they were absent. The matcher ignores them on purpose so that it agrees with the grid. docs/api.md does not list the two keys.
+status: open
+
+### DW-61: The email notifier logs in to SMTP without STARTTLS or SSL, so a mail provider that requires TLS refuses every send.
+origin: spec-deferred 1cd345b6576c
+location: src/adapters/notify/email_notifier.py:134
+source_spec: `spec-1-9-saved-search-new-match-detection-on-the-pipeline.md`
+severity: medium
+reason: src/adapters/notify/email_notifier.py: send_batch, send_digest and the new send_new_matches all open smtplib.SMTP(host, port) and call server.login(user, password) with no starttls() and no SMTP_SSL; AlertsConfig has no key for either. The pattern predates Story 1.9, which reused it. With real credentials for a public provider (port 587 or 465) the login is refused; send_new_matches then raises, the matches stay pending and an error is counted every hour (the two older methods swallow the error). Unit tests patch smtplib.SMTP, and this run was forbidden to contact a mail server, so it was read, not run. Fix: a config key (alerts.smtp_starttls / smtp_ssl) honoured by all three methods, with unit tests on the patched SMTP object.
+status: open
+
+### DW-62: A saved search does not store the Total Monthly Cost cap, so neither a reopened search nor its new-match alert applies it.
+origin: spec-deferred 318c7fb0a021
+location: frontend/src/savedSearchFilters.ts:11
+source_spec: `spec-1-9-saved-search-new-match-detection-on-the-pipeline.md`
+severity: low
+reason: frontend/src/savedSearchFilters.ts CAMEL_TO_SNAKE and SavedSearchFilters (src/api/saved_searches.py) have no max_total_monthly_cost / include_incomplete_totals, while the grid sends both to GET /properties (frontend/src/api.ts). A search saved with the cap set comes back without it, and the matcher (which reads the stored blob) alerts without it too: alert and reopened search agree with each other, not with the grid at the moment of saving. Predates Story 1.9 (the cap is Story 1.2). The matcher treats the key as unknown (never fires) if a blob carries it, pinned by a unit test, so adding the key to the wire must also add it to SAVED_SEARCH_WIRE_KEYS and the translation.
+status: open
+
+### DW-63: Periodic beat tasks pile up on the `scrapers` queue with no expiry, so new beat work (including the new-match matcher and sender) waits behind thousands of stale runs.
+origin: operator-observation (primary stack, 2026-10-08, while closing story 1-9)
+location: src/adapters/queue (beat schedule and task_routes)
+source_spec: n/a
+severity: medium
+reason: On 2026-10-08 the primary `scrapers` list held about 11,600 messages; a sample of the first 400 was 245 `tasks.snapshot_pipeline_metrics`, 121 `tasks.monitor_queues`, 23 `tasks.evaluate_watchlist_alerts` and 12 `tasks.scrape_listings`. The periodic tasks carry no `expires`, so every tick missed while the workers are busy or down stays queued and runs late, several in the same second. Scraping still works (Properties were first seen that day). Not measured: how late a beat task runs under this backlog. A blanket `expires` is not the fix for every entry: the story 1-9 review left it off the hourly sender on purpose, because under a backlog longer than an hour it would discard every sender run. Options: `expires` on the idempotent snapshot/monitor entries only, a separate queue for periodic housekeeping, or a single-flight guard.
+status: open

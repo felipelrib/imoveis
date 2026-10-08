@@ -283,3 +283,86 @@ def test_update_saved_search_body_keeps_or_rejects_the_price_percentile_cap():
             SavedSearchUpdate.model_validate(
                 {"filters": {"max_price_per_m2_percentile": value}}
             )
+
+
+# ---------------------------------------------------------------------------
+# New-match alert flag and threshold (v0.14-s1.9)
+# ---------------------------------------------------------------------------
+
+
+def test_new_match_flag_defaults_off_on_create():
+    from api.saved_searches import SavedSearchCreate
+
+    body = SavedSearchCreate.model_validate({"name": "x", "filters": {}})
+    assert body.notify_new_matches is False
+    assert body.min_price_drop is None
+
+
+@pytest.mark.parametrize("model_name", ["SavedSearchCreate", "SavedSearchUpdate"])
+def test_negative_min_price_drop_is_rejected(model_name):
+    import api.saved_searches as saved_searches
+
+    model = getattr(saved_searches, model_name)
+    with pytest.raises(ValidationError):
+        model.model_validate({"name": "x", "filters": {}, "min_price_drop": -0.01})
+    assert model.model_validate({"name": "x", "filters": {}, "min_price_drop": 0}).min_price_drop == 0
+
+
+@pytest.mark.parametrize("model_name", ["SavedSearchCreate", "SavedSearchUpdate"])
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+def test_non_finite_min_price_drop_is_rejected(model_name, value):
+    # A stored infinity cannot be serialised: it would turn every later
+    # GET /saved-searches into a 500.
+    import api.saved_searches as saved_searches
+
+    model = getattr(saved_searches, model_name)
+    with pytest.raises(ValidationError):
+        model.model_validate({"name": "x", "filters": {}, "min_price_drop": value})
+
+
+def test_update_tells_an_explicit_null_threshold_from_an_absent_one():
+    from api.saved_searches import SavedSearchUpdate
+
+    absent = SavedSearchUpdate.model_validate({"name": "x"})
+    explicit = SavedSearchUpdate.model_validate({"min_price_drop": None})
+    assert "min_price_drop" not in absent.model_fields_set
+    assert "min_price_drop" in explicit.model_fields_set
+    assert absent.notify_new_matches is None
+
+
+def test_item_reports_a_semantic_search_as_unsupported():
+    from datetime import date, datetime
+
+    from api.saved_searches import _item_from_row
+
+    stamp = datetime(2026, 10, 8, 13, 0)
+    row = ("id-1", "Com varanda", {"q": "varanda"}, stamp, True, 5.0, stamp, date(2026, 10, 8))
+    item = _item_from_row(row)
+    assert item.notify_new_matches is True
+    assert item.min_price_drop == 5.0
+    assert item.notify_enabled_at == "2026-10-08T13:00:00"
+    assert item.new_match_alerts_supported is False
+    assert item.last_new_match_alert_on == "2026-10-08"
+
+    plain = _item_from_row(("id-2", "Sem busca", {"q": " "}, None, False, None, None, None))
+    assert plain.new_match_alerts_supported is True
+    assert plain.notify_enabled_at is None
+    assert plain.last_new_match_alert_on is None
+
+
+@pytest.mark.parametrize("stored", [None, [], "rent", 3])
+def test_item_reports_a_blob_that_is_not_an_object_as_unsupported(stored):
+    # The matcher never fires for such a blob; the API must not say it would.
+    from api.saved_searches import _item_from_row
+
+    item = _item_from_row(("id-3", "Estranha", stored, None, True, None, None, None))
+    assert item.filters == {}
+    assert item.new_match_alerts_supported is False
+
+
+def test_item_reports_a_blob_with_an_unknown_key_as_unsupported():
+    from api.saved_searches import _item_from_row
+
+    legacy = {"listingType": "rent", "maxPrice": 3000}  # camelCase, pre-normalisation
+    item = _item_from_row(("id-4", "Antiga", legacy, None, True, None, None, None))
+    assert item.new_match_alerts_supported is False

@@ -9,6 +9,10 @@ Selection rule (documented for operators and feature docs)::
 
     ``score_target`` selects primary / rent / sale combined_score column
     (no COALESCE fallback — typed targets require that typed score).
+
+    With ``alerted_owner`` (Story 1.9), a Property that a saved-search
+    new-match email already told that owner about - or is about to, under a
+    search that still notifies - is left out: the digest does not repeat it.
 """
 
 from __future__ import annotations
@@ -26,6 +30,18 @@ _SCORE_COLUMNS = {
     "rent": "ms.combined_score_rent",
     "sale": "ms.combined_score_sale",
 }
+
+# Already alerted to this owner (``sent``), or waiting for the daily window of
+# a search that still notifies (``pending``). The LEFT JOIN keeps ``sent`` rows
+# of a deleted search (``saved_search_id`` NULL).
+_NOT_ALREADY_ALERTED = (
+    "NOT EXISTS ("
+    "SELECT 1 FROM saved_search_new_matches a "
+    "LEFT JOIN saved_searches s ON s.id = a.saved_search_id "
+    "WHERE a.property_id = p.id AND a.owner = :alerted_owner "
+    "AND (a.status = 'sent' OR (a.status = 'pending' AND s.notify_new_matches))"
+    ")"
+)
 
 TOP_DEALS_RULE = (
     "first_seen within lookback_hours; combined_score IS NOT NULL and "
@@ -63,8 +79,13 @@ def select_top_deals(
     limit: int = 10,
     score_target: str = "primary",
     now: Optional[datetime] = None,
+    alerted_owner: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Return AD-12 projected properties matching the top-deals rule."""
+    """Return AD-12 projected properties matching the top-deals rule.
+
+    ``alerted_owner``: leave out Properties already alerted to that owner by a
+    saved-search new-match email (see the module docstring).
+    """
     if limit <= 0:
         return []
 
@@ -85,15 +106,16 @@ def select_top_deals(
         "WHERE p.first_seen >= :since "
         "  AND " + column + " IS NOT NULL "
         "  AND " + column + " >= :min_score "
-        "ORDER BY " + column + " DESC, p.first_seen DESC "
+        + ("  AND " + _NOT_ALREADY_ALERTED + " " if alerted_owner is not None else "")
+        + "ORDER BY " + column + " DESC, p.first_seen DESC "
         "LIMIT :limit"
     )
-    rows = session.execute(
-        sql,
-        {
-            "since": since,
-            "min_score": min_combined_score,
-            "limit": limit,
-        },
-    ).mappings().fetchall()
+    params: Dict[str, Any] = {
+        "since": since,
+        "min_score": min_combined_score,
+        "limit": limit,
+    }
+    if alerted_owner is not None:
+        params["alerted_owner"] = alerted_owner
+    rows = session.execute(sql, params).mappings().fetchall()
     return [map_property_list_item(row) for row in rows]

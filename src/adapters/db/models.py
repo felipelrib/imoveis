@@ -342,6 +342,62 @@ class SavedSearch(Base):
     filters = Column(sa.JSON, nullable=False)
     owner = Column(String, nullable=True)  # Principal.id (AD-11)
     created_at = Column(DateTime, server_default=sa.text(SQL_NOW))
+    # New-match alerts (Story 1.9, FR-32). Off unless the owner turns it on;
+    # ``notify_enabled_at`` (naive UTC) is the newness floor: only Properties
+    # first seen at or after it can be a new match of this search.
+    notify_new_matches = Column(Boolean, nullable=False, server_default=sa.text("false"))
+    notify_enabled_at = Column(DateTime, nullable=True)
+    # Stored and round-tripped only; the drop rule that reads it is Story 1.10.
+    min_price_drop = Column(Float, nullable=True)
+    # Local date (alerts.new_match.window_timezone) of the last new-match email.
+    new_match_last_window_on = Column(sa.Date, nullable=True)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "min_price_drop IS NULL OR min_price_drop >= 0",
+            name="ck_saved_searches_min_price_drop",
+        ),
+    )
+
+
+class SavedSearchNewMatch(Base):
+    """One new Property found to match one saved search (Story 1.9, FR-32).
+
+    Written only by ``core.saved_search_alerts``. The unique constraint is the
+    "at most once per search x Property" rule. ``saved_search_id`` survives the
+    deletion of the search as NULL so the weekly digest still excludes a
+    Property that was already alerted.
+    """
+
+    __tablename__ = "saved_search_new_matches"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
+    )
+    saved_search_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("saved_searches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    property_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    owner = Column(String, nullable=True)  # Principal.id (AD-11)
+    status = Column(String, nullable=False, server_default=sa.text("'pending'"))
+    matched_at = Column(DateTime, nullable=False, server_default=sa.text(SQL_NOW))
+    sent_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint("saved_search_id", "property_id", name="uq_saved_search_new_match"),
+        sa.CheckConstraint(
+            "status IN ('pending', 'sent', 'withdrawn')",
+            name="ck_saved_search_new_matches_status",
+        ),
+    )
 
 
 class Favourite(Base):

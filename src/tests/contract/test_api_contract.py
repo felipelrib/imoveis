@@ -1126,3 +1126,60 @@ class TestAdminEnrichmentCoverageContract:
         second = client.get(self._PATH, headers=admin_headers)
         assert second.status_code == 200
         assert second.json()["cost_completeness"] == payload["cost_completeness"]
+
+
+class TestSavedSearchNewMatchContract:
+    """v0.14-s1.9 (FR-32): the saved-search fields Story 1.10 builds its UI on."""
+
+    _ITEM_FIELDS = {
+        "notify_new_matches",
+        "min_price_drop",
+        "notify_enabled_at",
+        "new_match_alerts_supported",
+        "last_new_match_alert_on",
+    }
+
+    def test_item_model_declares_the_new_match_fields(self):
+        from api.saved_searches import SavedSearchItem
+
+        assert self._ITEM_FIELDS <= set(SavedSearchItem.model_fields)
+        item = SavedSearchItem(id="x", name="n", filters={})
+        # A search is off, and reported matchable, unless stored otherwise.
+        assert item.notify_new_matches is False
+        assert item.min_price_drop is None
+        assert item.notify_enabled_at is None
+        assert item.new_match_alerts_supported is True
+        assert item.last_new_match_alert_on is None
+
+    def test_openapi_declares_the_fields_on_item_create_and_update(self, client):
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+        item = schemas["SavedSearchItem"]["properties"]
+        assert self._ITEM_FIELDS <= set(item)
+        assert item["notify_new_matches"]["type"] == "boolean"
+        assert item["new_match_alerts_supported"]["type"] == "boolean"
+
+        for name in ("SavedSearchCreate", "SavedSearchUpdate"):
+            body = schemas[name]["properties"]
+            assert {"notify_new_matches", "min_price_drop"} <= set(body), name
+            bounds = [body["min_price_drop"], *body["min_price_drop"].get("anyOf", [])]
+            assert any(b.get("minimum") == 0 for b in bounds), name
+            # The read-only fields cannot be written.
+            assert not {
+                "notify_enabled_at",
+                "new_match_alerts_supported",
+                "last_new_match_alert_on",
+            } & set(body), name
+        assert "notify_new_matches" not in schemas["SavedSearchCreate"].get("required", [])
+
+    def test_a_negative_threshold_is_rejected_before_any_write(self, client, admin_headers):
+        for method, path in (
+            ("post", "/saved-searches"),
+            ("patch", "/saved-searches/00000000-0000-0000-0000-000000000000"),
+        ):
+            response = getattr(client, method)(
+                path,
+                json={"name": "contract", "filters": {}, "min_price_drop": -1},
+                headers=admin_headers,
+            )
+            assert response.status_code == 422, (method, response.text[:300])

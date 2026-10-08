@@ -2,12 +2,19 @@ import json
 import smtplib
 from email.message import EmailMessage
 
-from adapters.notify.base import Notifier, PriceDropAlert, TopDealsDigest
+from adapters.notify.base import (
+    Notifier,
+    PriceDropAlert,
+    SavedSearchNewMatches,
+    TopDealsDigest,
+)
 from infra.config import get_config
 from infra.logging import get_logger
 from infra.redis_client import get_redis
 
 logger = get_logger(__name__)
+
+NEW_MATCH_SMTP_TIMEOUT_SECONDS = 30
 
 
 class EmailNotifier(Notifier):
@@ -102,3 +109,48 @@ class EmailNotifier(Notifier):
             )
         except Exception as e:
             logger.error("top_deals_digest_email_failed", error=str(e))
+
+    def send_new_matches(self, batch: SavedSearchNewMatches) -> None:
+        """Send one saved search's new matches (Story 1.9, FR-32).
+
+        Unlike the two methods above this one raises when the message was not
+        handed to the mail server: the caller keeps the matches pending and
+        tries again at its next run. No recipient is a failure too.
+        """
+        recipient = (getattr(self.cfg, "digest_email", "") or "").strip()
+        if not recipient:
+            raise ValueError("alerts.digest_email is empty: no recipient for new-match alerts")
+
+        msg = EmailMessage()
+        msg["Subject"] = batch.subject
+        msg["From"] = getattr(self.cfg, "smtp_user", "") or "noreply@imoveis.local"
+        msg["To"] = recipient
+        msg.set_content(batch.body)
+
+        try:
+            # A server that accepts and never answers must not hold the task
+            # (and its database session) past the next hourly run.
+            with smtplib.SMTP(
+                getattr(self.cfg, "smtp_host", "localhost"),
+                getattr(self.cfg, "smtp_port", 25),
+                timeout=NEW_MATCH_SMTP_TIMEOUT_SECONDS,
+            ) as server:
+                user = getattr(self.cfg, "smtp_user", "")
+                password = getattr(self.cfg, "smtp_pass", "")
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        except Exception as e:
+            logger.error(
+                "saved_search_new_matches_email_failed",
+                principal_id=batch.principal_id,
+                search_id=batch.search_id,
+                error=str(e),
+            )
+            raise
+        logger.info(
+            "saved_search_new_matches_email_sent",
+            principal_id=batch.principal_id,
+            search_id=batch.search_id,
+            count=len(batch.property_ids),
+        )

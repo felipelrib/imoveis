@@ -127,3 +127,104 @@ class TestMakeCeleryRedisResolution:
 
         assert celery_app.conf.broker_url == "redis://:pw@appconfig-host:6400/5"
         assert celery_app.conf.result_backend == "redis://:pw@appconfig-host:6400/5"
+
+
+# ---------------------------------------------------------------------------
+# Saved-search new-match alerts (v0.14-s1.9)
+# ---------------------------------------------------------------------------
+
+_NEW_MATCH_TASKS = (
+    "tasks.match_saved_search_new_matches",
+    "tasks.send_saved_search_new_match_alerts",
+)
+
+
+def _schedule_for(tmp_path: Path, yaml_text: str) -> dict:
+    from adapters.queue.celery_app import build_beat_schedule
+
+    cfg_file = tmp_path / "app_config.yaml"
+    cfg_file.write_text(yaml_text)
+    redis_inst = MagicMock()
+    redis_inst.get.return_value = None
+    with patch("adapters.queue.celery_app.get_config", return_value=load_config(cfg_file)), patch(
+        "adapters.queue.celery_app.get_redis", return_value=redis_inst
+    ):
+        return build_beat_schedule()
+
+
+@pytest.mark.unit
+class TestNewMatchAlertsSchedule:
+    @patch("adapters.queue.celery_app.get_redis")
+    @patch("adapters.queue.celery_app.get_config")
+    def test_both_tasks_are_routed_to_the_scrapers_queue(self, mock_get_config, mock_get_redis):
+        cfg = MagicMock()
+        cfg.redis.url = "redis://localhost:6379/0"
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value.get.return_value = None
+
+        from adapters.queue.celery_app import make_celery
+
+        routes = make_celery().conf.task_routes
+        for task in _NEW_MATCH_TASKS:
+            assert routes[task] == {"queue": "scrapers"}
+
+    def test_both_tasks_are_registered_under_the_routed_names(self):
+        from adapters.queue import tasks
+
+        assert tasks.match_saved_search_new_matches.name == _NEW_MATCH_TASKS[0]
+        assert tasks.send_saved_search_new_match_alerts.name == _NEW_MATCH_TASKS[1]
+
+    def test_default_config_schedules_the_matcher_and_the_hourly_sender(self, tmp_path: Path):
+        from celery.schedules import crontab
+
+        schedule = _schedule_for(tmp_path, YAML_WITH_CUSTOM_REDIS)
+
+        matcher = schedule["match-saved-search-new-matches"]
+        assert matcher["task"] == _NEW_MATCH_TASKS[0]
+        assert matcher["schedule"] == 15 * 60
+        sender = schedule["send-saved-search-new-match-alerts"]
+        assert sender["task"] == _NEW_MATCH_TASKS[1]
+        assert sender["schedule"] == crontab(minute=0)
+
+    def test_the_matcher_interval_comes_from_config(self, tmp_path: Path):
+        yaml_text = YAML_WITH_CUSTOM_REDIS + "alerts:\n  new_match:\n    match_interval_minutes: 5\n"
+        schedule = _schedule_for(tmp_path, yaml_text)
+        assert schedule["match-saved-search-new-matches"]["schedule"] == 300
+
+    def test_master_switch_off_schedules_neither(self, tmp_path: Path):
+        yaml_text = YAML_WITH_CUSTOM_REDIS + "alerts:\n  new_match:\n    enabled: false\n"
+        schedule = _schedule_for(tmp_path, yaml_text)
+        assert "match-saved-search-new-matches" not in schedule
+        assert "send-saved-search-new-match-alerts" not in schedule
+
+    @patch("adapters.queue.celery_app.get_redis")
+    @patch("adapters.queue.celery_app.get_config")
+    def test_a_mock_config_does_not_enable_the_jobs(self, mock_get_config, mock_get_redis):
+        from adapters.queue.celery_app import build_beat_schedule
+
+        cfg = MagicMock()
+        cfg.scraping.platforms = {}
+        mock_get_config.return_value = cfg
+        mock_get_redis.return_value.get.return_value = None
+
+        schedule = build_beat_schedule()
+        assert "match-saved-search-new-matches" not in schedule
+        assert "send-saved-search-new-match-alerts" not in schedule
+
+    def test_every_beat_task_has_a_route(self, tmp_path: Path):
+        """AGENTS.md: a beat task without a route lands on a queue nobody consumes."""
+        from adapters.queue.celery_app import make_celery
+
+        cfg_file = tmp_path / "app_config.yaml"
+        cfg_file.write_text(YAML_WITH_CUSTOM_REDIS)
+        redis_inst = MagicMock()
+        redis_inst.get.return_value = None
+        with patch(
+            "adapters.queue.celery_app.get_config", return_value=load_config(cfg_file)
+        ), patch("adapters.queue.celery_app.get_redis", return_value=redis_inst):
+            conf = make_celery().conf
+        assert {"match-saved-search-new-matches", "send-saved-search-new-match-alerts"} <= set(
+            conf.beat_schedule
+        )
+        for entry in conf.beat_schedule.values():
+            assert entry["task"] in conf.task_routes, entry["task"]

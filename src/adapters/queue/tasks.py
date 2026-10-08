@@ -1088,7 +1088,6 @@ def evaluate_watchlist_alerts(self):
             if drop_pct >= row.min_drop_pct:
                 alert = PriceDropAlert(
                     property_id=str(row.property_id),
-                    title=row.title or "Property",
                     listing_type=row.listing_type,
                     platform=row.platform,
                     old_price=float(reference),
@@ -1246,6 +1245,8 @@ def send_top_deals_digest(self):
             min_combined_score=top_deals.min_combined_score,
             limit=top_deals.limit,
             score_target=score_target,
+            # Story 1.9: not what a saved-search new-match email already covered.
+            alerted_owner=cfg.auth.principal_id,
         )
 
     if not properties:
@@ -1274,6 +1275,338 @@ def send_top_deals_digest(self):
         count=len(properties),
     )
     return {"status": "sent", "sent": len(properties)}
+
+
+# ---------------------------------------------------------------------------
+# Saved-search new-match alerts (Story 1.9, FR-32)
+# ---------------------------------------------------------------------------
+
+# Only the single principal's searches (AD-11); another or NULL owner never matches.
+_NEW_MATCH_ENABLED_SEARCHES_SQL = (
+    "SELECT id, filters, notify_enabled_at FROM saved_searches "
+    "WHERE owner = :owner AND notify_new_matches AND notify_enabled_at IS NOT NULL "
+    "ORDER BY created_at, id"
+)
+_NEW_MATCH_ALL_SEARCHES_SQL = (
+    "SELECT id, name, filters, notify_new_matches, notify_enabled_at, "
+    "new_match_last_window_on FROM saved_searches "
+    "WHERE owner = :owner ORDER BY created_at, id"
+)
+# One sender at a time per search (the scrapers worker has more than one
+# process and queued runs can start together). The row lock covers a short
+# transaction only: the state is read again under it, the day is claimed
+# (window date stamped) and the transaction commits before the mail server is
+# contacted. A second run either skips the locked row or finds the day taken.
+# The lock is never held while an email is being sent, so a PATCH or DELETE of
+# the search from the API does not wait for the mail server. ``NO KEY UPDATE``
+# leaves the matcher's inserts (foreign-key share lock) alone.
+_NEW_MATCH_LOCK_SEARCH_SQL = (
+    "SELECT notify_new_matches, notify_enabled_at, new_match_last_window_on "
+    "FROM saved_searches WHERE id = CAST(:search_id AS uuid) AND owner = :owner "
+    "FOR NO KEY UPDATE SKIP LOCKED"
+)
+
+
+def _utcnow_naive():
+    """Naive UTC, the clock of ``properties.first_seen``."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@celery.task(bind=True, name="tasks.match_saved_search_new_matches")
+def match_saved_search_new_matches(self):
+    """Record the new decidable Properties that match each notifying saved search.
+
+    Pull, not push: newness is ``properties.first_seen`` and decidability is
+    read from ``metrics_scoring``, so nothing hooks the persist path and a
+    Property that is not decidable yet is simply looked at again on the next
+    run, for as long as it takes (held, never dropped). Read-only on Property /
+    Listing / scoring; writes ``saved_search_new_matches`` only. Never enqueues
+    enrichment.
+    """
+    from sqlalchemy import text
+
+    from core.saved_search_alerts import (
+        hold_report,
+        match_filters_from_saved_search,
+        newness_floor,
+        record_new_matches,
+    )
+
+    cfg = get_config()
+    new_match = cfg.alerts.new_match
+    result = {
+        "status": "ok",
+        "searches": 0,
+        "matched": 0,
+        "unsupported": 0,
+        "errors": 0,
+        "held": 0,
+        "oldest_held_hours": None,
+        "held_overdue": 0,
+    }
+    if new_match.enabled is not True:
+        logger.info("saved_search_new_match_skipped", reason="disabled")
+        return {**result, "status": "skipped"}
+
+    owner = cfg.auth.principal_id
+    hold_warning_hours = int(new_match.hold_warning_hours)
+    now = _utcnow_naive()
+    floors = []
+
+    with SessionLocal() as session:
+        searches = session.execute(
+            text(_NEW_MATCH_ENABLED_SEARCHES_SQL), {"owner": owner}
+        ).fetchall()
+        for search_id, filters_blob, enabled_at in searches:
+            result["searches"] += 1
+            filters = match_filters_from_saved_search(filters_blob)
+            if filters is None:
+                # Not a membership test (semantic query, unknown key, not an
+                # object): never fires. The API reports it on the search.
+                result["unsupported"] += 1
+                continue
+            floors.append(newness_floor(enabled_at))
+            try:
+                result["matched"] += record_new_matches(
+                    session,
+                    search_id=str(search_id),
+                    owner=owner,
+                    filters=filters,
+                    enabled_at=enabled_at,
+                    now=now,
+                )
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                result["errors"] += 1
+                logger.error(
+                    "saved_search_new_match_failed",
+                    search_id=str(search_id),
+                    error=str(exc),
+                )
+
+        if floors:
+            try:
+                report = hold_report(
+                    session,
+                    floor=min(floors),
+                    now=now,
+                    overdue_after_hours=hold_warning_hours,
+                )
+                result.update(report)
+            except Exception as exc:
+                session.rollback()
+                result["errors"] += 1
+                logger.error("saved_search_new_match_hold_report_failed", error=str(exc))
+
+    if result["held_overdue"] > 0:
+        # Still held (they are alerted once decidable), but for longer than
+        # enrichment should take: new Properties are not getting a verdict.
+        logger.warning(
+            "saved_search_new_match_held_overdue",
+            held_overdue=result["held_overdue"],
+            held=result["held"],
+            oldest_held_hours=result["oldest_held_hours"],
+            hold_warning_hours=hold_warning_hours,
+        )
+    logger.info("saved_search_new_match_run", **result)
+    return result
+
+
+@celery.task(bind=True, name="tasks.send_saved_search_new_match_alerts")
+def send_saved_search_new_match_alerts(self):
+    """Email each saved search's recorded new matches, once per local day.
+
+    Runs hourly; a search is due from ``alerts.new_match.window_hour`` (local)
+    until it was stamped for that local date. Delivery is the notifier
+    registry's ``email`` channel only (AD-9). A failed send leaves the rows
+    pending and the date unstamped, so the next run tries again. An email
+    carries at most ``max_items_per_email`` matches, oldest first; the rest stay
+    pending for the next day's email. A failure of one search never stops the
+    others or raises (loading the searches does).
+
+    Per search: claim the day under the row lock and commit, send with no
+    transaction open, then mark the rows sent; a send that fails gives the day
+    back. A worker killed between the claim and the send leaves the day
+    claimed: the matches stay pending and leave the next day (late, never
+    twice, never lost).
+    """
+    from sqlalchemy import text
+
+    from adapters.notify import get_notifiers_for_channel
+    from adapters.notify.base import SavedSearchNewMatches
+    from core.saved_search_alerts import (
+        claim_window,
+        collect_pending,
+        hold_report,
+        local_window_date,
+        mark_sent,
+        newness_floor,
+        release_window,
+        render_new_match_email,
+        window_is_due,
+        withdraw_stale,
+    )
+
+    cfg = get_config()
+    new_match = cfg.alerts.new_match
+    result = {
+        "status": "ok",
+        "searches_due": 0,
+        "emails_sent": 0,
+        "properties_alerted": 0,
+        "withdrawn": 0,
+        "errors": 0,
+    }
+    if new_match.enabled is not True:
+        logger.info("saved_search_new_match_alerts_skipped", reason="disabled")
+        return {**result, "status": "skipped"}
+
+    owner = cfg.auth.principal_id
+    hold_warning_hours = int(new_match.hold_warning_hours)
+    max_items = int(new_match.max_items_per_email)
+    tz_name = new_match.window_timezone
+    locale = getattr(getattr(cfg, "ui", None), "locale", None)
+    if not isinstance(locale, str):
+        locale = "pt-BR"
+    now = _utcnow_naive()
+    window_date = local_window_date(now, tz_name)
+    email_notifiers = None
+    no_email_channel = False
+
+    with SessionLocal() as session:
+        searches = session.execute(
+            text(_NEW_MATCH_ALL_SEARCHES_SQL), {"owner": owner}
+        ).fetchall()
+        for search_id, search_name, filters_blob, _enabled, _enabled_at, _last_window in searches:
+            search_id = str(search_id)
+            claimed = False
+            delivered = 0
+            previous_window_on = None
+            try:
+                result["withdrawn"] += withdraw_stale(session, search_id=search_id)
+                session.commit()
+                locked = session.execute(
+                    text(_NEW_MATCH_LOCK_SEARCH_SQL), {"search_id": search_id, "owner": owner}
+                ).fetchone()
+                if locked is None:
+                    # Another run is sending this search right now (or it is gone).
+                    continue
+                enabled, enabled_at, last_window_on = locked
+                if enabled is not True or enabled_at is None:
+                    continue
+                if not window_is_due(
+                    now,
+                    tz_name=tz_name,
+                    window_hour=int(new_match.window_hour),
+                    last_window_on=last_window_on,
+                ):
+                    continue
+                result["searches_due"] += 1
+                pending = collect_pending(session, search_id)
+                if not pending:
+                    # Nothing to say: the day stays open for a later match.
+                    continue
+                if email_notifiers is None:
+                    email_notifiers = get_notifiers_for_channel("email")
+                if not email_notifiers:
+                    no_email_channel = True
+                    continue
+
+                # Claim the day and let the row go before the mail server is
+                # contacted: nothing that writes the search waits for SMTP.
+                previous_window_on = last_window_on
+                claim_window(session, search_id, window_date)
+                session.commit()
+                claimed = True
+
+                held = hold_report(
+                    session,
+                    floor=newness_floor(enabled_at),
+                    now=now,
+                    overdue_after_hours=hold_warning_hours,
+                )["held"]
+                # No transaction stays open during the send.
+                session.rollback()
+                blob = filters_blob if isinstance(filters_blob, dict) else {}
+                # Oldest first. What does not fit stays pending and leaves in
+                # the next day's email: a recorded match is never marked sent
+                # without having been shown.
+                shown = pending[:max_items]
+                subject, body = render_new_match_email(
+                    search_name=search_name,
+                    properties=shown,
+                    listing_type=blob.get("listing_type"),
+                    held=held,
+                    remaining=len(pending) - len(shown),
+                    app_base_url=new_match.app_base_url,
+                    locale=locale,
+                )
+                property_ids = [item["id"] for item in shown]
+                batch = SavedSearchNewMatches(
+                    principal_id=owner,
+                    search_id=search_id,
+                    search_name=search_name,
+                    subject=subject,
+                    body=body,
+                    property_ids=property_ids,
+                    generated_at=now,
+                )
+                for notifier in email_notifiers:
+                    try:
+                        notifier.send_new_matches(batch)
+                        delivered += 1
+                    except Exception as exc:
+                        result["errors"] += 1
+                        logger.error(
+                            "saved_search_new_match_alert_notifier_error",
+                            notifier=type(notifier).__name__,
+                            search_id=search_id,
+                            error=str(exc),
+                        )
+                if delivered:
+                    mark_sent(session, search_id, property_ids, now, window_date)
+                    session.commit()
+                    result["emails_sent"] += 1
+                    result["properties_alerted"] += len(property_ids)
+            except Exception as exc:
+                result["errors"] += 1
+                logger.error(
+                    "saved_search_new_match_alert_failed",
+                    search_id=search_id,
+                    error=str(exc),
+                )
+            finally:
+                # Ends the transaction on every path (a no-op after a commit),
+                # which is what releases the search's row lock.
+                session.rollback()
+                if claimed and not delivered:
+                    # Nothing left: give the day back so the next hourly run
+                    # tries again. After a delivery the day stays claimed even
+                    # if marking failed (the rows then leave again the next
+                    # day, not every hour).
+                    try:
+                        release_window(session, search_id, window_date, previous_window_on)
+                        session.commit()
+                    except Exception as exc:
+                        session.rollback()
+                        result["errors"] += 1
+                        logger.error(
+                            "saved_search_new_match_alert_release_failed",
+                            search_id=search_id,
+                            error=str(exc),
+                        )
+
+    if no_email_channel:
+        result["status"] = "no_email_channel"
+        logger.warning(
+            "saved_search_new_match_alerts_no_email_channel",
+            reason="alerts disabled or no email channel configured; matches stay pending",
+        )
+    logger.info("saved_search_new_match_alerts_run", **result)
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -102,6 +102,27 @@ def build_beat_schedule() -> dict:
             ),
         }
 
+    # Saved-search new-match alerts (Story 1.9, FR-32). Explicit ``is True`` so
+    # MagicMock stubs in unit tests do not accidentally enable the jobs. The
+    # sender ticks hourly; the daily window is a stored date, not this crontab.
+    new_match_cfg = None
+    try:
+        alerts_cfg = getattr(cfg, "alerts", None) if cfg is not None else None
+        new_match_cfg = getattr(alerts_cfg, "new_match", None) if alerts_cfg else None
+    except Exception:
+        new_match_cfg = None
+    if new_match_cfg is not None and getattr(new_match_cfg, "enabled", False) is True:
+        match_interval = int(getattr(new_match_cfg, "match_interval_minutes", 15) or 0)
+        if match_interval > 0:
+            schedule["match-saved-search-new-matches"] = {
+                "task": "tasks.match_saved_search_new_matches",
+                "schedule": match_interval * 60,
+            }
+        schedule["send-saved-search-new-match-alerts"] = {
+            "task": "tasks.send_saved_search_new_match_alerts",
+            "schedule": crontab(minute=0),
+        }
+
     # Soft-deactivate dead source URLs (BIN-80). Explicit ``is True`` so MagicMock
     # stubs in unit tests do not accidentally enable the job.
     recheck_cfg = None
@@ -230,6 +251,8 @@ def make_celery() -> Celery:
         'tasks.evaluate_watchlist_alerts': {'queue': 'scrapers'},
         'tasks.send_daily_digest': {'queue': 'scrapers'},
         'tasks.send_top_deals_digest': {'queue': 'scrapers'},
+        'tasks.match_saved_search_new_matches': {'queue': 'scrapers'},
+        'tasks.send_saved_search_new_match_alerts': {'queue': 'scrapers'},
         'tasks.recheck_listing_availability': {'queue': 'scrapers'},
         'tasks.refresh_neighbourhood_amenities': {'queue': 'scrapers'},
         'tasks.refresh_transit_proximity': {'queue': 'scrapers'},

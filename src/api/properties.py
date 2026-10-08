@@ -26,6 +26,20 @@ from api.schemas import (
 )
 from core.listing_type import normalize_listing_type, normalize_price_type
 from core.neighbourhood_quality import quality_profile_fields
+from core.property_list_filters import (
+    ACTIVE_RENT_LISTING_WITH_TOTAL,
+    PRICE_PERCENTILE_CAP_BY_LISTING_TYPE,
+    PRICE_PERCENTILE_CAP_EITHER,
+    PRICE_PERCENTILE_CAP_RENT,
+    PRICE_PERCENTILE_CAP_SALE,
+    TOTAL_MONTHLY_COST_CAP,
+    TOTAL_MONTHLY_COST_INCOMPLETE,
+    append_bbox_filter,
+    append_city_filters,
+    append_neighborhood_filters,
+    build_property_where,
+    effective_combined_score_expr,
+)
 from core.property_projection import (
     LIST_SELECT_COLUMNS,
     LISTINGS_JSON_AGG,
@@ -96,15 +110,6 @@ ListingTypeParam = Annotated[Optional[str], BeforeValidator(_coerce_listing_type
 PriceTypeParam = Annotated[Optional[str], BeforeValidator(_coerce_price_type)]
 
 
-def _effective_combined_score_expr(listing_type: Optional[str]) -> str:
-    """SQL expression for filter-aware combined score (BIN-83)."""
-    if listing_type == "rent":
-        return "COALESCE(ms.combined_score_rent, ms.combined_score, 0)"
-    if listing_type == "sale":
-        return "COALESCE(ms.combined_score_sale, ms.combined_score, 0)"
-    return "COALESCE(ms.combined_score, 0)"
-
-
 def _effective_sort_price_type(
     price_type: Optional[str],
     listing_type: Optional[str],
@@ -137,69 +142,27 @@ def _sort_price_expr(filters_in: "PropertyListFilters") -> tuple[str, Optional[s
     return expr, sort_type
 
 
-# Total Monthly Cost sort / cap (v0.14-s1.2, FR-31, AD-12). Static SQL: the
-# only cost column referenced is ``total_monthly_cost`` and the only value is a
-# bound parameter (BIN-135). The predicate - active, rent, total not null - is
-# the one ``core.property_projection.select_deciding_listing`` applies, so the
-# list order and ``deciding_listing_id`` cannot disagree. ``listing_type =
-# 'rent'`` is a literal on purpose: totals exist for rent Listings only (AD-3).
-_ACTIVE_RENT_LISTING_WITH_TOTAL = (
-    "FROM property_listings pl "
-    "WHERE pl.property_id = p.id AND pl.active = true "
-    "AND pl.listing_type = 'rent' AND pl.total_monthly_cost IS NOT NULL"
-)
+# The membership predicates (cost cap, percentile cap, places, bbox ...) live
+# in ``core.property_list_filters`` since v0.14-s1.9: the saved-search matcher
+# builds the same ``WHERE``. The private names below stay importable from this
+# module (unit tests and in-module callers use them).
+_effective_combined_score_expr = effective_combined_score_expr
+_ACTIVE_RENT_LISTING_WITH_TOTAL = ACTIVE_RENT_LISTING_WITH_TOTAL
+_TOTAL_MONTHLY_COST_CAP = TOTAL_MONTHLY_COST_CAP
+_TOTAL_MONTHLY_COST_INCOMPLETE = TOTAL_MONTHLY_COST_INCOMPLETE
+_PRICE_PERCENTILE_CAP_RENT = PRICE_PERCENTILE_CAP_RENT
+_PRICE_PERCENTILE_CAP_SALE = PRICE_PERCENTILE_CAP_SALE
+_PRICE_PERCENTILE_CAP_BY_LISTING_TYPE = PRICE_PERCENTILE_CAP_BY_LISTING_TYPE
+_PRICE_PERCENTILE_CAP_EITHER = PRICE_PERCENTILE_CAP_EITHER
+_append_neighborhood_filters = append_neighborhood_filters
+_append_city_filters = append_city_filters
+_append_bbox_filter = append_bbox_filter
 
 # Lowest persisted total among the Property's active rent Listings; NULL when
-# none has one (ordered last in both directions by the caller).
+# none has one (ordered last in both directions by the caller). Same predicate
+# as the cap (v0.14-s1.2), so the order and ``deciding_listing_id`` agree.
 _SORT_TOTAL_MONTHLY_COST_EXPR = (
     "(SELECT MIN(pl.total_monthly_cost) " + _ACTIVE_RENT_LISTING_WITH_TOTAL + ")"
-)
-
-_TOTAL_MONTHLY_COST_CAP = (
-    "EXISTS (SELECT 1 "
-    + _ACTIVE_RENT_LISTING_WITH_TOTAL
-    + " AND pl.total_monthly_cost <= :max_total_monthly_cost)"
-)
-
-# "Incomplete" = has an active rent Listing, none of them with a total. A
-# sale-only Property is not incomplete: a monthly-cost cap has no meaning for it.
-_TOTAL_MONTHLY_COST_INCOMPLETE = (
-    "(EXISTS (SELECT 1 FROM property_listings pl "
-    "WHERE pl.property_id = p.id AND pl.active = true "
-    "AND pl.listing_type = 'rent') "
-    "AND NOT EXISTS (SELECT 1 " + _ACTIVE_RENT_LISTING_WITH_TOTAL + "))"
-)
-
-
-# Cohort price/m2 percentile cap (v0.14-s1.7, FR-30). Static SQL over the
-# stored ``metrics_scoring`` columns of Story 1.6; the only value is a bound
-# parameter and the listing types are literals (BIN-135). A NULL percentile
-# (suppressed cohort, not a member, no scoring row) makes the comparison NULL,
-# so it never matches. With a listing type only that type's column is read (no
-# cross-type leakage, BIN-77); with ``both`` or none, a Property qualifies when
-# either of its price lines does. A column only counts while the Property has
-# an active Listing of that type: the stored value outlives a deactivated
-# Listing until the next scoring run, and the card has no price line (so no
-# badge) for a type without one. The legacy ``percentile_rank*`` columns are
-# never read here.
-_PRICE_PERCENTILE_CAP_RENT = (
-    "(ms.price_per_m2_percentile_rent <= :max_price_per_m2_percentile "
-    "AND EXISTS (SELECT 1 FROM property_listings pl "
-    "WHERE pl.property_id = p.id AND pl.active = true "
-    "AND pl.listing_type = 'rent'))"
-)
-_PRICE_PERCENTILE_CAP_SALE = (
-    "(ms.price_per_m2_percentile_sale <= :max_price_per_m2_percentile "
-    "AND EXISTS (SELECT 1 FROM property_listings pl "
-    "WHERE pl.property_id = p.id AND pl.active = true "
-    "AND pl.listing_type = 'sale'))"
-)
-_PRICE_PERCENTILE_CAP_BY_LISTING_TYPE = {
-    "rent": _PRICE_PERCENTILE_CAP_RENT,
-    "sale": _PRICE_PERCENTILE_CAP_SALE,
-}
-_PRICE_PERCENTILE_CAP_EITHER = (
-    "(" + _PRICE_PERCENTILE_CAP_RENT + " OR " + _PRICE_PERCENTILE_CAP_SALE + ")"
 )
 
 
@@ -332,157 +295,17 @@ def _embed_query_literal(query_text: str) -> str:
     return vector_literal(embedding)
 
 
-def _append_neighborhood_filters(
-    filters: list[str],
-    params: Dict[str, Any],
-    neighborhood_name: str,
-) -> None:
-    names = [n.strip() for n in neighborhood_name.split(",") if n.strip()]
-    if not names:
-        return
-    nbr_filters = []
-    for i, name in enumerate(names):
-        nbr_filters.append(f"(n.name ILIKE :nbr_{i} OR p.props_json->>'neighborhood' ILIKE :nbr_{i})")
-        params[f"nbr_{i}"] = f"%{name}%"
-    filters.append(f"({' OR '.join(nbr_filters)})")
-
-
-def _append_city_filters(
-    filters: list[str],
-    params: Dict[str, Any],
-    city_name: str,
-) -> None:
-    names = [n.strip() for n in city_name.split(",") if n.strip()]
-    if not names:
-        return
-    city_filters = []
-    for i, name in enumerate(names):
-        city_filters.append(
-            f"(COALESCE(n.city, p.props_json->>'city') ILIKE :city_{i})"
-        )
-        params[f"city_{i}"] = f"%{name}%"
-    filters.append(f"({' OR '.join(city_filters)})")
-
-
-def _append_bbox_filter(filters: list[str], params: Dict[str, Any], bbox: str) -> None:
-    try:
-        parts = [float(x.strip()) for x in bbox.split(",")]
-    except ValueError:
-        return
-    if len(parts) != 4:
-        return
-    min_lon, min_lat, max_lon, max_lat = parts
-    filters.append(
-        "ST_Within(p.location, ST_MakeEnvelope("
-        ":bbox_min_lon, :bbox_min_lat, :bbox_max_lon, :bbox_max_lat, 4326)) = true"
-    )
-    params["bbox_min_lon"] = min_lon
-    params["bbox_min_lat"] = min_lat
-    params["bbox_max_lon"] = max_lon
-    params["bbox_max_lat"] = max_lat
-
-
 def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Optional[str]) -> tuple[str, Dict[str, Any], str]:
-    filters = ["p.active = true"]
+    filters, where_params = build_property_where(
+        filters_in, require_embedding=query_vec_literal is not None
+    )
     params: Dict[str, Any] = {
         "limit": filters_in.page_size,
         "offset": (filters_in.page - 1) * filters_in.page_size,
     }
-
     if query_vec_literal is not None:
-        filters.append("p.embedding IS NOT NULL")
         params["q_vec"] = query_vec_literal
-
-    if filters_in.platform:
-        filters.append("p.platform = :platform")
-        params["platform"] = filters_in.platform
-    if filters_in.max_price is not None:
-        # Decisioning ``p.price`` is the lowest listing (rent preferred). Cap against
-        # the chosen rent/sale listing instead so sale budgets are not matched on rent.
-        price_type = filters_in.price_type
-        if price_type is None and filters_in.listing_type in ("rent", "sale"):
-            price_type = filters_in.listing_type
-        if price_type is None:
-            price_type = "rent"
-        filters.append(
-            "EXISTS ("
-            "SELECT 1 FROM property_listings pl "
-            "WHERE pl.property_id = p.id "
-            "AND pl.active = true "
-            "AND pl.listing_type = :price_type "
-            "AND pl.price IS NOT NULL "
-            "AND pl.price <= :max_price"
-            ")"
-        )
-        params["max_price"] = filters_in.max_price
-        params["price_type"] = price_type
-    if filters_in.max_total_monthly_cost is not None:
-        # ``include_incomplete_totals`` only widens a cap; alone it is a no-op.
-        if filters_in.include_incomplete_totals:
-            filters.append(
-                "(" + _TOTAL_MONTHLY_COST_CAP + " OR " + _TOTAL_MONTHLY_COST_INCOMPLETE + ")"
-            )
-        else:
-            filters.append(_TOTAL_MONTHLY_COST_CAP)
-        params["max_total_monthly_cost"] = filters_in.max_total_monthly_cost
-    if filters_in.max_price_per_m2_percentile is not None:
-        filters.append(
-            _PRICE_PERCENTILE_CAP_BY_LISTING_TYPE.get(
-                filters_in.listing_type or "", _PRICE_PERCENTILE_CAP_EITHER
-            )
-        )
-        params["max_price_per_m2_percentile"] = filters_in.max_price_per_m2_percentile
-    if filters_in.min_bedrooms is not None:
-        filters.append("p.bedrooms >= :min_bedrooms")
-        params["min_bedrooms"] = filters_in.min_bedrooms
-    if filters_in.min_parking is not None:
-        filters.append("p.parking >= :min_parking")
-        params["min_parking"] = filters_in.min_parking
-    if filters_in.neighborhood_name:
-        _append_neighborhood_filters(filters, params, filters_in.neighborhood_name)
-    if filters_in.city_name:
-        _append_city_filters(filters, params, filters_in.city_name)
-    if filters_in.min_score is not None:
-        score_expr = _effective_combined_score_expr(filters_in.listing_type)
-        filters.append(f"{score_expr} >= :min_score")
-        params["min_score"] = filters_in.min_score
-
-    if filters_in.listing_type and filters_in.listing_type != "both":
-        listing_type_col = {"rent": "available_for_rent", "sale": "available_for_sale"}
-        col = listing_type_col.get(filters_in.listing_type)
-        if col:
-            filters.append(f"(p.props_json->>{col!r})::boolean = true")
-
-    if filters_in.property_type:
-        from core.property_type import match_values_for_filter
-
-        type_values = match_values_for_filter(filters_in.property_type)
-        placeholders = ", ".join(f":pt{i}" for i in range(len(type_values)))
-        filters.append(f"LOWER(p.props_json->>'type') IN ({placeholders})")
-        for i, value in enumerate(type_values):
-            params[f"pt{i}"] = value
-
-    if filters_in.is_furnished is not None:
-        filters.append("(p.props_json->>'isFurnished')::boolean = :is_furnished")
-        params["is_furnished"] = filters_in.is_furnished
-
-    if filters_in.accepts_pets is not None:
-        # Prefer listing.accepts_pets (OLX + QuintoAndar); keep QA amenity for legacy rows.
-        pets_match = (
-            "("
-            "EXISTS ("
-            "SELECT 1 FROM property_listings pl "
-            "WHERE pl.property_id = p.id "
-            "AND pl.active = true "
-            "AND pl.accepts_pets IS TRUE"
-            ") "
-            "OR p.props_json->'amenities' ? 'PODE_TER_ANIMAIS_DE_ESTIMACAO'"
-            ")"
-        )
-        filters.append(pets_match if filters_in.accepts_pets else f"NOT {pets_match}")
-
-    if filters_in.bbox:
-        _append_bbox_filter(filters, params, filters_in.bbox)
+    params.update(where_params)
 
     where = " AND ".join(filters)
     if query_vec_literal is not None:

@@ -998,3 +998,89 @@ def test_real_config_exposes_cors_origins():
     assert isinstance(cfg.api.cors_origins, list)
     assert cfg.api.cors_origins
     assert all(isinstance(origin, str) for origin in cfg.api.cors_origins)
+
+
+# ---------------------------------------------------------------------------
+# alerts.new_match (v0.14-s1.9, FR-32)
+# ---------------------------------------------------------------------------
+
+
+def _yaml_with_new_match(body: str) -> str:
+    return MINIMAL_YAML + "alerts:\n  new_match:\n" + body
+
+
+@pytest.mark.unit
+def test_new_match_alerts_defaults_when_absent(tmp_path: Path):
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    new_match = cfg.alerts.new_match
+    assert new_match.enabled is True
+    assert new_match.match_interval_minutes == 15
+    assert new_match.window_hour == 7
+    assert new_match.window_timezone == "America/Sao_Paulo"
+    assert new_match.hold_warning_hours == 168
+    assert new_match.max_items_per_email == 20
+    assert new_match.app_base_url == ""
+
+
+@pytest.mark.unit
+def test_new_match_alerts_from_default_app_config_yaml():
+    """The committed YAML carries the section with the documented defaults."""
+    new_match = get_config().alerts.new_match
+    assert new_match.enabled is True
+    assert new_match.match_interval_minutes == 15
+    assert new_match.window_hour == 7
+    assert new_match.window_timezone == "America/Sao_Paulo"
+    assert new_match.hold_warning_hours == 168
+    assert new_match.max_items_per_email == 20
+    assert new_match.app_base_url == ""
+
+
+@pytest.mark.unit
+def test_new_match_alerts_yaml_overrides(tmp_path: Path):
+    cfg = load_config(
+        _write_yaml(
+            tmp_path,
+            _yaml_with_new_match(
+                "    enabled: false\n"
+                "    match_interval_minutes: 5\n"
+                "    window_hour: 0\n"
+                "    window_timezone: UTC\n"
+                "    hold_warning_hours: 24\n"
+                "    max_items_per_email: 3\n"
+                "    app_base_url: http://localhost:5173\n"
+            ),
+        )
+    )
+    new_match = cfg.alerts.new_match
+    assert new_match.enabled is False
+    assert new_match.match_interval_minutes == 5
+    assert new_match.window_hour == 0
+    assert new_match.window_timezone == "UTC"
+    assert new_match.hold_warning_hours == 24
+    assert new_match.max_items_per_email == 3
+    assert new_match.app_base_url == "http://localhost:5173"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "line",
+    [
+        "match_interval_minutes: 0",
+        "match_interval_minutes: -5",
+        "window_hour: 24",
+        "window_hour: -1",
+        "window_timezone: Mars/Olympus_Mons",
+        "hold_warning_hours: 0",
+        "max_items_per_email: 0",
+    ],
+)
+def test_new_match_alerts_rejects_out_of_range_values(tmp_path: Path, line: str):
+    with pytest.raises((ValidationError, ConfigError)):
+        load_config(_write_yaml(tmp_path, _yaml_with_new_match("    " + line + "\n")))
+
+
+@pytest.mark.unit
+def test_new_match_alerts_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("IMOVEIS_ALERTS__NEW_MATCH__WINDOW_HOUR", "9")
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    assert cfg.alerts.new_match.window_hour == 9

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from adapters.notify.base import Notifier, PriceDropAlert, TopDealsDigest
+from adapters.notify.base import (
+    Notifier,
+    PriceDropAlert,
+    SavedSearchNewMatches,
+    TopDealsDigest,
+)
 from infra.logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,4 +38,13 @@ class LogNotifier(Notifier):
             property_ids=property_ids,
             rule=digest.rule,
             generated_at=digest.generated_at.isoformat(),
+        )
+
+    def send_new_matches(self, batch: SavedSearchNewMatches) -> None:
+        logger.info(
+            "saved_search_new_matches",
+            principal_id=batch.principal_id,
+            search_id=batch.search_id,
+            count=len(batch.property_ids),
+            property_ids=list(batch.property_ids),
         )

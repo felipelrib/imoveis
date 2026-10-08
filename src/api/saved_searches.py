@@ -21,6 +21,7 @@ from api.auth import Principal, verify_api_key
 from api.errors import raise_api_error
 from core.listing_type import normalize_listing_type, normalize_price_type
 from core.property_type import normalize_property_type
+from core.saved_search_alerts import saved_search_is_matchable
 from infra.db import SessionLocal
 from infra.logging import get_logger
 
@@ -195,11 +196,18 @@ class SavedSearchFilters(BaseModel):
 class SavedSearchCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     filters: SavedSearchFilters
+    # New-match alerts (v0.14-s1.9): off unless asked for.
+    notify_new_matches: bool = False
+    # Stored and returned only; the drop rule that reads it is Story 1.10.
+    min_price_drop: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
 
 
 class SavedSearchUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     filters: Optional[SavedSearchFilters] = None
+    notify_new_matches: Optional[bool] = None
+    # ``null`` sent explicitly clears the threshold; an absent key leaves it.
+    min_price_drop: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
 
 
 class SavedSearchItem(BaseModel):
@@ -207,6 +215,44 @@ class SavedSearchItem(BaseModel):
     name: str
     filters: Dict[str, Any]
     created_at: Optional[str] = None
+    notify_new_matches: bool = False
+    min_price_drop: Optional[float] = None
+    # Naive UTC; only Properties first seen at or after it can be a new match.
+    notify_enabled_at: Optional[str] = None
+    # False when the filters carry a semantic query or an unknown key, or are
+    # not an object: such a search never fires.
+    new_match_alerts_supported: bool = True
+    # Local date (alerts.new_match.window_timezone) of the last new-match email.
+    last_new_match_alert_on: Optional[str] = None
+
+
+# One column list for every read, in the order ``_item_from_row`` unpacks.
+_ITEM_COLUMNS = (
+    "id, name, filters, created_at, notify_new_matches, min_price_drop, "
+    "notify_enabled_at, new_match_last_window_on"
+)
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC, the clock of ``properties.first_seen`` (the newness floor)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _item_from_row(row: Any) -> SavedSearchItem:
+    filters = row[2] if isinstance(row[2], dict) else {}
+    return SavedSearchItem(
+        id=str(row[0]),
+        name=row[1],
+        filters=filters,
+        created_at=row[3].isoformat() if row[3] else None,
+        notify_new_matches=bool(row[4]),
+        min_price_drop=row[5],
+        notify_enabled_at=row[6].isoformat() if row[6] else None,
+        # The stored value, not the ``{}`` stand-in: a blob that is not an
+        # object never fires, and the API must say so.
+        new_match_alerts_supported=saved_search_is_matchable(row[2]),
+        last_new_match_alert_on=row[7].isoformat() if row[7] else None,
+    )
 
 
 class PaginatedSavedSearchesResponse(BaseModel):
@@ -233,7 +279,7 @@ def list_saved_searches(
 
         rows = session.execute(
             text(
-                "SELECT id, name, filters, created_at "
+                "SELECT " + _ITEM_COLUMNS + " "
                 "FROM saved_searches WHERE owner = :owner "
                 "ORDER BY created_at DESC "
                 "LIMIT :limit OFFSET :offset"
@@ -241,15 +287,7 @@ def list_saved_searches(
             {"owner": principal.id, "limit": page_size, "offset": offset},
         ).fetchall()
 
-        items = [
-            SavedSearchItem(
-                id=str(r[0]),
-                name=r[1],
-                filters=r[2] if isinstance(r[2], dict) else {},
-                created_at=r[3].isoformat() if r[3] else None,
-            )
-            for r in rows
-        ]
+        items = [_item_from_row(r) for r in rows]
 
         return PaginatedSavedSearchesResponse(
             items=items,
@@ -265,19 +303,14 @@ def get_saved_search(search_id: str, principal: CurrentPrincipal) -> SavedSearch
     with SessionLocal() as session:
         row = session.execute(
             text(
-                "SELECT id, name, filters, created_at "
+                "SELECT " + _ITEM_COLUMNS + " "
                 "FROM saved_searches WHERE id = :sid AND owner = :owner"
             ),
             {"sid": search_id, "owner": principal.id},
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=SAVED_SEARCH_NOT_FOUND)
-        return SavedSearchItem(
-            id=str(row[0]),
-            name=row[1],
-            filters=row[2] if isinstance(row[2], dict) else {},
-            created_at=row[3].isoformat() if row[3] else None,
-        )
+        return _item_from_row(row)
 
 
 @router.post("", status_code=201, responses=_RESP_500)
@@ -290,10 +323,14 @@ def create_saved_search(
             now = datetime.now(timezone.utc)
             search_id = str(uuid.uuid4())
             wire = req.filters.to_wire()
+            # Created with alerts on: only Properties first seen from now on count.
+            enabled_at = _utcnow_naive() if req.notify_new_matches else None
             session.execute(
                 text(
-                    "INSERT INTO saved_searches (id, name, filters, owner, created_at) "
-                    "VALUES (:id, :name, :filters, :owner, :now)"
+                    "INSERT INTO saved_searches (id, name, filters, owner, created_at, "
+                    "notify_new_matches, notify_enabled_at, min_price_drop) "
+                    "VALUES (:id, :name, :filters, :owner, :now, "
+                    ":notify_new_matches, :notify_enabled_at, :min_price_drop)"
                 ),
                 {
                     "id": search_id,
@@ -301,6 +338,9 @@ def create_saved_search(
                     "filters": json.dumps(wire),
                     "owner": principal.id,
                     "now": now,
+                    "notify_new_matches": req.notify_new_matches,
+                    "notify_enabled_at": enabled_at,
+                    "min_price_drop": req.min_price_drop,
                 },
             )
             session.commit()
@@ -315,6 +355,11 @@ def create_saved_search(
                 name=req.name,
                 filters=wire,
                 created_at=now.isoformat(),
+                notify_new_matches=req.notify_new_matches,
+                min_price_drop=req.min_price_drop,
+                notify_enabled_at=enabled_at.isoformat() if enabled_at else None,
+                new_match_alerts_supported=saved_search_is_matchable(wire),
+                last_new_match_alert_on=None,
             )
         except Exception as exc:
             session.rollback()
@@ -359,7 +404,7 @@ def update_saved_search(
         try:
             existing = session.execute(
                 text(
-                    "SELECT id, name, filters FROM saved_searches "
+                    "SELECT id, name, filters, notify_new_matches FROM saved_searches "
                     "WHERE id = :sid AND owner = :owner"
                 ),
                 {"sid": search_id, "owner": principal.id},
@@ -379,12 +424,25 @@ def update_saved_search(
                 update_fields.append("filters = :filters")
                 params["filters"] = json.dumps(req.filters.to_wire())
 
+            if req.notify_new_matches is not None:
+                update_fields.append("notify_new_matches = :notify_new_matches")
+                params["notify_new_matches"] = req.notify_new_matches
+                if req.notify_new_matches and not existing[3]:
+                    # Off -> on: the newness floor starts now. Switching off
+                    # keeps the old stamp; switching on again replaces it.
+                    update_fields.append("notify_enabled_at = :notify_enabled_at")
+                    params["notify_enabled_at"] = _utcnow_naive()
+
+            if "min_price_drop" in req.model_fields_set:
+                update_fields.append("min_price_drop = :min_price_drop")
+                params["min_price_drop"] = req.min_price_drop
+
             if not update_fields:
                 return get_saved_search(search_id, principal)
 
-            # update_fields entries are hardcoded literals ("name = :name" /
-            # "filters = :filters") appended above — never user-supplied column
-            # names. Plain concatenation (not an f-string) per BIN-135.
+            # update_fields entries are hardcoded literals ("name = :name",
+            # "filters = :filters", ...) appended above — never user-supplied
+            # column names. Plain concatenation (not an f-string) per BIN-135.
             session.execute(
                 text(
                     "UPDATE saved_searches SET " + ", ".join(update_fields) + " "

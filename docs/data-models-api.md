@@ -13,7 +13,8 @@
 | `neighborhoods` | Neighbourhood geometries (constraints enforced) + quality profile columns |
 | `transit_stops` | Persisted transit stops (GTFS-derived) for proximity metrics |
 | `watchlist` | Price-drop watch entries |
-| `saved_searches` | Persisted search filters |
+| `saved_searches` | Persisted search filters. New-match alerts (v0.14-s1.9): `notify_new_matches` (NOT NULL, default false), `notify_enabled_at` (naive UTC, the newness floor), `min_price_drop` (CHECK ≥ 0; stored only), `new_match_last_window_on` (local date of the last new-match email) |
+| `saved_search_new_matches` | One row per saved search × Property found to be a new match (v0.14-s1.9, written only by `core/saved_search_alerts.py`): `status` (`pending`/`sent`/`withdrawn`, CHECK), `matched_at`, `sent_at`, `owner`; UNIQUE (`saved_search_id`, `property_id`); the search FK is `SET NULL` (a deleted search keeps "already alerted" for the weekly digest), the Property FK is `CASCADE` |
 | `favourites` | Favourited properties |
 | `admin_audit` | Audit log of admin actions |
 | `platform_checkpoints` | Scraper resume checkpoints |
@@ -30,4 +31,4 @@
 
 ## Migration strategy
 
-Alembic, 27 revisions from `b64c262168da_initial` through embedding resize (1024), owner-scoped personalization, dual listing-type scores, GiST location index, neighbourhood geometry constraints, price-per-m² rent/sale cohorts, listing Total Monthly Cost columns (`c4d5e6f7a8b9`), cohort price basis stamp (`d5e6f7a8b9c0`), cohort price/m² percentiles (`e6f7a8b9c0d1`). Gates: `alembic check` after schema changes; rebuild API image before `scripts/agent/validate.py --tier backend` when migrations changed (compose runs migrations from the image).
+Alembic, 28 revisions from `b64c262168da_initial` through embedding resize (1024), owner-scoped personalization, dual listing-type scores, GiST location index, neighbourhood geometry constraints, price-per-m² rent/sale cohorts, listing Total Monthly Cost columns (`c4d5e6f7a8b9`), cohort price basis stamp (`d5e6f7a8b9c0`), cohort price/m² percentiles (`e6f7a8b9c0d1`), saved-search new-match alerts (`f7a8b9c0d1e2`). Gates: `alembic check` after schema changes; rebuild API image before `scripts/agent/validate.py --tier backend` when migrations changed (compose runs migrations from the image).

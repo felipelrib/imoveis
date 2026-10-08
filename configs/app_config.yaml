@@ -459,6 +459,16 @@ alerts:
     crontab_minute: 0
     crontab_day_of_week: "0"  # Sunday
     redis_key: alerts:top_deals_digest
+  # Saved-search new-match alerts (Story 1.9, FR-32). Email only. Nothing is
+  # sent while every saved search has notify_new_matches off (the default).
+  new_match:
+    enabled: true               # master switch of the matcher and the sender
+    match_interval_minutes: 15  # matcher cadence
+    window_hour: 7              # one email per search per local day, from this hour
+    window_timezone: America/Sao_Paulo
+    hold_warning_hours: 168     # held longer than this is reported as overdue (still alerted later)
+    max_items_per_email: 20
+    app_base_url: ""            # e.g. http://localhost:5173 ; empty = no link
 
 # ---------------------------------------------------------------------------
 # Image Storage

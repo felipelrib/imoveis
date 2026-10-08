@@ -30,6 +30,23 @@ class TopDealsDigest:
     rule: str = ""
 
 
+@dataclass(frozen=True)
+class SavedSearchNewMatches:
+    """Immutable payload: the new matches of one saved search (Story 1.9, FR-32).
+
+    The text is rendered by ``core.saved_search_alerts.render_new_match_email``;
+    a channel delivers ``subject`` / ``body`` as they are.
+    """
+
+    principal_id: str
+    search_id: str
+    search_name: str
+    subject: str
+    body: str
+    property_ids: List[str] = field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
 class Notifier(ABC):
     """Interface that all notifier backends must implement."""
 
@@ -40,3 +57,12 @@ class Notifier(ABC):
     @abstractmethod
     def send_digest(self, digest: TopDealsDigest) -> None:
         """Deliver a top-deals digest (AD-9 registry)."""
+
+    def send_new_matches(self, batch: SavedSearchNewMatches) -> None:
+        """Deliver one saved search's new matches; raise when it was not delivered.
+
+        Not abstract: a channel that does not carry this message says so.
+        """
+        raise NotImplementedError(
+            type(self).__name__ + " does not deliver saved-search new matches"
+        )

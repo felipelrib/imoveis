@@ -18,9 +18,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.core.enrichment import (
     EnrichmentBackend,
@@ -501,6 +502,39 @@ class TopDealsDigestConfig(BaseModel, frozen=True):
     redis_key: str = "alerts:top_deals_digest"
 
 
+class NewMatchAlertsConfig(BaseModel, frozen=True):
+    """Saved-search new-match alerts (Story 1.9, FR-32).
+
+    ``enabled`` is the master switch of both beat tasks. Nothing is emailed
+    while every saved search has ``notify_new_matches`` off, which is the
+    default. Recipient and SMTP are the existing ``alerts.digest_email`` /
+    ``alerts.smtp_*``.
+    """
+
+    enabled: bool = True
+    # How often the matcher looks for new decidable Properties.
+    match_interval_minutes: int = Field(default=15, gt=0)
+    # One email per search per local day, from this hour on.
+    window_hour: int = Field(default=7, ge=0, le=23)
+    window_timezone: str = "America/Sao_Paulo"
+    # A new Property still without a verdict after this many hours is reported
+    # as overdue (warning log, task result). It stays held and is alerted when
+    # it becomes decidable: a hold has no time limit.
+    hold_warning_hours: int = Field(default=168, ge=1)
+    max_items_per_email: int = Field(default=20, ge=1)
+    # Base of the SPA for the per-Property link; empty = no link in the email.
+    app_base_url: str = ""
+
+    @field_validator("window_timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except Exception as exc:  # ZoneInfoNotFoundError, ValueError, OSError
+            raise ValueError("unknown IANA timezone: " + repr(value)) from exc
+        return value
+
+
 class AlertsConfig(BaseModel, frozen=True):
     """Price-drop alert settings."""
 
@@ -517,6 +551,7 @@ class AlertsConfig(BaseModel, frozen=True):
     smtp_user: str = ""
     smtp_pass: str = ""
     top_deals: TopDealsDigestConfig = Field(default_factory=TopDealsDigestConfig)
+    new_match: NewMatchAlertsConfig = Field(default_factory=NewMatchAlertsConfig)
 
 
 class AuthConfig(BaseModel, frozen=True):

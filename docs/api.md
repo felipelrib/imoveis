@@ -37,6 +37,7 @@ Query parameters:
 | `sort_dir` | string | `asc` or `desc` (default) |
 | `max_total_monthly_cost` | number ≥ 0 | Keep Properties that have an active rent Listing with `total_monthly_cost` at or under the cap |
 | `include_incomplete_totals` | bool | Only with `max_total_monthly_cost`: also keep Properties that have an active rent Listing but none with a total. No effect alone |
+| `accepts_pets` | bool | `true`: keep Properties known to accept pets (an active Listing with `accepts_pets` true, or the QuintoAndar pets amenity). `false`: the complement, "not known to accept pets": a Listing that says no and one that says nothing are both kept, so `true` and `false` together are every Property. Absent: no filter |
 | `max_price_per_m2_percentile` | number, > 0 and ≤ 1 | Keep Properties whose stored cohort price/m² percentile is at or under the value (`0.25` = among the 25% cheapest of the neighbourhood). Outside the range or not a number: `422` |
 
 `GET /properties/export` accepts the same `sort_by`, `max_total_monthly_cost`,
@@ -138,6 +139,54 @@ GET /properties/{id}/price-history
 ```
 
 Returns ordered price history intervals with `start_ts`, `end_ts`, and `price`.
+
+## Saved Searches
+
+All routes need the API key (`X-API-Key`) and only see the searches of the
+authenticated principal.
+
+```
+GET    /saved-searches?page=1&page_size=50
+GET    /saved-searches/{id}
+POST   /saved-searches
+PATCH  /saved-searches/{id}
+DELETE /saved-searches/{id}
+```
+
+Every item carries:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id`, `name`, `created_at` | string | |
+| `filters` | object | Snake_case English filter wire (`listing_type`, `max_price`, `price_type`, `min_bedrooms`, `min_parking`, `min_score`, `neighborhood`, `city`, `property_type`, `platform`, `is_furnished`, `accepts_pets`, `max_price_per_m2_percentile`, `sort_by`, `sort_dir`, `q`). camelCase keys are accepted on write |
+| `notify_new_matches` | bool | New-match alerts for this search (FR-32). Default `false` |
+| `min_price_drop` | number ≥ 0 or `null` | Minimum price drop of this search, in reais (absolute). Returned as stored; no rule reads it yet |
+| `notify_enabled_at` | string or `null` | Naive UTC timestamp of the last time `notify_new_matches` was turned on. Read-only. Only Properties first seen at or after it can be a new match |
+| `new_match_alerts_supported` | bool | `false` when `filters.q` is non-blank (a semantic search is a ranking), the stored filters carry a key outside the list above, or the stored value is not an object: such a search never produces a new-match alert, whatever `notify_new_matches` says. Read-only |
+| `last_new_match_alert_on` | string (`YYYY-MM-DD`) or `null` | Local date of the last new-match email of this search. Read-only |
+
+Writing:
+
+- `POST` body: `name`, `filters`, optional `notify_new_matches` (default
+  `false`) and `min_price_drop`.
+- `PATCH` body: any of `name`, `filters`, `notify_new_matches`,
+  `min_price_drop`. `"min_price_drop": null` sent explicitly clears the value;
+  an absent key leaves it.
+- Turning `notify_new_matches` on (`false` to `true`, or creating with `true`)
+  stamps `notify_enabled_at`. Turning it off keeps the stamp; turning it on
+  again replaces it. `true` on a search that is already on changes nothing.
+- A negative or non-finite `min_price_drop` is a `422`.
+
+New-match alerts (see `docs/features/v0.14-s1.9-saved-search-new-match-detection.md`):
+
+- A Property is a new match of a search when it was first seen after the
+  search was turned on, passes `GET /properties` with the parameters the
+  search stands for, and has a stored verdict and an evaluated percentile.
+  Until it has both it is held, with no time limit, and alerted when it does.
+- Each search gets at most one email per local day, by email only, listing the
+  matches recorded since the last one. Each search x Property pair is alerted
+  at most once.
+- There is no endpoint that lists the recorded matches in this version.
 
 ## Scraper Control
 
