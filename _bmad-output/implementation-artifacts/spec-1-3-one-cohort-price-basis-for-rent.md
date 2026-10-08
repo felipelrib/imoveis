@@ -2,7 +2,7 @@
 title: 'Story 1.3 — One cohort price basis for rent'
 type: 'feature'
 created: '2026-10-08'
-status: 'awaiting-operator'
+status: done
 baseline_revision: 'a50865464d3d2202ddf671c792ccc7bc8c2e54be'
 review_loop_iteration: 0
 followup_review_recommended: false
@@ -218,3 +218,15 @@ Status: awaiting-operator
 - Between the rebuild and the recalculation, newly enriched rows are scored on the new basis beside rows still on the headline.
 - The UI shows a fee-inclusive price beside a fee-exclusive R$/m² and does not say which basis produced it.
 - The primary has no `neighborhood_id` set, so cohorts are keyed by neighbourhood label alone and can span cities (Story 1.6's concern).
+
+## Operator Confirmation
+
+Confirmed 2026-10-08: the external actions this story owed were carried out.
+
+- Wait for the orchestrator to merge this story into main, then from the primary checkout in Git Bash run: bash scripts/agent/migrate-primary.sh (expect alembic_version d5e6f7a8b9c0; it refuses while a cloud backfill runner is alive - wait, never delete the Redis keys). Do this BEFORE rebuilding any container: the new scoring code writes metrics_scoring.price_basis.
+- Rebuild and restart the primary stack so the API and workers run the merged scoring code: ./scripts/restart.sh --build
+- Straight after the rebuild, recalculate the stored scores (one request, one transaction, run time on the primary unmeasured; it also inserts a metrics_scoring row for every active priced Property that has none, about 170,000 rows): curl --max-time 3600 -X POST http://localhost:8000/admin/scoring/recalculate -H 'X-API-Key: <the API key>'
+- Run the step 4 query in docs/features/v0.14-s1.3-one-cohort-price-basis-for-rent.md against the primary (read-only) and confirm not_scored is 0 and headline is a small remainder.
+- Run the step 5 query in the same doc (read-only) and record the stored Belo Horizonte band counts under the before/after band table in that doc.
+
+_Appended by hand in place of `bmad-loop confirm` (the loop was not in use that day): the agent operator carried these actions out and recorded the evidence in the feature doc, and the story was advanced from `awaiting-operator` to `done`._
