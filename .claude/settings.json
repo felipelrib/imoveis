@@ -7,10 +7,14 @@
             "type": "command",
             "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_start.py",
             "timeout": 30
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.bmad-loop/bmad_loop_hook.py SessionStart"
+            "command": "C:/Users/Felipe/AppData/Roaming/uv/tools/bmad-loop/Scripts/bmad-loop.exe relay SessionStart"
           }
         ]
       }
@@ -32,12 +36,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.bmad-loop/bmad_loop_hook.py Stop"
-          },
-          {
-            "type": "command",
             "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/auto_push.py",
             "timeout": 180
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/Felipe/AppData/Roaming/uv/tools/bmad-loop/Scripts/bmad-loop.exe relay Stop"
           }
         ]
       }
@@ -47,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.bmad-loop/bmad_loop_hook.py SessionEnd"
+            "command": "C:/Users/Felipe/AppData/Roaming/uv/tools/bmad-loop/Scripts/bmad-loop.exe relay SessionEnd"
           }
         ]
       }
@@ -57,7 +65,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-project python \"$CLAUDE_PROJECT_DIR\"/.bmad-loop/bmad_loop_hook.py PreCompact"
+            "command": "C:/Users/Felipe/AppData/Roaming/uv/tools/bmad-loop/Scripts/bmad-loop.exe relay PreCompact"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/Felipe/AppData/Roaming/uv/tools/bmad-loop/Scripts/bmad-loop.exe relay Notification"
           }
         ]
       }
