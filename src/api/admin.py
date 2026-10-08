@@ -1090,10 +1090,11 @@ def enrichment_coverage(request: Request):
     Read-only and DB-derived. ``backfill.active`` is the runner's lease and
     nothing else; every number comes from the database, so the figures are
     correct with no runner present and identical across repeated calls over an
-    unchanged corpus.
+    unchanged corpus. ``cost_completeness`` is the per-Platform Total Monthly
+    Cost completeness of active rent Listings (NFR-6 / SM-3).
 
     Rate-limited like the control routes, generously: the UI polls this about
-    once a minute, while a single call runs four aggregates plus a per-row
+    once a minute, while a single call runs five aggregates plus a per-row
     ``jsonb_array_elements_text`` expansion over ``properties``. The credential
     gate on the router runs first either way, so the limit is a cap on an
     authenticated operator's own tab count, not an auth surface.
@@ -1117,6 +1118,7 @@ def enrichment_coverage(request: Request):
             remaining=inputs.remaining,
             throughput_per_day=inputs.throughput_per_day,
             today=datetime.now(timezone.utc).date(),
+            cost_completeness_counts=inputs.cost_completeness,
         )
         # Inside the guard on purpose: a response-model mismatch raises here
         # (the BIN-56 ``ResponseValidationError`` class), and outside it that

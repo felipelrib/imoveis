@@ -71,6 +71,157 @@ def select_primary_listing(listings: Sequence[Mapping[str, Any]] | None) -> Opti
     return dict(winner)
 
 
+# --- Total Monthly Cost view (Story 1.2, FR-31, AD-12) -----------------------
+#
+# Every figure below is a persisted ``property_listings`` column copied as
+# stored (written only by ``core/dedupe.py`` from ``core.listing_cost``). The
+# ``*_state`` labels are derived from which columns are NULL / true and nothing
+# else: no arithmetic, no fallback to the legacy ``price`` / ``condo_fee`` /
+# ``iptu`` / ``base_price``, and a NULL component is never read as 0.
+
+DECIDING_RULE_LOWEST_COMPLETE_TOTAL = "lowest-complete-total"
+DECIDING_RULE_LOWEST_HEADLINE_PRICE = "lowest-headline-price"
+
+# Row key of the ``fees_bundled`` *column* inside ``LISTINGS_JSON_AGG``. The
+# plain ``fees_bundled`` key is the legacy ``raw_json`` flag (true for the
+# QuintoAndar remainder case too) and keeps that meaning on the wire.
+_COST_FEES_BUNDLED_ROW_KEY = "cost_fees_bundled"
+
+# Flat row keys that move under the nested ``cost`` object.
+_COST_ROW_KEYS = (
+    "rent_monthly",
+    "condo_fee_monthly",
+    "iptu_monthly",
+    "iptu_periodicity_source",
+    _COST_FEES_BUNDLED_ROW_KEY,
+    "total_monthly_cost",
+    "cost_complete",
+)
+
+
+def _fee_state(value: Any, bundled: bool) -> str:
+    if bundled:
+        return "bundled"
+    return "known" if value is not None else "unknown"
+
+
+def listing_cost_view(listing: Mapping[str, Any]) -> Dict[str, Any]:
+    """Nested ``cost`` object of one Listing: stored values plus state labels.
+
+    Missing keys (older fake rows, digest fixtures) read as NULL / false.
+    """
+    is_rent = listing.get("listing_type") == "rent"
+    rent = listing.get("rent_monthly")
+    condo = listing.get("condo_fee_monthly")
+    iptu = listing.get("iptu_monthly")
+    total = listing.get("total_monthly_cost")
+    bundled = bool(listing.get(_COST_FEES_BUNDLED_ROW_KEY))
+
+    if not is_rent:
+        rent_state = "not-applicable"
+        total_state = "not-applicable"
+    else:
+        rent_state = "known" if rent is not None else "unknown"
+        if total is None:
+            total_state = "incomplete"
+        else:
+            total_state = "bundled" if bundled else "complete"
+
+    return {
+        "rent_monthly": rent,
+        "rent_state": rent_state,
+        "condo_fee_monthly": condo,
+        "condo_fee_state": _fee_state(condo, bundled),
+        "iptu_monthly": iptu,
+        "iptu_state": _fee_state(iptu, bundled),
+        "iptu_periodicity_source": listing.get("iptu_periodicity_source") or "unknown",
+        "fees_bundled": bundled,
+        "total_monthly_cost": total,
+        "total_state": total_state,
+        "cost_complete": bool(listing.get("cost_complete")),
+    }
+
+
+def project_listing(listing: Mapping[str, Any]) -> Dict[str, Any]:
+    """Wire shape of one Listing: legacy keys untouched, plus ``id`` and ``cost``."""
+    projected = {k: v for k, v in listing.items() if k not in _COST_ROW_KEYS}
+    listing_id = listing.get("id")
+    projected["id"] = str(listing_id) if listing_id is not None else None
+    projected["cost"] = listing_cost_view(listing)
+    return projected
+
+
+def _stored_total(listing: Mapping[str, Any]) -> Any:
+    """Persisted total of a *projected* Listing (``project_listing`` output)."""
+    return listing["cost"]["total_monthly_cost"]
+
+
+def select_deciding_listing(
+    listings: Sequence[Mapping[str, Any]] | None,
+    primary: Optional[Mapping[str, Any]],
+) -> tuple[Optional[str], Optional[str], Any]:
+    """``(deciding_listing_id, deciding_rule, total_monthly_cost)`` (AD-12 + AD-19).
+
+    The rent Listing with the lowest non-null persisted total decides
+    (``lowest-complete-total``; ties: ``platform`` ascending, then ``id``
+    ascending). When no rent Listing has a total, the legacy primary Listing
+    decides (``lowest-headline-price``) and the Property has no total. All three
+    are None only when there is no primary Listing.
+
+    ``listings`` are the active Listings ``LISTINGS_JSON_AGG`` returns, already
+    run through ``project_listing`` (the total is read from ``cost``), in any
+    order; the predicate (active, rent, total not null) is the one the SQL
+    sort and cap use, so list order and this choice cannot disagree.
+    """
+    candidates: List[tuple] = []
+    for listing in listings or ():
+        if listing.get("listing_type") != "rent":
+            continue
+        total = _stored_total(listing)
+        if total is None:
+            continue
+        listing_id = listing.get("id")
+        candidates.append(
+            (
+                total,
+                str(listing.get("platform") or ""),
+                str(listing_id) if listing_id is not None else "",
+                listing,
+            )
+        )
+
+    if candidates:
+        winner = min(candidates, key=lambda c: c[:3])[3]
+        winner_id = winner.get("id")
+        return (
+            str(winner_id) if winner_id is not None else None,
+            DECIDING_RULE_LOWEST_COMPLETE_TOTAL,
+            _stored_total(winner),
+        )
+    if primary is not None:
+        primary_id = primary.get("id")
+        return (
+            str(primary_id) if primary_id is not None else None,
+            DECIDING_RULE_LOWEST_HEADLINE_PRICE,
+            None,
+        )
+    return None, None, None
+
+
+def _listing_views(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """``listings`` / ``primary_listing`` / deciding fields shared by both mappers."""
+    listings = [project_listing(listing) for listing in (row.get("listings") or [])]
+    primary = select_primary_listing(listings)
+    deciding_id, deciding_rule, total = select_deciding_listing(listings, primary)
+    return {
+        "listings": listings,
+        "primary_listing": primary,
+        "deciding_listing_id": deciding_id,
+        "deciding_rule": deciding_rule,
+        "total_monthly_cost": total,
+    }
+
+
 def decisioning_price(row_price: Any, primary: Optional[Mapping[str, Any]]) -> float:
     """Top-level price: primary listing price when present, else property row price."""
     if primary is not None and primary.get("price") is not None:
@@ -152,8 +303,8 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
     visual = meta.get("visual", {})
     sentiment = meta.get("sentiment", {})
     props_json = row.get("props_json") or {}
-    listings = list(row.get("listings") or [])
-    primary = select_primary_listing(listings)
+    listing_views = _listing_views(row)
+    primary = listing_views["primary_listing"]
     nbr = neighborhood_fields(row)
 
     return {
@@ -212,8 +363,7 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         if sentiment.get("category")
         else None,
         "sentiment_reasoning": sentiment.get("reasoning"),
-        "listings": listings,
-        "primary_listing": primary,
+        **listing_views,
         "neighbourhood_quality": neighbourhood_quality_fields(row),
     }
 
@@ -221,8 +371,8 @@ def map_property_list_item(row: Mapping[str, Any]) -> Dict[str, Any]:
 def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
     """Serialize a DB row to PropertyDetailModel (nested analysis + AD-12 fields)."""
     meta = row.get("meta") or {}
-    listings = list(row.get("listings") or [])
-    primary = select_primary_listing(listings)
+    listing_views = _listing_views(row)
+    primary = listing_views["primary_listing"]
     nbr = neighborhood_fields(row)
 
     return {
@@ -278,8 +428,7 @@ def map_property_detail(row: Mapping[str, Any]) -> Dict[str, Any]:
         "neighborhood_name": nbr["neighborhood_name"],
         "city": nbr["city"],
         "location": {"lon": row.get("lon"), "lat": row.get("lat")},
-        "listings": listings,
-        "primary_listing": primary,
+        **listing_views,
         "deal_summary": meta.get("deal_verdict", {}).get("verdict"),
         "stat_analysis": normalize_stat_analysis_meta(meta.get("stat_analysis", {})),
         "ai_analysis": {
@@ -295,6 +444,7 @@ LISTINGS_JSON_AGG = """
     (
         SELECT json_agg(
             json_build_object(
+                'id', pl.id,
                 'platform', pl.platform,
                 'platform_listing_id', pl.platform_listing_id,
                 'listing_type', pl.listing_type,
@@ -306,7 +456,14 @@ LISTINGS_JSON_AGG = """
                 'condo_fee', pl.condo_fee,
                 'iptu', pl.iptu,
                 'base_price', pl.base_price,
-                'fees_bundled', (pl.raw_json->>'fees_bundled')::boolean
+                'fees_bundled', (pl.raw_json->>'fees_bundled')::boolean,
+                'rent_monthly', pl.rent_monthly,
+                'condo_fee_monthly', pl.condo_fee_monthly,
+                'iptu_monthly', pl.iptu_monthly,
+                'iptu_periodicity_source', pl.iptu_periodicity_source,
+                'cost_fees_bundled', pl.fees_bundled,
+                'total_monthly_cost', pl.total_monthly_cost,
+                'cost_complete', pl.cost_complete
             )
         )
         FROM property_listings pl

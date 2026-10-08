@@ -33,6 +33,62 @@ Query parameters:
 | `bbox` | string | Bounding box: `minLon,minLat,maxLon,maxLat` |
 | `limit` | int | Results per page (default 50) |
 | `offset` | int | Pagination offset |
+| `sort_by` | string | `combined_score` (default), `price`, `total_monthly_cost`, `first_seen`, `created_at`, `area_m2`; anything else is a `422` |
+| `sort_dir` | string | `asc` or `desc` (default) |
+| `max_total_monthly_cost` | number ≥ 0 | Keep Properties that have an active rent Listing with `total_monthly_cost` at or under the cap |
+| `include_incomplete_totals` | bool | Only with `max_total_monthly_cost`: also keep Properties that have an active rent Listing but none with a total. No effect alone |
+
+`GET /properties/export` accepts the same `sort_by`, `max_total_monthly_cost` and
+`include_incomplete_totals`.
+
+#### Total Monthly Cost (FR-31)
+
+Every Property returned by `GET /properties`, `/properties/by-ids`,
+`/properties/export` and `/properties/{id}` goes through one serializer
+(`core/property_projection.py`, AD-12) and carries the same cost fields. Every
+figure is a stored `property_listings` column copied as is — nothing is
+computed, imputed or re-derived at read time, and the legacy `price`,
+`condo_fee`, `iptu` and `base_price` are never used as a fallback.
+
+Per Property:
+
+| Field | Meaning |
+|-------|---------|
+| `deciding_listing_id` | `id` of the one Listing in `listings` that decides the Property's monthly cost |
+| `deciding_rule` | `lowest-complete-total`: the active rent Listing with the lowest total (ties: `platform`, then `id`, ascending). `lowest-headline-price`: no active rent Listing has a total, so `primary_listing` decides |
+| `total_monthly_cost` | The deciding Listing's stored total under `lowest-complete-total`, otherwise `null` |
+
+All three are `null` only when `primary_listing` is `null`. `price` and
+`primary_listing` keep their meaning (lowest headline price), so
+`deciding_listing_id` and `primary_listing.id` can differ.
+
+Per Listing (`listings[]` and `primary_listing`): `id` (the Listing UUID) and a
+nested `cost` object.
+
+| `cost` field | Values |
+|--------------|--------|
+| `rent_monthly`, `rent_state` | number or `null`; `known`, `unknown`, `not-applicable` (sale Listing) |
+| `condo_fee_monthly`, `condo_fee_state` | number or `null`; `known`, `bundled`, `unknown` |
+| `iptu_monthly`, `iptu_state` | number or `null`; `known`, `bundled`, `unknown` |
+| `iptu_periodicity_source` | `monthly`, `annual`, `unknown` |
+| `fees_bundled` | `true` when the platform published one combined fee figure (held in `condo_fee_monthly`) |
+| `total_monthly_cost`, `total_state` | number or `null`; `complete`, `bundled`, `incomplete`, `not-applicable` (sale Listing) |
+| `cost_complete` | `true` exactly when the total is not `null` |
+
+- **`null` is "not published", never zero.** An `unknown` component makes the
+  total `incomplete` and `null`.
+- **`cost.fees_bundled` is not the Listing's top-level `fees_bundled`.** The
+  top-level key is the legacy `raw_json` flag and keeps its meaning.
+- **`sort_by=total_monthly_cost`** orders by the lowest total among the
+  Property's active rent Listings; Properties without one sort last in both
+  directions. The sort and the cap read `total_monthly_cost` only and use the
+  same rule as `deciding_listing_id`, so the order always matches the
+  `total_monthly_cost` shown. `sort_by=price` and `max_price` are unchanged.
+- **A sale-only Property never passes the cap**, with or without
+  `include_incomplete_totals`: totals exist for rent Listings only.
+- CSV export: `deciding_listing_id`, `deciding_rule` and `total_monthly_cost`
+  are the last three columns; per-Listing `cost` is inside the `listings` JSON
+  cell.
 
 ### Get Property
 
@@ -40,7 +96,8 @@ Query parameters:
 GET /properties/{id}
 ```
 
-Returns full property details including listings, scores, and metadata.
+Returns full property details including listings, scores, and metadata, plus the
+Total Monthly Cost fields described above.
 
 ### Price History
 
@@ -187,9 +244,20 @@ the throughput is measured over.
   "minimum_fraction": 0.6,
   "total_properties": 2000,
   "backfill": {"active": true, "remaining": 640, "throughput_per_day": 4600.0,
-               "eta_days": 3.2, "projected_completion_date": "2026-08-14"}
+               "eta_days": 3.2, "projected_completion_date": "2026-08-14"},
+  "cost_completeness": [{"platform": "olx", "total": 4, "complete": 2, "bundled": 1,
+                         "incomplete": 1, "complete_fraction": 0.5,
+                         "bundled_fraction": 0.25, "incomplete_fraction": 0.25}]
 }
 ```
+
+- **`cost_completeness` is Total Monthly Cost completeness per Platform**
+  (NFR-6 / SM-3), counted over active rent Listings of active Properties. The
+  three counts are mutually exclusive and always sum to `total`: `complete` (a
+  total, itemized), `bundled` (a total built on a combined published fee figure)
+  and `incomplete` (no total). Rows are ordered by `platform`; a Platform with no
+  active rent Listing has no row, so the list is `[]` on an empty corpus. The
+  fractions are null when `total` is 0.
 
 - **`null` means "not measurable", never "zero".** `fraction` is null when the
   denominator is zero (an empty or fully delisted corpus has *undefined*

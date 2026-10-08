@@ -20,8 +20,10 @@ import pytest
 from core.enrichment import EnrichmentTaskClass
 from core.enrichment_coverage import (
     BackfillProgress,
+    CostCompleteness,
     CoverageReport,
     SignalCoverage,
+    build_cost_completeness,
     build_coverage_report,
     coverage_fraction,
 )
@@ -197,3 +199,77 @@ class TestDeterminism:
             "throughput_per_day": 4600.0,
         }
         assert _report(**args) == _report(**args)
+
+
+class TestCostCompleteness:
+    """v0.14-s1.2 (NFR-6 / SM-3): per-Platform Total Monthly Cost completeness."""
+
+    def test_counts_and_fractions_per_platform(self):
+        (row,) = build_cost_completeness(
+            [{"platform": "olx", "complete": 2, "bundled": 1, "incomplete": 1}]
+        )
+        assert row == CostCompleteness(
+            platform="olx",
+            total=4,
+            complete=2,
+            bundled=1,
+            incomplete=1,
+            complete_fraction=0.5,
+            bundled_fraction=0.25,
+            incomplete_fraction=0.25,
+        )
+
+    def test_total_is_the_sum_of_the_three_counts(self):
+        rows = build_cost_completeness(
+            [
+                {"platform": "a", "complete": 7, "bundled": 0, "incomplete": 3},
+                {"platform": "b", "complete": 0, "bundled": 5, "incomplete": 0},
+            ]
+        )
+        for row in rows:
+            assert row.complete + row.bundled + row.incomplete == row.total
+
+    def test_zero_total_has_null_fractions_not_zero(self):
+        (row,) = build_cost_completeness(
+            [{"platform": "zap", "complete": 0, "bundled": 0, "incomplete": 0}]
+        )
+        assert row.total == 0
+        assert row.complete_fraction is None
+        assert row.bundled_fraction is None
+        assert row.incomplete_fraction is None
+
+    def test_rows_are_ordered_by_platform(self):
+        rows = build_cost_completeness(
+            [
+                {"platform": "zapimoveis", "complete": 1},
+                {"platform": "olx", "incomplete": 1},
+                {"platform": "quintoandar", "bundled": 1},
+            ]
+        )
+        assert [r.platform for r in rows] == ["olx", "quintoandar", "zapimoveis"]
+
+    def test_a_missing_or_null_count_reads_as_zero(self):
+        (row,) = build_cost_completeness(
+            [{"platform": "olx", "complete": 3, "bundled": None}]
+        )
+        assert (row.complete, row.bundled, row.incomplete, row.total) == (3, 0, 0, 3)
+        assert row.complete_fraction == 1.0
+
+    def test_no_rows_is_an_empty_block(self):
+        assert build_cost_completeness([]) == ()
+
+    def test_the_report_carries_the_block(self):
+        report = _report(
+            cost_completeness_counts=[
+                {"platform": "olx", "complete": 2, "bundled": 1, "incomplete": 1}
+            ]
+        )
+        assert [r.platform for r in report.cost_completeness] == ["olx"]
+        assert report.cost_completeness[0].total == 4
+
+    def test_the_report_defaults_to_an_empty_block(self):
+        assert _report().cost_completeness == ()
+
+    def test_identical_counts_produce_identical_blocks(self):
+        counts = [{"platform": "olx", "complete": 1, "bundled": 2, "incomplete": 4}]
+        assert build_cost_completeness(counts) == build_cost_completeness(counts)

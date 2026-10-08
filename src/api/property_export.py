@@ -87,10 +87,20 @@ _PRIMARY_LISTING_COLUMNS: tuple[str, ...] = (
     "base_price",
 )
 
+# Rent decisioning fields (v0.14-s1.2). Appended after the existing columns so
+# no earlier column changes position; per-Listing ``cost`` rides in the
+# ``listings`` JSON cell.
+_DECIDING_COLUMNS: tuple[str, ...] = (
+    "deciding_listing_id",
+    "deciding_rule",
+    "total_monthly_cost",
+)
+
 CSV_COLUMNS: tuple[str, ...] = (
     *_CSV_SCALAR_COLUMNS,
     *(_JSON_LIST_COLUMNS),
     *(f"primary_listing_{c}" for c in _PRIMARY_LISTING_COLUMNS),
+    *_DECIDING_COLUMNS,
 )
 
 
@@ -133,6 +143,8 @@ def _row_from_projection(item: Mapping[str, Any]) -> Dict[str, str]:
             row[key] = ""
         else:
             row[key] = _cell(primary.get(col))
+    for col in _DECIDING_COLUMNS:
+        row[col] = _cell(item.get(col))
     return row
 
 

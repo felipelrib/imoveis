@@ -144,3 +144,57 @@ def test_export_csv_null_primary_listing_leaves_prefixed_empty():
     assert row["primary_listing_platform"] == ""
     assert row["primary_listing_price"] == ""
     assert json.loads(row["listings"]) == []
+
+
+@pytest.mark.unit
+def test_export_csv_deciding_columns_are_appended_last():
+    """v0.14-s1.2: new columns never shift an existing column's position."""
+    assert CSV_COLUMNS[-3:] == (
+        "deciding_listing_id",
+        "deciding_rule",
+        "total_monthly_cost",
+    )
+    assert CSV_COLUMNS[0] == "id"
+    assert len(set(CSV_COLUMNS)) == len(CSV_COLUMNS)
+
+
+@pytest.mark.unit
+def test_export_csv_carries_the_deciding_listing_and_total():
+    listing = dict(_sample_item()["listings"][0])
+    listing["id"] = "33333333-3333-3333-3333-333333333333"
+    listing["cost"] = {"total_monthly_cost": 4100.0, "total_state": "complete"}
+    text = properties_to_csv(
+        [
+            _sample_item(
+                listings=[listing],
+                deciding_listing_id=listing["id"],
+                deciding_rule="lowest-complete-total",
+                total_monthly_cost=4100.0,
+            )
+        ]
+    )
+    row = next(csv.DictReader(io.StringIO(text)))
+    assert row["deciding_listing_id"] == "33333333-3333-3333-3333-333333333333"
+    assert row["deciding_rule"] == "lowest-complete-total"
+    assert row["total_monthly_cost"] == "4100.0"
+    # Per-Listing cost rides in the listings JSON cell.
+    assert json.loads(row["listings"])[0]["cost"]["total_state"] == "complete"
+
+
+@pytest.mark.unit
+def test_export_csv_null_total_is_an_empty_cell_not_zero():
+    text = properties_to_csv(
+        [
+            _sample_item(
+                deciding_listing_id="l-1",
+                deciding_rule="lowest-headline-price",
+                total_monthly_cost=None,
+            ),
+            _sample_item(),
+        ]
+    )
+    first, second = list(csv.DictReader(io.StringIO(text)))
+    assert first["deciding_rule"] == "lowest-headline-price"
+    assert first["total_monthly_cost"] == ""
+    assert second["deciding_listing_id"] == ""
+    assert second["deciding_rule"] == ""

@@ -137,6 +137,40 @@ def _sort_price_expr(filters_in: "PropertyListFilters") -> tuple[str, Optional[s
     return expr, sort_type
 
 
+# Total Monthly Cost sort / cap (v0.14-s1.2, FR-31, AD-12). Static SQL: the
+# only cost column referenced is ``total_monthly_cost`` and the only value is a
+# bound parameter (BIN-135). The predicate - active, rent, total not null - is
+# the one ``core.property_projection.select_deciding_listing`` applies, so the
+# list order and ``deciding_listing_id`` cannot disagree. ``listing_type =
+# 'rent'`` is a literal on purpose: totals exist for rent Listings only (AD-3).
+_ACTIVE_RENT_LISTING_WITH_TOTAL = (
+    "FROM property_listings pl "
+    "WHERE pl.property_id = p.id AND pl.active = true "
+    "AND pl.listing_type = 'rent' AND pl.total_monthly_cost IS NOT NULL"
+)
+
+# Lowest persisted total among the Property's active rent Listings; NULL when
+# none has one (ordered last in both directions by the caller).
+_SORT_TOTAL_MONTHLY_COST_EXPR = (
+    "(SELECT MIN(pl.total_monthly_cost) " + _ACTIVE_RENT_LISTING_WITH_TOTAL + ")"
+)
+
+_TOTAL_MONTHLY_COST_CAP = (
+    "EXISTS (SELECT 1 "
+    + _ACTIVE_RENT_LISTING_WITH_TOTAL
+    + " AND pl.total_monthly_cost <= :max_total_monthly_cost)"
+)
+
+# "Incomplete" = has an active rent Listing, none of them with a total. A
+# sale-only Property is not incomplete: a monthly-cost cap has no meaning for it.
+_TOTAL_MONTHLY_COST_INCOMPLETE = (
+    "(EXISTS (SELECT 1 FROM property_listings pl "
+    "WHERE pl.property_id = p.id AND pl.active = true "
+    "AND pl.listing_type = 'rent') "
+    "AND NOT EXISTS (SELECT 1 " + _ACTIVE_RENT_LISTING_WITH_TOTAL + "))"
+)
+
+
 class PropertyListFilters(BaseModel):
     """Query filters for ``GET /properties`` (keeps FastAPI query params under the S107 limit)."""
 
@@ -154,7 +188,13 @@ class PropertyListFilters(BaseModel):
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
     accepts_pets: Optional[bool] = None
-    sort_by: str = Field("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$")
+    # Total Monthly Cost cap (v0.14-s1.2): reads ``total_monthly_cost`` only.
+    max_total_monthly_cost: Optional[float] = Field(None, ge=0)
+    include_incomplete_totals: bool = False
+    sort_by: str = Field(
+        "combined_score",
+        pattern="^(combined_score|price|total_monthly_cost|first_seen|created_at|area_m2)$",
+    )
     sort_dir: str = Field("desc", pattern="^(asc|desc)$")
     bbox: Optional[str] = None
     q: Optional[str] = Field(None, max_length=500)
@@ -176,7 +216,13 @@ class PropertyExportFilters(BaseModel):
     property_type: Optional[str] = None
     is_furnished: Optional[bool] = None
     accepts_pets: Optional[bool] = None
-    sort_by: str = Field("combined_score", pattern="^(combined_score|price|first_seen|created_at|area_m2)$")
+    # Total Monthly Cost cap (v0.14-s1.2): reads ``total_monthly_cost`` only.
+    max_total_monthly_cost: Optional[float] = Field(None, ge=0)
+    include_incomplete_totals: bool = False
+    sort_by: str = Field(
+        "combined_score",
+        pattern="^(combined_score|price|total_monthly_cost|first_seen|created_at|area_m2)$",
+    )
     sort_dir: str = Field("desc", pattern="^(asc|desc)$")
     bbox: Optional[str] = None
     q: Optional[str] = Field(None, max_length=500)
@@ -334,6 +380,15 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         )
         params["max_price"] = filters_in.max_price
         params["price_type"] = price_type
+    if filters_in.max_total_monthly_cost is not None:
+        # ``include_incomplete_totals`` only widens a cap; alone it is a no-op.
+        if filters_in.include_incomplete_totals:
+            filters.append(
+                "(" + _TOTAL_MONTHLY_COST_CAP + " OR " + _TOTAL_MONTHLY_COST_INCOMPLETE + ")"
+            )
+        else:
+            filters.append(_TOTAL_MONTHLY_COST_CAP)
+        params["max_total_monthly_cost"] = filters_in.max_total_monthly_cost
     if filters_in.min_bedrooms is not None:
         filters.append("p.bedrooms >= :min_bedrooms")
         params["min_bedrooms"] = filters_in.min_bedrooms
@@ -397,11 +452,17 @@ def _build_list_filters(filters_in: PropertyListFilters, query_vec_literal: Opti
         sort_col_map = {
             "combined_score": score_expr,
             "price": price_expr,
+            "total_monthly_cost": _SORT_TOTAL_MONTHLY_COST_EXPR,
             "first_seen": "p.first_seen",
             "created_at": "p.first_seen",
             "area_m2": "p.area_m2",
         }
         order = f"{sort_col_map[filters_in.sort_by]} {filters_in.sort_dir.upper()}"
+        if filters_in.sort_by == "total_monthly_cost":
+            # Properties without a total sort last in both directions (Postgres
+            # would put NULLs first on DESC). ``p.id`` breaks ties - every
+            # Property without a total ties - so LIMIT/OFFSET pages are stable.
+            order += " NULLS LAST, p.id"
     return where, params, order
 
 

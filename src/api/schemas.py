@@ -1,9 +1,42 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Total Monthly Cost vocabulary (v0.14-s1.2, FR-31). English on the wire.
+CostRentState = Literal["known", "unknown", "not-applicable"]
+CostFeeState = Literal["known", "bundled", "unknown"]
+CostTotalState = Literal["complete", "bundled", "incomplete", "not-applicable"]
+IptuPeriodicitySource = Literal["monthly", "annual", "unknown"]
+DecidingRule = Literal["lowest-complete-total", "lowest-headline-price"]
+
+
+class ListingCostModel(BaseModel):
+    """Persisted Total Monthly Cost components of one Listing (AD-3 / AD-12).
+
+    Every figure is the stored ``property_listings`` column, never computed at
+    read time. ``null`` means the platform did not publish the component
+    (``unknown``) - it is never zero. The ``*_state`` fields label which case
+    applies: a ``bundled`` fee is part of one combined published figure (held in
+    ``condo_fee_monthly``), and ``total_monthly_cost`` exists only for rent
+    Listings whose every component is known or bundled.
+    """
+
+    rent_monthly: Optional[float] = None
+    rent_state: CostRentState
+    condo_fee_monthly: Optional[float] = None
+    condo_fee_state: CostFeeState
+    iptu_monthly: Optional[float] = None
+    iptu_state: CostFeeState
+    iptu_periodicity_source: IptuPeriodicitySource = "unknown"
+    fees_bundled: bool = False
+    total_monthly_cost: Optional[float] = None
+    total_state: CostTotalState
+    cost_complete: bool = False
+
 
 class PropertyListingModel(BaseModel):
+    # ``property_listings.id``; what ``deciding_listing_id`` points at.
+    id: Optional[str] = None
     platform: str
     platform_listing_id: str
     listing_type: str
@@ -15,7 +48,10 @@ class PropertyListingModel(BaseModel):
     condo_fee: Optional[float] = None
     iptu: Optional[float] = None
     base_price: Optional[float] = None
+    # Legacy ``raw_json.fees_bundled`` flag (unchanged meaning). The persisted
+    # column of the same name is ``cost.fees_bundled``.
     fees_bundled: Optional[bool] = None
+    cost: Optional[ListingCostModel] = None
 
 
 class PropertyModel(BaseModel):
@@ -76,6 +112,13 @@ class PropertyModel(BaseModel):
     sentiment_reasoning: Optional[str] = None
     listings: List[PropertyListingModel] = []
     primary_listing: Optional[PropertyListingModel] = None
+    # Rent decisioning (AD-12 + AD-19): the one Listing that decides this
+    # Property's monthly cost. ``lowest-complete-total`` -> ``total_monthly_cost``
+    # is that Listing's persisted total; ``lowest-headline-price`` -> no Listing
+    # has a total, the primary Listing decides and the total is null.
+    deciding_listing_id: Optional[str] = None
+    deciding_rule: Optional[DecidingRule] = None
+    total_monthly_cost: Optional[float] = None
     neighbourhood_quality: Optional["NeighbourhoodQualityModel"] = None
     model_config = ConfigDict(extra="ignore")
 
@@ -185,6 +228,13 @@ class PropertyDetailModel(BaseModel):
     location: Dict[str, Any]
     listings: List[PropertyListingModel] = []
     primary_listing: Optional[PropertyListingModel] = None
+    # Rent decisioning (AD-12 + AD-19): the one Listing that decides this
+    # Property's monthly cost. ``lowest-complete-total`` -> ``total_monthly_cost``
+    # is that Listing's persisted total; ``lowest-headline-price`` -> no Listing
+    # has a total, the primary Listing decides and the total is null.
+    deciding_listing_id: Optional[str] = None
+    deciding_rule: Optional[DecidingRule] = None
+    total_monthly_cost: Optional[float] = None
     deal_summary: Optional[str] = None
     stat_analysis: Dict[str, Any]
     ai_analysis: Dict[str, Any]
@@ -449,6 +499,25 @@ class BackfillProgressModel(BaseModel):
     projected_completion_date: Optional[str] = None
 
 
+class CostCompletenessModel(BaseModel):
+    """Total Monthly Cost completeness of one Platform (v0.14-s1.2, NFR-6 / SM-3).
+
+    Counted over active rent Listings of active Properties. The three counts are
+    mutually exclusive and sum to ``total``: ``complete`` (a total, itemized),
+    ``bundled`` (a total built on a combined published fee figure) and
+    ``incomplete`` (no total). Fractions are ``null`` when ``total`` is 0.
+    """
+
+    platform: str
+    total: int
+    complete: int
+    bundled: int
+    incomplete: int
+    complete_fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
+    bundled_fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
+    incomplete_fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+
 class EnrichmentCoverageResponse(BaseModel):
     """``GET /admin/enrichment/coverage``.
 
@@ -457,9 +526,13 @@ class EnrichmentCoverageResponse(BaseModel):
     than "not enriched". ``minimum_fraction`` is the smallest measurable
     fraction (the figure the Painel health strip renders as ``Cobertura de IA
     N%``) and is ``null`` when nothing is measurable.
+
+    ``cost_completeness`` carries one row per Platform that has at least one
+    active rent Listing, ordered by platform; a Platform with none has no row.
     """
 
     signals: List[SignalCoverageModel]
     minimum_fraction: Optional[float] = Field(None, ge=0.0, le=1.0)
     total_properties: int
     backfill: BackfillProgressModel
+    cost_completeness: List[CostCompletenessModel] = Field(default_factory=list)

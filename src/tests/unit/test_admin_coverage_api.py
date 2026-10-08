@@ -377,6 +377,80 @@ def test_the_session_is_opened_and_closed_around_the_queries(
     assert mock_inputs.call_args[0][0] is session_factory.return_value.__enter__.return_value
 
 
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+@patch("api.admin.fetch_coverage_inputs")
+@patch("api.admin.SessionLocal", new_callable=_session_factory)
+def test_cost_completeness_passes_through_to_the_response(
+    _session, mock_inputs, mock_cfg, mock_redis
+):
+    """v0.14-s1.2: the adapter's per-Platform counts reach the wire (NFR-6)."""
+    from api.admin import enrichment_coverage
+
+    mock_cfg.return_value = _cfg()
+    mock_redis.return_value = FakeRedis()
+    mock_inputs.return_value = _inputs(
+        cost_completeness=[
+            {"platform": "zapimoveis", "complete": 9, "bundled": 0, "incomplete": 1},
+            {"platform": "olx", "complete": 2, "bundled": 1, "incomplete": 1},
+        ]
+    )
+
+    body = enrichment_coverage(request=None)
+
+    assert [r.platform for r in body.cost_completeness] == ["olx", "zapimoveis"]
+    olx = body.cost_completeness[0]
+    assert (olx.total, olx.complete, olx.bundled, olx.incomplete) == (4, 2, 1, 1)
+    assert olx.complete_fraction == pytest.approx(0.5)
+    assert olx.bundled_fraction == pytest.approx(0.25)
+    assert olx.incomplete_fraction == pytest.approx(0.25)
+    for row in body.cost_completeness:
+        assert row.complete + row.bundled + row.incomplete == row.total
+
+
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+@patch("api.admin.fetch_coverage_inputs")
+@patch("api.admin.SessionLocal", new_callable=_session_factory)
+def test_no_rent_listings_is_an_empty_cost_block(
+    _session, mock_inputs, mock_cfg, mock_redis
+):
+    from api.admin import enrichment_coverage
+
+    mock_cfg.return_value = _cfg()
+    mock_redis.return_value = FakeRedis()
+    mock_inputs.return_value = _inputs()
+
+    body = enrichment_coverage(request=None)
+
+    assert body.cost_completeness == []
+
+
+def test_cost_completeness_rows_are_read_out_of_the_query():
+    from adapters.db.enrichment_coverage_queries import (
+        _COST_COMPLETENESS_SQL,
+        _count_cost_completeness,
+    )
+
+    session = MagicMock(name="session")
+    session.execute.return_value.mappings.return_value.fetchall.return_value = [
+        {"platform": "olx", "complete": 2, "bundled": 1, "incomplete": None},
+    ]
+
+    assert _count_cost_completeness(session) == [
+        {"platform": "olx", "complete": 2, "bundled": 1, "incomplete": 0},
+    ]
+    # Static SQL, no bound values; the only cost column gating a count is the
+    # persisted total (``fees_bundled`` only splits complete from bundled).
+    statement = session.execute.call_args[0][0]
+    assert statement.compile().params == {}
+    for other in ("rent_monthly", "condo_fee_monthly", "iptu_monthly", "cost_complete"):
+        assert other not in _COST_COMPLETENESS_SQL
+    assert "pl.listing_type = 'rent'" in _COST_COMPLETENESS_SQL
+    assert "p.active" in _COST_COMPLETENESS_SQL
+    assert "pl.active = true" in _COST_COMPLETENESS_SQL
+
+
 # ---------------------------------------------------------------------------
 # adapters.db.enrichment_coverage_queries._throughput_per_day
 #

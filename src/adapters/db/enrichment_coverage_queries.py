@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import sqlalchemy
 
@@ -206,6 +206,36 @@ _THROUGHPUT_SQL = """
 """
 
 
+# Total Monthly Cost completeness per Platform (v0.14-s1.2, NFR-6 / SM-3), over
+# active rent Listings of active Properties - the same "active" denominator
+# convention as the signals above, and rent only because a total exists for rent
+# Listings only (AD-3). The three FILTERs partition the rows: ``fees_bundled``
+# is NOT NULL, so every Listing with a total is exactly one of complete /
+# bundled, and every Listing without one is incomplete. ``total_monthly_cost IS
+# NOT NULL`` rather than ``cost_complete``: Story 1.1 guarantees the two agree,
+# and reading one column keeps every cost read on ``total_monthly_cost``.
+# A Platform with no active rent Listing yields no group, hence no row.
+_COST_COMPLETENESS_SQL = """
+    SELECT
+      pl.platform AS platform,
+      count(*) FILTER (
+        WHERE pl.total_monthly_cost IS NOT NULL AND NOT pl.fees_bundled)
+        AS complete,
+      count(*) FILTER (
+        WHERE pl.total_monthly_cost IS NOT NULL AND pl.fees_bundled)
+        AS bundled,
+      count(*) FILTER (WHERE pl.total_monthly_cost IS NULL)
+        AS incomplete
+    FROM property_listings pl
+    JOIN properties p ON p.id = pl.property_id
+    WHERE p.active
+      AND pl.active = true
+      AND pl.listing_type = 'rent'
+    GROUP BY pl.platform
+    ORDER BY pl.platform
+"""
+
+
 @dataclass(frozen=True)
 class CoverageInputs:
     """Everything the pure coverage math needs, measured from the database."""
@@ -214,6 +244,8 @@ class CoverageInputs:
     enriched_by_task_class: Dict[str, int] = field(default_factory=dict)
     remaining: int = 0
     throughput_per_day: Optional[float] = None
+    # One ``{platform, complete, bundled, incomplete}`` row per Platform.
+    cost_completeness: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _min_photos_required(cfg: Any) -> int:
@@ -253,6 +285,19 @@ def _count_enriched_by_task_class(session: Any) -> Dict[str, int]:
 def _count_remaining_candidates(session: Any, min_photos: int) -> int:
     stmt = sqlalchemy.text(_REMAINING_SQL).bindparams(min_photos=int(min_photos))
     return int(session.execute(stmt).scalar() or 0)
+
+
+def _count_cost_completeness(session: Any) -> List[Dict[str, Any]]:
+    rows = session.execute(sqlalchemy.text(_COST_COMPLETENESS_SQL)).mappings().fetchall()
+    return [
+        {
+            "platform": str(row["platform"]),
+            "complete": int(row["complete"] or 0),
+            "bundled": int(row["bundled"] or 0),
+            "incomplete": int(row["incomplete"] or 0),
+        }
+        for row in rows
+    ]
 
 
 def _throughput_per_day(
@@ -312,4 +357,5 @@ def fetch_coverage_inputs(
         enriched_by_task_class=_count_enriched_by_task_class(session),
         remaining=_count_remaining_candidates(session, min_photos),
         throughput_per_day=_throughput_per_day(session, run_started_at),
+        cost_completeness=_count_cost_completeness(session),
     )

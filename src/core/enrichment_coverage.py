@@ -30,7 +30,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 from core.backfill_runner import estimate_eta_days
 from core.enrichment import EnrichmentTaskClass
@@ -38,8 +38,10 @@ from core.enrichment import EnrichmentTaskClass
 __all__ = [
     "SignalCoverage",
     "BackfillProgress",
+    "CostCompleteness",
     "CoverageReport",
     "coverage_fraction",
+    "build_cost_completeness",
     "build_backfill_progress",
     "build_coverage_report",
 ]
@@ -83,6 +85,25 @@ class BackfillProgress:
 
 
 @dataclass(frozen=True)
+class CostCompleteness:
+    """Total Monthly Cost completeness of one Platform (v0.14-s1.2, NFR-6 / SM-3).
+
+    Over active rent Listings of active Properties. ``complete`` (a total,
+    itemized), ``bundled`` (a total built on a combined published fee figure)
+    and ``incomplete`` (no total) are mutually exclusive and sum to ``total``.
+    """
+
+    platform: str
+    total: int
+    complete: int
+    bundled: int
+    incomplete: int
+    complete_fraction: Optional[float]
+    bundled_fraction: Optional[float]
+    incomplete_fraction: Optional[float]
+
+
+@dataclass(frozen=True)
 class CoverageReport:
     """The whole ``/admin/enrichment/coverage`` payload, pre-serialisation."""
 
@@ -90,6 +111,7 @@ class CoverageReport:
     minimum_fraction: Optional[float]
     total_properties: int
     backfill: BackfillProgress
+    cost_completeness: Tuple[CostCompleteness, ...] = ()
 
 
 def coverage_fraction(enriched: int, total: int) -> Optional[float]:
@@ -108,6 +130,42 @@ def coverage_fraction(enriched: int, total: int) -> Optional[float]:
         return None
     fraction = float(enriched) / float(total)
     return round(min(1.0, max(0.0, fraction)), _FRACTION_DECIMALS)
+
+
+def _count(row: Mapping[str, Any], key: str) -> int:
+    return max(0, int(row.get(key) or 0))
+
+
+def build_cost_completeness(
+    rows: Iterable[Mapping[str, Any]],
+) -> Tuple[CostCompleteness, ...]:
+    """Per-Platform cost completeness from measured counts, ordered by platform.
+
+    Each row carries ``platform`` and the three mutually exclusive counts
+    ``complete`` / ``bundled`` / ``incomplete``. ``total`` is their sum by
+    construction, so the three always add up to it on the wire. Fractions follow
+    the absence-over-zero rule: ``None`` when the Platform has no Listing
+    counted (the adapter emits no such row; a caller that does gets no 0%).
+    """
+    built = []
+    for row in rows:
+        complete = _count(row, "complete")
+        bundled = _count(row, "bundled")
+        incomplete = _count(row, "incomplete")
+        total = complete + bundled + incomplete
+        built.append(
+            CostCompleteness(
+                platform=str(row.get("platform") or ""),
+                total=total,
+                complete=complete,
+                bundled=bundled,
+                incomplete=incomplete,
+                complete_fraction=coverage_fraction(complete, total),
+                bundled_fraction=coverage_fraction(bundled, total),
+                incomplete_fraction=coverage_fraction(incomplete, total),
+            )
+        )
+    return tuple(sorted(built, key=lambda item: item.platform))
 
 
 def _projected_completion(eta_days: float, today: date) -> Optional[str]:
@@ -183,6 +241,7 @@ def build_coverage_report(
     remaining: int,
     throughput_per_day: Optional[float],
     today: date,
+    cost_completeness_counts: Iterable[Mapping[str, Any]] = (),
 ) -> CoverageReport:
     """Assemble the coverage payload from measured counts and lease liveness.
 
@@ -213,4 +272,5 @@ def build_coverage_report(
             throughput_per_day=throughput_per_day,
             today=today,
         ),
+        cost_completeness=build_cost_completeness(cost_completeness_counts),
     )

@@ -353,7 +353,95 @@ _PROJECTION_KEYS = (
     "neighbourhood_quality",
     "primary_listing",
     "listings",
+    # v0.14-s1.2 — rent decisioning (AD-12 + AD-19)
+    "deciding_listing_id",
+    "deciding_rule",
+    "total_monthly_cost",
 )
+
+# v0.14-s1.2 — per-Listing ``cost`` object and its state vocabulary (FR-31).
+_COST_KEYS = {
+    "rent_monthly",
+    "rent_state",
+    "condo_fee_monthly",
+    "condo_fee_state",
+    "iptu_monthly",
+    "iptu_state",
+    "iptu_periodicity_source",
+    "fees_bundled",
+    "total_monthly_cost",
+    "total_state",
+    "cost_complete",
+}
+_RENT_STATES = {"known", "unknown", "not-applicable"}
+_FEE_STATES = {"known", "bundled", "unknown"}
+_TOTAL_STATES = {"complete", "bundled", "incomplete", "not-applicable"}
+_PERIODICITY_SOURCES = {"monthly", "annual", "unknown"}
+_DECIDING_RULES = {"lowest-complete-total", "lowest-headline-price"}
+
+
+def _assert_listing_cost(listing: dict) -> None:
+    assert "id" in listing
+    cost = listing.get("cost")
+    assert isinstance(cost, dict), "every projected listing carries a cost object"
+    assert set(cost) == _COST_KEYS
+    assert cost["rent_state"] in _RENT_STATES
+    assert cost["condo_fee_state"] in _FEE_STATES
+    assert cost["iptu_state"] in _FEE_STATES
+    assert cost["total_state"] in _TOTAL_STATES
+    assert cost["iptu_periodicity_source"] in _PERIODICITY_SOURCES
+    assert isinstance(cost["fees_bundled"], bool)
+    assert isinstance(cost["cost_complete"], bool)
+    assert cost["cost_complete"] == (cost["total_monthly_cost"] is not None)
+    for fee_state_key in ("condo_fee_state", "iptu_state"):
+        assert (cost[fee_state_key] == "bundled") == cost["fees_bundled"]
+    # States are labels of the stored columns — a value and its state agree.
+    for value_key, state_key in (
+        ("rent_monthly", "rent_state"),
+        ("condo_fee_monthly", "condo_fee_state"),
+        ("iptu_monthly", "iptu_state"),
+    ):
+        value = cost[value_key]
+        assert value is None or isinstance(value, (int, float))
+        if cost[state_key] == "known":
+            assert value is not None
+        if cost[state_key] == "unknown":
+            assert value is None
+    total = cost["total_monthly_cost"]
+    assert total is None or isinstance(total, (int, float))
+    assert (total is not None) == (cost["total_state"] in ("complete", "bundled"))
+    if listing.get("listing_type") != "rent":
+        assert cost["rent_state"] == "not-applicable"
+        assert cost["total_state"] == "not-applicable"
+    else:
+        assert cost["rent_state"] != "not-applicable"
+        assert cost["total_state"] != "not-applicable"
+
+
+def _assert_deciding_listing(item: dict) -> None:
+    rule = item["deciding_rule"]
+    deciding_id = item["deciding_listing_id"]
+    total = item["total_monthly_cost"]
+    if item["primary_listing"] is None:
+        assert rule is None and deciding_id is None and total is None
+        return
+    assert rule in _DECIDING_RULES
+    by_id = {listing["id"]: listing for listing in item["listings"]}
+    assert deciding_id in by_id, "deciding_listing_id names one of the listings"
+    rent_totals = [
+        listing["cost"]["total_monthly_cost"]
+        for listing in item["listings"]
+        if listing["listing_type"] == "rent"
+        and listing["cost"]["total_monthly_cost"] is not None
+    ]
+    if rule == "lowest-complete-total":
+        deciding = by_id[deciding_id]
+        assert deciding["listing_type"] == "rent"
+        assert total == deciding["cost"]["total_monthly_cost"] == min(rent_totals)
+    else:
+        assert rent_totals == []
+        assert total is None
+        assert deciding_id == item["primary_listing"]["id"]
 
 
 def _assert_projection_keys(item: dict) -> None:
@@ -365,6 +453,10 @@ def _assert_projection_keys(item: dict) -> None:
         assert "price" in item["primary_listing"]
         assert "listing_type" in item["primary_listing"]
         assert "platform" in item["primary_listing"]
+        _assert_listing_cost(item["primary_listing"])
+    for listing in item["listings"]:
+        _assert_listing_cost(listing)
+    _assert_deciding_listing(item)
 
 
 class TestPropertyProjectionContract:
@@ -434,6 +526,74 @@ class TestPropertyProjectionContract:
         for item in data["properties"]:
             _assert_projection_keys(item)
 
+    # --- v0.14-s1.2: Total Monthly Cost sort / cap -------------------------
+
+    def test_schema_models_declare_the_cost_fields(self):
+        """``extra="ignore"`` models drop undeclared fields silently."""
+        from api.schemas import (
+            ListingCostModel,
+            PropertyDetailModel,
+            PropertyListingModel,
+        )
+
+        assert set(ListingCostModel.model_fields) == _COST_KEYS
+        assert {"id", "cost"} <= set(PropertyListingModel.model_fields)
+        for model in (PropertyModel, PropertyDetailModel):
+            assert {
+                "deciding_listing_id",
+                "deciding_rule",
+                "total_monthly_cost",
+            } <= set(model.model_fields)
+
+    def test_openapi_declares_the_total_cost_params_on_list_and_export(self, client):
+        spec = client.get("/openapi.json").json()
+        for path in ("/properties", "/properties/export"):
+            params = {p["name"]: p for p in spec["paths"][path]["get"]["parameters"]}
+            assert "max_total_monthly_cost" in params, path
+            assert "include_incomplete_totals" in params, path
+            assert "total_monthly_cost" in params["sort_by"]["schema"]["pattern"], path
+
+    @pytest.mark.parametrize("sort_dir", ["asc", "desc"])
+    def test_sort_by_total_monthly_cost_orders_nulls_last(self, client, sort_dir):
+        response = client.get(
+            f"/properties?page=1&page_size=50&sort_by=total_monthly_cost&sort_dir={sort_dir}"
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties sort total")
+        totals = [p["total_monthly_cost"] for p in response.json()["properties"]]
+        known = [t for t in totals if t is not None]
+        assert totals == known + [None] * (len(totals) - len(known))
+        assert known == sorted(known, reverse=(sort_dir == "desc"))
+        for item in response.json()["properties"]:
+            _assert_projection_keys(item)
+
+    def test_max_total_monthly_cost_caps_the_property_total(self, client):
+        response = client.get("/properties?page=1&page_size=50&max_total_monthly_cost=4000")
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties cap total")
+        for item in response.json()["properties"]:
+            assert item["deciding_rule"] == "lowest-complete-total"
+            assert item["total_monthly_cost"] <= 4000
+
+    def test_include_incomplete_totals_admits_rent_properties_without_a_total(
+        self, client
+    ):
+        response = client.get(
+            "/properties?page=1&page_size=50&max_total_monthly_cost=4000"
+            "&include_incomplete_totals=true"
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties cap + incomplete")
+        for item in response.json()["properties"]:
+            if item["total_monthly_cost"] is None:
+                assert any(x["listing_type"] == "rent" for x in item["listings"])
+            else:
+                assert item["total_monthly_cost"] <= 4000
+
+    def test_total_cost_params_are_validated(self, client):
+        assert client.get("/properties?sort_by=total").status_code == 422
+        assert client.get("/properties?max_total_monthly_cost=-1").status_code == 422
+        assert (
+            client.get("/properties?include_incomplete_totals=maybe").status_code == 422
+        )
+
 
 class TestPropertyExportContract:
     def test_export_rejects_invalid_format(self, client, admin_headers):
@@ -479,6 +639,31 @@ class TestPropertyExportContract:
         assert data["properties"] == []
         assert data["total"] == 0
         assert data["truncated"] is False
+
+    def test_export_accepts_the_total_cost_params(self, client, admin_headers):
+        response = client.get(
+            "/properties/export?format=json&sort_by=total_monthly_cost&sort_dir=asc"
+            "&max_total_monthly_cost=4000&include_incomplete_totals=true",
+            headers=admin_headers,
+        )
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties/export total cost")
+        for item in response.json()["properties"]:
+            _assert_projection_keys(item)
+            assert item["total_monthly_cost"] is None or item["total_monthly_cost"] <= 4000
+
+    def test_export_rejects_an_invalid_total_cost_param(self, client, admin_headers):
+        response = client.get("/properties/export?sort_by=total", headers=admin_headers)
+        assert response.status_code == 422
+        response = client.get(
+            "/properties/export?max_total_monthly_cost=-1", headers=admin_headers
+        )
+        assert response.status_code == 422
+
+    def test_export_csv_header_carries_the_deciding_columns(self, client, admin_headers):
+        response = client.get("/properties/export?format=csv", headers=admin_headers)
+        _assert_ok_or_skip_infra(response, endpoint="GET /properties/export csv")
+        header = response.text.splitlines()[0].split(",")
+        assert header[-3:] == ["deciding_listing_id", "deciding_rule", "total_monthly_cost"]
 
     def test_export_requires_key_when_configured(self, client):
         response = client.get("/properties/export?format=json")
@@ -810,3 +995,43 @@ class TestAdminEnrichmentCoverageContract:
         second = client.get(self._PATH, headers=admin_headers)
         assert second.status_code == 200
         assert first.json()["signals"] == second.json()["signals"]
+
+    def test_cost_completeness_shape(self, client, admin_headers, backfill_redis):
+        """v0.14-s1.2 (NFR-6 / SM-3): one row per Platform, counts that add up."""
+        from api.schemas import CostCompletenessModel, EnrichmentCoverageResponse
+
+        assert set(CostCompletenessModel.model_fields) == {
+            "platform",
+            "total",
+            "complete",
+            "bundled",
+            "incomplete",
+            "complete_fraction",
+            "bundled_fraction",
+            "incomplete_fraction",
+        }
+
+        first = client.get(self._PATH, headers=admin_headers)
+        _assert_ok_or_skip_infra(first, endpoint=f"GET {self._PATH}")
+        payload = first.json()
+        assert isinstance(payload["cost_completeness"], list)
+        body = EnrichmentCoverageResponse.model_validate(payload)
+
+        platforms = [row.platform for row in body.cost_completeness]
+        assert platforms == sorted(platforms)
+        assert len(set(platforms)) == len(platforms)
+        for row in body.cost_completeness:
+            # A Platform with no active rent Listing has no row at all.
+            assert row.total > 0
+            assert row.complete + row.bundled + row.incomplete == row.total
+            for count, fraction in (
+                (row.complete, row.complete_fraction),
+                (row.bundled, row.bundled_fraction),
+                (row.incomplete, row.incomplete_fraction),
+            ):
+                assert count >= 0
+                assert fraction == pytest.approx(count / row.total, abs=1e-6)
+
+        second = client.get(self._PATH, headers=admin_headers)
+        assert second.status_code == 200
+        assert second.json()["cost_completeness"] == payload["cost_completeness"]

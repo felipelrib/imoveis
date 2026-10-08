@@ -272,6 +272,103 @@ def test_an_empty_corpus_measures_zero_rather_than_failing(session):
 
 
 # ---------------------------------------------------------------------------
+# Total Monthly Cost completeness per Platform (v0.14-s1.2, NFR-6 / SM-3)
+# ---------------------------------------------------------------------------
+
+
+def _insert_listing(
+    session,
+    property_id: str,
+    *,
+    platform: str,
+    listing_type: str = "rent",
+    total: float | None = None,
+    bundled: bool = False,
+    active: bool = True,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO property_listings (
+                property_id, platform, platform_listing_id, listing_type,
+                price, currency, url, active,
+                fees_bundled, total_monthly_cost, cost_complete
+            )
+            VALUES (
+                CAST(:pid AS uuid), :platform, :plid, :lt,
+                1000, 'BRL', 'https://example.test/l', :active,
+                :bundled, :total, :complete
+            )
+            """
+        ),
+        {
+            "pid": property_id,
+            "platform": platform,
+            "plid": f"cov-{uuid.uuid4().hex[:12]}",
+            "lt": listing_type,
+            "active": active,
+            "bundled": bundled,
+            "total": total,
+            "complete": total is not None,
+        },
+    )
+
+
+def test_cost_completeness_is_empty_without_active_rent_listings(session):
+    from adapters.db.enrichment_coverage_queries import fetch_coverage_inputs
+
+    # A sale Listing alone gives its Platform no row.
+    prop = _insert_property(session)
+    _insert_listing(session, prop, platform="plat-x", listing_type="sale")
+    session.commit()
+
+    assert fetch_coverage_inputs(session).cost_completeness == []
+
+
+def test_cost_completeness_counts_active_rent_listings_per_platform(session):
+    from adapters.db.enrichment_coverage_queries import fetch_coverage_inputs
+    from core.enrichment_coverage import build_cost_completeness
+
+    active_a = _insert_property(session)
+    active_b = _insert_property(session)
+    delisted = _insert_property(session, active=False)
+
+    # plat-x: 2 complete, 1 bundled, 1 incomplete …
+    _insert_listing(session, active_a, platform="plat-x", total=3900.0)
+    _insert_listing(session, active_b, platform="plat-x", total=4100.0)
+    _insert_listing(session, active_a, platform="plat-x", total=857.0, bundled=True)
+    _insert_listing(session, active_b, platform="plat-x", total=None)
+    # … and three rows that must count for nothing: an inactive Listing, a sale
+    # Listing, and a Listing of an inactive Property.
+    _insert_listing(session, active_a, platform="plat-x", total=1000.0, active=False)
+    _insert_listing(session, active_a, platform="plat-x", listing_type="sale")
+    _insert_listing(session, delisted, platform="plat-x", total=2000.0)
+    # A bundled flag without a total is incomplete, not bundled.
+    _insert_listing(session, active_a, platform="plat-a", total=None, bundled=True)
+    session.commit()
+
+    inputs = fetch_coverage_inputs(session)
+
+    assert inputs.cost_completeness == [
+        {"platform": "plat-a", "complete": 0, "bundled": 0, "incomplete": 1},
+        {"platform": "plat-x", "complete": 2, "bundled": 1, "incomplete": 1},
+    ]
+
+    plat_a, plat_x = build_cost_completeness(inputs.cost_completeness)
+    assert plat_x.total == 4
+    assert (plat_x.complete_fraction, plat_x.bundled_fraction, plat_x.incomplete_fraction) == (
+        0.5,
+        0.25,
+        0.25,
+    )
+    assert plat_a.total == 1
+    assert plat_a.incomplete_fraction == 1.0
+
+    # AC: unchanged corpus, identical figures.
+    assert fetch_coverage_inputs(session).cost_completeness == inputs.cost_completeness
+
+
+# ---------------------------------------------------------------------------
 # Throughput window
 # ---------------------------------------------------------------------------
 
