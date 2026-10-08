@@ -8,9 +8,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: '^(\.agents/|_bmad/(?!custom/))'
+        exclude: '^(\.agents/|\.bmad-loop/|_bmad/(?!custom/))'
       - id: end-of-file-fixer
-        exclude: '^(\.agents/|_bmad/(?!custom/))'
+        exclude: '^(\.agents/|\.bmad-loop/|_bmad/(?!custom/))'
       - id: check-yaml
         exclude: '^(\.agents/|_bmad/(?!custom/))'
       - id: check-json
