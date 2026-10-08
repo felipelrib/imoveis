@@ -1029,8 +1029,12 @@ body {
 
 /* Saved Searches Sidebar */
 .saved-searches-sidebar {
-  width: 220px;
-  min-width: 220px;
+  /* v0.14-s1.10: the saved-search row carries a control line, so the sidebar
+     is 272px at the design frame (1440px). Below about 1320px it narrows, down
+     to 232px, so the card grid beside it keeps the width its price lines need. */
+  --saved-searches-width: clamp(232px, calc(100vw - 1048px), 272px);
+  width: var(--saved-searches-width);
+  min-width: var(--saved-searches-width);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
   border-radius: 12px;
@@ -1064,61 +1068,6 @@ body {
   color: var(--text-muted, #9ca3af);
   font-style: italic;
   padding: 4px 0;
-}
-
-.sidebar-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
-  font-size: 13px;
-  color: var(--text-primary, #e5e7eb);
-  background: rgba(255,255,255,0.03);
-  border: 1px solid transparent;
-}
-
-.sidebar-item:hover {
-  background: rgba(99,102,241,0.12);
-  border-color: rgba(99,102,241,0.2);
-}
-
-.sidebar-item-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-item-delete {
-  background: none;
-  border: none;
-  color: var(--text-muted, #9ca3af);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.sidebar-item:hover .sidebar-item-delete {
-  opacity: 1;
-}
-
-.sidebar-item-delete:hover {
-  color: var(--accent-rose, #f43f5e);
-  background: rgba(244,63,94,0.1);
 }
 
 .sidebar-link {
@@ -1783,4 +1732,187 @@ body {
   background: var(--surface-card);
   border: 1px solid var(--border-hairline);
   border-radius: 10px;
+}
+
+/* ============================================================
+   SAVED-SEARCH ROW (v0.14-s1.10, UX-DR13)
+   DESIGN.md "Saved-search row": surface-card rows with hairline
+   separators, name in body type, filter summary in meta type, accent only
+   on the two controls. The list carries `.meia` for the palette roles.
+   ============================================================ */
+
+.saved-search-list {
+  display: flex;
+  flex-direction: column;
+  /* Rows keep their height (controls are never clipped); a long list scrolls. */
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.saved-search-row {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px;
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-hairline);
+}
+.saved-search-row:first-child {
+  border-top-left-radius: var(--radius-meia-md);
+  border-top-right-radius: var(--radius-meia-md);
+}
+.saved-search-row:last-child {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-meia-md);
+  border-bottom-right-radius: var(--radius-meia-md);
+}
+
+.saved-search-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.saved-search-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: left;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-search-name:hover,
+.saved-search-name:focus-visible {
+  color: var(--accent);
+}
+.saved-search-delete {
+  flex: none;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.saved-search-row:hover .saved-search-delete,
+.saved-search-row:focus-within .saved-search-delete {
+  opacity: 1;
+}
+.saved-search-delete:hover,
+.saved-search-delete:focus-visible {
+  color: var(--text-primary);
+}
+
+.saved-search-summary,
+.saved-search-state,
+.saved-search-invalid {
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+}
+.saved-search-summary {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.saved-search-state {
+  color: var(--text-muted);
+}
+.saved-search-invalid {
+  color: var(--health-warn);
+}
+
+/* Two control lines: the switch, then the minimum drop. */
+.saved-search-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.saved-search-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.saved-search-control-label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.saved-search-switch {
+  flex: none;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  padding: 0;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.saved-search-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-secondary);
+  border-radius: 4px;
+  transition: transform 0.15s, background 0.15s;
+}
+.saved-search-switch[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.saved-search-switch[aria-checked="true"] .saved-search-switch-knob {
+  background: var(--surface-card);
+  transform: translateX(12px);
+}
+/* Offset from the track: a switch that is on is already accent-filled, so a
+   ring drawn on its own border would not show. */
+.saved-search-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Same field convention as `.detail-watch-input`; the value is in accent. */
+.saved-search-drop-input {
+  /* Takes what the label leaves at the narrow sidebar width, never more
+     than an amount needs. */
+  flex: 1 1 56px;
+  min-width: 0;
+  max-width: 96px;
+  padding: 3px 4px;
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--accent);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-meia-sm);
+}
+.saved-search-drop-input::placeholder {
+  color: var(--text-muted);
+}
+.saved-search-drop-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.saved-search-drop-input[aria-invalid="true"] {
+  border-color: var(--health-warn);
+  color: var(--text-primary);
 }

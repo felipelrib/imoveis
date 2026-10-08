@@ -469,6 +469,13 @@ alerts:
     hold_warning_hours: 168     # held longer than this is reported as overdue (still alerted later)
     max_items_per_email: 20
     app_base_url: ""            # e.g. http://localhost:5173 ; empty = no link
+  # Saved-search price-drop alerts (Story 1.10, FR-32). Email only, sent by the
+  # hourly saved-search sender (so new_match.enabled must be on too), once per
+  # search per local day, with the window hour and timezone above. Nothing is
+  # sent while no saved search has both its alert switch on and a minimum drop.
+  price_drop:
+    enabled: true               # switch of the drop pass
+    max_items_per_email: 20
 
 # ---------------------------------------------------------------------------
 # Image Storage

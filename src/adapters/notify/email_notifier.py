@@ -6,6 +6,7 @@ from adapters.notify.base import (
     Notifier,
     PriceDropAlert,
     SavedSearchNewMatches,
+    SavedSearchPriceDrops,
     TopDealsDigest,
 )
 from infra.config import get_config
@@ -117,9 +118,27 @@ class EmailNotifier(Notifier):
         handed to the mail server: the caller keeps the matches pending and
         tries again at its next run. No recipient is a failure too.
         """
+        self._send_saved_search_email(batch, kind="new-match", event="saved_search_new_matches")
+
+    def send_price_drops(self, batch: SavedSearchPriceDrops) -> None:
+        """Send one saved search's price drops (Story 1.10, FR-32).
+
+        Raises like ``send_new_matches``: the caller records an alert only for
+        a message the mail server took, and gives the day back otherwise.
+        """
+        self._send_saved_search_email(batch, kind="price-drop", event="saved_search_price_drops")
+
+    def _send_saved_search_email(self, batch, *, kind: str, event: str) -> None:
+        """Hand one rendered saved-search message to the mail server, or raise.
+
+        ``batch`` carries ``subject`` / ``body`` as they are sent. Logs
+        ``<event>_email_sent`` or ``<event>_email_failed``.
+        """
         recipient = (getattr(self.cfg, "digest_email", "") or "").strip()
         if not recipient:
-            raise ValueError("alerts.digest_email is empty: no recipient for new-match alerts")
+            raise ValueError(
+                "alerts.digest_email is empty: no recipient for " + kind + " alerts"
+            )
 
         msg = EmailMessage()
         msg["Subject"] = batch.subject
@@ -142,14 +161,14 @@ class EmailNotifier(Notifier):
                 server.send_message(msg)
         except Exception as e:
             logger.error(
-                "saved_search_new_matches_email_failed",
+                event + "_email_failed",
                 principal_id=batch.principal_id,
                 search_id=batch.search_id,
                 error=str(e),
             )
             raise
         logger.info(
-            "saved_search_new_matches_email_sent",
+            event + "_email_sent",
             principal_id=batch.principal_id,
             search_id=batch.search_id,
             count=len(batch.property_ids),

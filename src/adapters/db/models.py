@@ -347,10 +347,16 @@ class SavedSearch(Base):
     # first seen at or after it can be a new match of this search.
     notify_new_matches = Column(Boolean, nullable=False, server_default=sa.text("false"))
     notify_enabled_at = Column(DateTime, nullable=True)
-    # Stored and round-tripped only; the drop rule that reads it is Story 1.10.
+    # Minimum price drop in reais (absolute) that alerts for this search; NULL
+    # means no drop alerts. Read by ``core.saved_search_price_drops``.
     min_price_drop = Column(Float, nullable=True)
     # Local date (alerts.new_match.window_timezone) of the last new-match email.
     new_match_last_window_on = Column(sa.Date, nullable=True)
+    # Price-drop alerts (Story 1.10). ``price_drop_enabled_at`` (naive UTC) is
+    # the moment they became active (alerts on and a minimum stored): the floor
+    # a Listing's drop is measured from. The date is the drop pass's own window.
+    price_drop_enabled_at = Column(DateTime, nullable=True)
+    price_drop_last_window_on = Column(sa.Date, nullable=True)
 
     __table_args__ = (
         sa.CheckConstraint(
@@ -396,6 +402,61 @@ class SavedSearchNewMatch(Base):
         sa.CheckConstraint(
             "status IN ('pending', 'sent', 'withdrawn')",
             name="ck_saved_search_new_matches_status",
+        ),
+    )
+
+
+class SavedSearchPriceDropAlert(Base):
+    """One alerted Listing of a Property a saved search's drop email carried.
+
+    Story 1.10, FR-32. Written only by ``core.saved_search_price_drops`` after
+    the email left; there is no pending state. The email shows one Listing per
+    Property; another Listing of it that fell by the threshold as well gets a
+    row too. ``new_price`` is the reference of the next comparison for that
+    search and Listing, and ``threshold`` is the minimum the email stated
+    (UX-DR13).
+    """
+
+    __tablename__ = "saved_search_price_drop_alerts"
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text(SQL_GEN_RANDOM_UUID),
+    )
+    saved_search_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("saved_searches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    property_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(FK_PROPERTIES_ID, ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    property_listing_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("property_listings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner = Column(String, nullable=True)  # Principal.id (AD-11)
+    listing_type = Column(String, nullable=False)
+    platform = Column(String, nullable=True)
+    reference_price = Column(Float, nullable=False)
+    new_price = Column(Float, nullable=False)
+    threshold = Column(Float, nullable=False)
+    sent_at = Column(DateTime, nullable=False, server_default=sa.text(SQL_NOW))
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "new_price < reference_price AND threshold >= 0",
+            name="ck_saved_search_price_drop_alerts_drop",
+        ),
+        sa.Index(
+            "ix_saved_search_price_drop_alerts_lookup",
+            "saved_search_id",
+            "property_listing_id",
+            "sent_at",
         ),
     )
 

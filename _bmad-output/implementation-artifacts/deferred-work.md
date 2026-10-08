@@ -642,3 +642,27 @@ source_spec: n/a
 severity: medium
 reason: On 2026-10-08 the primary `scrapers` list held about 11,600 messages; a sample of the first 400 was 245 `tasks.snapshot_pipeline_metrics`, 121 `tasks.monitor_queues`, 23 `tasks.evaluate_watchlist_alerts` and 12 `tasks.scrape_listings`. The periodic tasks carry no `expires`, so every tick missed while the workers are busy or down stays queued and runs late, several in the same second. Scraping still works (Properties were first seen that day). Not measured: how late a beat task runs under this backlog. A blanket `expires` is not the fix for every entry: the story 1-9 review left it off the hourly sender on purpose, because under a backlog longer than an hour it would discard every sender run. Options: `expires` on the idempotent snapshot/monitor entries only, a separate queue for periodic housekeeping, or a single-flight guard.
 status: open
+
+### DW-64: The watchlist path records a price as announced before anything delivered it, so a watchlist alert that is debounced or fails to send is never retried.
+origin: spec-deferred 9aa11a47a791
+location: src/core/dedupe.py:465
+source_spec: `spec-1-10-saved-search-alert-management-ui.md`
+severity: medium
+reason: src/core/dedupe.py _check_watchlist_alerts sets watchlist.last_notified_price right after send_price_drop_alert.delay(...). The task (src/adapters/queue/tasks.py send_price_drop_alert) returns early under the one-hour debounce key, sends through every channel, and EmailNotifier.send / send_batch swallow SMTP errors; with digest_mode the email only leaves at the 08:00 digest. The stamp also survives a later rise: a Listing stamped at 3000 that goes up and falls back to 3000 is 0% below the stamp and fires nothing. Since the follow-up review (2026-10-08) the saved-search drop pass no longer reads this stamp, so the defect is confined to the watchlist path's own alerts. The primary had 0 watchlist rows on 2026-10-08. Fix belongs there: stamp after delivery, or record which Listing and channel announced the price and when.
+status: open
+
+### DW-65: The watchlist price-drop email does not state the threshold that fired it, which the UX contract asks of every alert email.
+origin: spec-deferred e73efb3b34f4
+location: src/adapters/notify/email_notifier.py:43
+source_spec: `spec-1-10-saved-search-alert-management-ui.md`
+severity: low
+reason: EXPERIENCE.md, Notifications and Recall: every alert email states the threshold that fired it. EmailNotifier.send_batch writes "Property <id>: old -> new (-x%)" with no threshold (src/adapters/notify/email_notifier.py). Story 1.10 covers the saved-search drop email only; the watchlist threshold is a percent stored per watch (watchlist.min_drop_pct) and PriceDropAlert does not carry it.
+status: open
+
+### DW-66: The SPA has no display name for the zapimoveis platform, so the saved-search row's summary (and every other place that calls formatPlatform) shows the slug.
+origin: spec-deferred 6a75e9e56023
+location: frontend/src/labels.ts:6
+source_spec: `spec-1-10-saved-search-alert-management-ui.md`
+severity: low
+reason: frontend/src/labels.ts PLATFORM_LABELS has olx and quintoandar only; formatPlatform falls back to the slug. src/adapters/scrapers/zapimoveis.py exists, and the drop email names the platform ZapImóveis (core/saved_search_price_drops.py _PLATFORM_NAMES). Pre-existing in labels.ts; adding the label changes cards and filters outside this story.
+status: open

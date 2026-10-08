@@ -495,3 +495,104 @@ def test_panel_sentence_and_badge_share_one_rule():
         path.name for path in detail_dir.rglob("*.ts*") if legacy.search(path.read_text(encoding="utf-8"))
     )
     assert not offenders, f"the detail panel reads the legacy percentile_rank fields: {offenders}"
+
+
+# --- v0.14-s1.10: saved-search row (UX-DR13) ----------------------------------
+#
+# The row states, per search, whether alerts are on and which price drop
+# alerts. Its copy is the contract's microcopy and is pinned verbatim in both
+# catalogs; the summary fragments that carry a count are One/Many pairs.
+
+_SAVED_SEARCH_ROW_PINS: dict[str, dict[str, str]] = {
+    "en": {
+        "properties.savedSearchNotify": "Email alerts",
+        "properties.savedSearchMinDrop": "Minimum drop",
+        "properties.savedSearchMinDropPlaceholder": "no alert",
+        "properties.savedSearchMinDropInvalid": "Enter an amount in reais, such as 240",
+        "properties.savedSearchAlertsOff": "Alerts off",
+        "properties.savedSearchAlertsNew": "Alerts on new homes",
+        "properties.savedSearchAlertsNewAndDrops": "Alerts on new homes and drops of R$ {amount} or more",
+        "properties.savedSearchAlertsNewAndAnyDrop": "Alerts on new homes and any price drop",
+        "properties.savedSearchAlertsUnsupported": "This search does not produce email alerts.",
+        "properties.savedSearchAlertsUnsupportedQuery": "A text search does not produce email alerts.",
+        "properties.savedSearchNoFilters": "No filters",
+        "properties.savedSearchSummaryMaxPriceRent": "up to R$ {amount}/month",
+        "properties.savedSearchSummaryMaxPriceSale": "up to R$ {amount}",
+        "properties.savedSearchSummaryBedsOne": "{n}+ bed",
+        "properties.savedSearchSummaryBedsMany": "{n}+ beds",
+        "properties.savedSearchSummaryParkingOne": "{n}+ parking space",
+        "properties.savedSearchSummaryParkingMany": "{n}+ parking spaces",
+        "properties.savedSearchSummaryMinScore": "score {n}+",
+        "properties.savedSearchSummaryQuery": "“{q}”",
+        "properties.toastAlertUpdateFailed": "Could not update the alerts of this search",
+    },
+    "pt-BR": {
+        "properties.savedSearchNotify": "Avisos por e-mail",
+        "properties.savedSearchMinDrop": "Queda mínima",
+        "properties.savedSearchMinDropPlaceholder": "sem aviso",
+        "properties.savedSearchMinDropInvalid": "Digite um valor em reais, como 240",
+        "properties.savedSearchAlertsOff": "Avisos desligados",
+        "properties.savedSearchAlertsNew": "Avisa imóveis novos",
+        "properties.savedSearchAlertsNewAndDrops": "Avisa imóveis novos e quedas a partir de R$ {amount}",
+        "properties.savedSearchAlertsNewAndAnyDrop": "Avisa imóveis novos e qualquer queda de preço",
+        "properties.savedSearchAlertsUnsupported": "Esta busca não gera avisos por e-mail.",
+        "properties.savedSearchAlertsUnsupportedQuery": "Busca por texto não gera avisos por e-mail.",
+        "properties.savedSearchNoFilters": "Sem filtros",
+        "properties.savedSearchSummaryMaxPriceRent": "até R$ {amount}/mês",
+        "properties.savedSearchSummaryMaxPriceSale": "até R$ {amount}",
+        "properties.savedSearchSummaryBedsOne": "{n}+ quarto",
+        "properties.savedSearchSummaryBedsMany": "{n}+ quartos",
+        "properties.savedSearchSummaryParkingOne": "{n}+ vaga",
+        "properties.savedSearchSummaryParkingMany": "{n}+ vagas",
+        "properties.savedSearchSummaryMinScore": "score {n}+",
+        "properties.savedSearchSummaryQuery": "“{q}”",
+        "properties.toastAlertUpdateFailed": "Não foi possível atualizar os avisos desta busca",
+    },
+}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("locale", sorted(_SAVED_SEARCH_ROW_PINS))
+def test_saved_search_row_copy_is_pinned(locale: str):
+    """Switch label, threshold field, state lines and muted lines, verbatim."""
+    catalog = _catalog(locale)
+    for key, expected in _SAVED_SEARCH_ROW_PINS[locale].items():
+        assert catalog.get(key) == expected, f"{locale}.{key} must read exactly {expected!r}"
+
+
+@pytest.mark.unit
+def test_saved_search_row_pins_cover_the_same_keys_in_every_locale():
+    """A string pinned in one catalog only would let the other drift unseen."""
+    key_sets = {locale: set(pins) for locale, pins in _SAVED_SEARCH_ROW_PINS.items()}
+    assert set(key_sets) == set(_locales())
+    assert len({frozenset(keys) for keys in key_sets.values()}) == 1, key_sets
+
+
+@pytest.mark.unit
+def test_the_saved_search_row_renders_every_pinned_string():
+    """Each pinned key is named by the row component (a source scan).
+
+    A key no call site names is dead copy; a call site naming a key that is
+    not in the catalogs renders the raw dotted key (`t()` falls back to it).
+    """
+    row = _REPO / "frontend" / "src" / "components" / "properties" / "SavedSearchRow.tsx"
+    source = row.read_text(encoding="utf-8")
+    named = set(re.findall(r"""['"](properties\.[A-Za-z]+)['"]""", source))
+
+    pinned = set(_SAVED_SEARCH_ROW_PINS[_REFERENCE_LOCALE])
+    assert pinned <= named, f"pinned but not rendered by the row: {sorted(pinned - named)}"
+    catalog = _catalog(_REFERENCE_LOCALE)
+    assert named <= set(catalog), f"named by the row but in no catalog: {sorted(named - set(catalog))}"
+
+
+@pytest.mark.unit
+def test_nothing_is_switched_on_from_the_save_dialog():
+    """Saving a search sends a name and filters only (a source scan).
+
+    Alerts are switched on per search, on its row, and nowhere else: no
+    default, no bulk switch, no alert option in the save dialog.
+    """
+    api = (_REPO / "frontend" / "src" / "api.ts").read_text(encoding="utf-8")
+    save = api.split("export async function saveSearch", 1)[1].split("\nexport ", 1)[0]
+    assert "body: { name, filters }" in save
+    assert "notify_new_matches" not in save and "min_price_drop" not in save

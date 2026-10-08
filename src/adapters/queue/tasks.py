@@ -1415,8 +1415,7 @@ def match_saved_search_new_matches(self):
     return result
 
 
-@celery.task(bind=True, name="tasks.send_saved_search_new_match_alerts")
-def send_saved_search_new_match_alerts(self):
+def _send_saved_search_new_match_alerts(cfg, now):
     """Email each saved search's recorded new matches, once per local day.
 
     Runs hourly; a search is due from ``alerts.new_match.window_hour`` (local)
@@ -1450,7 +1449,6 @@ def send_saved_search_new_match_alerts(self):
         withdraw_stale,
     )
 
-    cfg = get_config()
     new_match = cfg.alerts.new_match
     result = {
         "status": "ok",
@@ -1471,7 +1469,6 @@ def send_saved_search_new_match_alerts(self):
     locale = getattr(getattr(cfg, "ui", None), "locale", None)
     if not isinstance(locale, str):
         locale = "pt-BR"
-    now = _utcnow_naive()
     window_date = local_window_date(now, tz_name)
     email_notifiers = None
     no_email_channel = False
@@ -1606,6 +1603,283 @@ def send_saved_search_new_match_alerts(self):
             reason="alerts disabled or no email channel configured; matches stay pending",
         )
     logger.info("saved_search_new_match_alerts_run", **result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Saved-search price-drop alerts (Story 1.10, FR-32, UX-DR13)
+# ---------------------------------------------------------------------------
+
+# Drop alerts are active for a search when its switch is on and a minimum drop
+# is stored; ``price_drop_enabled_at`` is when that became true (the floor).
+_PRICE_DROP_SEARCHES_SQL = (
+    "SELECT id FROM saved_searches "
+    "WHERE owner = :owner AND notify_new_matches AND min_price_drop IS NOT NULL "
+    "AND price_drop_enabled_at IS NOT NULL "
+    "ORDER BY created_at, id"
+)
+# Same lock as the new-match sender: held for a short transaction only, never
+# while an email is being sent. Everything the pass uses is read under it.
+_PRICE_DROP_LOCK_SEARCH_SQL = (
+    "SELECT notify_new_matches, min_price_drop, price_drop_enabled_at, "
+    "price_drop_last_window_on, name, filters "
+    "FROM saved_searches WHERE id = CAST(:search_id AS uuid) AND owner = :owner "
+    "FOR NO KEY UPDATE SKIP LOCKED"
+)
+
+
+def _price_drop_result(status="ok"):
+    return {
+        "status": status,
+        "searches_due": 0,
+        "emails_sent": 0,
+        "properties_alerted": 0,
+        "unsupported": 0,
+        "errors": 0,
+    }
+
+
+def _send_saved_search_price_drop_alerts(cfg, now):
+    """Email each saved search's price drops, once per local day.
+
+    A search takes part when its alert switch is on and it stores a minimum
+    drop. Its email lists the Listings of matching, decidable Properties whose
+    own price fell by at least that minimum since drop alerts became active
+    for the search (``core.saved_search_price_drops``), largest drop first,
+    at most ``alerts.price_drop.max_items_per_email``; only those are recorded.
+    Delivery is the registry's ``email`` channel only (AD-9); read-only on
+    Property / Listing / price history (AD-3).
+
+    Per search: lock the row, compute the drops, claim the day and commit,
+    send with no lock or transaction open, then record what was emailed. A
+    failed send gives the day back, so the next hourly run tries again. A
+    failure of one search never stops the others or raises.
+    """
+    from sqlalchemy import text
+
+    from adapters.notify import get_notifiers_for_channel
+    from adapters.notify.base import SavedSearchPriceDrops
+    from core.saved_search_alerts import (
+        local_window_date,
+        match_filters_from_saved_search,
+        window_is_due,
+    )
+    from core.saved_search_price_drops import (
+        claim_drop_window,
+        collect_drop_candidates,
+        drops_to_record,
+        load_drop_properties,
+        record_drop_alerts,
+        release_drop_window,
+        render_price_drop_email,
+        select_drops,
+    )
+
+    result = _price_drop_result()
+    price_drop = getattr(cfg.alerts, "price_drop", None)
+    if price_drop is None or price_drop.enabled is not True:
+        logger.info("saved_search_price_drop_alerts_skipped", reason="disabled")
+        return {**result, "status": "skipped"}
+
+    new_match = cfg.alerts.new_match
+    owner = cfg.auth.principal_id
+    max_items = int(price_drop.max_items_per_email)
+    tz_name = new_match.window_timezone
+    locale = getattr(getattr(cfg, "ui", None), "locale", None)
+    if not isinstance(locale, str):
+        locale = "pt-BR"
+    window_date = local_window_date(now, tz_name)
+    email_notifiers = None
+    no_email_channel = False
+
+    with SessionLocal() as session:
+        searches = session.execute(text(_PRICE_DROP_SEARCHES_SQL), {"owner": owner}).fetchall()
+        for (search_id,) in searches:
+            search_id = str(search_id)
+            claimed = False
+            delivered = 0
+            previous_window_on = None
+            try:
+                locked = session.execute(
+                    text(_PRICE_DROP_LOCK_SEARCH_SQL), {"search_id": search_id, "owner": owner}
+                ).fetchone()
+                if locked is None:
+                    # Another run is sending this search right now (or it is gone).
+                    continue
+                enabled, threshold, floor, last_window_on, search_name, filters_blob = locked
+                if enabled is not True or threshold is None or floor is None:
+                    continue
+                if not window_is_due(
+                    now,
+                    tz_name=tz_name,
+                    window_hour=int(new_match.window_hour),
+                    last_window_on=last_window_on,
+                ):
+                    continue
+                result["searches_due"] += 1
+                filters = match_filters_from_saved_search(filters_blob)
+                if filters is None:
+                    # Not a membership test: such a search never fires.
+                    result["unsupported"] += 1
+                    continue
+                threshold = float(threshold)
+                candidates = collect_drop_candidates(
+                    session,
+                    search_id=search_id,
+                    filters=filters,
+                    listing_type=filters.listing_type,
+                    floor=floor,
+                )
+                drops = select_drops(candidates, threshold)
+                if not drops:
+                    # Nothing to say: the day stays open for a later drop.
+                    continue
+                if email_notifiers is None:
+                    email_notifiers = get_notifiers_for_channel("email")
+                if not email_notifiers:
+                    no_email_channel = True
+                    continue
+
+                # Claim the day and let the row go before the mail server is
+                # contacted: nothing that writes the search waits for SMTP.
+                previous_window_on = last_window_on
+                claim_drop_window(session, search_id, window_date)
+                session.commit()
+                claimed = True
+
+                # Largest drops first. What does not fit is not recorded, so it
+                # is found again (while it still holds) for the next day's email.
+                properties = load_drop_properties(
+                    session, [item["property_id"] for item in drops[:max_items]]
+                )
+                # No transaction stays open during the send.
+                session.rollback()
+                shown = [item for item in drops[:max_items] if item["property_id"] in properties]
+                if not shown:
+                    continue
+                subject, body = render_price_drop_email(
+                    search_name=search_name,
+                    drops=shown,
+                    properties=properties,
+                    threshold=threshold,
+                    # What did not fit the limit; a Property that went away
+                    # since the statement ran is not waiting for anything.
+                    remaining=max(len(drops) - max_items, 0),
+                    app_base_url=new_match.app_base_url,
+                    locale=locale,
+                )
+                property_ids = [item["property_id"] for item in shown]
+                batch = SavedSearchPriceDrops(
+                    principal_id=owner,
+                    search_id=search_id,
+                    search_name=search_name,
+                    subject=subject,
+                    body=body,
+                    property_ids=property_ids,
+                    generated_at=now,
+                )
+                for notifier in email_notifiers:
+                    try:
+                        notifier.send_price_drops(batch)
+                        delivered += 1
+                    except Exception as exc:
+                        result["errors"] += 1
+                        logger.error(
+                            "saved_search_price_drop_alert_notifier_error",
+                            notifier=type(notifier).__name__,
+                            search_id=search_id,
+                            error=str(exc),
+                        )
+                if delivered:
+                    record_drop_alerts(
+                        session,
+                        search_id=search_id,
+                        owner=owner,
+                        # Every Listing of an emailed Property that fell, so
+                        # a second one does not email the Property again.
+                        drops=drops_to_record(candidates, threshold, shown),
+                        threshold=threshold,
+                        # Never before the floor: the run's clock is read
+                        # once, and a search switched off and on since then
+                        # has a later floor, which would hide the row from
+                        # the next comparison.
+                        now=max(now, floor),
+                    )
+                    session.commit()
+                    result["emails_sent"] += 1
+                    result["properties_alerted"] += len(property_ids)
+            except Exception as exc:
+                result["errors"] += 1
+                logger.error(
+                    "saved_search_price_drop_alert_failed",
+                    search_id=search_id,
+                    error=str(exc),
+                )
+            finally:
+                # Ends the transaction on every path (a no-op after a commit),
+                # which is what releases the search's row lock.
+                session.rollback()
+                if claimed and not delivered:
+                    # Nothing left: give the day back so the next hourly run
+                    # tries again. After a delivery the day stays claimed even
+                    # if recording failed (the drops then leave again the next
+                    # day, not every hour).
+                    try:
+                        release_drop_window(session, search_id, window_date, previous_window_on)
+                        session.commit()
+                    except Exception as exc:
+                        session.rollback()
+                        result["errors"] += 1
+                        logger.error(
+                            "saved_search_price_drop_alert_release_failed",
+                            search_id=search_id,
+                            error=str(exc),
+                        )
+
+    if no_email_channel:
+        result["status"] = "no_email_channel"
+        logger.warning(
+            "saved_search_price_drop_alerts_no_email_channel",
+            reason="alerts disabled or no email channel configured; nothing recorded",
+        )
+    logger.info("saved_search_price_drop_alerts_run", **result)
+    return result
+
+
+@celery.task(bind=True, name="tasks.send_saved_search_new_match_alerts")
+def send_saved_search_new_match_alerts(self):
+    """The hourly saved-search sender: new matches, then price drops.
+
+    Two independent passes, one email each per search per local day
+    (``_send_saved_search_new_match_alerts``, Story 1.9, and
+    ``_send_saved_search_price_drop_alerts``, Story 1.10). The result is the
+    new-match pass's own, with the drop pass's under ``price_drops``.
+    ``alerts.new_match.enabled`` is the master switch of the task; the drop
+    pass has ``alerts.price_drop.enabled`` besides. The drop pass runs even
+    when the new-match pass raised (which is then raised again).
+    """
+    cfg = get_config()
+    if cfg.alerts.new_match.enabled is not True:
+        result = _send_saved_search_new_match_alerts(cfg, None)
+        result["price_drops"] = _price_drop_result("skipped")
+        return result
+
+    now = _utcnow_naive()
+    try:
+        result = _send_saved_search_new_match_alerts(cfg, now)
+    except Exception:
+        try:
+            _send_saved_search_price_drop_alerts(cfg, now)
+        except Exception as exc:
+            logger.error("saved_search_price_drop_alerts_failed", error=str(exc))
+        raise
+    try:
+        result["price_drops"] = _send_saved_search_price_drop_alerts(cfg, now)
+    except Exception as exc:
+        # The new-match emails already left: their result is not lost to a
+        # failure of the drop pass outside its per-search handling.
+        logger.error("saved_search_price_drop_alerts_failed", error=str(exc))
+        result["price_drops"] = {**_price_drop_result("error"), "errors": 1}
     return result
 
 

@@ -1084,3 +1084,40 @@ def test_new_match_alerts_env_override(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("IMOVEIS_ALERTS__NEW_MATCH__WINDOW_HOUR", "9")
     cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
     assert cfg.alerts.new_match.window_hour == 9
+
+
+# ---------------------------------------------------------------------------
+# alerts.price_drop (v0.14-s1.10, FR-32)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_price_drop_alerts_defaults_when_absent(tmp_path: Path):
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML))
+    assert cfg.alerts.price_drop.enabled is True
+    assert cfg.alerts.price_drop.max_items_per_email == 20
+
+
+@pytest.mark.unit
+def test_price_drop_alerts_from_default_app_config_yaml():
+    """The committed YAML carries the section with the documented defaults."""
+    price_drop = get_config().alerts.price_drop
+    assert price_drop.enabled is True
+    assert price_drop.max_items_per_email == 20
+
+
+@pytest.mark.unit
+def test_price_drop_alerts_yaml_overrides(tmp_path: Path):
+    body = "alerts:\n  price_drop:\n    enabled: false\n    max_items_per_email: 3\n"
+    cfg = load_config(_write_yaml(tmp_path, MINIMAL_YAML + body))
+    assert cfg.alerts.price_drop.enabled is False
+    assert cfg.alerts.price_drop.max_items_per_email == 3
+    # The new-match section keeps its defaults beside it.
+    assert cfg.alerts.new_match.enabled is True
+
+
+@pytest.mark.unit
+def test_price_drop_alerts_reject_an_email_without_items(tmp_path: Path):
+    body = "alerts:\n  price_drop:\n    max_items_per_email: 0\n"
+    with pytest.raises((ValidationError, ConfigError)):
+        load_config(_write_yaml(tmp_path, MINIMAL_YAML + body))

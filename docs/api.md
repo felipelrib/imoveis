@@ -160,10 +160,12 @@ Every item carries:
 | `id`, `name`, `created_at` | string | |
 | `filters` | object | Snake_case English filter wire (`listing_type`, `max_price`, `price_type`, `min_bedrooms`, `min_parking`, `min_score`, `neighborhood`, `city`, `property_type`, `platform`, `is_furnished`, `accepts_pets`, `max_price_per_m2_percentile`, `sort_by`, `sort_dir`, `q`). camelCase keys are accepted on write |
 | `notify_new_matches` | bool | New-match alerts for this search (FR-32). Default `false` |
-| `min_price_drop` | number ≥ 0 or `null` | Minimum price drop of this search, in reais (absolute). Returned as stored; no rule reads it yet |
+| `min_price_drop` | number ≥ 0 or `null` | Minimum price drop that alerts for this search, in reais (absolute, on the Listing's headline price). `0` means any drop; `null` means no drop alerts |
 | `notify_enabled_at` | string or `null` | Naive UTC timestamp of the last time `notify_new_matches` was turned on. Read-only. Only Properties first seen at or after it can be a new match |
 | `new_match_alerts_supported` | bool | `false` when `filters.q` is non-blank (a semantic search is a ranking), the stored filters carry a key outside the list above, or the stored value is not an object: such a search never produces a new-match alert, whatever `notify_new_matches` says. Read-only |
 | `last_new_match_alert_on` | string (`YYYY-MM-DD`) or `null` | Local date of the last new-match email of this search. Read-only |
+| `price_drop_enabled_at` | string or `null` | Naive UTC timestamp of the moment drop alerts became active for this search (`notify_new_matches` true and `min_price_drop` not `null`). A Listing's drop is measured from its price at that moment. Read-only |
+| `last_price_drop_alert_on` | string (`YYYY-MM-DD`) or `null` | Local date of the last price-drop email of this search. Read-only |
 
 Writing:
 
@@ -176,6 +178,12 @@ Writing:
   stamps `notify_enabled_at`. Turning it off keeps the stamp; turning it on
   again replaces it. `true` on a search that is already on changes nothing.
 - A negative or non-finite `min_price_drop` is a `422`.
+- Drop alerts are active when `notify_new_matches` is true and
+  `min_price_drop` is not `null`. A `POST` that creates an active search, and a
+  `PATCH` after which the search is active when it was not before, stamp
+  `price_drop_enabled_at`. Changing the value while active, or switching
+  off, leaves the stamp; switching on again replaces it, which starts the
+  comparison over.
 
 New-match alerts (see `docs/features/v0.14-s1.9-saved-search-new-match-detection.md`):
 
@@ -187,6 +195,28 @@ New-match alerts (see `docs/features/v0.14-s1.9-saved-search-new-match-detection
   matches recorded since the last one. Each search x Property pair is alerted
   at most once.
 - There is no endpoint that lists the recorded matches in this version.
+
+Price-drop alerts (see `docs/features/v0.14-s1.10-saved-search-alert-management-ui.md`):
+
+- A drop is one Listing against its own earlier price: the price of this
+  search's last drop email for the Listing, else the price in force at
+  `price_drop_enabled_at`, else the Listing's first recorded price after it.
+  A cheaper Listing appearing on another platform is not a drop.
+- A drop of at least `min_price_drop` is emailed when its Property is active,
+  passes `GET /properties` with the parameters the search stands for, and
+  has a stored verdict and an evaluated percentile. Until then it is looked
+  at again every day. The Listing itself is of the searched listing type,
+  within `max_price` (for its `price_type`) and on the searched `platform`,
+  when the search has those filters. A search for one listing type capped
+  on the other (`listing_type: sale` with `price_type: rent`) announces
+  Listings of its own type; the cap stays a condition on the Property.
+- Independent of the watchlist alert: a watched Property that a search
+  also covers can be announced by both.
+- Each search gets at most one drop email per local day, by email only,
+  separate from its new-match email. Every Property block states the drop
+  and the threshold: `queda de R$ 240 — seu mínimo: R$ 100`.
+- A search with `new_match_alerts_supported: false` sends neither kind.
+- There is no endpoint that lists the emailed drops in this version.
 
 ## Scraper Control
 

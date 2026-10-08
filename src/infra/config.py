@@ -535,6 +535,20 @@ class NewMatchAlertsConfig(BaseModel, frozen=True):
         return value
 
 
+class PriceDropAlertsConfig(BaseModel, frozen=True):
+    """Saved-search price-drop alerts (Story 1.10, FR-32).
+
+    ``enabled`` switches the drop pass of the hourly saved-search sender; the
+    pass also needs ``alerts.new_match.enabled``, the master switch of that
+    task. Nothing is emailed while no saved search has both its alert switch
+    on and a minimum drop stored. Window hour, timezone and ``app_base_url``
+    are the ``alerts.new_match`` ones.
+    """
+
+    enabled: bool = True
+    max_items_per_email: int = Field(default=20, ge=1)
+
+
 class AlertsConfig(BaseModel, frozen=True):
     """Price-drop alert settings."""
 
@@ -552,6 +566,7 @@ class AlertsConfig(BaseModel, frozen=True):
     smtp_pass: str = ""
     top_deals: TopDealsDigestConfig = Field(default_factory=TopDealsDigestConfig)
     new_match: NewMatchAlertsConfig = Field(default_factory=NewMatchAlertsConfig)
+    price_drop: PriceDropAlertsConfig = Field(default_factory=PriceDropAlertsConfig)
 
 
 class AuthConfig(BaseModel, frozen=True):

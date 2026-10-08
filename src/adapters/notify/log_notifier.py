@@ -6,6 +6,7 @@ from adapters.notify.base import (
     Notifier,
     PriceDropAlert,
     SavedSearchNewMatches,
+    SavedSearchPriceDrops,
     TopDealsDigest,
 )
 from infra.logging import get_logger
@@ -43,6 +44,15 @@ class LogNotifier(Notifier):
     def send_new_matches(self, batch: SavedSearchNewMatches) -> None:
         logger.info(
             "saved_search_new_matches",
+            principal_id=batch.principal_id,
+            search_id=batch.search_id,
+            count=len(batch.property_ids),
+            property_ids=list(batch.property_ids),
+        )
+
+    def send_price_drops(self, batch: SavedSearchPriceDrops) -> None:
+        logger.info(
+            "saved_search_price_drops",
             principal_id=batch.principal_id,
             search_id=batch.search_id,
             count=len(batch.property_ids),

@@ -256,6 +256,24 @@ export interface SavedSearchItem {
   name: string
   filters: Record<string, unknown>
   created_at?: string | null
+  /** Per-search alert switch (v0.14-s1.9); off unless switched on. */
+  notify_new_matches?: boolean
+  /** Minimum price drop in reais that alerts; `null` = no drop alerts. */
+  min_price_drop?: number | null
+  notify_enabled_at?: string | null
+  /** False for a search that never fires (text query, unknown filter key). */
+  new_match_alerts_supported?: boolean
+  last_new_match_alert_on?: string | null
+  /** When drop alerts became active (switch on and a minimum stored). */
+  price_drop_enabled_at?: string | null
+  last_price_drop_alert_on?: string | null
+}
+
+/** What the saved-search row writes through `PATCH /saved-searches/{id}`. */
+export interface SavedSearchPatch {
+  notify_new_matches?: boolean
+  /** `null` clears the threshold. */
+  min_price_drop?: number | null
 }
 
 export interface PaginatedSavedSearches {
@@ -931,6 +949,16 @@ export async function saveSearch(
   return apiFetch('/saved-searches', {
     method: 'POST',
     body: { name, filters },
+  })
+}
+
+export async function updateSavedSearch(
+  id: string,
+  patch: SavedSearchPatch,
+): Promise<SavedSearchItem> {
+  return apiFetch(`/saved-searches/${id}`, {
+    method: 'PATCH',
+    body: { ...patch },
   })
 }
 

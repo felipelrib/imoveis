@@ -76,7 +76,7 @@ development_status:
   1-7-percentile-badge-on-cards-and-percentile-filter: done
   1-8-detail-side-panel-with-percentile-sentence-and-cost-breakdow: done
   1-9-saved-search-new-match-detection-on-the-pipeline: awaiting-operator
-  1-10-saved-search-alert-management-ui: backlog
+  1-10-saved-search-alert-management-ui: done
   1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip: backlog
   1-12-backfill-liveness-is-visible-for-the-whole-run: backlog
   1-13-runner-lifecycle-ends-honestly: backlog

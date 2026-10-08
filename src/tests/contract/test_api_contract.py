@@ -1172,6 +1172,28 @@ class TestSavedSearchNewMatchContract:
             } & set(body), name
         assert "notify_new_matches" not in schemas["SavedSearchCreate"].get("required", [])
 
+    # v0.14-s1.10: when drop alerts became active, and the last drop email.
+    _DROP_FIELDS = {"price_drop_enabled_at", "last_price_drop_alert_on"}
+
+    def test_item_model_declares_the_price_drop_fields(self):
+        from api.saved_searches import SavedSearchItem
+
+        assert self._DROP_FIELDS <= set(SavedSearchItem.model_fields)
+        item = SavedSearchItem(id="x", name="n", filters={})
+        assert item.price_drop_enabled_at is None
+        assert item.last_price_drop_alert_on is None
+
+    def test_openapi_declares_the_price_drop_fields_as_read_only(self, client):
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+        item = schemas["SavedSearchItem"]["properties"]
+        assert self._DROP_FIELDS <= set(item)
+        for name in self._DROP_FIELDS:
+            types = {entry.get("type") for entry in item[name].get("anyOf", [item[name]])}
+            assert types == {"string", "null"}, name
+        for name in ("SavedSearchCreate", "SavedSearchUpdate"):
+            assert not self._DROP_FIELDS & set(schemas[name]["properties"]), name
+
     def test_a_negative_threshold_is_rejected_before_any_write(self, client, admin_headers):
         for method, path in (
             ("post", "/saved-searches"),

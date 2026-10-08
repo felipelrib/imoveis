@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef, type SyntheticEvent } from 'r
 import { useNavigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import {
   MAX_PAGE_SIZE, fetchProperties, exportProperties, fetchWatchlist, addToWatchlist, removeFromWatchlist,
-  fetchSavedSearches, saveSearch, deleteSavedSearch, fetchFavourites, addFavourite,
+  fetchSavedSearches, saveSearch, deleteSavedSearch, updateSavedSearch, fetchFavourites, addFavourite,
   removeFavourite, fetchNeighborhoods, fetchCities,
   type Property, type PaginatedProperties, type FavouriteWithProperty,
-  type SavedSearchItem, type Neighborhood, type City, type ExportFormat,
+  type SavedSearchItem, type SavedSearchPatch, type Neighborhood, type City, type ExportFormat,
   type SortDir, type PriceType, type ListingType,
 } from '../api.js'
 import PropertyDetailPanel from '../components/detail/PropertyDetailPanel.jsx'
@@ -15,6 +15,7 @@ import MapView from '../components/MapView.jsx'
 import PropertiesFilterBar from '../components/properties/PropertiesFilterBar.jsx'
 import PropertiesResultsGrid from '../components/properties/PropertiesResultsGrid.jsx'
 import PropertiesPagination from '../components/properties/PropertiesPagination.jsx'
+import SavedSearchRow from '../components/properties/SavedSearchRow.jsx'
 import { useCompareSelection } from '../hooks/useCompareSelection.js'
 import { usePropertiesFiltersState } from '../hooks/usePropertiesFiltersState.js'
 import { usePropertiesPagination } from '../hooks/usePropertiesPagination.js'
@@ -454,6 +455,28 @@ export default function Properties() {
     }
   }
 
+  // The row's alert switch and minimum drop (v0.14-s1.10): one PATCH per
+  // control. Only the field that was written is taken from the response (plus
+  // the two stamps the server derives): the switch and the threshold can be in
+  // flight together, and the response that lands last may have been read before
+  // the other write. A failure rejects to the row, which puts the old value
+  // back and shows the toast.
+  const handlePatchSavedSearch = useCallback(async (id: string, patch: SavedSearchPatch) => {
+    const updated = await updateSavedSearch(id, patch)
+    setSavedSearches(prev => prev.map((s) => {
+      if (s.id !== id) return s
+      const next: SavedSearchItem = { ...s }
+      if ('notify_new_matches' in patch) {
+        next.notify_new_matches = updated.notify_new_matches
+        next.notify_enabled_at = updated.notify_enabled_at
+      }
+      if ('min_price_drop' in patch) next.min_price_drop = updated.min_price_drop
+      if (updated.price_drop_enabled_at) next.price_drop_enabled_at = updated.price_drop_enabled_at
+      return next
+    }))
+    return updated
+  }, [])
+
   const handleApplySavedSearch = (filters: Record<string, unknown>) => {
     navigate(PROPERTIES_PATH, { state: { compareIds } })
     applyFilters(filters)
@@ -482,16 +505,15 @@ export default function Properties() {
           {savedSearches.length === 0 ? (
             <div className="sidebar-empty">{t('properties.noSavedSearches')}</div>
           ) : (
-            <div className="sidebar-list">
+            <div className="saved-search-list meia" data-testid="saved-search-list">
               {savedSearches.map(ss => (
-                <div
+                <SavedSearchRow
                   key={ss.id}
-                  className="sidebar-item"
-                  onClick={() => handleApplySavedSearch(ss.filters)}
-                >
-                  <span className="sidebar-item-name">{ss.name}</span>
-                  <button className="sidebar-item-delete" onClick={(e) => handleDeleteSavedSearch(e, ss.id)} title={t('common.delete')}>✕</button>
-                </div>
+                  search={ss}
+                  onApply={handleApplySavedSearch}
+                  onDelete={handleDeleteSavedSearch}
+                  onPatch={handlePatchSavedSearch}
+                />
               ))}
             </div>
           )}

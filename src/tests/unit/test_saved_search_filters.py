@@ -336,7 +336,18 @@ def test_item_reports_a_semantic_search_as_unsupported():
     from api.saved_searches import _item_from_row
 
     stamp = datetime(2026, 10, 8, 13, 0)
-    row = ("id-1", "Com varanda", {"q": "varanda"}, stamp, True, 5.0, stamp, date(2026, 10, 8))
+    row = (
+        "id-1",
+        "Com varanda",
+        {"q": "varanda"},
+        stamp,
+        True,
+        5.0,
+        stamp,
+        date(2026, 10, 8),
+        None,
+        None,
+    )
     item = _item_from_row(row)
     assert item.notify_new_matches is True
     assert item.min_price_drop == 5.0
@@ -344,7 +355,9 @@ def test_item_reports_a_semantic_search_as_unsupported():
     assert item.new_match_alerts_supported is False
     assert item.last_new_match_alert_on == "2026-10-08"
 
-    plain = _item_from_row(("id-2", "Sem busca", {"q": " "}, None, False, None, None, None))
+    plain = _item_from_row(
+        ("id-2", "Sem busca", {"q": " "}, None, False, None, None, None, None, None)
+    )
     assert plain.new_match_alerts_supported is True
     assert plain.notify_enabled_at is None
     assert plain.last_new_match_alert_on is None
@@ -355,7 +368,7 @@ def test_item_reports_a_blob_that_is_not_an_object_as_unsupported(stored):
     # The matcher never fires for such a blob; the API must not say it would.
     from api.saved_searches import _item_from_row
 
-    item = _item_from_row(("id-3", "Estranha", stored, None, True, None, None, None))
+    item = _item_from_row(("id-3", "Estranha", stored, None, True, None, None, None, None, None))
     assert item.filters == {}
     assert item.new_match_alerts_supported is False
 
@@ -364,5 +377,159 @@ def test_item_reports_a_blob_with_an_unknown_key_as_unsupported():
     from api.saved_searches import _item_from_row
 
     legacy = {"listingType": "rent", "maxPrice": 3000}  # camelCase, pre-normalisation
-    item = _item_from_row(("id-4", "Antiga", legacy, None, True, None, None, None))
+    item = _item_from_row(("id-4", "Antiga", legacy, None, True, None, None, None, None, None))
     assert item.new_match_alerts_supported is False
+
+
+# ---------------------------------------------------------------------------
+# Price-drop activation stamp (v0.14-s1.10)
+# ---------------------------------------------------------------------------
+
+
+def test_item_reports_the_drop_floor_and_the_last_drop_email_date():
+    from datetime import date, datetime
+
+    from api.saved_searches import _item_from_row
+
+    stamp = datetime(2026, 10, 8, 13, 0)
+    row = ("id-5", "Savassi", {}, None, True, 100.0, stamp, None, stamp, date(2026, 10, 9))
+    item = _item_from_row(row)
+    assert item.price_drop_enabled_at == "2026-10-08T13:00:00"
+    assert item.last_price_drop_alert_on == "2026-10-09"
+
+    never = _item_from_row(("id-6", "Savassi", {}, None, True, None, stamp, None, None, None))
+    assert never.price_drop_enabled_at is None
+    assert never.last_price_drop_alert_on is None
+
+
+class _StampSession:
+    """Answers the PATCH / POST statements and keeps what they wrote."""
+
+    def __init__(self, *, notify: bool = False, min_drop: float | None = None):
+        self.existing = ("id-1", "Savassi", {}, notify, min_drop)
+        self.writes: list[tuple[str, dict]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def execute(self, statement, params=None):
+        sql = " ".join(str(statement).split())
+        result = MagicMock(rowcount=1)
+        if sql.startswith(("UPDATE", "INSERT")):
+            self.writes.append((sql, dict(params or {})))
+        elif "min_price_drop FROM saved_searches" in sql:
+            result.fetchone.return_value = self.existing
+        else:
+            result.fetchone.return_value = (
+                "id-1", "Savassi", {}, None, True, 100.0, None, None, None, None,
+            )
+        return result
+
+
+def _stamp_client(monkeypatch: pytest.MonkeyPatch, store: _StampSession) -> TestClient:
+    monkeypatch.setattr("api.saved_searches.SessionLocal", lambda: store)
+    cfg = MagicMock()
+    cfg.auth = AuthConfig(
+        api_key="key-a",
+        jwt_secret="test-jwt-secret",
+        principal_id="alice",
+        admin_user="admin",
+        admin_pass="admin",
+    )
+    monkeypatch.setattr("api.auth.get_config", lambda: cfg)
+    monkeypatch.setattr("infra.config.get_config", lambda: cfg)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _patch_writes(monkeypatch, body: dict, **stored) -> dict:
+    store = _StampSession(**stored)
+    response = _stamp_client(monkeypatch, store).patch(
+        "/saved-searches/id-1", headers={"X-API-Key": "key-a"}, json=body
+    )
+    assert response.status_code == 200, response.text
+    assert len(store.writes) == 1
+    return store.writes[0][1]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("body", "stored"),
+    [
+        # Switched on with a threshold already stored.
+        ({"notify_new_matches": True}, {"notify": False, "min_drop": 100.0}),
+        # Threshold set while the switch is on.
+        ({"min_price_drop": 100}, {"notify": True, "min_drop": None}),
+        ({"min_price_drop": 0}, {"notify": True, "min_drop": None}),
+        # Both in one write.
+        ({"notify_new_matches": True, "min_price_drop": 240}, {"notify": False, "min_drop": None}),
+    ],
+)
+def test_patch_that_activates_drop_alerts_stamps_the_floor(monkeypatch, body, stored):
+    from datetime import datetime, timezone
+
+    written = _patch_writes(monkeypatch, body, **stored)
+
+    stamp = written["price_drop_enabled_at"]
+    assert stamp.tzinfo is None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs((now - stamp).total_seconds()) < 60
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("body", "stored"),
+    [
+        # Changing the value while active leaves the floor.
+        ({"min_price_drop": 50}, {"notify": True, "min_drop": 100.0}),
+        ({"notify_new_matches": True}, {"notify": True, "min_drop": 100.0}),
+        # Switching off, or clearing the threshold, leaves it too.
+        ({"notify_new_matches": False}, {"notify": True, "min_drop": 100.0}),
+        ({"min_price_drop": None}, {"notify": True, "min_drop": 100.0}),
+        # Not active after the write: on without a threshold, threshold while off.
+        ({"notify_new_matches": True}, {"notify": False, "min_drop": None}),
+        ({"min_price_drop": 100}, {"notify": False, "min_drop": None}),
+        ({"notify_new_matches": True, "min_price_drop": None}, {"notify": False, "min_drop": 100.0}),
+        ({"name": "Outro nome"}, {"notify": True, "min_drop": 100.0}),
+    ],
+)
+def test_any_other_patch_leaves_the_drop_floor(monkeypatch, body, stored):
+    written = _patch_writes(monkeypatch, body, **stored)
+
+    assert "price_drop_enabled_at" not in written
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("extra", "stamped"),
+    [
+        ({"notify_new_matches": True, "min_price_drop": 100}, True),
+        ({"notify_new_matches": True, "min_price_drop": 0}, True),
+        ({"notify_new_matches": True}, False),
+        ({"min_price_drop": 100}, False),
+        ({}, False),
+    ],
+)
+def test_create_stamps_the_drop_floor_only_when_drop_alerts_are_active(
+    monkeypatch, extra, stamped
+):
+    store = _StampSession()
+    response = _stamp_client(monkeypatch, store).post(
+        "/saved-searches",
+        headers={"X-API-Key": "key-a"},
+        json={"name": "Savassi", "filters": {}, **extra},
+    )
+
+    assert response.status_code == 201, response.text
+    written = store.writes[0][1]
+    assert (written["price_drop_enabled_at"] is not None) is stamped
+    assert (response.json()["price_drop_enabled_at"] is not None) is stamped
+    assert response.json()["last_price_drop_alert_on"] is None

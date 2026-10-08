@@ -198,7 +198,7 @@ class SavedSearchCreate(BaseModel):
     filters: SavedSearchFilters
     # New-match alerts (v0.14-s1.9): off unless asked for.
     notify_new_matches: bool = False
-    # Stored and returned only; the drop rule that reads it is Story 1.10.
+    # Minimum price drop in reais that alerts (Story 1.10); none = no drop alerts.
     min_price_drop: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
 
 
@@ -224,12 +224,18 @@ class SavedSearchItem(BaseModel):
     new_match_alerts_supported: bool = True
     # Local date (alerts.new_match.window_timezone) of the last new-match email.
     last_new_match_alert_on: Optional[str] = None
+    # Naive UTC; when drop alerts became active (alerts on and a minimum drop
+    # stored). A Listing's drop is measured from its price at that moment.
+    price_drop_enabled_at: Optional[str] = None
+    # Local date of the last price-drop email.
+    last_price_drop_alert_on: Optional[str] = None
 
 
 # One column list for every read, in the order ``_item_from_row`` unpacks.
 _ITEM_COLUMNS = (
     "id, name, filters, created_at, notify_new_matches, min_price_drop, "
-    "notify_enabled_at, new_match_last_window_on"
+    "notify_enabled_at, new_match_last_window_on, "
+    "price_drop_enabled_at, price_drop_last_window_on"
 )
 
 
@@ -252,7 +258,14 @@ def _item_from_row(row: Any) -> SavedSearchItem:
         # object never fires, and the API must say so.
         new_match_alerts_supported=saved_search_is_matchable(row[2]),
         last_new_match_alert_on=row[7].isoformat() if row[7] else None,
+        price_drop_enabled_at=row[8].isoformat() if row[8] else None,
+        last_price_drop_alert_on=row[9].isoformat() if row[9] else None,
     )
+
+
+def _drop_alerts_active(notify_new_matches: Any, min_price_drop: Any) -> bool:
+    """Drop alerts need both: the switch on and a minimum drop stored."""
+    return bool(notify_new_matches) and min_price_drop is not None
 
 
 class PaginatedSavedSearchesResponse(BaseModel):
@@ -325,12 +338,20 @@ def create_saved_search(
             wire = req.filters.to_wire()
             # Created with alerts on: only Properties first seen from now on count.
             enabled_at = _utcnow_naive() if req.notify_new_matches else None
+            # Created with drop alerts active: drops are measured from now on.
+            drop_enabled_at = (
+                _utcnow_naive()
+                if _drop_alerts_active(req.notify_new_matches, req.min_price_drop)
+                else None
+            )
             session.execute(
                 text(
                     "INSERT INTO saved_searches (id, name, filters, owner, created_at, "
-                    "notify_new_matches, notify_enabled_at, min_price_drop) "
+                    "notify_new_matches, notify_enabled_at, min_price_drop, "
+                    "price_drop_enabled_at) "
                     "VALUES (:id, :name, :filters, :owner, :now, "
-                    ":notify_new_matches, :notify_enabled_at, :min_price_drop)"
+                    ":notify_new_matches, :notify_enabled_at, :min_price_drop, "
+                    ":price_drop_enabled_at)"
                 ),
                 {
                     "id": search_id,
@@ -341,6 +362,7 @@ def create_saved_search(
                     "notify_new_matches": req.notify_new_matches,
                     "notify_enabled_at": enabled_at,
                     "min_price_drop": req.min_price_drop,
+                    "price_drop_enabled_at": drop_enabled_at,
                 },
             )
             session.commit()
@@ -360,6 +382,8 @@ def create_saved_search(
                 notify_enabled_at=enabled_at.isoformat() if enabled_at else None,
                 new_match_alerts_supported=saved_search_is_matchable(wire),
                 last_new_match_alert_on=None,
+                price_drop_enabled_at=drop_enabled_at.isoformat() if drop_enabled_at else None,
+                last_price_drop_alert_on=None,
             )
         except Exception as exc:
             session.rollback()
@@ -404,8 +428,12 @@ def update_saved_search(
         try:
             existing = session.execute(
                 text(
-                    "SELECT id, name, filters, notify_new_matches FROM saved_searches "
-                    "WHERE id = :sid AND owner = :owner"
+                    # Row lock: the stamps below are decided from this read,
+                    # and the row's switch and threshold are written by two
+                    # requests that can arrive together.
+                    "SELECT id, name, filters, notify_new_matches, min_price_drop "
+                    "FROM saved_searches "
+                    "WHERE id = :sid AND owner = :owner FOR UPDATE"
                 ),
                 {"sid": search_id, "owner": principal.id},
             ).fetchone()
@@ -436,6 +464,22 @@ def update_saved_search(
             if "min_price_drop" in req.model_fields_set:
                 update_fields.append("min_price_drop = :min_price_drop")
                 params["min_price_drop"] = req.min_price_drop
+
+            # Drop alerts became active with this write (switched on with a
+            # minimum stored, or a minimum set while on): drops are measured
+            # from now. Changing the value while active, or switching off,
+            # leaves the stamp.
+            notify_after = (
+                existing[3] if req.notify_new_matches is None else req.notify_new_matches
+            )
+            min_drop_after = (
+                req.min_price_drop if "min_price_drop" in req.model_fields_set else existing[4]
+            )
+            if _drop_alerts_active(notify_after, min_drop_after) and not _drop_alerts_active(
+                existing[3], existing[4]
+            ):
+                update_fields.append("price_drop_enabled_at = :price_drop_enabled_at")
+                params["price_drop_enabled_at"] = _utcnow_naive()
 
             if not update_fields:
                 return get_saved_search(search_id, principal)

@@ -47,6 +47,24 @@ class SavedSearchNewMatches:
     generated_at: Optional[datetime] = None
 
 
+@dataclass(frozen=True)
+class SavedSearchPriceDrops:
+    """Immutable payload: the price drops of one saved search (Story 1.10, FR-32).
+
+    The text is rendered by
+    ``core.saved_search_price_drops.render_price_drop_email``; a channel
+    delivers ``subject`` / ``body`` as they are.
+    """
+
+    principal_id: str
+    search_id: str
+    search_name: str
+    subject: str
+    body: str
+    property_ids: List[str] = field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
 class Notifier(ABC):
     """Interface that all notifier backends must implement."""
 
@@ -65,4 +83,13 @@ class Notifier(ABC):
         """
         raise NotImplementedError(
             type(self).__name__ + " does not deliver saved-search new matches"
+        )
+
+    def send_price_drops(self, batch: SavedSearchPriceDrops) -> None:
+        """Deliver one saved search's price drops; raise when it was not delivered.
+
+        Not abstract: a channel that does not carry this message says so.
+        """
+        raise NotImplementedError(
+            type(self).__name__ + " does not deliver saved-search price drops"
         )
