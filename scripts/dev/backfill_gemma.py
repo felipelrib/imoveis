@@ -128,6 +128,7 @@ for _p in (str(_ROOT), str(_ROOT / "src")):
         sys.path.insert(0, _p)
 
 import sqlalchemy  # noqa: E402
+from redis.exceptions import RedisError  # noqa: E402
 
 from adapters.ai.client import _gemini_client_for, resolve_enrichment_backend  # noqa: E402
 from adapters.ai.image_store import ImageStore  # noqa: E402
@@ -143,6 +144,7 @@ from core.backfill_runner import (  # noqa: E402
     Checkpoint,
     DailyBudget,
     Heartbeat,
+    LivenessTicker,
     MigrationGate,
     QueueCensus,
     TokenBudget,
@@ -629,17 +631,88 @@ def _print_status(cfg, session, redis) -> None:
         )
     else:
         print("  start request        : none")
-    serving = _supervisor_heartbeat_for(cfg, redis).is_active()
+    # One read answers both "is it up" and "which process is it": two reads
+    # could straddle the expiry of the key.
+    supervisor_id = _supervisor_heartbeat_for(cfg, redis).value()
+    lease_holder = _lease_for(cfg, redis).holder()
     print(
-        f"  supervisor           : "
-        f"{'waiting for start requests' if serving else 'not running (--serve)'}"
+        "  supervisor           : "
+        f"{_supervisor_summary(supervisor_id is not None, lease_holder, supervisor_id)}"
     )
-    print(f"  lease                : {_lease_summary(_lease_for(cfg, redis).holder())}")
+    print(f"  lease                : {_lease_summary(lease_holder)}")
     _print_quarantine(_quarantine_report(ledger), indent="  ")
+
+
+def _supervisor_summary(
+    serving: bool, holder: dict | None, supervisor_id: str | None = None
+) -> str:
+    """The ``--status`` supervisor line.
+
+    The supervisor keeps its heartbeat alive while it drives a run, so "the
+    key is there" means the process is up. Whether it is free to take a start
+    request is a second fact, read from the lease: while any run holds it, a
+    new request waits.
+
+    The supervisor runs the run it drives inside its own process, so that
+    run's lease owner is the ``host:pid`` the supervisor beats its key with
+    (``supervisor_id``). A different owner is a run in another process, for
+    instance one started by hand beside an idle supervisor: this supervisor
+    is not busy, its start requests only wait. The line says "another
+    process" and nothing about who started it, which also stays true when two
+    supervisors share the prefix and the idle one beat the key last. A key
+    that carries no identity (a supervisor started before this was written,
+    which beats ``1``) or a lease whose owner is unknown cannot be told apart
+    and gets the plain line.
+    """
+    if not serving:
+        return "not running (--serve)"
+    if holder is None:
+        return "running — waiting for start requests"
+    owner = holder.get("owner")
+    if _is_process_id(supervisor_id) and _is_process_id(owner) and owner != supervisor_id:
+        return (
+            f"running — idle; a run in another process ({owner}) holds the "
+            "lease, so a start request waits"
+        )
+    return "running — busy, a run holds the lease"
+
+
+def _is_process_id(value) -> bool:
+    """True for a ``host:pid`` identity, the form ``_process_id`` writes."""
+    return isinstance(value, str) and ":" in value
+
+
+def _process_id() -> str:
+    """This process as ``host:pid``: the lease owner and the supervisor's key value."""
+    return f"{socket.gethostname()}:{os.getpid()}"
 
 
 def _control_for(cfg, redis) -> BackfillControl:
     return BackfillControl(redis, prefix=cfg.backfill.redis_prefix)
+
+
+def _liveness_for(
+    cfg, redis, *, lease=None, control=None, writes_rows: bool = True
+) -> LivenessTicker:
+    """The ticker that keeps a run's lease, state and ``:active`` key alive.
+
+    ``main`` starts one for the whole run. A pass called without one builds its
+    own and leaves it unstarted: the synchronous transitions (the beat before
+    the gate read, the renews at the loop's stop decisions) are then the same
+    code, only without the timer.
+
+    ``writes_rows=False`` is a dry run: it writes no row, so its ticker has no
+    ``:active`` heartbeat at all. With one, a dry run started beside a live
+    pass beat that pass's key and then deleted it on the way out, and
+    ``migrate-primary.sh`` read an idle guard until the live run's next beat.
+    """
+    return LivenessTicker(
+        lease=lease,
+        control=control,
+        heartbeat=(
+            Heartbeat(redis, prefix=cfg.backfill.redis_prefix) if writes_rows else None
+        ),
+    )
 
 
 def _lease_for(cfg, redis) -> BackfillLease:
@@ -648,7 +721,7 @@ def _lease_for(cfg, redis) -> BackfillLease:
         redis,
         prefix=cfg.backfill.redis_prefix,
         ttl_seconds=int(cfg.backfill.lease_ttl_seconds),
-        owner=f"{socket.gethostname()}:{os.getpid()}",
+        owner=_process_id(),
     )
 
 
@@ -711,22 +784,59 @@ def _build_ledger(cfg, redis, max_attempts: int | None = None) -> AttemptLedger:
     )
 
 
-def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResult:
+def _run(
+    cfg, session, redis, args, *, control=None, lease=None, liveness=None
+) -> BackfillResult:
     scope = _scope_from_args(args)
     stages = _stages_for(scope)
+    if liveness is None:
+        liveness = _liveness_for(
+            cfg, redis, lease=lease, control=control, writes_rows=not args.dry_run
+        )
+    elif lease is None:
+        lease = liveness.lease
     # Read the gate before the first DB query. ``fetch_candidate_rows`` (and the
     # census right after it) can block for the whole upgrade on the ACCESS
     # EXCLUSIVE lock an ALTER TABLE holds, so a pass that is going to be refused
     # anyway would sit inside Postgres long enough for its own lease to lapse.
     # This is a pure optimization — it can only refuse a pass early, never let
     # one through — so the *authoritative* beat-then-check stays exactly where it
-    # is, in ``_go`` after ``heartbeat.beat()``: only that ordering makes the two
-    # halves mutually exclusive (DW-3/DW-4).
+    # is, in ``_go`` at ``liveness.set_writing(True)``: only that ordering makes
+    # the two halves mutually exclusive (DW-3/DW-4).
     if not args.dry_run:
         early_gate = _migration_gate_for(cfg, redis)
         if early_gate.is_migrating():
             print(_migration_refusal(early_gate.holder_token()), file=sys.stderr)
             return BackfillResult(migration_blocked=True)
+        # The state is published from here, not from the first launch: the
+        # candidate fetch and the photo gating below can take minutes, and the
+        # runner doing them holds the lease. ``paused`` when a pause is
+        # pending, so a pause the previous pass acknowledged does not flip to
+        # ``running`` for the whole fetch; ``running`` otherwise.
+        #
+        # Renewed first, because a displaced runner must not stamp its state
+        # over the successor's; a refusal is latched by the ticker and
+        # ``run_backfill`` reports it as ``lease_lost``. Every step is guarded
+        # on its own: the state key is decoration, and ``run_backfill`` repeats
+        # the renew where a Redis failure ends the pass as it always did. A
+        # renew that raised says nothing about the lease, so the state is still
+        # recorded, and the ticker publishes it once Redis answers.
+        try:
+            lease_known_lost = not liveness.renew_now()
+        except Exception as exc:  # noqa: BLE001 - decoration never fails a pass
+            logger.warning("backfill_pass_start_renew_failed", error=str(exc))
+            lease_known_lost = liveness.lease_lost
+        if not lease_known_lost:
+            pass_state = BackfillState.RUNNING
+            try:
+                if control is not None and control.is_paused():
+                    pass_state = BackfillState.PAUSED
+            except Exception as exc:  # noqa: BLE001 - decoration never fails a pass
+                logger.warning("backfill_pass_start_pause_read_failed", error=str(exc))
+            try:
+                liveness.set_state(pass_state)
+            except Exception as exc:  # noqa: BLE001 - decoration never fails a pass
+                logger.warning("backfill_pass_state_publish_failed", error=str(exc))
     # A dry-run makes no API calls, so it must not require a key/client — build
     # the cloud client only for a real run. It still pre-flights the routing a
     # real run would demand, as a warning rather than a refusal.
@@ -775,7 +885,6 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
     # only for ``--dry-run``, which writes nothing anyway; ``--status`` builds
     # its own read-only checkpoint and stays lease-less by construction.
     checkpoint = Checkpoint(redis, prefix=cfg.backfill.redis_prefix, lease=lease)
-    heartbeat = Heartbeat(redis, prefix=cfg.backfill.redis_prefix)
     # A dry run takes no lease and writes nothing, so it takes no control keys
     # either — the migration gate follows the same rule.
     migration_gate = None if args.dry_run else _migration_gate_for(cfg, redis)
@@ -805,17 +914,11 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
 
     def _on_progress(res: BackfillResult) -> None:
         # A multi-day run must not die on a transient Redis blip: this hook is
-        # bookkeeping, never the run's correctness. The lease is renewed inside
-        # ``run_backfill`` (which sees failing rows and pauses too), not here.
+        # bookkeeping, never the run's correctness. It touches no Redis key:
+        # the lease, the state and the ``:active`` heartbeat are the liveness
+        # ticker's, on its own timer, so a row slower than their TTLs no longer
+        # lets them lapse (DW-9) and a Redis blip cannot cost this log line.
         try:
-            # Beat in its own arm: an inferred throttle stops the pass
-            # immediately, so this hook gets exactly one chance to emit the
-            # counter explaining the back-off. A Redis blip on the lease must
-            # not be what swallows it.
-            try:
-                heartbeat.beat()
-            except Exception as exc:  # noqa: BLE001 - the tick still matters
-                logger.warning("backfill_heartbeat_beat_failed", error=str(exc))
             milestone = res.processed - (res.processed % 25)
             inferences = getattr(client, "transport_quota_inferences", 0)
             # DW-7: an inferred throttle stops the pass immediately, so gating on
@@ -864,12 +967,14 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             ledger=None if args.dry_run else ledger,
             on_progress=_on_progress,
             control=control,
-            # The lease is renewed inside run_backfill: by a background timer
-            # every `lease_ttl_seconds / 3` for the whole pass, plus once per
-            # launch-loop iteration, pause poll and finished row. So neither a
-            # storm of failing rows, nor a long pause, nor a single property
-            # slower than the TTL can let it lapse under a second runner.
+            # The lease is renewed by the liveness ticker for the whole run,
+            # and again inside run_backfill at each of the loop's stop
+            # decisions (launch-loop head, pause poll, finished row). So
+            # neither a storm of failing rows, nor a long pause, nor a single
+            # property slower than the TTL can let it lapse under a second
+            # runner.
             lease=lease,
+            liveness=liveness,
             # Re-read on every launch and every pause poll: a migration can
             # start at any point in a pass that runs for hours.
             is_migrating=None if migration_gate is None else migration_gate.is_migrating,
@@ -895,8 +1000,14 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
         # from `_sleep_for_reset`, whose `finally` cleared the heartbeat on the
         # way in — so a sleeping runner read as idle to the guard and came back
         # writing mid-migration (DW-4).
-        heartbeat.beat()
+        #
+        # ``set_writing(True)`` is that beat, on this thread, and it also turns
+        # the ticker's timer on for the key: from here to the ``finally`` the
+        # heartbeat is refreshed whatever the rows are doing. ``False`` stops
+        # the timer and clears the key, so the census and the budget sleep that
+        # follow read as idle to the guard.
         try:
+            liveness.set_writing(True)
             if migration_gate is not None and migration_gate.is_migrating():
                 print(_migration_refusal(migration_gate.holder_token()), file=sys.stderr)
                 return BackfillResult(migration_blocked=True)
@@ -905,7 +1016,7 @@ def _run(cfg, session, redis, args, *, control=None, lease=None) -> BackfillResu
             async with client.session_context():
                 return await _run_backfill()
         finally:
-            heartbeat.clear()
+            liveness.set_writing(False)
 
     return asyncio.run(_go())
 
@@ -1013,8 +1124,12 @@ def _finish(census: QueueCensus, report: dict[str, str], *, cycle: int, elapsed:
     return code
 
 
-def _publish_wait_state(control, waiting_state: BackfillState) -> None:
+def _publish_wait_state(control, liveness, waiting_state: BackfillState) -> None:
     """Publish the control state from a sync wait loop — decoration, never fatal.
+
+    It goes through the ticker, which remembers the state and keeps it alive
+    between this loop's own publishes, and which publishes nothing once the
+    lease is lost.
 
     ``run_backfill`` guards every equivalent bookkeeping touch (``_tick_lease``,
     the ``on_progress`` hook) and so does ``main``'s exit ``finally``, for the
@@ -1023,19 +1138,19 @@ def _publish_wait_state(control, waiting_state: BackfillState) -> None:
     unattended multi-day run spends most of its wall clock, and a blip on this
     purely decorative key ended the whole run with an undocumented traceback
     (exit 1, colliding with none of the documented codes) despite an intact
-    checkpoint and a healthy provider. The stop poll and ``lease.renew()``
+    checkpoint and a healthy provider. The stop poll and the lease renew
     around it stay unguarded on purpose: those decide whether this process may
     keep writing, and a blip there ends the pass by design.
     """
     try:
-        control.publish_state(
+        liveness.set_state(
             BackfillState.PAUSED if control.is_paused() else waiting_state
         )
     except Exception as exc:  # noqa: BLE001 - the state key is decoration
         logger.warning("backfill_wait_state_publish_failed", error=str(exc))
 
 
-def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
+def _sleep_for_reset(wait: float, *, cfg, control=None, liveness=None) -> str:
     """Sleep out a budget window in small, interruptible steps.
 
     Returns the outcome the caller maps to an exit code, exactly like
@@ -1057,7 +1172,16 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
     * **state re-publish** every ``_STATE_REFRESH_SECONDS`` — strictly below the
       120s state-key TTL, so ``backing-off`` never decays to ``idle`` while the
       runner is in fact alive and waiting.
+
+    The lease and the state go through ``liveness``. Its timer also renews and
+    re-publishes during the sleep; the renew here stays because it is this
+    loop's stop decision, and a loss the timer found is read on every step.
+    ``:active`` is not beaten during the sleep: the pass cleared it on its way
+    out, so a sleeping runner reads as idle to ``migrate-primary.sh``.
     """
+    if liveness is None:
+        # No lease to renew; the state still goes out through one code path.
+        liveness = LivenessTicker(control=control)
     step = max(0.05, float(cfg.backfill.control_poll_seconds))
     renew_every = max(1.0, float(cfg.backfill.lease_ttl_seconds) / 3.0)
     state_every = float(_STATE_REFRESH_SECONDS)
@@ -1072,19 +1196,24 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
     next_renew = 0.0
     next_state = 0.0
     while True:
+        # First, before anything else is read: once the lease is lost the
+        # control keys belong to the successor, and a stop found there is aimed
+        # at that run, not at this one.
+        if liveness.lease_lost:
+            return "lease_lost"
         elapsed = max(slept, time.monotonic() - started)
         if elapsed >= wait:
             return "elapsed"
         if control is not None and control.should_stop():
             return "stopped"
-        if lease is not None and elapsed >= next_renew:
+        if liveness.lease is not None and elapsed >= next_renew:
             # Losing the lease mid-wait used to go unnoticed for the rest of the
             # window — potentially hours asleep on a lease someone else now
             # owns. Return so the next pass sees it and exits EXIT_LEASE_LOST.
             # Checked *before* publishing: a lapsed lease means the state key
             # already describes the successor, and stamping ``backing-off`` over
             # their ``running`` is exactly the lie the exit path guards against.
-            if not lease.renew():
+            if not liveness.renew_now():
                 return "lease_lost"
             # Fixed cadence (``+=``), not ``elapsed + every``: the latter folds
             # each check's own offset into the next deadline and drifts.
@@ -1097,7 +1226,7 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
             # (and story 1.5's API) got no acknowledgement the request had
             # been seen. The wait itself is unchanged — the launch loop is
             # what actually holds on a pause.
-            _publish_wait_state(control, BackfillState.BACKING_OFF)
+            _publish_wait_state(control, liveness, BackfillState.BACKING_OFF)
             next_state += state_every
             if next_state <= elapsed:
                 next_state = elapsed + state_every
@@ -1107,7 +1236,7 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, lease=None) -> str:
 
 
 def _wait_out_migration(
-    cfg, redis, *, control=None, lease=None, budget_seconds=None
+    cfg, redis, *, control=None, liveness=None, budget_seconds=None
 ) -> str:
     """Poll until ``migrate-primary.sh`` releases the key.
 
@@ -1133,7 +1262,12 @@ def _wait_out_migration(
 
     The key is only ever read: it belongs to the migration and self-clears on
     its own TTL, so clearing it here would green-light writes mid-upgrade.
+
+    As in ``_sleep_for_reset``, the lease and the state go through
+    ``liveness``, and ``:active`` is not beaten while this waits.
     """
+    if liveness is None:
+        liveness = LivenessTicker(control=control)
     gate = _migration_gate_for(cfg, redis)
     limit = float(cfg.backfill.migration_wait_seconds)
     if budget_seconds is not None:
@@ -1152,6 +1286,10 @@ def _wait_out_migration(
     next_state = 0.0
     announced = False
     while True:
+        # First, as in ``_sleep_for_reset``: a displaced runner must not report
+        # (and have its caller clear) a stop aimed at its successor.
+        if liveness.lease_lost:
+            return "lease_lost"
         if not gate.is_migrating():
             return "cleared"
         elapsed = time.monotonic() - started
@@ -1164,8 +1302,8 @@ def _wait_out_migration(
             return "stopped"
         if elapsed >= limit:
             return "timeout"
-        if lease is not None and elapsed >= next_renew:
-            if not lease.renew():
+        if liveness.lease is not None and elapsed >= next_renew:
+            if not liveness.renew_now():
                 return "lease_lost"
             next_renew = max(next_renew + renew_every, elapsed + renew_every)
         if control is not None and elapsed >= next_state:
@@ -1173,7 +1311,7 @@ def _wait_out_migration(
             # a pause issued during the wait must still read back as ``paused``.
             # ``BLOCKED``, never ``BACKING_OFF``: no provider refused anything
             # here, and "backing-off" points the operator at the wrong system.
-            _publish_wait_state(control, BackfillState.BLOCKED)
+            _publish_wait_state(control, liveness, BackfillState.BLOCKED)
             next_state = max(next_state + state_every, elapsed + state_every)
         if not announced:
             announced = True
@@ -1186,7 +1324,33 @@ def _wait_out_migration(
         time.sleep(min(step, limit - elapsed))
 
 
-def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
+# What a Redis call raises when Redis cannot be reached: redis-py's own
+# hierarchy, and the builtins a socket (or a test double) raises directly.
+_REDIS_UNREACHABLE = (RedisError, ConnectionError, TimeoutError)
+
+
+def _lease_lost_pass(liveness, exc: Exception) -> BackfillResult:
+    """The result of a pass that died on Redis, when the lease is already lost.
+
+    Before its first launch a pass reads Redis three times (the early
+    migration gate, the attempt ledger in ``partition_candidates``, the gate
+    again in ``_go``). When the ticker latched the loss during the candidate
+    fetch, after an outage as long as the lease TTL, Redis may still be down
+    and one of those reads raises: the outcome is still "lease lost" (exit 7),
+    not a traceback (exit 1). With the lease held, or without a ticker, the
+    error is the caller's to see and is raised again. Only Redis errors are
+    taken over; anything else a pass raises is a defect and keeps its
+    traceback.
+    """
+    if liveness is None or not liveness.lease_lost:
+        raise exc
+    logger.warning("backfill_pass_failed_after_lease_loss", error=str(exc))
+    return BackfillResult(lease_lost=True)
+
+
+def _run_continuous(
+    cfg, redis, args, *, control=None, lease=None, liveness=None
+) -> int:
     """Run passes until the backfill completes, sleeping across RPD-window resets.
 
     Each pass enriches until the daily budget is exhausted (or candidates run
@@ -1233,13 +1397,41 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
     while True:
         cycle += 1
         with SessionLocal() as session:
-            result = _run(cfg, session, redis, args, control=control, lease=lease)
+            try:
+                result = _run(
+                    cfg, session, redis, args,
+                    control=control, lease=lease, liveness=liveness,
+                )
+            except _REDIS_UNREACHABLE as exc:
+                result = _lease_lost_pass(liveness, exc)
             # A blocked pass launched nothing, so there is nothing to measure —
             # and the census SELECTs run on the same session, where an ALTER
             # TABLE's ACCESS EXCLUSIVE lock can hold them for the whole upgrade.
             # Waiting there instead of in ``_wait_out_migration`` costs this
             # runner its lease.
-            census = None if result.migration_blocked else _census(cfg, session, ledger)
+            try:
+                census = (
+                    None if result.migration_blocked else _census(cfg, session, ledger)
+                )
+            except Exception as exc:  # noqa: BLE001 - re-raised unless the lease is lost
+                # The census reads the attempt ledger in Redis. After a Redis
+                # outage as long as the lease TTL the lease is lost and Redis
+                # may still be down: the outcome is "lease lost" (exit 7), and
+                # a census that cannot be taken must not replace it with a
+                # traceback (exit 1).
+                if not (
+                    result.lease_lost
+                    or (liveness is not None and liveness.lease_lost)
+                ):
+                    raise
+                logger.warning("backfill_census_failed_after_lease_loss", error=str(exc))
+                census = None
+        # The ticker renewed through the fetch and the census above. If it
+        # found the lease gone in that stretch (after the pass's last own
+        # check), the pass result does not know yet, and the branches below
+        # would report a successor's drained queue as this run's completion.
+        if liveness is not None and liveness.lease_lost:
+            result.lease_lost = True
         enriched_this_run += result.processed
         errors_this_run += result.errors
         remaining = "unmeasured" if census is None else census.remaining
@@ -1279,7 +1471,7 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
                 cfg,
                 redis,
                 control=control,
-                lease=lease,
+                liveness=liveness,
                 budget_seconds=max(
                     0.0, float(cfg.backfill.migration_wait_seconds) - migration_waited
                 ),
@@ -1331,6 +1523,21 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # exit code exists to surface, and let ``main`` stamp its final state
         # over the successor's.
         if result.lease_lost:
+            if census is None:
+                # The census could not be taken (see above): the banner goes
+                # out without the queue summary, with the totals this run
+                # counted itself.
+                _print_banner(
+                    _LEASE_LOST_TITLE,
+                    [
+                        f"cycles {cycle} · elapsed "
+                        f"{_format_elapsed(time.monotonic() - started)}"
+                        f" · enriched this run {enriched_this_run:,}"
+                        f" · errors {errors_this_run:,}",
+                        *_lease_lost_lines(result),
+                    ],
+                )
+                return EXIT_LEASE_LOST
             _print_banner(
                 _LEASE_LOST_TITLE,
                 _terminal_summary(
@@ -1503,7 +1710,10 @@ def _run_continuous(cfg, redis, args, *, control=None, lease=None) -> int:
         # elapsed window: the successor that took the lease has been draining
         # the queue, so that pass fetches nothing, never reaches a renewal, and
         # the run below reported the successor's completion as its own.
-        if _sleep_for_reset(wait, cfg=cfg, control=control, lease=lease) == "lease_lost":
+        if (
+            _sleep_for_reset(wait, cfg=cfg, control=control, liveness=liveness)
+            == "lease_lost"
+        ):
             # Lost while sleeping out the budget window: nothing was in flight.
             _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines())
             return EXIT_LEASE_LOST
@@ -1525,6 +1735,9 @@ def _supervisor_heartbeat_for(cfg, redis) -> Heartbeat:
         redis,
         prefix=supervisor_prefix(cfg.backfill.redis_prefix),
         ttl_seconds=ttl,
+        # Read back by ``--status`` (``_supervisor_summary``); every other
+        # reader only asks whether the key exists.
+        value=_process_id(),
     )
 
 
@@ -1766,7 +1979,14 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
             try:
                 # Never lets a failing run end the supervisor: the request it
                 # consumed is already gone, so dying here would lose both.
-                rc = _run_supervised(_continuous_argv(args))
+                #
+                # The poll loop above is the only other place that beats the
+                # supervisor heartbeat, and it does not turn while a run is
+                # being driven: the key expired and ``--status`` reported the
+                # supervisor as not running for the whole (multi-day) run
+                # (DW-34). A keepalive-only ticker beats it for that stretch.
+                with LivenessTicker(keepalives=(heartbeat,)):
+                    rc = _run_supervised(_continuous_argv(args))
             finally:
                 # The run installed its own stop-signal handlers; take them back
                 # so the idle loop below answers Ctrl-C itself — and re-arm the
@@ -2059,8 +2279,18 @@ def main(argv: list[str] | None = None) -> int:
     quota_backoff = False
     lease_lost = False
     stopped = False
+    liveness = None
     try:
         if lease is not None:
+            # One ticker for the whole run, from the acquire above to the
+            # release below, on its own thread. It renews the lease and
+            # re-publishes the state throughout: the candidate fetch, the
+            # census, a slow row and the waits between passes (DW-20, DW-21).
+            # It beats ``:active`` only inside a pass, where a slow row no
+            # longer lets it lapse (DW-9); between passes that key is absent on
+            # purpose, so the runner reads as idle to ``migrate-primary.sh``.
+            liveness = _liveness_for(cfg, redis, lease=lease, control=control)
+            liveness.start()
             # A fresh run must not inherit a pause/stop left over from the last
             # one — but silently dropping an operator's request is its own bug,
             # so say exactly what is being discarded.
@@ -2072,7 +2302,12 @@ def main(argv: list[str] | None = None) -> int:
             # --continuous processes to completion; a per-run --limit would loop.
             args.limit = None
             rc = _run_continuous(
-                cfg, redis, args, control=None if args.dry_run else control, lease=lease
+                cfg,
+                redis,
+                args,
+                control=None if args.dry_run else control,
+                lease=lease,
+                liveness=liveness,
             )
             # run_backfill publishes BACKING_OFF when the provider refused; the
             # finally below must not erase it.
@@ -2104,22 +2339,41 @@ def main(argv: list[str] | None = None) -> int:
             return rc
 
         with SessionLocal() as session:
-            result = _run(
-                cfg,
-                session,
-                redis,
-                args,
-                control=None if args.dry_run else control,
-                lease=lease,
-            )
+            try:
+                result = _run(
+                    cfg,
+                    session,
+                    redis,
+                    args,
+                    control=None if args.dry_run else control,
+                    lease=lease,
+                    liveness=liveness,
+                )
+            except _REDIS_UNREACHABLE as exc:
+                result = _lease_lost_pass(liveness, exc)
+        if liveness is not None and liveness.lease_lost:
+            # Found by the ticker after the pass's last own check.
+            result.lease_lost = True
         quota_backoff = result.quota_exhausted
         lease_lost = result.lease_lost
         # Read the stop request while the lease is still held. Reading it after
         # the release (as this did) means a runner that started in between owns
         # these keys, so an operator's stop aimed at *that* live run was
         # reported as served by this one — and then cleared, so it never stopped.
-        stopped = result.stopped or (not args.dry_run and control.should_stop())
+        # Not read at all once the lease is lost: the key then belongs to the
+        # successor (and Redis may be down, which is how the lease was lost).
+        stopped = result.stopped or (
+            not args.dry_run and not lease_lost and control.should_stop()
+        )
     finally:
+        if liveness is not None:
+            # First: once the ticker is stopped nothing re-publishes the state
+            # or renews the lease behind the final publish and the release
+            # below. Its verdict on the lease counts here too — a loss it found
+            # on its own thread (an outage as long as the TTL) means the keys
+            # describe a successor, whatever the exit code says.
+            liveness.stop()
+            lease_lost = lease_lost or liveness.lease_lost
         if lease is not None:
             # Everything that touches the control keys happens *before* the
             # release. Releasing first opens a window in which a newly started

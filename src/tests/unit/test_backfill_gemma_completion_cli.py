@@ -435,8 +435,12 @@ def test_budget_sleep_renews_the_lease_so_no_second_runner_slips_in(monkeypatch)
     sleeps = []
     monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
 
+    control = mod.BackfillControl(redis, prefix="t")
     mod._sleep_for_reset(
-        25.0, cfg=cfg, control=mod.BackfillControl(redis, prefix="t"), lease=lease
+        25.0,
+        cfg=cfg,
+        control=control,
+        liveness=mod.LivenessTicker(lease=lease, control=control),
     )
 
     # Slept in control_poll_seconds steps, but the total wait is unchanged.
@@ -462,7 +466,7 @@ def test_budget_sleep_notices_a_stop_within_one_poll_interval(monkeypatch):
 
     monkeypatch.setattr(mod.time, "sleep", _sleep)
 
-    mod._sleep_for_reset(86400.0, cfg=cfg, control=control, lease=None)
+    mod._sleep_for_reset(86400.0, cfg=cfg, control=control, liveness=None)
 
     assert sleeps == [2.0, 2.0]  # noticed on the very next poll, not 300s later
     assert sum(sleeps) < 10
@@ -480,7 +484,7 @@ def test_budget_sleep_republishes_the_state_below_its_ttl(monkeypatch):
         control, "publish_state", lambda state: published.append(state)
     )
 
-    mod._sleep_for_reset(600.0, cfg=cfg, control=control, lease=None)
+    mod._sleep_for_reset(600.0, cfg=cfg, control=control, liveness=None)
 
     # 600s of back-off at a refresh interval strictly below the 120s TTL.
     assert len(published) >= 600 / mod._STATE_REFRESH_SECONDS
@@ -496,7 +500,7 @@ def test_budget_sleep_is_cut_short_by_a_stop_request(monkeypatch):
     sleeps = []
     monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
 
-    mod._sleep_for_reset(3600.0, cfg=cfg, control=control, lease=None)
+    mod._sleep_for_reset(3600.0, cfg=cfg, control=control, liveness=None)
 
     assert sleeps == []
 

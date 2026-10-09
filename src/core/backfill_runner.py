@@ -18,7 +18,9 @@ if a live worker enriched a row in between.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -556,16 +558,35 @@ class Checkpoint:
 class Heartbeat:
     """Short-TTL 'backfill active' flag other components can observe."""
 
-    def __init__(self, redis: Any, *, prefix: str, ttl_seconds: int = 300) -> None:
+    def __init__(
+        self, redis: Any, *, prefix: str, ttl_seconds: int = 300, value: str = "1"
+    ) -> None:
         self._redis = redis
         self._key = f"{prefix}:active"
         self._ttl = ttl_seconds
+        # What the key holds. Every reader but :meth:`value` only asks whether
+        # the key exists, so the default stays the historical ``"1"``.
+        self._value = value or "1"
+
+    @property
+    def ttl_seconds(self) -> int:
+        """TTL of the key; for :class:`LivenessTicker` a beat is due every third of this."""
+        return self._ttl
 
     def beat(self) -> None:
-        self._redis.set(self._key, "1", ex=self._ttl)
+        self._redis.set(self._key, self._value, ex=self._ttl)
 
     def clear(self) -> None:
         self._redis.delete(self._key)
+
+    def value(self) -> Optional[str]:
+        """What the key holds right now, or None when it is absent. Read-only.
+
+        The ``--serve`` supervisor beats its key with its own ``host:pid``, so
+        ``--status`` can tell the run it drives from one started by hand.
+        """
+        raw = self._redis.get(self._key)
+        return _decode(raw) if raw else None
 
     def is_active(self) -> bool:
         """Read-only liveness probe — never beats the key.
@@ -987,6 +1008,472 @@ class BackfillControl:
             return BackfillState(raw)
         except ValueError:
             return BackfillState.IDLE
+
+
+# Fallbacks for a primitive that does not say how long its key lives (a test
+# double). They are the defaults of the real classes above.
+_DEFAULT_LEASE_TTL_SECONDS = 900.0
+_DEFAULT_HEARTBEAT_TTL_SECONDS = 300.0
+# How often an empty ticker wakes up. Nothing is due, so the value only bounds
+# how long ``stop()`` waits for the thread.
+_EMPTY_TICKER_INTERVAL_SECONDS = 1.0
+# How long a caller's transition (``set_state``, ``set_writing``,
+# ``release_heartbeat``) waits for a tick that is writing the same key. A tick
+# stuck in a socket holds that lock for as long as the socket hangs, and the
+# launch loop must still get to its next read of ``lease_lost``, so the caller
+# waits this long and then goes on without the lock.
+_LIVENESS_LOCK_WAIT_SECONDS = 2.0
+
+
+def _positive_seconds(value: Any, default: float) -> float:
+    """``value`` as seconds when it is a positive number, else ``default``.
+
+    The ticker reads TTLs off duck-typed objects. A ``MagicMock`` attribute is
+    neither a number nor comparable, so anything that is not a plain positive
+    number falls back instead of turning a cadence into nonsense.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return float(default)
+    return float(value)
+
+
+class LivenessTicker:
+    """Keeps a run's three liveness keys alive for as long as the run lives.
+
+    A backfill run is visible through three Redis keys with three meanings:
+
+    * the **lease** (``<prefix>:lease``): this process owns the run;
+    * the **published state** (``<prefix>:state``): what the run is doing;
+    * the **heartbeat** (``<prefix>:active``): rows may be written right now,
+      which is what ``migrate-primary.sh`` probes.
+
+    Each used to be refreshed from a different event (a launch, a finished row,
+    a wait-loop step), so a slow row, the candidate fetch or the census let a
+    live run read as idle and could let the lease lapse (DW-9, DW-20, DW-21).
+    The ticker refreshes all three on a timer of its own. The run only tells it
+    what is true: :meth:`set_state`, :meth:`set_writing`, and the pause hold.
+
+    It runs on a daemon thread, not an asyncio task: the stretches it has to
+    cover include blocking database calls outside any event loop, and a
+    blocking section inside an enrichment starves a coroutine timer just the
+    same. The thread touches no asyncio object; the run reads
+    :attr:`lease_lost`, a property that reads the clock and may latch the
+    loss, with no Redis I/O.
+
+    The ticker also decides when the lease is lost. A refused renew is a loss at
+    once. A Redis failure is retried on every tick and changes nothing until a
+    whole lease TTL has passed without one successful renew; from then on the
+    lease has expired in Redis and a successor may hold it, so that is a loss
+    too (DW-10). A loss is terminal: the lease is not renewed and no state is
+    published afterwards, because those keys now describe the successor. The
+    ``:active`` heartbeat is the exception: rows already in flight drain after
+    a loss and still write, so the timer keeps beating it until the pass ends.
+    No new beating starts once the lease is lost, and the key is not cleared.
+
+    ``keepalives`` are extra heartbeats beaten on every due tick whatever the
+    lease or writing state (the supervisor's own key). ``clock`` is injectable
+    so the state machine is tested through :meth:`tick` without a thread, and
+    it is never the run loop's clock.
+    """
+
+    def __init__(
+        self,
+        *,
+        lease: Optional[Any] = None,
+        control: Optional[Any] = None,
+        heartbeat: Optional[Any] = None,
+        keepalives: Iterable[Any] = (),
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._lease = lease
+        self._control = control
+        self._heartbeat = heartbeat
+        self._clock = clock
+
+        self._lease_ttl = _positive_seconds(
+            getattr(lease, "ttl_seconds", None), _DEFAULT_LEASE_TTL_SECONDS
+        )
+        self._lease_every = self._lease_ttl / 3.0
+        self._state_every = _positive_seconds(
+            getattr(control, "refresh_interval_seconds", None), _STATE_REFRESH_SECONDS
+        )
+        self._beat_every = (
+            _positive_seconds(
+                getattr(heartbeat, "ttl_seconds", None), _DEFAULT_HEARTBEAT_TTL_SECONDS
+            )
+            / 3.0
+        )
+
+        now = clock()
+        # Each keepalive: [heartbeat, period, next due time].
+        self._keepalives: list[list[Any]] = [
+            [
+                keepalive,
+                _positive_seconds(
+                    getattr(keepalive, "ttl_seconds", None),
+                    _DEFAULT_HEARTBEAT_TTL_SECONDS,
+                )
+                / 3.0,
+                now,
+            ]
+            for keepalive in keepalives
+        ]
+
+        periods = [entry[1] for entry in self._keepalives]
+        if lease is not None:
+            periods.append(self._lease_every)
+        if control is not None:
+            periods.append(self._state_every)
+        if heartbeat is not None:
+            periods.append(self._beat_every)
+        self._interval = (
+            max(0.05, min(periods)) if periods else _EMPTY_TICKER_INTERVAL_SECONDS
+        )
+
+        # The owner builds the ticker right after ``lease.acquire()``, so the
+        # lease is as fresh as it gets: the outage bound starts here.
+        self._last_renew_ok = now
+        self._next_renew = now + self._lease_every
+        self._renew_failing = False
+        self._lost = False
+        self._latch_lock = threading.Lock()
+
+        self._state: Optional[BackfillState] = None
+        self._next_state = now
+        self._writing = False
+        self._held = False
+        self._next_beat = now
+        # Serializes the state and heartbeat writes of the thread with the
+        # caller's transitions, so a tick that read the old value cannot write
+        # it after the caller wrote the new one (``running`` over
+        # ``backing-off``, a beat after the clear). The lease is not under it:
+        # ``lease_lost`` must stay readable while a tick is stuck in a socket.
+        # Nobody waits on it without a bound: a caller gives up after
+        # ``_LIVENESS_LOCK_WAIT_SECONDS`` (see ``_caller_lock``) and a tick
+        # skips the chore when it is busy.
+        self._io_lock = threading.Lock()
+
+        self._failing: set[str] = set()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    # -- read-only surface --------------------------------------------------
+
+    @property
+    def lease(self) -> Optional[Any]:
+        """The lease this ticker renews, or None."""
+        return self._lease
+
+    @property
+    def interval(self) -> float:
+        """Seconds between wake-ups: the smallest period of anything it keeps alive."""
+        return self._interval
+
+    @property
+    def lease_lost(self) -> bool:
+        """True once the lease is gone. No Redis I/O.
+
+        Either a loss was latched, or a whole lease TTL has passed since the
+        last successful renew. The second half is computed here, by the reader,
+        so it holds even when the ticker thread is stuck inside a Redis call and
+        no tick completes.
+        """
+        if self._lost:
+            return True
+        if self._lease is None:
+            return False
+        if self._clock() - self._last_renew_ok >= self._lease_ttl:
+            self._latch(
+                f"no successful renew for a whole lease TTL ({self._lease_ttl:.0f}s) "
+                "— the lease has expired and another runner may hold it"
+            )
+            return True
+        return False
+
+    # -- lease ----------------------------------------------------------------
+
+    def _latch(self, reason: str) -> None:
+        """Record the loss once and log it once, whoever found it."""
+        with self._latch_lock:
+            if self._lost:
+                return
+            self._lost = True
+        try:
+            _log_lease_lost(reason)
+        except Exception:  # noqa: BLE001 - a log line never undoes the latch
+            pass
+
+    def note_lease_lost(self, reason: str) -> None:
+        """Latch a loss found elsewhere (a refused checkpoint write)."""
+        self._latch(reason)
+
+    def renew_now(self) -> bool:
+        """Renew the lease on the caller's thread. False means it is lost.
+
+        Same owner-token CAS and same bookkeeping as the timer, so a renew made
+        here pushes the timer's next one out. Raises on a Redis error: the call
+        sites are the launch loop's stop decisions, where a failure ends the
+        pass as it did before. Returns False without touching Redis once the
+        lease is lost. True when there is no lease to renew.
+        """
+        if self._lease is None:
+            return True
+        if self.lease_lost:
+            return False
+        # Stamped before the call: the TTL in Redis restarts no earlier than
+        # this, so the outage bound errs early, never late.
+        stamp = self._clock()
+        try:
+            renewed = bool(self._lease.renew())
+        except Exception:
+            self._renew_failing = True
+            raise
+        if not renewed:
+            # A renew that was stuck in a socket past ``stop()`` comes back
+            # after the owner released the lease: the refusal is the release,
+            # not a successor, and it must not log a loss for a run that ended
+            # cleanly.
+            if self._stop_event.is_set():
+                return False
+            self._latch("renew refused — another runner may hold the lease")
+            return False
+        self._renew_failing = False
+        self._last_renew_ok = max(self._last_renew_ok, stamp)
+        self._next_renew = stamp + self._lease_every
+        # A renew that itself took a whole TTL to come back proves nothing.
+        return not self.lease_lost
+
+    # -- published state ------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _caller_lock(self):
+        """Hold ``_io_lock`` for a caller's transition, waiting a bounded time.
+
+        When a tick is stuck in a Redis call it holds the lock for as long as
+        the socket hangs. The caller then proceeds without it: an out-of-order
+        write of a key that is re-published within one period is the smaller
+        harm, a launch loop that never reaches its next lease check the larger.
+        """
+        acquired = self._io_lock.acquire(timeout=_LIVENESS_LOCK_WAIT_SECONDS)
+        try:
+            yield
+        finally:
+            if acquired:
+                self._io_lock.release()
+
+    def set_state(self, state: BackfillState) -> None:
+        """Remember ``state`` and publish it now; the timer keeps it alive.
+
+        Nothing is published once the lease is lost. Raises on a Redis error;
+        the state is remembered first, so the timer still publishes it later.
+        """
+        with self._caller_lock():
+            self._state = state
+            if self._control is None or self.lease_lost:
+                return
+            self._control.publish_state(state)
+            self._next_state = self._clock() + self._state_every
+
+    # -- `<prefix>:active` ------------------------------------------------------
+
+    def set_writing(self, writing: bool) -> None:
+        """Say whether rows may be written from now on.
+
+        ``True`` beats the heartbeat on the caller's thread before returning
+        (and raises on a Redis error), so the caller can read
+        ``<prefix>:migrating`` right after it: that order is what makes the run
+        and ``migrate-primary.sh`` mutually exclusive. The timer beats it from
+        then on.
+
+        ``False`` stops the beating and clears the key. It never raises, and it
+        does not clear once the lease is lost, because a successor may be
+        beating the same key. Either value ends a pause hold.
+
+        ``True`` once the lease is lost starts nothing: no beat now and none on
+        the timer. A pass that begins on a lost lease launches no row.
+        """
+        if writing:
+            with self._caller_lock():
+                if self.lease_lost:
+                    self._writing = False
+                    return
+                self._held = False
+                if self._heartbeat is not None:
+                    self._heartbeat.beat()
+                    self._next_beat = self._clock() + self._beat_every
+                self._writing = True
+            return
+        try:
+            with self._caller_lock():
+                self._writing = False
+                self._held = False
+                if self._heartbeat is not None and not self.lease_lost:
+                    self._heartbeat.clear()
+        except Exception as exc:  # noqa: BLE001 - the key expires on its own TTL
+            _log_liveness_failed("clear-active", exc)
+
+    def hold_heartbeat(self) -> None:
+        """Stop beating while a pause has nothing in flight.
+
+        A paused runner must read as idle to ``migrate-primary.sh``, which is
+        the main reason an operator pauses. The key is left to lapse on its TTL
+        instead of being cleared, for two reasons: that is what a pause did
+        before the ticker existed (nothing beat the key, nothing cleared it),
+        and the pause loop calls this on every poll, so it must do no Redis
+        I/O.
+        """
+        self._held = True
+
+    def release_heartbeat(self) -> None:
+        """End a pause hold; beats now, on the caller's thread, when writing.
+
+        The beat is synchronous for the same reason as in :meth:`set_writing`:
+        the launch loop reads the migration key again before its next launch.
+        Raises on a Redis error. Once the lease is lost it does nothing: the
+        hold stays, so no beating starts again.
+        """
+        with self._caller_lock():
+            if self.lease_lost:
+                return
+            self._held = False
+            if self._writing and self._heartbeat is not None:
+                self._heartbeat.beat()
+                self._next_beat = self._clock() + self._beat_every
+
+    # -- the timer --------------------------------------------------------------
+
+    def tick(self) -> None:
+        """Run the chores that are due. Never raises.
+
+        This is what the thread calls on every wake-up and what the tests call
+        directly. A failing chore is logged once per streak of failures and
+        does not stop the others.
+        """
+        if self._stop_event.is_set():
+            return
+        try:
+            now = self._clock()
+        except Exception as exc:  # noqa: BLE001 - never out of a tick
+            _log_liveness_failed("clock", exc)
+            return
+        self._guarded("lease", lambda: self._tick_lease(now))
+        self._guarded("state", lambda: self._tick_state(now))
+        self._guarded("active", lambda: self._tick_heartbeat(now))
+        for index, entry in enumerate(self._keepalives):
+            self._guarded(f"keepalive-{index}", lambda e=entry: self._tick_keepalive(e, now))
+
+    def _guarded(self, chore: str, run: Callable[[], None]) -> None:
+        try:
+            run()
+        except Exception as exc:  # noqa: BLE001 - a Redis failure never leaves a tick
+            if chore not in self._failing:
+                self._failing.add(chore)
+                _log_liveness_failed(chore, exc)
+        else:
+            if chore in self._failing:
+                self._failing.discard(chore)
+                _log_liveness_recovered(chore)
+
+    def _tick_lease(self, now: float) -> None:
+        if self._lease is None or self.lease_lost:
+            return
+        # After a failed renew the retry is on every tick, not every ttl/3: the
+        # outage bound is one TTL, and three attempts would be too few to tell
+        # a blip from an outage.
+        if self._renew_failing or now >= self._next_renew:
+            # Checked again right before the call: a tick that outlives
+            # ``stop()`` must not renew after the owner released the lease.
+            if self._stop_event.is_set():
+                return
+            self.renew_now()
+
+    def _tick_state(self, now: float) -> None:
+        if self._control is None or self._state is None or now < self._next_state:
+            return
+        # Never waits: a caller is writing this key right now, and the next
+        # tick is one interval away.
+        if not self._io_lock.acquire(blocking=False):
+            return
+        try:
+            if self._stop_event.is_set() or self._state is None or self.lease_lost:
+                return
+            self._control.publish_state(self._state)
+            self._next_state = now + self._state_every
+        finally:
+            self._io_lock.release()
+
+    def _tick_heartbeat(self, now: float) -> None:
+        if self._heartbeat is None or now < self._next_beat:
+            return
+        if not self._io_lock.acquire(blocking=False):
+            return
+        try:
+            # Not gated on the lease: rows in flight drain after a loss and are
+            # still writing, so the key must stay alive until the pass ends.
+            # ``set_writing`` and ``release_heartbeat`` are what refuse to
+            # start beating on a lost lease.
+            if self._stop_event.is_set() or not self._writing or self._held:
+                return
+            self._heartbeat.beat()
+            self._next_beat = now + self._beat_every
+        finally:
+            self._io_lock.release()
+
+    def _tick_keepalive(self, entry: list[Any], now: float) -> None:
+        keepalive, period, due = entry
+        if now < due:
+            return
+        # A tick that outlives ``stop()`` must not re-beat a key its owner has
+        # cleared (the supervisor clears its heartbeat on the way out).
+        if self._stop_event.is_set():
+            return
+        keepalive.beat()
+        entry[2] = now + period
+
+    def _loop(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            self.tick()
+
+    def start(self) -> "LivenessTicker":
+        """Start the daemon thread. Calling it again does nothing."""
+        if self._thread is None and not self._stop_event.is_set():
+            self._thread = threading.Thread(
+                target=self._loop, name="backfill-liveness", daemon=True
+            )
+            self._thread.start()
+        return self
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop ticking and wait up to ``timeout`` for the thread. Never raises.
+
+        It writes nothing: the keys are the owner's to end (the final state,
+        the lease release). A tick that was already running may still finish
+        the chore it is in; ``timeout`` bounds the wait for it, and the thread
+        is a daemon, so one stuck in a socket cannot keep the process alive.
+        """
+        self._stop_event.set()
+        thread = self._thread
+        if thread is None or thread is threading.current_thread():
+            return
+        try:
+            thread.join(timeout)
+        except Exception as exc:  # noqa: BLE001 - never out of stop()
+            _log_liveness_failed("stop", exc)
+            return
+        if thread.is_alive():
+            _log_liveness_failed(
+                "stop",
+                TimeoutError(
+                    f"the liveness thread was still inside a tick after {timeout:g}s; "
+                    "it re-checks the stop flag before its next Redis call"
+                ),
+            )
+
+    def __enter__(self) -> "LivenessTicker":
+        return self.start()
+
+    def __exit__(self, *_exc_info: Any) -> None:
+        self.stop()
 
 
 def pending_control_requests(control: Any) -> list[str]:
@@ -1659,6 +2146,7 @@ async def run_backfill(
     pause_poll_seconds: float = 2.0,
     lease_renew_interval: Optional[float] = None,
     lease_sleep_fn: SleepFn = asyncio.sleep,
+    liveness: Optional[LivenessTicker] = None,
 ) -> BackfillResult:
     """Enrich candidate ``(property, metrics)`` rows, up to ``concurrency`` at once.
 
@@ -1754,7 +2242,34 @@ async def run_backfill(
     :attr:`BackfillResult.migration_blocked` — *not* ``stopped``: nobody asked
     this run to end, the checkpoint is untouched, and the caller is free to wait
     the migration out and come back.
+
+    ``liveness`` hands the three liveness keys to a :class:`LivenessTicker`
+    that outlives this call (v0.14-s1.12). Without it nothing above changes.
+    With it:
+
+    * the lease is the ticker's (``liveness.lease``). The synchronous renew
+      sites listed above stay as the loop's stop decision and go through
+      ``liveness.renew_now()``; the background timer task is not created,
+      because the ticker's thread renews for the whole run, including a row
+      that blocks the event loop;
+    * ``BackfillResult.lease_lost`` also follows ``liveness.lease_lost``, read
+      at the launch-loop head, after ``sem.acquire()`` and before every write
+      of shared state, so a loss the ticker found while the loop was parked
+      (a refused renew, or a Redis outage as long as the lease TTL) stops the
+      launches;
+    * the published state goes through ``liveness.set_state`` and the ticker
+      keeps it alive, so the loop's own refresh is a no-op;
+    * a pause with nothing in flight holds the ``:active`` heartbeat (a paused
+      runner must read as idle to ``migrate-primary.sh``) and the resume beats
+      it on this thread before the next launch;
+    * the closing ``idle`` is not published: the run goes on after this pass
+      (census, the wait for the next window) and whoever owns the ticker ends
+      it. ``backing-off`` is still published.
     """
+    if liveness is not None and lease is None:
+        # One lease for everything below (the finished-row renew, the
+        # checkpoint warning): the ticker's.
+        lease = liveness.lease
     if dry_run:
         return _run_dry(
             rows,
@@ -1812,10 +2327,27 @@ async def run_backfill(
         handover rules would be two things to keep in step (v0.13-fu7 guarded
         the first, DW-11 is the second).
         """
+        _sync_lease_lost()
         return not result.lease_lost
+
+    def _sync_lease_lost() -> None:
+        """Take over a loss the ticker found on its own thread.
+
+        The ticker has already logged it, so this only sets the flag every
+        launch-loop check reads.
+        """
+        if liveness is not None and not result.lease_lost and liveness.lease_lost:
+            result.lease_lost = True
 
     def _publish(state: BackfillState) -> None:
         nonlocal last_state_publish, current_state
+        if liveness is not None:
+            # The ticker remembers the state and re-publishes it on its own
+            # clock. It refuses once the lease is lost; the check here covers a
+            # loss only this run knows about for the moment.
+            if _owns_shared_state():
+                liveness.set_state(state)
+            return
         # Once the lease is gone the state key describes whoever took it over.
         # The background timer can flag that mid-row, so rows still draining
         # (and a pause that ends right after) would otherwise stamp *our*
@@ -1836,7 +2368,12 @@ async def run_backfill(
         ``backing-off`` — because this is also driven from a worker's ``finally``
         (see :func:`_tick_lease`), which must not stamp ``running`` over a
         deliberate pause or a provider back-off.
+
+        With a ticker this does nothing: the ticker keeps the state alive, and
+        it must not call the loop's injected ``clock``.
         """
+        if liveness is not None:
+            return
         if control is not None and clock() - last_state_publish >= state_refresh_seconds:
             _publish(current_state)
 
@@ -1850,10 +2387,24 @@ async def run_backfill(
         if result.lease_lost:
             return
         result.lease_lost = True
-        _log_lease_lost(reason)
+        if liveness is not None:
+            # The ticker must stop too: it would keep renewing and publishing
+            # for a run that has already given the keys up. It logs the line.
+            liveness.note_lease_lost(reason)
+        else:
+            _log_lease_lost(reason)
 
     def _lease_held() -> bool:
         """Renew the lease. False = we lost it; stop launching immediately."""
+        if liveness is not None:
+            # One bookkeeping: the same CAS, counted by the ticker, which also
+            # answers False (without a Redis call) once the lease is lost.
+            if result.lease_lost:
+                return False
+            if liveness.renew_now():
+                return True
+            result.lease_lost = True
+            return False
         if lease is None:
             return True
         # A lost lease is terminal — this run never re-acquires one. Re-running
@@ -2009,7 +2560,8 @@ async def run_backfill(
     # this run and the checkpoint may be someone else's object — but it must
     # never be invisible. ``is False`` so the duck-typed checkpoints in the
     # suite (no such attribute) stay silent.
-    if lease is not None and getattr(checkpoint, "lease_gated", None) is False:
+    held_lease = lease if liveness is None else (liveness.lease or lease)
+    if held_lease is not None and getattr(checkpoint, "lease_gated", None) is False:
         _log_checkpoint_ungated()
 
     def _reconcile_requests() -> None:
@@ -2232,9 +2784,23 @@ async def run_backfill(
                 # and story 1.5's API — for a runner that is alive, holding the
                 # lease and deliberately held.
                 _refresh_state()
+                # Rows still draining are still writing, so `:active` keeps
+                # being beaten until the last one finishes. From then on the
+                # paused run writes nothing and must read as idle to
+                # ``migrate-primary.sh``: the ticker stops beating and the key
+                # lapses on its TTL.
+                if liveness is not None and inflight == 0:
+                    liveness.hold_heartbeat()
                 await sleep_fn(poll_seconds)
         finally:
             result.paused_seconds += max(0.0, clock() - paused_at)
+        if liveness is not None:
+            # Beat before anything is launched. The loop reads the migration
+            # key again after ``sem.acquire()``, so the order with
+            # ``migrate-primary.sh`` stays set-then-check on both sides. Only
+            # the resume does this: a pause that ended in a stop, a migration
+            # or a lost lease launches nothing, and the pass clears the key.
+            liveness.release_heartbeat()
         _publish(BackfillState.RUNNING)
         return True
 
@@ -2245,7 +2811,9 @@ async def run_backfill(
     # ``asyncio.run`` — mid-enrichment, mid-write. In-flight rows always drain.
     renewer: Optional[asyncio.Task] = None
     try:
-        if lease is not None:
+        # With a ticker its thread renews for the whole run, so there is no
+        # timer task to create (and none to cancel below).
+        if lease is not None and liveness is None:
             renewer = asyncio.create_task(_renew_lease_periodically())
         try:
             for prop, metrics in rows:
@@ -2260,6 +2828,15 @@ async def run_backfill(
                 # unattended, behind a healthy-looking progress banner (DW-17).
                 if result.ai_circuit_open:
                     break
+                # With a ticker, the lease flag is read before anything that
+                # talks to Redis. The ticker latches a loss during a Redis
+                # outage as long as the lease TTL, and Redis may still be down:
+                # the migration read below would then raise and the run would
+                # end in an exception instead of ``lease_lost``.
+                if liveness is not None:
+                    _sync_lease_lost()
+                    if result.lease_lost:
+                        break
                 # A primary migration holds the exclusion key. The caller beat its
                 # ``:active`` heartbeat before handing this predicate in, so the
                 # migration either sees that heartbeat and refuses, or it got here
@@ -2271,6 +2848,7 @@ async def run_backfill(
                 # would report the same thing (it short-circuits on the flag);
                 # naming the timer's verdict here is what keeps a lost lease from
                 # reading as an ordinary failed renew at this break.
+                _sync_lease_lost()
                 if result.lease_lost:
                     break
                 # Renewing here (not in ``on_progress``) means the lease is refreshed
@@ -2331,6 +2909,7 @@ async def run_backfill(
                 # Same window, third writer: the background renewer can have lost
                 # the lease while this loop waited for a slot. Launching now would
                 # make this a second writer against a queue someone else owns.
+                _sync_lease_lost()
                 if result.lease_lost:
                     sem.release()
                     break
@@ -2397,10 +2976,15 @@ async def run_backfill(
     # anything else (including an operator stop) has genuinely gone idle. A run
     # that lost its lease publishes nothing: the state key now describes whoever
     # took the lease over, and stamping ``idle`` on it would erase their liveness.
+    #
+    # With a ticker the pass does not end the run: the census and the wait for
+    # the next window follow, on the same lease, and ``idle`` here would report
+    # that live run as gone. Its owner publishes the final state.
     if _owns_shared_state():
-        _publish(
-            BackfillState.BACKING_OFF if result.quota_exhausted else BackfillState.IDLE
-        )
+        if result.quota_exhausted:
+            _publish(BackfillState.BACKING_OFF)
+        elif liveness is None:
+            _publish(BackfillState.IDLE)
     # Once, at the end: the count is only meaningful whole, and one line per
     # drained row would bury the handover it is reporting.
     if result.unrecorded_completions:
@@ -2532,6 +3116,44 @@ def _log_lease_tick_failed(exc: Exception) -> None:
         "backfill_lease_tick_failed",
         error=str(exc),
     )
+
+
+def _log_liveness_failed(chore: str, exc: Exception) -> None:
+    """One liveness chore failed (a Redis error in the ticker). Never raises.
+
+    ``chore`` names which key was not refreshed: ``lease``, ``state``,
+    ``active``, ``keepalive-N``, ``clear-active`` for the clear at the end of
+    a pass, or ``stop`` when the thread was still inside a tick after the
+    join. The ticker calls this once per streak of failures, so a long
+    outage is one line per key, and the lease-lost line says when it became
+    terminal.
+    """
+    try:
+        from infra.logging import get_logger
+
+        get_logger(__name__).warning(
+            "backfill_liveness_tick_failed",
+            chore=chore,
+            error=str(exc),
+        )
+    except Exception:  # noqa: BLE001 - the ticker thread must survive its own log
+        pass
+
+
+def _log_liveness_recovered(chore: str) -> None:
+    """A liveness chore works again after a streak of failures. Never raises.
+
+    Pairs with :func:`_log_liveness_failed`, which logs only the first failure
+    of a streak: without this line an operator reading the log during a Redis
+    outage cannot tell a blip that ended from an outage still running towards
+    the lease TTL.
+    """
+    try:
+        from infra.logging import get_logger
+
+        get_logger(__name__).info("backfill_liveness_tick_recovered", chore=chore)
+    except Exception:  # noqa: BLE001 - the ticker thread must survive its own log
+        pass
 
 
 def _log_budget_settle_failed(exc: Exception) -> None:

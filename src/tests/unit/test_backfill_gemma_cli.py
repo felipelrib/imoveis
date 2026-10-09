@@ -1376,7 +1376,9 @@ def test_sleep_for_reset_stops_waiting_once_the_lease_is_lost(monkeypatch):
     sleep_spy = MagicMock()
     monkeypatch.setattr(mod.time, "sleep", sleep_spy)
 
-    mod._sleep_for_reset(3600.0, cfg=cfg, control=None, lease=lease)
+    mod._sleep_for_reset(
+        3600.0, cfg=cfg, control=None, liveness=mod.LivenessTicker(lease=lease)
+    )
 
     sleep_spy.assert_not_called()  # bailed on the very first renew
 
@@ -1740,7 +1742,10 @@ def test_sleep_for_reset_reports_why_it_returned(monkeypatch):
     stopping.should_stop.return_value = True
 
     assert mod._sleep_for_reset(0.0, cfg=cfg) == "elapsed"
-    assert mod._sleep_for_reset(3600.0, cfg=cfg, lease=lost) == "lease_lost"
+    assert (
+        mod._sleep_for_reset(3600.0, cfg=cfg, liveness=mod.LivenessTicker(lease=lost))
+        == "lease_lost"
+    )
     assert mod._sleep_for_reset(3600.0, cfg=cfg, control=stopping) == "stopped"
 
 
@@ -2461,3 +2466,909 @@ def test_the_breaker_threshold_comes_from_config_not_a_literal(monkeypatch):
     mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
 
     assert captured["max_consecutive_ai_failures"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Liveness ticker wiring (v0.14-s1.12)
+# ---------------------------------------------------------------------------
+
+
+def _liveness_threads():
+    import threading
+
+    return [t for t in threading.enumerate() if t.name == "backfill-liveness"]
+
+
+def _spy_ticker(mod, monkeypatch, events, redis, *, lease_lost=None):
+    """Replace ``LivenessTicker`` with a subclass that records start and stop."""
+    real = mod.LivenessTicker
+
+    class _Spy(real):
+        def start(self):
+            events.append(("start", "t:lease" in redis.kv))
+            return super().start()
+
+        def stop(self, timeout=5.0):
+            events.append(("stop", "t:lease" in redis.kv, redis.kv.get("t:state")))
+            super().stop(timeout)
+
+    if lease_lost is not None:
+        _Spy.lease_lost = property(lambda self: lease_lost())
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Spy)
+    return _Spy
+
+
+def test_the_ticker_runs_from_the_lease_acquire_to_just_before_the_release(monkeypatch):
+    """One ticker for the whole run: started holding the lease, stopped before
+    the final state is published and the lease is released."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    events = []
+    spy = _spy_ticker(mod, monkeypatch, events, redis)
+    during = {}
+
+    def _pass(*_args, **kwargs):
+        during["liveness"] = kwargs["liveness"]
+        during["threads"] = len(_liveness_threads())
+        return _br(mod, processed=1)
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    assert mod.main(["--limit", "1"]) == 0
+
+    # Started with the lease already held; stopped while it was still held and
+    # before ``idle`` was published.
+    assert events == [("start", True), ("stop", True, None)]
+    assert isinstance(during["liveness"], spy)
+    assert during["liveness"].lease is not None
+    assert during["threads"] == 1
+    assert _liveness_threads() == []
+    assert redis.get("t:state") == "idle"
+    assert redis.get("t:lease") is None
+
+
+def test_a_dry_run_starts_no_ticker(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="")
+    events = []
+    _spy_ticker(mod, monkeypatch, events, redis)
+
+    assert mod.main(["--dry-run", "--limit", "1"]) == 0
+
+    assert events == []
+    assert _liveness_threads() == []
+
+
+def test_the_ticker_is_stopped_even_when_the_pass_raises(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    events = []
+    _spy_ticker(mod, monkeypatch, events, redis)
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError):
+        mod.main(["--limit", "1"])
+
+    assert [e[0] for e in events] == ["start", "stop"]
+    assert _liveness_threads() == []
+    assert redis.get("t:lease") is None
+
+
+def test_a_loss_only_the_ticker_found_is_a_lost_lease_at_exit(monkeypatch, capsys):
+    """An outage as long as the lease TTL is found by the ticker, not by the
+    pass: the exit must still say lease lost and leave the shared keys alone."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+
+    def _pass(*_args, **_kwargs):
+        # A successor owns the keys by the time the pass returns.
+        redis.kv["t:lease"] = "successor"
+        redis.kv["t:state"] = "running"
+        lost["now"] = True
+        return _br(mod, processed=1)  # the pass itself never noticed
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    assert mod.main(["--limit", "1"]) == mod.EXIT_LEASE_LOST == 7
+
+    assert redis.get("t:state") == "running"  # no ``idle`` over the successor
+    assert redis.get("t:lease") == "successor"
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+def test_continuous_reports_a_loss_the_ticker_found_during_the_census(monkeypatch, capsys):
+    """The census runs after the pass's last renew. A queue the successor
+    drained must not be reported as this run's completion."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=1)))
+
+    def _slow_census(*_args, **_kwargs):
+        lost["now"] = True
+        return _census()  # reads complete
+
+    monkeypatch.setattr(mod, "_census", _slow_census)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_LEASE_LOST
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+def test_continuous_hands_one_ticker_to_the_pass_and_to_the_budget_sleep(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            side_effect=[
+                _br(mod, processed=2, budget_exhausted=True, quota_exhausted=True),
+                _br(mod, processed=3),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=2, candidates=3), _census()]),
+    )
+    sleeps = []
+    monkeypatch.setattr(
+        mod, "_sleep_for_reset", lambda wait, **kw: sleeps.append(kw) or "elapsed"
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    tickers = {id(call.kwargs["liveness"]) for call in mod._run.call_args_list}
+    assert len(tickers) == 1
+    assert isinstance(mod._run.call_args.kwargs["liveness"], mod.LivenessTicker)
+    assert len(sleeps) == 1
+    assert sleeps[0]["liveness"] is mod._run.call_args.kwargs["liveness"]
+    assert "lease" not in sleeps[0]
+
+
+def test_the_migration_wait_renews_through_the_ticker(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.lease_ttl_seconds = 3  # renew every 1s of wait
+    cfg.backfill.control_poll_seconds = 1.0
+    redis.set("t:migrating", "migrate-primary:host:1:1")
+    lease = MagicMock()
+    lease.renew.return_value = False
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+    now = {"t": 0.0}
+
+    def _monotonic():
+        now["t"] += 2.0
+        return now["t"]
+
+    monkeypatch.setattr(mod.time, "monotonic", _monotonic)
+
+    outcome = mod._wait_out_migration(
+        cfg, redis, liveness=mod.LivenessTicker(lease=lease)
+    )
+
+    assert outcome == "lease_lost"
+    assert lease.renew.call_count == 1
+
+
+def test_a_pass_turns_writing_on_before_the_gate_read_and_off_after(monkeypatch):
+    """The set-then-check order with ``migrate-primary.sh``, through the ticker."""
+    mod = _load_module()
+    trail = []
+
+    class _GateRedis(_FakeRedis):
+        def get(self, k):
+            if k == "t:migrating":
+                trail.append("gate-read")
+            return super().get(k)
+
+    redis = _GateRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+
+    class _Ticker(mod.LivenessTicker):
+        def set_writing(self, writing):
+            super().set_writing(writing)
+            trail.append(("writing", writing, redis.kv.get("t:active")))
+
+    ticker = _Ticker(heartbeat=mod.Heartbeat(redis, prefix="t"))
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        trail.append("rows")
+        captured.update(kwargs)
+        captured["active_during"] = redis.kv.get("t:active")
+        return _br(mod)
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1), liveness=ticker)
+
+    assert trail == [
+        "gate-read",  # the early probe, before any DB query
+        ("writing", True, "1"),  # beaten on this thread...
+        "gate-read",  # ...before the authoritative read
+        "rows",
+        ("writing", False, None),  # cleared: the census reads as idle
+    ]
+    assert captured["liveness"] is ticker
+    assert captured["active_during"] == "1"
+
+
+def test_a_pass_without_a_ticker_makes_the_same_synchronous_transitions(monkeypatch):
+    mod = _load_module()
+    redis = _RecordingRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured.update(kwargs)
+        captured["active_during"] = redis.kv.get("t:active")
+        return _br(mod)
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+
+    assert isinstance(captured["liveness"], mod.LivenessTicker)
+    assert captured["active_during"] == "1"
+    assert redis.kv.get("t:active") is None
+    beat = redis.ops.index(("set", "t:active"))
+    last_gate_read = max(
+        i for i, op in enumerate(redis.ops) if op == ("get", "t:migrating")
+    )
+    assert beat < last_gate_read
+    assert _liveness_threads() == []  # built, never started
+
+
+def test_a_pass_reads_as_running_before_the_candidate_fetch(monkeypatch):
+    """The fetch and the photo gating take minutes on a full queue (DW-21)."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    _stub_run_backfill(mod, monkeypatch)
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+    seen = {}
+
+    def _fetch(_session, _params):
+        seen["state"] = redis.get("t:state")
+        return []
+
+    monkeypatch.setattr(mod, "fetch_candidate_rows", _fetch)
+
+    mod._run(
+        cfg, MagicMock(), redis, _run_args(limit=1),
+        control=mod._control_for(cfg, redis), lease=lease,
+    )
+
+    assert seen["state"] == "running"
+
+
+def test_a_displaced_pass_does_not_publish_running_over_its_successor(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    _stub_run_backfill(mod, monkeypatch)
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+    redis.kv["t:lease"] = "successor"
+    redis.kv["t:state"] = "paused"
+
+    mod._run(
+        cfg, MagicMock(), redis, _run_args(limit=1),
+        control=mod._control_for(cfg, redis), lease=lease,
+    )
+
+    assert redis.get("t:state") == "paused"
+    assert redis.get("t:active") is None  # and never beat `:active` either
+
+
+def test_the_progress_hook_touches_no_redis_key(monkeypatch):
+    """`:active` is the ticker's now; the hook only logs."""
+    mod = _load_module()
+    redis = _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    captured = {}
+
+    async def fake_run_backfill(rows, **kwargs):
+        captured["on_progress"] = kwargs["on_progress"]
+        return _br(mod)
+
+    monkeypatch.setattr(mod, "run_backfill", fake_run_backfill)
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1))
+    redis.sets.clear()
+
+    captured["on_progress"](_br(mod, processed=25))
+
+    assert redis.sets == []
+
+
+def test_serve_keeps_the_supervisor_heartbeat_alive_while_it_drives_a_run(monkeypatch):
+    """DW-34: the poll loop does not turn during a run, so the key expired and
+    ``--status`` said the supervisor was not running for the whole run."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._control_for(cfg, redis).request_start("admin-api")
+    clock = {"t": 0.0}
+    made = []
+    real = mod.LivenessTicker
+
+    class _Clocked(real):
+        def __init__(self, **kwargs):
+            super().__init__(clock=lambda: clock["t"], **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Clocked)
+    seen = {}
+
+    def _driven_run(_argv):
+        seen["thread_during"] = len(_liveness_threads())
+        # The key's TTL runs out mid-run; the next due tick brings it back.
+        redis.kv.pop("t:supervisor:active", None)
+        clock["t"] += 60.0
+        made[-1].tick()
+        seen["heartbeat_during"] = redis.get("t:supervisor:active")
+        seen["runner_active_during"] = redis.get("t:active")
+        return 0
+
+    monkeypatch.setattr(mod, "main", _driven_run)
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=MagicMock(), max_cycles=1)
+
+    assert rc == 0
+    assert seen == {
+        "thread_during": 1,
+        # Beaten by the ticker, with the identity ``--status`` reads back.
+        "heartbeat_during": mod._process_id(),
+        # Only its own key: a supervisor must never block a migration.
+        "runner_active_during": None,
+    }
+    assert len(made) == 1
+    assert _liveness_threads() == []
+
+
+def _status_output(mod, monkeypatch, capsys, cfg, redis):
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    monkeypatch.setattr(mod, "_observed_rate_per_day", lambda s: None)
+    mod._print_status(cfg, MagicMock(), redis)
+    return capsys.readouterr().out
+
+
+def test_status_says_the_supervisor_is_running_and_busy_while_a_run_holds_the_lease(
+    monkeypatch, capsys
+):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._supervisor_heartbeat_for(cfg, redis).beat()
+    assert mod._lease_for(cfg, redis).acquire() is True
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "supervisor           : running — busy, a run holds the lease" in out
+
+
+def test_status_says_an_idle_supervisor_is_running_and_waiting(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._supervisor_heartbeat_for(cfg, redis).beat()
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "supervisor           : running — waiting for start requests" in out
+
+
+def test_status_says_no_supervisor_when_its_key_is_absent(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    # A run holding the lease does not make a supervisor appear.
+    assert mod._lease_for(cfg, redis).acquire() is True
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "supervisor           : not running (--serve)" in out
+
+
+def test_status_tells_a_hand_started_run_from_the_one_the_supervisor_drives(
+    monkeypatch, capsys
+):
+    """An idle supervisor beside a run started from another process is not busy.
+
+    The supervisor beats its key with its own ``host:pid`` and the run it
+    drives lives in that same process, so a lease owned by anyone else is a
+    run it did not start.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._supervisor_heartbeat_for(cfg, redis).beat()
+    monkeypatch.setattr(mod, "_process_id", lambda: "otherhost:4242")
+    assert mod._lease_for(cfg, redis).acquire() is True
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert (
+        "supervisor           : running — idle; a run in another process "
+        "(otherhost:4242) holds the lease, so a start request waits"
+    ) in out
+    assert "busy" not in out.split("supervisor           :")[1].splitlines()[0]
+
+
+def test_status_keeps_the_plain_busy_line_for_a_supervisor_key_without_identity(
+    monkeypatch, capsys
+):
+    """A supervisor started before the key carried ``host:pid`` beats ``1``."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    redis.set("t:supervisor:active", "1", ex=30)
+    monkeypatch.setattr(mod, "_process_id", lambda: "otherhost:4242")
+    assert mod._lease_for(cfg, redis).acquire() is True
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "supervisor           : running — busy, a run holds the lease" in out
+
+
+def test_status_keeps_the_plain_busy_line_when_the_lease_owner_is_unknown(
+    monkeypatch, capsys
+):
+    """No lease meta (its write is best effort): the owner cannot be compared."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod._supervisor_heartbeat_for(cfg, redis).beat()
+    redis.set("t:lease", "some-token", ex=900)
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "supervisor           : running — busy, a run holds the lease" in out
+
+
+# ---------------------------------------------------------------------------
+# Liveness ticker wiring — review follow-up (v0.14-s1.12)
+# ---------------------------------------------------------------------------
+
+
+class _OutageRedis(_FakeRedis):
+    """Every command raises once ``down`` is set: Redis during an outage."""
+
+    down = False
+
+
+def _raise_when_down(name):
+    real = getattr(_FakeRedis, name)
+
+    def method(self, *args, **kwargs):
+        if self.down:
+            raise ConnectionError("redis is down")
+        return real(self, *args, **kwargs)
+
+    return method
+
+
+for _name in (
+    "get", "set", "delete", "incrby", "expire", "hgetall", "hget", "hset",
+    "hincrby", "hdel",
+):
+    setattr(_OutageRedis, _name, _raise_when_down(_name))
+
+
+def test_continuous_exits_lease_lost_when_redis_is_still_down_after_the_loss(
+    monkeypatch, capsys
+):
+    """An outage as long as the lease TTL: the ticker latched the loss, the pass
+    never noticed, and the census (which reads the ledger in Redis) raises."""
+    mod = _load_module()
+    redis = _OutageRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+
+    def _pass(*_args, **_kwargs):
+        redis.down = True
+        lost["now"] = True
+        return _br(mod, processed=1)
+
+    monkeypatch.setattr(mod, "_run", _pass)
+    monkeypatch.setattr(
+        mod, "_census", lambda cfg, session, ledger: ledger.quarantined_ids()
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_LEASE_LOST == 7
+
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+def test_continuous_still_raises_a_census_failure_while_the_lease_is_held(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=1)))
+    monkeypatch.setattr(mod, "_census", MagicMock(side_effect=RuntimeError("db gone")))
+
+    with pytest.raises(RuntimeError, match="db gone"):
+        mod.main(["--continuous"])
+
+
+def test_a_single_pass_exits_lease_lost_when_redis_is_still_down_after_the_loss(
+    monkeypatch, capsys
+):
+    mod = _load_module()
+    redis = _OutageRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+
+    def _pass(*_args, **_kwargs):
+        redis.down = True
+        return _br(mod, processed=1, lease_lost=True)
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    assert mod.main(["--limit", "1"]) == mod.EXIT_LEASE_LOST == 7
+
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["--continuous"], ["--limit", "1"]])
+def test_a_pass_that_dies_on_redis_after_the_loss_exits_lease_lost(
+    monkeypatch, capsys, argv
+):
+    """The loss was latched during the candidate fetch and Redis is still down:
+    the next Redis read of the pass (the ledger, the migration gate) raises
+    before the launch loop is ever reached."""
+    mod = _load_module()
+    redis = _OutageRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+
+    def _pass(*_args, **_kwargs):
+        redis.down = True
+        lost["now"] = True
+        return redis.get("t:migrating")  # raises: Redis is down
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    assert mod.main(argv) == mod.EXIT_LEASE_LOST == 7
+
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["--continuous"], ["--limit", "1"]])
+def test_a_pass_that_dies_on_redis_while_the_lease_is_held_still_raises(
+    monkeypatch, argv
+):
+    mod = _load_module()
+    redis = _OutageRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+
+    def _pass(*_args, **_kwargs):
+        raise ConnectionError("redis blip")
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    with pytest.raises(ConnectionError, match="redis blip"):
+        mod.main(argv)
+
+
+def test_the_census_less_lease_lost_banner_keeps_the_totals_of_the_run(
+    monkeypatch, capsys
+):
+    mod = _load_module()
+    redis = _OutageRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+
+    def _pass(*_args, **_kwargs):
+        redis.down = True
+        lost["now"] = True
+        return _br(mod, processed=7, errors=2)
+
+    monkeypatch.setattr(mod, "_run", _pass)
+    monkeypatch.setattr(
+        mod, "_census", lambda cfg, session, ledger: ledger.quarantined_ids()
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_LEASE_LOST
+
+    out = capsys.readouterr().out
+    assert "cycles 1" in out
+    assert "enriched this run 7 · errors 2" in out
+
+
+def test_a_dry_run_never_touches_the_active_key_of_a_live_run(monkeypatch):
+    """A dry run writes no row. Beside a live pass it used to beat that pass's
+    ``:active`` key and delete it on the way out, so ``migrate-primary.sh``
+    read an idle guard until the live run's next beat."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    mod.Heartbeat(redis, prefix="t").beat()  # the live run
+    monkeypatch.setattr(mod, "fetch_candidate_rows", lambda _session, _params: [])
+    touched = []
+    real_set, real_delete = redis.set, redis.delete
+    redis.set = lambda k, *a, **kw: (touched.append(k), real_set(k, *a, **kw))[1]
+    redis.delete = lambda k: (touched.append(k), real_delete(k))[1]
+
+    mod._run(cfg, MagicMock(), redis, _run_args(limit=1, dry_run=True))
+
+    assert redis.get("t:active") == "1"
+    assert "t:active" not in touched
+
+
+def test_a_pause_read_that_raises_at_pass_start_still_reaches_the_fetch(monkeypatch):
+    """The pause read only chooses the word that is published: decoration."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    is_paused = control.is_paused
+    calls = {"n": 0}
+
+    def _first_read_fails():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("redis blip")
+        return is_paused()
+
+    control.is_paused = _first_read_fails
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+
+    seen = _pass_start(mod, monkeypatch, redis, cfg, control=control, lease=lease)
+
+    assert calls["n"] >= 1
+    assert seen == ["running"]
+
+
+def test_a_displaced_single_pass_does_not_claim_a_stop_aimed_at_its_successor(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+
+    def _pass(*_args, **_kwargs):
+        redis.kv["t:lease"] = "successor"
+        control.request_stop()  # aimed at the successor
+        return _br(mod, processed=1, lease_lost=True)
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    assert mod.main(["--limit", "1"]) == mod.EXIT_LEASE_LOST
+
+    assert control.should_stop() is True
+
+
+def test_main_leaves_the_successors_keys_alone_when_the_pass_raises_on_a_lost_lease(
+    monkeypatch,
+):
+    """Here the ticker's verdict in the exit ``finally`` is the only guard: the
+    pass raised, so no result ever said the lease was lost."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    lost = {"now": False}
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+
+    def _pass(*_args, **_kwargs):
+        redis.kv["t:lease"] = "successor"
+        redis.kv["t:state"] = "running"
+        control.request_stop()  # aimed at the successor
+        lost["now"] = True
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mod, "_run", _pass)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        mod.main(["--limit", "1"])
+
+    assert redis.get("t:state") == "running"
+    assert control.should_stop() is True
+    assert redis.get("t:lease") == "successor"
+
+
+def _wait_cfg():
+    cfg = MagicMock()
+    cfg.backfill.redis_prefix = "t"
+    cfg.backfill.control_poll_seconds = 1.0
+    cfg.backfill.lease_ttl_seconds = 900
+    cfg.backfill.migration_wait_seconds = 1800
+    return cfg
+
+
+def _clocked_ticker(mod, **kwargs):
+    clock = {"t": 0.0}
+    return clock, mod.LivenessTicker(clock=lambda: clock["t"], **kwargs)
+
+
+def test_the_budget_sleep_reads_a_lost_lease_before_a_pending_stop(monkeypatch):
+    """The ticker found the loss; the loop's own renew is not due and would
+    still succeed. A stop pending by then is aimed at the successor."""
+    mod = _load_module()
+    lease = MagicMock()
+    lease.ttl_seconds = 900
+    lease.renew.return_value = True
+    clock, ticker = _clocked_ticker(mod, lease=lease)
+    control = MagicMock()
+    control.should_stop.return_value = False
+    control.is_paused.return_value = False
+
+    def _sleep(_seconds):
+        clock["t"] += 1000.0  # a whole TTL with no successful renew
+        control.should_stop.return_value = True
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    outcome = mod._sleep_for_reset(3600.0, cfg=_wait_cfg(), control=control, liveness=ticker)
+
+    assert outcome == "lease_lost"
+    assert lease.renew.call_count == 1  # the one at the start of the wait
+
+
+def test_the_migration_wait_reads_a_lost_lease_before_a_pending_stop(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    redis.set("t:migrating", "migrate-primary:host:1:1")
+    lease = MagicMock()
+    lease.ttl_seconds = 900
+    lease.renew.return_value = True
+    clock, ticker = _clocked_ticker(mod, lease=lease)
+    control = mod.BackfillControl(redis, prefix="t")
+
+    def _sleep(_seconds):
+        clock["t"] += 1000.0
+        control.request_stop()
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    outcome = mod._wait_out_migration(_wait_cfg(), redis, control=control, liveness=ticker)
+
+    assert outcome == "lease_lost"
+    assert lease.renew.call_count == 0  # not due yet, and never reached
+    assert control.should_stop() is True  # still there for the successor
+
+
+def test_the_budget_sleep_publishes_through_the_ticker(monkeypatch):
+    """Published past the ticker, ``backing-off`` would be overwritten by the
+    ``running`` the timer still remembers."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    clock, ticker = _clocked_ticker(mod, control=control)
+    ticker.set_state(mod.BackfillState.RUNNING)
+    monkeypatch.setattr(mod.time, "sleep", MagicMock())
+
+    assert mod._sleep_for_reset(3.0, cfg=_wait_cfg(), control=control, liveness=ticker) == "elapsed"
+    assert redis.get("t:state") == "backing-off"
+
+    clock["t"] += 60.0  # past the 30s state period
+    ticker.tick()
+    assert redis.get("t:state") == "backing-off"
+
+
+def test_the_migration_wait_publishes_through_the_ticker(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    redis.set("t:migrating", "migrate-primary:host:1:1")
+    control = mod.BackfillControl(redis, prefix="t")
+    clock, ticker = _clocked_ticker(mod, control=control)
+    ticker.set_state(mod.BackfillState.RUNNING)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: redis.delete("t:migrating"))
+
+    outcome = mod._wait_out_migration(_wait_cfg(), redis, control=control, liveness=ticker)
+
+    assert outcome == "cleared"
+    assert redis.get("t:state") == "blocked"
+
+    clock["t"] += 60.0
+    ticker.tick()
+    assert redis.get("t:state") == "blocked"
+
+
+def _pass_start(mod, monkeypatch, redis, cfg, *, control, lease, liveness=None):
+    """Run one stubbed pass; return the state key as the candidate fetch saw it."""
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    _stub_run_backfill(mod, monkeypatch)
+    seen = []
+
+    def _fetch(_session, _params):
+        seen.append(redis.get("t:state"))
+        return []
+
+    monkeypatch.setattr(mod, "fetch_candidate_rows", _fetch)
+    mod._run(
+        cfg, MagicMock(), redis, _run_args(limit=1),
+        control=control, lease=lease, liveness=liveness,
+    )
+    return seen
+
+
+def test_a_pass_that_starts_under_a_pending_pause_reads_as_paused(monkeypatch):
+    """An acknowledged ``paused`` must not flip to ``running`` for the fetch."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_pause()
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+
+    assert _pass_start(mod, monkeypatch, redis, cfg, control=control, lease=lease) == ["paused"]
+
+
+def test_a_failed_publish_at_pass_start_is_retried_by_the_ticker(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    publish = control.publish_state
+    calls = {"n": 0}
+
+    def _first_publish_fails(state):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("redis blip")
+        publish(state)
+
+    control.publish_state = _first_publish_fails
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+    clock, ticker = _clocked_ticker(
+        mod, lease=lease, control=control, heartbeat=mod.Heartbeat(redis, prefix="t")
+    )
+
+    seen = _pass_start(
+        mod, monkeypatch, redis, cfg, control=control, lease=lease, liveness=ticker
+    )
+
+    assert seen == [None]  # the blip did not stop the pass reaching the fetch
+    clock["t"] += 1.0
+    ticker.tick()
+    assert redis.get("t:state") == "running"
+
+
+def test_a_renew_that_raises_at_pass_start_still_records_the_state(monkeypatch):
+    """A Redis error says nothing about who holds the lease."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    lease = mod._lease_for(cfg, redis)
+    assert lease.acquire() is True
+    renew = lease.renew
+    calls = {"n": 0}
+
+    def _first_renew_fails():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("redis blip")
+        return renew()
+
+    lease.renew = _first_renew_fails
+
+    seen = _pass_start(mod, monkeypatch, redis, cfg, control=control, lease=lease)
+
+    assert seen == ["running"]
