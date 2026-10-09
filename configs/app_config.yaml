@@ -301,9 +301,22 @@ ai:
   # 429, so the refusal arrives as identical connection resets/timeouts (DW-7).
   # Repeated identical transport failures count as quota (rolling the backfill
   # attempt back) only when the provider actually refused on quota within this
-  # many seconds. 0 disables the inference — every reset is a hard row error;
+  # many seconds of the storm's first failure, before or after it (a refusal
+  # seen later than that does not excuse the storm). 0 disables the inference,
+  # the hold below included — every reset is a hard row error;
   # 3600 is the ceiling (a wider window would suppress row errors all day).
   gemini_transport_quota_window_seconds: 300.0
+  # How long one refusal the provider stated keeps licensing that inference
+  # after the window, while the provider has answered nothing at all since
+  # (v0.14-s1.14). Counted from the stated refusal, never extended by an
+  # inference; any answer that is not a refusal ends it. Keep it longer than
+  # backfill.quota_backoff_seconds + ai.timeout or the cycle after a back-off
+  # starts with no licence. 0 turns the hold off; 21600 (6 h) is the ceiling, so one
+  # refusal cannot excuse a blocked route for a whole day.
+  # Cost: a route that dies during the back-off after a 429 is read as that
+  # throttle, and four such passes park the run until the daily window resets
+  # (docs/features/v0.14-s1.14-transport-quota-inference-holds.md).
+  gemini_transport_quota_hold_seconds: 7200.0
   # Single generative VLM for photos + text JSON (sentiment, OLX location, verdict)
   visual_model: qwen2.5vl:7b
   text_model: qwen2.5vl:7b

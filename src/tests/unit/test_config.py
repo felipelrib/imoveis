@@ -586,6 +586,100 @@ def test_gemini_client_default_window_mirrors_the_config_default():
 
 
 @pytest.mark.unit
+def test_transport_quota_hold_ships_enabled_and_longer_than_the_quota_backoff():
+    """v0.14-s1.14: the hold must outlive the back-off between refused passes.
+
+    DW-14 was a licence that could never reach the cycle after a quota back-off
+    (300 s window against a 900 s sleep). The hold exists to cross that gap, so
+    the two shipped knobs are pinned in that order: a hold not longer than
+    ``backfill.quota_backoff_seconds`` would bring the defect back silently.
+    """
+    cfg = get_config()
+    assert cfg.ai.gemini_transport_quota_hold_seconds == 7200.0
+    assert cfg.ai.gemini_transport_quota_hold_seconds > float(
+        cfg.backfill.quota_backoff_seconds
+    )
+    # And longer than the short window it extends, or it would extend nothing.
+    assert (
+        cfg.ai.gemini_transport_quota_hold_seconds
+        > cfg.ai.gemini_transport_quota_window_seconds
+    )
+    # The figure the default rests on, computed from the knobs it depends on so
+    # a change to any of them fails here: a refusing provider gets four passes
+    # ``quota_backoff_seconds`` apart before the runner waits for the daily
+    # window, and a storm of timeouts takes ``max_retries`` x ``ai.timeout``
+    # per pass. The hold has to reach the fourth.
+    from src.adapters.ai.client import GeminiClient
+
+    max_retries = GeminiClient(api_key="k").max_retries
+    four_refused_passes = 3 * float(cfg.backfill.quota_backoff_seconds) + 4 * (
+        max_retries * float(cfg.ai.timeout)
+    )
+    assert four_refused_passes == 5100.0
+    assert cfg.ai.gemini_transport_quota_hold_seconds >= four_refused_passes
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [-1.0, 21600.1, float("inf"), float("nan")])
+def test_ai_rejects_a_transport_quota_hold_out_of_range(value):
+    """Six hours is the ceiling: one refusal must not excuse a dead route all day."""
+    from src.infra.config import AIConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig(gemini_transport_quota_hold_seconds=value)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [0.0, 21600.0])
+def test_ai_accepts_the_transport_quota_hold_bounds(value):
+    """``0`` turns the hold off (the window still licenses); 21 600 is the ceiling."""
+    from src.infra.config import AIConfig
+
+    assert AIConfig(gemini_transport_quota_hold_seconds=value).gemini_transport_quota_hold_seconds == value
+
+
+@pytest.mark.unit
+def test_no_allowed_hold_reaches_across_a_daily_budget_window():
+    """An outage read as quota cannot, by itself, end a run with exit 10.
+
+    Story 1.13 ends a run after ``backfill.max_no_progress_cycles`` (6) refused
+    cycles with nothing enriched, and an inferred refusal counts. The sixth is
+    a whole local budget window after the fifth (locked by
+    ``test_the_fifth_and_sixth_refusal_are_a_daily_window_apart``). The hold is
+    anchored on a refusal the provider *stated* and capped below that window,
+    so the cycle that would complete the count is never licensed by the same
+    stated refusal as the ones before it: it needs the provider to state a
+    refusal again. Raising the ceiling to a day would remove that.
+    """
+    from src.adapters.ai.client import GeminiClient
+    from src.core.backfill_runner import _WINDOW_SECONDS
+
+    assert GeminiClient._MAX_TRANSPORT_QUOTA_HOLD_SECONDS < _WINDOW_SECONDS
+    cfg = get_config()
+    assert cfg.ai.gemini_transport_quota_hold_seconds < _WINDOW_SECONDS
+    assert cfg.backfill.max_no_progress_cycles >= 6
+
+
+@pytest.mark.unit
+def test_gemini_client_default_hold_mirrors_the_config_default():
+    """Same claim as the window: the client's fallback and ceiling mirror config."""
+    from src.adapters.ai.client import GeminiClient
+    from src.infra.config import AIConfig
+
+    assert (
+        GeminiClient._DEFAULT_TRANSPORT_QUOTA_HOLD_SECONDS
+        == AIConfig().gemini_transport_quota_hold_seconds
+    )
+    assert GeminiClient._MAX_TRANSPORT_QUOTA_HOLD_SECONDS == 21600.0
+    with pytest.raises(ValidationError):
+        AIConfig(
+            gemini_transport_quota_hold_seconds=(
+                GeminiClient._MAX_TRANSPORT_QUOTA_HOLD_SECONDS + 1.0
+            )
+        )
+
+
+@pytest.mark.unit
 def test_enrichment_routing_default_all_local():
     """Shipped config routes every task class to a LOCAL backend (all-local)."""
     cfg = get_config()

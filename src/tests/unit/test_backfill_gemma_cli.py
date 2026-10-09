@@ -117,6 +117,11 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None, routing=No
     # raising — which is why the value is asserted, not just set. Deliberately
     # NOT the client's own 300.0 default, or a dropped kwarg would still assert.
     cfg.ai.gemini_transport_quota_window_seconds = 120.0
+    # Same reason (v0.14-s1.14), and again not the client default (7200.0).
+    # Longer than ``quota_backoff_seconds`` above, as the shipped pair is.
+    cfg.ai.gemini_transport_quota_hold_seconds = 1800.0
+    # Real number: the hold warning adds it to the back-off.
+    cfg.ai.timeout = 120
     cfg.ai.enrichment_routing = dict(routing or _ALL_LOCAL_ROUTING)
     rows = [
         (
@@ -321,7 +326,7 @@ def test_a_transport_quota_inference_is_logged_before_the_first_milestone(monkey
             yield
 
     client = _StubClient()
-    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None: client)
+    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None, **_kw: client)
     monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
 
     captured = {}
@@ -392,7 +397,7 @@ def test_a_failed_lease_beat_does_not_swallow_the_inference_tick(monkeypatch):
 
     client = _StubClient()
     monkeypatch.setattr(mod, "Heartbeat", _FlakyHeartbeat)
-    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None: client)
+    monkeypatch.setattr(mod, "_build_client", lambda cfg, scope=None, **_kw: client)
     monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
 
     captured = {}
@@ -4388,3 +4393,770 @@ def test_a_hand_started_continuous_run_that_stalls_closes_its_own_record(monkeyp
     final = json.loads(redis.get("t:last_run"))
     assert (final["outcome"], final["exit_code"], final["source"]) == ("hung", 11, "cli")
     assert final["reason"] == mod._exit_reason(11, cfg)
+
+
+# ---------------------------------------------------------------------------
+# Transport-quota inference holds across a throttle (v0.14-s1.14)
+# ---------------------------------------------------------------------------
+#
+# The CLI seam of the story: one licence per ``--continuous`` run reaches every
+# cycle's client (DW-14), and every end-of-run banner states how many rows were
+# classified by inference (DW-16). Every provider answer here is a fake.
+
+_INFERRED_BANNER = "quota inferred from transport storms: "
+
+
+def test_build_client_threads_the_hold_and_the_shared_licence(monkeypatch):
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    from adapters.ai.client import GeminiClient, TransportQuotaLicence
+    from core.enrichment import EnrichmentTaskClass
+
+    scope = {EnrichmentTaskClass.DEAL_VERDICT}
+    licence = TransportQuotaLicence()
+
+    shared = mod._build_client(cfg, scope, quota_licence=licence)
+    private = mod._build_client(cfg, scope)
+
+    assert shared.quota_licence is licence
+    assert private.quota_licence is not licence
+    # Not the client default, so a dropped kwarg cannot satisfy this.
+    assert shared.transport_quota_hold_seconds == 1800.0
+    assert (
+        shared.transport_quota_hold_seconds
+        != GeminiClient._DEFAULT_TRANSPORT_QUOTA_HOLD_SECONDS
+    )
+
+
+def test_run_hands_its_licence_to_the_client_it_builds(monkeypatch):
+    """``_run`` is the only caller of ``_build_client`` on the run path."""
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    build = MagicMock()
+    monkeypatch.setattr(mod, "_build_client", build)
+
+    async def _fake_run_backfill(rows, **kw):
+        return _br(mod, processed=0)
+
+    monkeypatch.setattr(mod, "run_backfill", _fake_run_backfill)
+
+    mod.main(["--limit", "1"])
+
+    # A single pass has no run-wide licence: the client makes a private one.
+    assert build.call_args.kwargs["quota_licence"] is None
+
+
+def test_continuous_shares_one_licence_with_every_cycle(monkeypatch):
+    """DW-14: the evidence must outlive the per-cycle client."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    from adapters.ai.client import TransportQuotaLicence
+
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[_refused(mod), _refused(mod), _br(mod, processed=5)],
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5)] * 2 + [_census()]),
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    licences = [call.kwargs["quota_licence"] for call in run.call_args_list]
+    assert len(licences) == 3
+    assert isinstance(licences[0], TransportQuotaLicence)
+    assert licences[1] is licences[0] and licences[2] is licences[0]
+
+    # A second run in the same process starts with no evidence of the first.
+    run.side_effect = [_br(mod, processed=5)]
+    run.reset_mock()
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+    assert run.call_args.kwargs["quota_licence"] is not licences[0]
+
+
+@pytest.mark.parametrize(
+    ("hold", "warns"),
+    [
+        (600.0, True),    # shorter than the 900 s back-off: the licence cannot cross
+        (900.0, True),    # equal is not longer
+        # Longer than the back-off, but the next cycle's first timeout lands
+        # ``ai.timeout`` (120 s) after it: still past the hold.
+        (1020.0, True),
+        (1021.0, False),
+        (1800.0, False),
+        (0.0, False),     # the hold is off on purpose: nothing to order
+    ],
+)
+def test_a_hold_not_longer_than_the_quota_backoff_is_announced(monkeypatch, hold, warns):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.ai.gemini_transport_quota_hold_seconds = hold
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=5)))
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    warn_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "warning", warn_spy)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    events = [c for c in warn_spy.call_args_list if c[0] and c[0][0] == "backfill_quota_hold_not_longer_than_backoff"]
+    assert bool(events) is warns
+    if warns:
+        assert events[0][1]["hold_seconds"] == hold
+        assert events[0][1]["quota_backoff_seconds"] == 900.0
+
+
+def _inferring(mod, rows, *, processed=1):
+    """A cycle that got rows through and ended on an inferred refusal."""
+    return _br(
+        mod,
+        processed=processed,
+        budget_exhausted=True,
+        quota_exhausted=True,
+        quota_inferred_ids=[f"p{i}" for i in range(rows)],
+    )
+
+
+def _terminal_events(spy):
+    return [c[1] for c in spy.call_args_list if c[0] and c[0][0] == "backfill_terminal"]
+
+
+@pytest.mark.parametrize(
+    ("ending", "final", "final_census", "exit_name", "total"),
+    [
+        ("complete", dict(processed=1), dict(), "EXIT_COMPLETE", 2),
+        (
+            "stalled",
+            dict(processed=0, errors=1),
+            dict(enriched=0, candidates=5),
+            "EXIT_STALLED",
+            2,
+        ),
+        (
+            "stopped",
+            dict(
+                processed=0,
+                stopped=True,
+                budget_exhausted=True,
+                quota_exhausted=True,
+                quota_inferred_ids=["q0", "q1", "q2"],
+            ),
+            dict(enriched=0, candidates=5),
+            "EXIT_STOPPED",
+            5,
+        ),
+        (
+            "breaker",
+            dict(processed=0, ai_circuit_open=True, quota_inferred_ids=["q0", "q1", "q2"]),
+            dict(enriched=0, candidates=5),
+            "EXIT_AI_CIRCUIT_OPEN",
+            5,
+        ),
+        (
+            "lease_lost",
+            dict(processed=0, lease_lost=True, quota_inferred_ids=["q0", "q1", "q2"]),
+            dict(enriched=0, candidates=5),
+            "EXIT_LEASE_LOST",
+            5,
+        ),
+        (
+            "provider_refused",
+            dict(
+                processed=0,
+                budget_exhausted=True,
+                quota_exhausted=True,
+                quota_inferred_ids=["q0", "q1", "q2"],
+            ),
+            dict(enriched=0, candidates=5),
+            "EXIT_PROVIDER_REFUSED",
+            5,
+        ),
+    ],
+)
+def test_every_terminal_banner_states_the_rows_classified_by_inference(
+    monkeypatch, capsys, ending, final, final_census, exit_name, total
+):
+    """DW-16: rows inferred in two different cycles, summed, on every ending."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 1
+    _open_budget_window(redis, consumed=30)
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        # Cycle 1 enriched a row, so it is not a refusal cycle for exit 10.
+        passes=[_inferring(mod, 2), _br(mod, **final)],
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(
+            side_effect=[_census(enriched=0, candidates=5), _census(**final_census)]
+        ),
+    )
+    info_spy, warn_spy = MagicMock(), MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+    monkeypatch.setattr(mod.logger, "warning", warn_spy)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == getattr(mod, exit_name), ending
+    assert run.call_count == 2
+    out = capsys.readouterr().out
+    assert f"{_INFERRED_BANNER}{total}" in out
+    assert out.count(_INFERRED_BANNER) == 1
+    # Per cycle on the cycle event, run-wide on the terminal one.
+    cycles = [c[1] for c in info_spy.call_args_list if c[0] and c[0][0] == "backfill_cycle_done"]
+    assert [c["quota_inferred_rows"] for c in cycles] == [2, total - 2]
+    terminal = _terminal_events(info_spy) + _terminal_events(warn_spy)
+    if ending in ("complete", "stalled", "breaker", "provider_refused"):
+        assert [t["quota_inferred_rows"] for t in terminal] == [total]
+
+
+def test_no_banner_line_when_nothing_was_inferred(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    _refusing_provider(
+        mod, monkeypatch, redis, passes=[_refused(mod), _br(mod, processed=5)]
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5), _census()]),
+    )
+    info_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    out = capsys.readouterr().out
+    assert "BACKFILL COMPLETE" in out
+    assert "inferred" not in out
+    assert _terminal_events(info_spy)[0]["quota_inferred_rows"] == 0
+
+
+@pytest.mark.parametrize("rows", [0, 2])
+def test_a_single_pass_prints_the_inferred_rows_on_their_own_line(monkeypatch, capsys, rows):
+    mod = _load_module()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+    monkeypatch.setattr(
+        mod,
+        "_run",
+        MagicMock(
+            return_value=_br(
+                mod,
+                processed=1,
+                budget_exhausted=bool(rows),
+                quota_exhausted=bool(rows),
+                quota_inferred_ids=[f"p{i}" for i in range(rows)],
+            )
+        ),
+    )
+
+    mod.main(["--limit", "3"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("Backfill pass done") for line in lines)
+    inferred = [line for line in lines if _INFERRED_BANNER in line]
+    if rows:
+        assert len(inferred) == 1
+        assert f"{_INFERRED_BANNER}{rows}" in inferred[0]
+        assert not inferred[0].startswith("Backfill pass done")
+    else:
+        assert inferred == []
+
+
+# -- end to end: real _run, run_backfill, ledger and GeminiClient -----------
+
+
+class _ProviderScript:
+    """A fake provider: every POST of every cycle's client pops one answer.
+
+    An answer is an HTTP status (int) or an exception instance to raise from
+    the POST. Nothing here opens a socket.
+    """
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.posts = 0
+
+    def post(self, *_args, **_kwargs):
+        from unittest.mock import AsyncMock
+
+        self.posts += 1
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        response = AsyncMock(status=answer)
+        response.text.return_value = "rate limited" if answer == 429 else "upstream"
+        response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        return AsyncMock(
+            __aenter__=AsyncMock(return_value=response),
+            __aexit__=AsyncMock(return_value=None),
+        )
+
+
+class _AdapterClock:
+    """The adapter module's ``time`` name: only ``monotonic`` is fake."""
+
+    def __init__(self):
+        self.now = 10_000.0
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        import time as real_time
+
+        return getattr(real_time, name)
+
+
+def _reset_error():
+    import aiohttp
+
+    return aiohttp.ClientConnectionError("Connection reset by peer")
+
+
+def _real_continuous_run(mod, monkeypatch, redis, cfg, answers, censuses):
+    """``--continuous`` with only the provider, the DB and the sleep faked.
+
+    Real: ``_run_continuous``, ``_run``, ``_build_client``, ``run_backfill``,
+    the attempt ledger and ``GeminiClient.chat_completions``. The row's
+    enrichment is one chat call (``run_enrichment`` needs a database), and the
+    candidate partition lets every row through.
+    Returns (exit code, clients built, ledger attempts of the row seen while
+    the run slept between cycles, seconds slept).
+    """
+    import adapters.ai.client as client_module
+
+    cfg.backfill.tpm_limit = 16000
+    clock = _AdapterClock()
+    monkeypatch.setattr(client_module, "time", clock)
+    script = _ProviderScript(answers)
+
+    @asynccontextmanager
+    async def _session_context(self):
+        self.session = SimpleNamespace(post=script.post)
+        try:
+            yield self.session
+        finally:
+            self.session = None
+
+    async def _no_backoff(self, _backoff):
+        return 0.0
+
+    monkeypatch.setattr(client_module.GeminiClient, "session_context", _session_context)
+    monkeypatch.setattr(client_module.GeminiClient, "_sleep_backoff", _no_backoff)
+
+    built = []
+    real_build = mod._build_client
+
+    def _build(*args, **kwargs):
+        client = real_build(*args, **kwargs)
+        built.append(client)
+        return client
+
+    monkeypatch.setattr(mod, "_build_client", _build)
+
+    async def _enrich(prop, *, client, cfg, stages):
+        await client.chat_completions("m", [{"role": "user", "content": str(prop.id)}])
+
+    monkeypatch.setattr(mod, "_enrich_one", _enrich)
+    # The photo gate is not this story's subject, and the rows of ``_wire``
+    # carry no gallery: every candidate is workable here.
+    monkeypatch.setattr(mod, "partition_candidates", _all_workable)
+    monkeypatch.setattr(mod, "_census", MagicMock(side_effect=censuses))
+
+    attempts_at_sleep = []
+    slept = []
+
+    def _sleep(seconds):
+        # The back-off between cycles moves the adapter's clock too. The wait
+        # loop sleeps in poll-sized steps, so this runs many times per back-off.
+        clock.now += seconds
+        slept.append(seconds)
+        attempts_at_sleep.append(mod._build_ledger(cfg, redis).attempts("p0"))
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    rc = mod.main(["--continuous", "--min-interval", "0"])
+    assert script.answers == [], "the run did not consume the whole script"
+    return rc, built, attempts_at_sleep, slept
+
+
+def _all_workable(rows, **_kw):
+    return SimpleNamespace(
+        workable=list(rows), blocked_no_photos=[], quarantined=[], blocked_total=0
+    )
+
+
+def test_a_storm_in_the_cycle_after_a_stated_refusal_charges_no_attempt(
+    monkeypatch, capsys
+):
+    """I/O matrix "Cycle boundary (DW-14)" and "Banner (DW-16)", end to end.
+
+    Cycle 1 ends on a stated 429. 900 s later cycle 2 builds a new client and
+    meets a storm from its first call. Cycle 3 is answered.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis, n_rows=1)
+    info_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+
+    rc, built, attempts_at_sleep, slept = _real_continuous_run(
+        mod,
+        monkeypatch,
+        redis,
+        cfg,
+        answers=[429] * 5 + [_reset_error() for _ in range(5)] + [200],
+        censuses=[_census(enriched=0, candidates=1)] * 2 + [_census()],
+    )
+
+    assert rc == mod.EXIT_COMPLETE
+    assert len(built) == 3
+    assert built[1] is not built[0]
+    assert built[0].quota_licence is built[1].quota_licence is built[2].quota_licence
+    # The storm was read as quota on the new client, which never saw a 429.
+    assert built[1].rate_limit_hits == 0
+    assert built[1].transport_quota_inferences == 1
+    # No attempt charged after the stated refusal, none after the storm.
+    assert sum(slept) == pytest.approx(2 * 900.0)
+    assert attempts_at_sleep and set(attempts_at_sleep) == {0}
+    out = capsys.readouterr().out
+    assert f"{_INFERRED_BANNER}1" in out
+    cycles = [c[1] for c in info_spy.call_args_list if c[0] and c[0][0] == "backfill_cycle_done"]
+    assert [c["quota_inferred_rows"] for c in cycles] == [0, 1, 0]
+    assert _terminal_events(info_spy)[0]["quota_inferred_rows"] == 1
+
+
+def test_a_storm_with_no_licence_charges_the_row_and_is_not_a_refusal_cycle(
+    monkeypatch, capsys
+):
+    """The hold is off, so 900 s after the stated 429 nothing licenses the storm.
+
+    The row is charged, the cycle is a stall (exit 3) and not a provider
+    refusal: with a limit of two refusal cycles, counting it would end the run
+    with exit 10.
+    """
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis, n_rows=1)
+    cfg.ai.gemini_transport_quota_hold_seconds = 0.0
+    cfg.backfill.max_no_progress_cycles = 2
+
+    rc, built, attempts_at_sleep, slept = _real_continuous_run(
+        mod,
+        monkeypatch,
+        redis,
+        cfg,
+        answers=[429] * 5 + [_reset_error() for _ in range(5)],
+        censuses=[_census(enriched=0, candidates=1)] * 2,
+    )
+
+    assert rc == mod.EXIT_STALLED
+    assert len(built) == 2
+    assert built[1].transport_quota_inferences == 0
+    assert sum(slept) == pytest.approx(900.0)
+    assert attempts_at_sleep and set(attempts_at_sleep) == {0}
+    assert mod._build_ledger(cfg, redis).attempts("p0") == 1
+    out = capsys.readouterr().out
+    assert "BACKFILL STALLED" in out
+    assert "inferred" not in out
+
+
+@pytest.mark.parametrize(
+    ("final", "wait_outcome", "exit_name"),
+    [
+        (dict(migration_blocked=True), "stopped", "EXIT_STOPPED"),
+        (dict(migration_blocked=True), "timed_out", "EXIT_MIGRATION_ACTIVE"),
+        (dict(migration_blocked=True), "lease_lost", "EXIT_LEASE_LOST"),
+        (dict(migration_blocked=True, lease_lost=True), None, "EXIT_LEASE_LOST"),
+    ],
+)
+def test_the_banners_of_a_migration_blocked_ending_state_the_inferred_rows_too(
+    monkeypatch, capsys, final, wait_outcome, exit_name
+):
+    """These endings take no census, so they print no summary: the line is added."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    _refusing_provider(
+        mod, monkeypatch, redis, passes=[_inferring(mod, 2), _br(mod, **final)]
+    )
+    wait = MagicMock(return_value=wait_outcome)
+    monkeypatch.setattr(mod, "_wait_out_migration", wait)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == getattr(mod, exit_name)
+    assert wait.call_count == (0 if wait_outcome is None else 1)
+    out = capsys.readouterr().out
+    assert out.count(f"{_INFERRED_BANNER}2") == 1
+
+
+# -- review pass 1 (v0.14-s1.14) ---------------------------------------------
+
+
+def test_a_row_inferred_in_two_cycles_is_one_row_on_the_banner(monkeypatch, capsys):
+    """The banner counts rows. A rolled-back row is a candidate again, so the
+    same property can be classified by inference in several cycles of one run:
+    it is still one row."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    again = _br(
+        mod,
+        processed=1,
+        budget_exhausted=True,
+        quota_exhausted=True,
+        quota_inferred_ids=["p1", "p7"],
+    )
+    _refusing_provider(
+        mod, monkeypatch, redis, passes=[_inferring(mod, 2), again, _br(mod, processed=1)]
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5)] * 2 + [_census()]),
+    )
+    info_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "info", info_spy)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    out = capsys.readouterr().out
+    # p0, p1 in cycle 1; p1 again and p7 in cycle 2.
+    assert out.count(f"{_INFERRED_BANNER}3 row(s)") == 1
+    cycles = [c[1] for c in info_spy.call_args_list if c[0] and c[0][0] == "backfill_cycle_done"]
+    assert [c["quota_inferred_rows"] for c in cycles] == [2, 2, 0]
+    assert _terminal_events(info_spy)[0]["quota_inferred_rows"] == 3
+
+
+def test_a_lease_lost_in_the_quota_backoff_states_the_inferred_rows(monkeypatch, capsys):
+    """The wait a cycle enters right after an inferred refusal. A lease lost
+    there printed the one banner of the run without the line."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    run, _slept = _refusing_provider(mod, monkeypatch, redis, passes=[_inferring(mod, 2)])
+    monkeypatch.setattr(mod, "_sleep_for_reset", lambda wait, **kw: "lease_lost")
+
+    assert mod.main(["--continuous"]) == mod.EXIT_LEASE_LOST
+
+    assert run.call_count == 1
+    assert capsys.readouterr().out.count(f"{_INFERRED_BANNER}2 row(s)") == 1
+
+
+def test_a_lease_lost_ending_without_a_census_states_the_inferred_rows(monkeypatch, capsys):
+    """Redis down for the lease TTL: no census, a banner built by hand."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[_inferring(mod, 2), _br(mod, processed=0, lease_lost=True)],
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(
+            side_effect=[_census(enriched=0, candidates=5), ConnectionError("redis is down")]
+        ),
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_LEASE_LOST
+
+    out = capsys.readouterr().out
+    assert out.count(f"{_INFERRED_BANNER}2 row(s)") == 1
+    assert "enrichable" not in out  # the summary a census would have printed
+
+
+def test_the_hold_warning_is_silent_when_the_inference_is_off(monkeypatch):
+    """A zero window turns every basis off: the hold is inert, nothing to order."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.ai.gemini_transport_quota_window_seconds = 0.0
+    cfg.ai.gemini_transport_quota_hold_seconds = 600.0
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=5)))
+    monkeypatch.setattr(mod, "_census", MagicMock(return_value=_census()))
+    warn_spy = MagicMock()
+    monkeypatch.setattr(mod.logger, "warning", warn_spy)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    assert [
+        c for c in warn_spy.call_args_list
+        if c[0] and c[0][0] == "backfill_quota_hold_not_longer_than_backoff"
+    ] == []
+
+
+@pytest.mark.parametrize("inferred", [True, False])
+def test_the_wait_line_says_when_the_refusal_was_inferred(monkeypatch, capsys, inferred):
+    """"Provider refused on quota" is not what happened when the provider said
+    nothing: the line an operator reads while the run sleeps says so."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    first = (
+        _inferring(mod, 1)
+        if inferred
+        else _br(mod, processed=1, budget_exhausted=True, quota_exhausted=True)
+    )
+    _refusing_provider(mod, monkeypatch, redis, passes=[first, _br(mod, processed=1)])
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5), _census()]),
+    )
+    monkeypatch.setattr(mod, "_sleep_for_reset", lambda wait, **kw: "elapsed")
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    waits = [line for line in capsys.readouterr().out.splitlines() if "sleeping" in line]
+    assert len(waits) == 1
+    assert ("inferred from transport failures" in waits[0]) is inferred
+    assert "Provider refused on quota" in waits[0]
+
+
+def test_the_long_wait_line_says_when_the_refusal_was_inferred(monkeypatch, capsys):
+    """The fourth refused pass in a row is where a silent provider is parked
+    for the daily window (follow-up review of v0.14-s1.14): that line is the
+    one an operator reads for hours, and it has to say the refusals were
+    inferred, on their last attempt (an ``in-call`` row did see a 429)."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    passes = [_inferring(mod, 1, processed=0) for _ in range(mod._MAX_QUOTA_BACKOFF_CYCLES)]
+    _refusing_provider(mod, monkeypatch, redis, passes=passes + [_br(mod, processed=1)])
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(
+            side_effect=[_census(enriched=0, candidates=5)] * len(passes) + [_census()]
+        ),
+    )
+    monkeypatch.setattr(mod, "_sleep_for_reset", lambda wait, **kw: "elapsed")
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+
+    waits = [line for line in capsys.readouterr().out.splitlines() if "sleeping" in line]
+    assert len(waits) == len(passes)
+    clause = "(inferred from transport failures on 1 row(s), no 429 on their last attempt)"
+    assert all(clause in line for line in waits)
+    assert "Provider has refused on quota" in waits[-1]
+    assert "Waiting out the RPD window" in waits[-1]
+
+
+def test_the_budget_spent_wait_line_says_when_the_refusal_was_inferred(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    # --daily-budget 30 with 30 already consumed: no headroom for another row.
+    _open_budget_window(redis, consumed=30)
+    _refusing_provider(
+        mod, monkeypatch, redis, passes=[_inferring(mod, 2), _br(mod, processed=1)]
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5), _census()]),
+    )
+    monkeypatch.setattr(mod, "_sleep_for_reset", lambda wait, **kw: "elapsed")
+
+    assert mod.main(["--continuous", "--daily-budget", "30"]) == mod.EXIT_COMPLETE
+
+    waits = [line for line in capsys.readouterr().out.splitlines() if "sleeping" in line]
+    assert len(waits) == 1
+    assert "inferred from transport failures on 2 row(s)" in waits[0]
+    assert "local daily budget is spent" in waits[0]
+
+
+def test_the_exit_ten_reason_on_the_card_names_the_inferred_reading(monkeypatch):
+    """Cycles refused by inference feed exit 10, and the status record carries
+    no row count: its one sentence must not send the operator to the quota
+    page alone when the evidence may be a route that died after a 429."""
+    mod = _load_module()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING)
+
+    reason = mod._exit_reason(mod.EXIT_PROVIDER_REFUSED, cfg)
+
+    assert "inferred from transport failures" in reason
+    assert "network route" in reason
+    assert "max_no_progress_cycles" in reason
+    # ``last_run`` truncates the reason; the sentence has to fit whole.
+    from core.backfill_runner import _LAST_RUN_REASON_MAX_CHARS
+
+    assert len(reason) <= _LAST_RUN_REASON_MAX_CHARS
+
+
+def test_a_throttle_that_turns_silent_mid_call_charges_no_attempt(monkeypatch, capsys):
+    """I/O matrix "Throttle turns silent mid-call (DW-12)", end to end: the
+    adapter's own error reaches the real runner and the real ledger."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis, n_rows=1)
+
+    rc, built, attempts_at_sleep, _slept = _real_continuous_run(
+        mod,
+        monkeypatch,
+        redis,
+        cfg,
+        answers=[429] + [_reset_error() for _ in range(4)] + [200],
+        censuses=[_census(enriched=0, candidates=1), _census()],
+    )
+
+    assert rc == mod.EXIT_COMPLETE
+    assert built[0].rate_limit_hits == 1
+    assert built[0].transport_quota_inferences == 1
+    assert "in-call" in built[0].last_error
+    assert attempts_at_sleep and set(attempts_at_sleep) == {0}
+    assert f"{_INFERRED_BANNER}1 row(s)" in capsys.readouterr().out
+
+
+def test_cycles_refused_by_inference_count_towards_the_no_progress_exit(
+    monkeypatch, capsys
+):
+    """Story 1.13's rule, fed by a real inferred refusal: a stated refusal in
+    cycle 1, a storm read as quota in cycle 2, limit of two, exit 10. The
+    mirror of the hold-off test above, where the same storm is a stall."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis, n_rows=1)
+    cfg.backfill.max_no_progress_cycles = 2
+
+    rc, built, attempts_at_sleep, slept = _real_continuous_run(
+        mod,
+        monkeypatch,
+        redis,
+        cfg,
+        answers=[429] * 5 + [_reset_error() for _ in range(5)],
+        censuses=[_census(enriched=0, candidates=1)] * 2,
+    )
+
+    assert rc == mod.EXIT_PROVIDER_REFUSED
+    assert built[1].transport_quota_inferences == 1
+    assert sum(slept) == pytest.approx(900.0)
+    assert mod._build_ledger(cfg, redis).attempts("p0") == 0
+    assert f"{_INFERRED_BANNER}1 row(s)" in capsys.readouterr().out

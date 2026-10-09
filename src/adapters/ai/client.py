@@ -244,6 +244,22 @@ class AIQuotaExhaustedError(AIClientError):
     is_quota_exhausted = True
 
 
+class AITransportQuotaInferredError(AIQuotaExhaustedError):
+    """A quota refusal the client *inferred* from a transport storm (v0.14-s1.14).
+
+    The provider did not say 429 on the attempt that ended the call: every
+    attempt was a stated refusal or the same transport failure, and a refusal
+    the provider did state licenses reading that as a throttle (see
+    :meth:`GeminiClient._transport_quota_basis`). It is still a quota refusal —
+    ``is_quota_exhausted`` is inherited and stays the only signal that makes the
+    backfill runner roll the row's attempt back. ``is_quota_inferred`` is the
+    second duck-typed attribute ``src/core`` reads (AD-1), and it only counts:
+    the runner reports how many rows were classified this way.
+    """
+
+    is_quota_inferred = True
+
+
 class AIResultDegradedError(AIClientError):
     """A consumer refused to use a result the client had to fabricate (DW-17).
 
@@ -923,6 +939,60 @@ class LMStudioClient(LocalAIClient):
         return [float(x) for x in data[0]["embedding"]]
 
 
+class TransportQuotaLicence:
+    """What the provider last told this process about its quota (v0.14-s1.14).
+
+    A storm of identical transport failures is read as a throttle only when a
+    refusal the provider *stated* licenses it. That evidence used to live on the
+    client, and ``--continuous`` builds a new client every cycle, so the cycle
+    after a quota back-off always started with none (DW-14). It lives here
+    instead: a run creates one licence and builds every cycle's client around
+    it; a client built without one gets a private licence and behaves as before.
+
+    Two facts, and nothing else:
+
+    - ``refused_at`` — monotonic stamp of the last stated refusal (a 429, or a
+      quota-shaped body on a terminal answer); ``None`` when there is none or a
+      success has cleared it. Monotonic, never wall-clock: a clock step must
+      not license or revoke an inference.
+    - ``answered_since_refusal`` — the provider answered something that was
+      neither a success nor a stated refusal since then. The hold needs silence,
+      so this ends it; the short window does not look at it.
+
+    An inference never touches a licence: only what the provider said does, so
+    one inference cannot license the next. Process-local on purpose — no Redis
+    key (that would need a wall clock, be a second quota key beside the pacer
+    and survive an operator restart), no counter and no knobs: the window and
+    the hold belong to the client that judges a storm against this state.
+    Plain attribute writes, used from one event loop; no lock is needed.
+    """
+
+    __slots__ = ("refused_at", "answered_since_refusal")
+
+    def __init__(self) -> None:
+        self.refused_at: float | None = None
+        self.answered_since_refusal = False
+
+    def note_refusal(self) -> None:
+        """The provider stated a refusal now: the anchor moves, silence restarts."""
+        self.refused_at = time.monotonic()
+        self.answered_since_refusal = False
+
+    def note_success(self) -> None:
+        """A 200: the provider is serving us, so nothing licenses a later storm."""
+        self.refused_at = None
+        self.answered_since_refusal = False
+
+    def note_other_answer(self) -> None:
+        """An answer that is neither a success nor a stated refusal.
+
+        The refusal stays on record (the short window still applies), but the
+        provider is talking, so a later storm is not "still the same throttle".
+        """
+        if self.refused_at is not None:
+            self.answered_since_refusal = True
+
+
 class GeminiClient(LMStudioClient):
     """Client for Google Gemini via its OpenAI-compatible endpoint.
 
@@ -943,6 +1013,10 @@ class GeminiClient(LMStudioClient):
     observed quota headroom empirically. ``rate_limit_hits`` counts only
     throttles the provider *stated*; throttles merely inferred from a transport
     storm are counted apart, in ``transport_quota_inferences`` (DW-7).
+
+    The stated-refusal evidence those inferences need is a
+    :class:`TransportQuotaLicence`; pass one as ``quota_licence`` to share it
+    between clients of one run (v0.14-s1.14).
     """
 
     DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -956,9 +1030,19 @@ class GeminiClient(LMStudioClient):
     # observed 429 licenses the inference for the whole window, so a day-wide one
     # would turn a dead key or a firewall change into permanent silent back-off.
     _MAX_TRANSPORT_QUOTA_WINDOW_SECONDS = 3600.0
-    # "Repeated" needs at least two failures: with ``max_retries=1`` the test
+    # "Repeated" needs at least two attempts: with ``max_retries=1`` the test
     # "every attempt failed identically" would be vacuously true for one blip.
+    # Since v0.14-s1.14 the count is stated refusals plus transport failures
+    # (the name is kept from v0.13-fu8): ``[429, reset]`` meets it, because the
+    # call was refused and then cut off.
     _MIN_TRANSPORT_FAILURES_FOR_QUOTA = 2
+    # Mirror ``AIConfig.gemini_transport_quota_hold_seconds`` and its
+    # ``le=21600.0`` bound, like the window pair above. The hold is how long a
+    # stated refusal keeps licensing storms while the provider answers nothing
+    # at all; the ceiling keeps one refusal from excusing a dead route for a
+    # whole day.
+    _DEFAULT_TRANSPORT_QUOTA_HOLD_SECONDS = 7200.0
+    _MAX_TRANSPORT_QUOTA_HOLD_SECONDS = 21600.0
 
     def __init__(
         self,
@@ -968,6 +1052,8 @@ class GeminiClient(LMStudioClient):
         timeout: int = 120,
         max_retries: int = 5,
         transport_quota_window_seconds: float = _DEFAULT_TRANSPORT_QUOTA_WINDOW_SECONDS,
+        transport_quota_hold_seconds: float = _DEFAULT_TRANSPORT_QUOTA_HOLD_SECONDS,
+        quota_licence: "TransportQuotaLicence | None" = None,
     ):
         if not api_key:
             raise AIClientError(
@@ -1024,100 +1110,193 @@ class GeminiClient(LMStudioClient):
                 self._MAX_TRANSPORT_QUOTA_WINDOW_SECONDS,
             )
         self.transport_quota_window_seconds = applied
-        # Monotonic (never wall-clock — a clock step must not license or revoke
-        # the inference) stamp of the last throttle the provider *stated*.
-        self.last_rate_limit_at: float | None = None
+        # The hold (v0.14-s1.14, DW-13): same rule as the window above — the
+        # bound is the config schema's, a hand-built client is clamped to it,
+        # and every correction is logged. ``0`` leaves only the in-call and
+        # window licences.
+        hold = float(transport_quota_hold_seconds)
+        if not math.isfinite(hold):
+            applied_hold = 0.0
+        else:
+            applied_hold = min(max(hold, 0.0), self._MAX_TRANSPORT_QUOTA_HOLD_SECONDS)
+        if applied_hold != hold:
+            logger.warning(
+                "gemini_transport_quota_hold_clamped raw=%s applied=%s "
+                "(AIConfig bounds this to [0.0, %s]; 0 disables the hold)",
+                hold,
+                applied_hold,
+                self._MAX_TRANSPORT_QUOTA_HOLD_SECONDS,
+            )
+        self.transport_quota_hold_seconds = applied_hold
+        # What the provider last stated. Shared by every client of one
+        # ``--continuous`` run (the caller passes it in); private otherwise.
+        self.quota_licence: TransportQuotaLicence = (
+            quota_licence if quota_licence is not None else TransportQuotaLicence()
+        )
+        # Per client, and about calls: the run-wide count of *rows* is kept by
+        # the backfill runner (``BackfillResult.quota_inferred_rows``).
         self.transport_quota_inferences = 0
+
+    @property
+    def last_rate_limit_at(self) -> float | None:
+        """Monotonic stamp of the last refusal the provider *stated*, or ``None``.
+
+        A view over :class:`TransportQuotaLicence`, kept under its v0.13-fu8
+        name. Writing a stamp records a stated refusal at that moment (silence
+        starts over); writing ``None`` clears the licence.
+        """
+        return self.quota_licence.refused_at
+
+    @last_rate_limit_at.setter
+    def last_rate_limit_at(self, value: float | None) -> None:
+        self.quota_licence.refused_at = value
+        self.quota_licence.answered_since_refusal = False
 
     def _note_rate_limit_hit(self) -> None:
         """Record a throttle the provider *stated* (429 / quota body).
 
         ``rate_limit_hits`` is observed evidence — the A/B harness and the CLI
         progress hook report it as "the provider said 429" — so an inferred
-        throttle must never bump it. The monotonic stamp is what later licenses
-        :meth:`_is_transport_throttle`.
+        throttle must never bump it. The licence stamp is what later licenses
+        :meth:`_transport_quota_basis`.
         """
         self.rate_limit_hits += 1
-        self.last_rate_limit_at = time.monotonic()
+        self.quota_licence.note_refusal()
 
     def _clear_rate_limit_recency(self) -> None:
         """A successful response proves the provider is answering us again.
 
-        The window is meant to say "we are being refused *right now*", but a
+        The licence is meant to say "we are being refused *right now*", but a
         paced free-tier run collects retried 429s routinely, and without this
         every one of them would license the inference for the next window —
         including for an unrelated local network drop. Clearing on success keeps
         the licence tied to a live refusal and can only ever move a borderline
         case to the safe side (a hard row error).
         """
-        self.last_rate_limit_at = None
+        self.quota_licence.note_success()
 
-    def _is_transport_throttle(
-        self, signatures: list[str], *, saw_http_response: bool, first_failure_at: float
-    ) -> bool:
-        """True when a transport failure sequence is more likely quota than outage.
+    def _transport_quota_basis(
+        self,
+        signatures: list[str],
+        *,
+        stated_refusals: int,
+        saw_other_answer: bool,
+        first_failure_at: float,
+    ) -> str | None:
+        """Why a call that ended in transport is read as quota, or ``None``.
 
-        Both look like a dead socket, so the evidence is weak by construction and
-        each condition is deliberately over-strict: *every* attempt of this call
-        died as a transport error with the *same* ``(type, message)`` signature —
-        which excludes the common outage shape of a connect error decaying into a
-        timeout, and any call that saw a real HTTP response — *and* the provider
-        itself refused on quota inside the recency window. A mixed sequence during
-        a real throttle is therefore misclassified as an outage, costing the row
-        what it costs today; the opposite error would mask a genuine outage across
-        every row of a multi-day run.
+        A throttle and an outage both look like a dead socket, so the evidence
+        is weak by construction and each condition is deliberately strict.
 
-        ``saw_http_response`` is what actually enforces "no attempt reached the
-        endpoint": a body read (``response.json()`` / ``.text()``) can raise
-        ``ContentTypeError`` / ``ClientPayloadError``, which *are*
-        ``aiohttp.ClientError`` subclasses, so a fully answered request can land
-        in the transport arm and would otherwise look like a dead socket.
+        **The storm.** Every attempt of the call was either a refusal the
+        provider stated (a 429) or a transport failure; all transport failures
+        carry the same full ``type: message`` signature; there are at least two
+        such attempts in total. That excludes the common outage shape of a
+        connect error decaying into a timeout, and any call in which the
+        provider answered something else (``saw_other_answer``): a 5xx, or a
+        body that could not be read — ``ContentTypeError`` / ``ClientPayloadError``
+        are ``aiohttp.ClientError`` subclasses, so an answered request can land
+        in the transport arm and would otherwise look like a dead socket. A
+        stated refusal inside the call is evidence, not a veto (DW-12).
 
-        Recency is judged at ``first_failure_at``, not at call end: five attempts
-        at ``ai.timeout`` seconds each, plus backoff, can outlive the whole window,
-        so a *timeout* storm — half of what DW-7 describes — would never qualify
-        if it were judged when the last attempt gave up.
+        **The licence.** A storm is quota only on the strength of a refusal the
+        provider stated, in this order:
+
+        - ``in-call`` — a refusal was stated inside this very call and no
+          success has cleared the licence since (another row of the same run
+          being answered means the provider is serving). No time test: the
+          refusal is part of the call it licenses.
+        - ``window`` — the last stated refusal lies within
+          ``transport_quota_window_seconds`` of the storm's first failure, on
+          either side (DW-15: a refusal stamped by another row long *after* the
+          storm began licenses nothing).
+        - ``hold`` — the last stated refusal is older than the window but at
+          most ``transport_quota_hold_seconds`` old, and the provider has
+          answered nothing at all since (DW-13). The hold is anchored on the
+          stated refusal and an inference never moves it.
+
+        Time is judged at ``first_failure_at``, not at call end: five attempts
+        at ``ai.timeout`` seconds each, plus backoff, can outlive the window.
+
+        A zero window disables every basis, whatever the hold: it is the one
+        switch that turns the inference off.
         """
-        if len(signatures) < self._MIN_TRANSPORT_FAILURES_FOR_QUOTA:
-            return False
-        if saw_http_response:
-            return False
-        if len(signatures) != self.max_retries or len(set(signatures)) != 1:
-            return False
         window = self.transport_quota_window_seconds
-        if window <= 0.0 or self.last_rate_limit_at is None:
-            return False
-        return (first_failure_at - self.last_rate_limit_at) <= window
+        if window <= 0.0:
+            return None
+        if saw_other_answer:
+            return None
+        if stated_refusals + len(signatures) < self._MIN_TRANSPORT_FAILURES_FOR_QUOTA:
+            return None
+        # Defence-in-depth, as in v0.13-fu8: every attempt must be accounted
+        # for. ``saw_other_answer`` already covers each gap the retry loop can
+        # leave today.
+        if stated_refusals + len(signatures) != self.max_retries:
+            return None
+        if not signatures or len(set(signatures)) != 1:
+            return None
+        licence = self.quota_licence
+        if licence.refused_at is None:
+            # No stated refusal on record, or a 200 cleared it. That holds for
+            # a refusal stated inside this call too: a success on another row
+            # of the run after it means the provider is serving.
+            return None
+        if stated_refusals > 0:
+            return "in-call"
+        since_refusal = first_failure_at - licence.refused_at
+        if -window <= since_refusal <= window:
+            return "window"
+        hold = self.transport_quota_hold_seconds
+        if (
+            hold > 0.0
+            and not licence.answered_since_refusal
+            and 0.0 <= since_refusal <= hold
+        ):
+            return "hold"
+        return None
 
     def _raise_inferred_transport_quota(
-        self, signatures: list[str], exc: BaseException
+        self,
+        signatures: list[str],
+        exc: BaseException,
+        *,
+        basis: str,
+        attempts: int,
     ) -> NoReturn:
         """Tag a throttle-shaped transport storm as quota — audibly.
 
         Masking a genuine outage is this inference's only real risk, so it is
         made auditable: its own counter (never ``rate_limit_hits``), a
         ``last_error`` that cannot be confused with a plain ``connection:``
-        failure, and a WARNING naming the repeated signature and the window it
-        was judged against. The message keeps a phrase that
+        failure, and a WARNING naming the repeated signature, the attempts and
+        the basis it was licensed on (``in-call``, ``window`` or ``hold``) with
+        the two bounds it was judged against. The message keeps a phrase that
         ``core.backfill_runner``'s ``_QUOTA_MARKERS`` text net matches, so the
         runner's backstop agrees with the duck-typed flag.
+
+        The licence is not touched here: an inference is not something the
+        provider said.
         """
         self.transport_quota_inferences += 1
         # Signatures are compared in full (two failures differing only past a
         # cut-off must not collapse into one) and truncated only for display.
         signature = signatures[-1][:180]
         window = self.transport_quota_window_seconds
-        self.last_error = f"quota inferred from transport: {signature}"
+        hold = self.transport_quota_hold_seconds
+        self.last_error = f"quota inferred from transport ({basis}): {signature}"
         logger.warning(
-            "gemini_transport_quota_inferred attempts=%s window_seconds=%s signature=%s",
-            len(signatures),
+            "gemini_transport_quota_inferred attempts=%s basis=%s "
+            "window_seconds=%s hold_seconds=%s signature=%s",
+            attempts,
+            basis,
             window,
+            hold,
             signature,
         )
-        raise AIQuotaExhaustedError(
-            f"Gemini quota exhausted (inferred): {len(signatures)} identical "
-            f"transport failures within {window}s of an observed rate limit "
-            f"— {signature}"
+        raise AITransportQuotaInferredError(
+            f"Gemini quota exhausted (inferred, basis={basis}): {attempts} "
+            f"attempts, {len(signatures)} of them the same transport failure, "
+            f"licensed by a rate limit the provider stated — {signature}"
         ) from exc
 
     async def _sleep_backoff(self, backoff: float) -> float:
@@ -1139,14 +1318,23 @@ class GeminiClient(LMStudioClient):
         ``AIQuotaExhaustedError`` and bumps ``rate_limit_hits``. Past the ceiling
         the endpoint can also just stop answering, so the refusal arrives as
         transport failures instead (DW-7); that is read as quota only when
-        :meth:`_is_transport_throttle` holds — every attempt died with the same
-        signature, *no* attempt reached the endpoint at all, *and* the provider
-        stated a refusal within ``transport_quota_window_seconds`` of the first
-        failure. Anything else — a mixed failure sequence, a storm with no recent
-        stated throttle (including one whose throttle was cancelled by a later
-        success), a storm on a request that did get answered, a single-attempt
-        client, or a zero window — re-raises the original transport exception,
-        which the backfill runner charges to the row as a hard error.
+        :meth:`_transport_quota_basis` names a basis — every attempt was a stated
+        429 or died in transport with one signature, the call ended in transport,
+        *and* a refusal the provider stated licenses it: one inside this call
+        (``in-call``), one within ``transport_quota_window_seconds`` of the first
+        failure on either side (``window``), or one at most
+        ``transport_quota_hold_seconds`` old with nothing answered since
+        (``hold``). That raises ``AITransportQuotaInferredError``, a quota
+        refusal that says it was inferred.
+
+        **What is not.** Anything else re-raises the original transport
+        exception, which the backfill runner charges to the row as a hard error:
+        a mixed failure sequence; a call in which the provider answered anything
+        other than a 429 (a 5xx, an unreadable body); a storm with no stated
+        refusal in reach — none ever, one cleared by a later success, one older
+        than the hold, one older than the window when the provider has answered
+        since, or one stamped more than the window after the storm began; a
+        single-attempt client; or a zero window.
         """
         self._ensure_session()
         url = f"{self.base_url}/chat/completions"
@@ -1161,28 +1349,45 @@ class GeminiClient(LMStudioClient):
         backoff = 1.0
         last_exc: Exception | None = None
         # One entry per attempt that died in transport, compared in full (see
-        # ``_is_transport_throttle``). A gap — an attempt that got a real HTTP
-        # response — leaves this shorter than ``max_retries``, and is recorded
-        # explicitly in ``saw_http_response`` because a body read can raise a
-        # ``ClientError`` too and would otherwise leave no gap at all.
+        # ``_transport_quota_basis``). An attempt the provider answered is
+        # either a stated refusal (counted in ``stated_refusals``: evidence for
+        # the storm, DW-12) or something else, recorded in ``saw_other_answer``
+        # — explicitly, because a body read can raise a ``ClientError`` too and
+        # would otherwise look like one more dead socket.
         transport_signatures: list[str] = []
-        saw_http_response = False
+        stated_refusals = 0
+        saw_other_answer = False
         first_failure_at = 0.0
         for attempt in range(self.max_retries):
             self.request_count += 1
             final_attempt = attempt == self.max_retries - 1
+            # True while this attempt holds an answer nothing has classified
+            # yet. If a body read below raises, the transport arm sees it and
+            # records an answer that was not a stated refusal. Set before the
+            # status is looked at: a 200 whose body cannot be read is an answer
+            # too, and after an in-call 429 it would otherwise complete a storm.
+            unclassified_answer = False
             try:
                 async with self.session.post(url, json=payload, headers=headers) as response:
-                    saw_http_response = True
+                    unclassified_answer = True
                     if response.status == 200:
                         # The provider is answering us: any earlier throttle is
                         # over, so it must not license a later inference.
                         self._clear_rate_limit_recency()
                         return await response.json()
                     error_text = await response.text()
+                    unclassified_answer = False
                     if response.status in self._RETRY_STATUS and not final_attempt:
-                        if response.status == 429:
+                        if _is_quota_response(response.status, error_text):
+                            # A 429, or a retried 5xx whose body is a quota
+                            # refusal: the same test the terminal branch below
+                            # applies, so one answer is not a stated refusal on
+                            # the last attempt and "something else" before it.
                             self._note_rate_limit_hit()
+                            stated_refusals += 1
+                        else:
+                            saw_other_answer = True
+                            self.quota_licence.note_other_answer()
                         self.retry_count += 1
                         logger.warning(
                             "gemini_retry status=%s attempt=%s body=%s",
@@ -1207,12 +1412,18 @@ class GeminiClient(LMStudioClient):
                     # text-matching safety net is the last line of defence for a
                     # quota refusal this function failed to tag, and a message
                     # carrying only the status code can never match it.
+                    # The provider answered, and not with a refusal: the hold
+                    # (which needs silence) ends here.
+                    self.quota_licence.note_other_answer()
                     raise AIClientError(
                         f"Gemini API error: {response.status} "
                         f"{error_text[:200].strip()}"
                     )
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 last_exc = exc
+                if unclassified_answer:
+                    saw_other_answer = True
+                    self.quota_licence.note_other_answer()
                 if not transport_signatures:
                     first_failure_at = time.monotonic()
                 transport_signatures.append(f"{type(exc).__name__}: {exc}")
@@ -1222,12 +1433,19 @@ class GeminiClient(LMStudioClient):
                     # error, so it must not also emit an ERROR traceback that
                     # contradicts the WARNING reclassifying it — log-based triage
                     # would read the storm as the failure the change denies it is.
-                    if self._is_transport_throttle(
+                    basis = self._transport_quota_basis(
                         transport_signatures,
-                        saw_http_response=saw_http_response,
+                        stated_refusals=stated_refusals,
+                        saw_other_answer=saw_other_answer,
                         first_failure_at=first_failure_at,
-                    ):
-                        self._raise_inferred_transport_quota(transport_signatures, exc)
+                    )
+                    if basis is not None:
+                        self._raise_inferred_transport_quota(
+                            transport_signatures,
+                            exc,
+                            basis=basis,
+                            attempts=stated_refusals + len(transport_signatures),
+                        )
                     logger.exception("Error calling Gemini API")
                     raise
                 self.retry_count += 1
@@ -1538,6 +1756,7 @@ def create_ai_client(
             base_url=cfg.ai.gemini_url,
             timeout=cfg.ai.timeout,
             transport_quota_window_seconds=cfg.ai.gemini_transport_quota_window_seconds,
+            transport_quota_hold_seconds=cfg.ai.gemini_transport_quota_hold_seconds,
         )
     return _build_local_client(backend, cfg)
 

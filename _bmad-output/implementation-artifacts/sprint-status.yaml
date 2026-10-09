@@ -80,7 +80,7 @@ development_status:
   1-11-ui-follow-ups-dashboard-plurals-and-the-shared-bottom-strip: done
   1-12-backfill-liveness-is-visible-for-the-whole-run: awaiting-operator
   1-13-runner-lifecycle-ends-honestly: done
-  1-14-transport-quota-inference-holds-across-a-throttle: backlog
+  1-14-transport-quota-inference-holds-across-a-throttle: awaiting-operator
   1-15-dependency-and-image-scanning-restored: backlog
   1-16-the-admin-audit-trail-names-who-acted: backlog
   1-17-ledger-and-loop-hygiene: backlog

@@ -328,6 +328,25 @@ class AIConfig(BaseModel, frozen=True):
     gemini_transport_quota_window_seconds: float = Field(
         default=300.0, ge=0.0, le=3600.0, allow_inf_nan=False
     )
+    # How long one refusal the provider *stated* keeps licensing that inference
+    # after the window above has passed, as long as the provider has answered
+    # nothing at all since (v0.14-s1.14, DW-13/DW-14). It bounds the stretch a
+    # silent provider is read as "still throttled" rather than "down": counted
+    # from the last stated refusal, never extended by an inference, ended by
+    # any answer that is not a refusal (a 200 clears the licence, any other
+    # non-quota status ends the hold).
+    # 7200 s covers the four refused passes ``backfill.quota_backoff_seconds``
+    # apart, retry ladders included (about 5100 s with the shipped values;
+    # ``test_config.py`` computes it), after which the runner waits for the
+    # daily window anyway. It must stay longer than
+    # ``backfill.quota_backoff_seconds`` + ``timeout`` or the cycle after a
+    # back-off starts with no licence again. ``0`` turns the hold off (the window still
+    # applies). Capped at 6 h (and no inf/NaN): past that, one refusal would
+    # excuse a dead key, a retired model id or a blocked route for most of a
+    # day, and those must surface as row errors and trip the circuit breaker.
+    gemini_transport_quota_hold_seconds: float = Field(
+        default=7200.0, ge=0.0, le=21600.0, allow_inf_nan=False
+    )
     visual_model: str = "qwen2.5vl:7b"
     text_model: str = "qwen2.5vl:7b"
     embedding_model: str = "bge-m3"

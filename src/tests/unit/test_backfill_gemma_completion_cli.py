@@ -108,6 +108,10 @@ def _cfg():
         "embedding": "ollama",
     }
     cfg.ai.max_images_per_property = 8
+    # Real floats (v0.14-s1.14): ``float(MagicMock())`` is 1.0, which would
+    # read as a hold shorter than the quota back-off and warn on every run.
+    cfg.ai.gemini_transport_quota_window_seconds = 300.0
+    cfg.ai.gemini_transport_quota_hold_seconds = 7200.0
     cfg.scraping.photo_gate.enabled = True
     cfg.scraping.photo_gate.floor_min = 8
     cfg.scraping.photo_gate.coverage_ratio = 1.0

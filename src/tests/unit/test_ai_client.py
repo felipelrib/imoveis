@@ -344,12 +344,15 @@ class TestCreateAIClient:
         # ``float(MagicMock())`` is ``1.0``, so a cfg double missing this field
         # yields a 1-second window that can essentially never fire (DW-7).
         mock_cfg.ai.gemini_transport_quota_window_seconds = 120.0
+        mock_cfg.ai.gemini_transport_quota_hold_seconds = 1800.0
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()
         assert isinstance(client, GeminiClient)
         assert client.api_key == "secret-key"
         assert client.transport_quota_window_seconds == 120.0
+        # v0.14-s1.14: the hold is threaded the same way (not the 7200 default).
+        assert client.transport_quota_hold_seconds == 1800.0
         assert client.model == "gemini-2.5-flash-lite"
         assert client.visual_model == "gemini-2.5-flash-lite"
         assert client.text_model == "gemini-2.5-flash-lite"
@@ -367,6 +370,7 @@ class TestCreateAIClient:
         mock_cfg.ai.gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai"
         mock_cfg.ai.timeout = 120
         mock_cfg.ai.gemini_transport_quota_window_seconds = 300.0
+        mock_cfg.ai.gemini_transport_quota_hold_seconds = 7200.0
         mock_get_config.return_value = mock_cfg
 
         client = create_ai_client()

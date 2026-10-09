@@ -143,7 +143,11 @@ for _p in (str(_ROOT), str(_ROOT / "src")):
 import sqlalchemy  # noqa: E402
 from redis.exceptions import RedisError  # noqa: E402
 
-from adapters.ai.client import _gemini_client_for, resolve_enrichment_backend  # noqa: E402
+from adapters.ai.client import (  # noqa: E402
+    TransportQuotaLicence,
+    _gemini_client_for,
+    resolve_enrichment_backend,
+)
 from adapters.ai.image_store import ImageStore  # noqa: E402
 from adapters.queue.tasks import run_enrichment  # noqa: E402
 from core.backfill_runner import (  # noqa: E402
@@ -518,7 +522,14 @@ def _resolve_backfill_backend(cfg, scope) -> str:
     return backends[0]
 
 
-def _build_client(cfg, scope=DEFAULT_BACKFILL_SCOPE):
+def _build_client(cfg, scope=DEFAULT_BACKFILL_SCOPE, *, quota_licence=None):
+    """Build the cloud client for one pass.
+
+    ``quota_licence`` is the run's ``TransportQuotaLicence`` (v0.14-s1.14):
+    ``--continuous`` builds a client per cycle, and what the provider last
+    stated has to outlive it. ``None`` (a single pass) gives the client a
+    private one.
+    """
     backend = _resolve_backfill_backend(cfg, scope)
     # Key is loaded from the GEMINI_API_KEY env into cfg by infra.config — the
     # single place env is read (never os.getenv here, per repo convention).
@@ -542,6 +553,10 @@ def _build_client(cfg, scope=DEFAULT_BACKFILL_SCOPE):
         # must still roll the attempt back rather than burn one of the row's
         # max_attempts. 0 in config disables that inference.
         transport_quota_window_seconds=cfg.ai.gemini_transport_quota_window_seconds,
+        # v0.14-s1.14: how long a stated refusal keeps licensing that inference
+        # while the provider answers nothing, and the evidence itself.
+        transport_quota_hold_seconds=cfg.ai.gemini_transport_quota_hold_seconds,
+        quota_licence=quota_licence,
     )
 
 
@@ -808,11 +823,19 @@ def _exit_reason(code, cfg) -> str | None:
     endings that explain themselves (complete, stopped).
     """
     if code == EXIT_PROVIDER_REFUSED:
+        # A cycle refused by *inference* counts too (v0.14-s1.14): a storm of
+        # identical transport failures after a stated refusal. This record has
+        # no row count to give (the banner and the log have it), so the
+        # sentence names both readings and both things to check: a route that
+        # died right after a 429 looks the same from here.
         return (
             f"The provider refused on quota for "
             f"{int(cfg.backfill.max_no_progress_cycles)} consecutive cycles and "
-            "nothing was enriched (backfill.max_no_progress_cycles). Check the "
-            "provider quota for this key, then start again."
+            "nothing was enriched (backfill.max_no_progress_cycles). A cycle "
+            "counts when the refusal was stated (429) or inferred from "
+            "transport failures after one; the run's banner says how many rows "
+            "were inferred. Check the provider quota for this key and the "
+            "network route to the provider, then start again."
         )
     if code == EXIT_MAIN_THREAD_STALLED:
         return (
@@ -1038,7 +1061,8 @@ def _build_ledger(cfg, redis, max_attempts: int | None = None) -> AttemptLedger:
 
 
 def _run(
-    cfg, session, redis, args, *, control=None, lease=None, liveness=None
+    cfg, session, redis, args, *, control=None, lease=None, liveness=None,
+    quota_licence=None,
 ) -> BackfillResult:
     scope = _scope_from_args(args)
     stages = _stages_for(scope)
@@ -1101,7 +1125,7 @@ def _run(
     if args.dry_run:
         _dry_run_backend_preflight(cfg, scope)
     else:
-        client = _build_client(cfg, scope)
+        client = _build_client(cfg, scope, quota_licence=quota_licence)
     ledger = _build_ledger(cfg, redis, getattr(args, "max_attempts", None))
     params = EnrichmentRerunParams(
         mode=MODE_MISSING,
@@ -1342,8 +1366,44 @@ def _lease_lost_lines(result=None) -> list[str]:
     return _unrecorded_completion_lines(result) + _LEASE_LOST_LINES
 
 
+def _inferred_lines(rows: int) -> list[str]:
+    """The banner line for rows classified by inference; nothing when there are none.
+
+    A row counted here ended as a provider quota refusal that the provider did
+    not state on the attempt that ended the call: the client read a storm of
+    identical transport failures as a throttle (v0.14-s1.14). The attempt was
+    rolled back, so the row is still a candidate. The number is what an
+    operator weighs against the run: if the provider was in fact down, these
+    rows were waited on instead of reported as errors.
+    """
+    if rows <= 0:
+        return []
+    return [
+        f"quota inferred from transport storms: {rows:,} row(s) rolled back "
+        "with no 429 on the last attempt (log: gemini_transport_quota_inferred)"
+    ]
+
+
+def _inferred_clause(result) -> str:
+    """Says, inside a wait line, that this cycle's refusal was not stated.
+
+    "Provider refused on quota" is what the line says for a 429. When rows of
+    the cycle were classified by inference the call on each of them ended in a
+    transport failure, not in an answer, and the operator reading the line
+    while the run sleeps is told so. "On their last attempt": the ``in-call``
+    basis is a row that *was* answered 429 earlier in the same call.
+    """
+    rows = getattr(result, "quota_inferred_rows", 0) or 0
+    if not isinstance(rows, int) or rows <= 0:
+        return ""
+    return (
+        f" (inferred from transport failures on {rows:,} row(s), no 429 on "
+        "their last attempt)"
+    )
+
+
 def _terminal_summary(census: QueueCensus, *, cycle: int, elapsed: float,
-                      processed: int, errors: int) -> list[str]:
+                      processed: int, errors: int, inferred: int = 0) -> list[str]:
     return [
         f"enriched {census.enriched:,} / enrichable {census.enrichable:,}"
         f" ({census.progress_pct:.1f}%)",
@@ -1354,14 +1414,16 @@ def _terminal_summary(census: QueueCensus, *, cycle: int, elapsed: float,
         f" · quarantined {census.quarantined:,})",
         f"cycles {cycle} · elapsed {_format_elapsed(elapsed)}"
         f" · enriched this run {processed:,} · errors {errors:,}",
+        *_inferred_lines(inferred),
     ]
 
 
 def _finish(census: QueueCensus, report: dict[str, str], *, cycle: int, elapsed: float,
-            processed: int, errors: int) -> int:
+            processed: int, errors: int, inferred: int = 0) -> int:
     """Print the terminal banner and return the exit code for this outcome."""
     summary = _terminal_summary(
-        census, cycle=cycle, elapsed=elapsed, processed=processed, errors=errors
+        census, cycle=cycle, elapsed=elapsed, processed=processed, errors=errors,
+        inferred=inferred,
     )
     if census.is_complete:
         retired = census.quarantined or len(report)
@@ -1378,6 +1440,7 @@ def _finish(census: QueueCensus, report: dict[str, str], *, cycle: int, elapsed:
         exit_code=code,
         cycles=cycle,
         elapsed_seconds=round(elapsed),
+        quota_inferred_rows=inferred,
         **census.to_dict(),
     )
     return code
@@ -1658,7 +1721,40 @@ def _run_continuous(
     cycle = 0
     enriched_this_run = 0
     errors_this_run = 0
+    # Rows whose quota refusal the client inferred from a transport storm, over
+    # every cycle. Every terminal banner states how many (v0.14-s1.14, DW-16).
+    # Ids, because a rolled-back row is a candidate again: the same row
+    # classified in three cycles is one row.
+    inferred_ids: set[str] = set()
+    inferred_this_run = 0
     quota_zero_cycles = 0
+    # What the provider last stated, for the whole run: each cycle builds a new
+    # client around it, so a refusal stated in one cycle still licenses a storm
+    # in the next (DW-14). Process-local on purpose; a restart starts clean.
+    quota_licence = TransportQuotaLicence()
+    hold_seconds = float(cfg.ai.gemini_transport_quota_hold_seconds)
+    backoff_seconds = float(cfg.backfill.quota_backoff_seconds)
+    # The cycle after a quota back-off starts ``quota_backoff_seconds`` after
+    # the refusal, and a storm of timeouts is judged at its first failure, one
+    # ``ai.timeout`` later. A hold that does not reach past that has lapsed by
+    # then, and the storm charges every row an attempt. Nothing to say when the
+    # window is 0: the inference is off and the hold is inert.
+    reach_needed = backoff_seconds + float(cfg.ai.timeout)
+    if (
+        float(cfg.ai.gemini_transport_quota_window_seconds) > 0.0
+        and 0.0 < hold_seconds <= reach_needed
+    ):
+        logger.warning(
+            "backfill_quota_hold_not_longer_than_backoff",
+            hold_seconds=hold_seconds,
+            quota_backoff_seconds=backoff_seconds,
+            ai_timeout_seconds=float(cfg.ai.timeout),
+            hint=(
+                "raise ai.gemini_transport_quota_hold_seconds above "
+                "backfill.quota_backoff_seconds + ai.timeout, or set it to 0 "
+                "to turn the hold off"
+            ),
+        )
     # Cumulative across *consecutive blocked* cycles, not per call: a migration
     # that keeps the key (or a runner that keeps being blocked at pass entry)
     # must not be able to stretch ``migration_wait_seconds`` into an unbounded
@@ -1675,6 +1771,7 @@ def _run_continuous(
                 result = _run(
                     cfg, session, redis, args,
                     control=control, lease=lease, liveness=liveness,
+                    quota_licence=quota_licence,
                 )
             except _REDIS_UNREACHABLE as exc:
                 result = _lease_lost_pass(liveness, exc)
@@ -1712,6 +1809,8 @@ def _run_continuous(
             result.lease_lost = True
         enriched_this_run += result.processed
         errors_this_run += result.errors
+        inferred_ids.update(result.quota_inferred_ids)
+        inferred_this_run = len(inferred_ids)
         remaining = "unmeasured" if census is None else census.remaining
         logger.info(
             "backfill_cycle_done",
@@ -1724,6 +1823,8 @@ def _run_continuous(
             # a word. The console line below still says "unmeasured".
             remaining=None if census is None else census.remaining,
             budget_exhausted=result.budget_exhausted,
+            # This cycle only; the terminal event carries the run-wide sum.
+            quota_inferred_rows=result.quota_inferred_rows,
             # Without this a blocked pass reads exactly like an ordinary empty
             # one in the logs.
             migration_blocked=result.migration_blocked,
@@ -1742,7 +1843,10 @@ def _run_continuous(
                 # Both flags set (a worker's renew failed while the pass was
                 # breaking on the gate): there is nothing to wait for, a
                 # successor owns the run.
-                return _lease_lost_exit(liveness, _lease_lost_lines(result))
+                return _lease_lost_exit(
+                    liveness,
+                    _inferred_lines(inferred_this_run) + _lease_lost_lines(result),
+                )
             waited_from = time.monotonic()
             outcome = _wait_out_migration(
                 cfg,
@@ -1759,12 +1863,14 @@ def _run_continuous(
             if outcome == "lease_lost":
                 # Lost during the *wait*, so this pass launched nothing and has
                 # no completions of its own to report.
-                return _lease_lost_exit(liveness, _lease_lost_lines())
+                return _lease_lost_exit(
+                    liveness, _inferred_lines(inferred_this_run) + _lease_lost_lines()
+                )
             if outcome == "stopped":
                 _print_banner(
                     "BACKFILL STOPPED — operator requested; resume with the "
                     "same command",
-                    _MIGRATION_BLOCKED_LINES,
+                    _MIGRATION_BLOCKED_LINES + _inferred_lines(inferred_this_run),
                 )
                 if control is not None:
                     # Served — see the matching note in ``main``.
@@ -1773,7 +1879,7 @@ def _run_continuous(
             _print_banner(
                 "BACKFILL BLOCKED BY A PRIMARY MIGRATION — "
                 "restart once migrate-primary.sh has finished",
-                _MIGRATION_BLOCKED_LINES,
+                _MIGRATION_BLOCKED_LINES + _inferred_lines(inferred_this_run),
             )
             return EXIT_MIGRATION_ACTIVE
 
@@ -1797,6 +1903,7 @@ def _run_continuous(
                 elapsed=time.monotonic() - started,
                 processed=enriched_this_run,
                 errors=errors_this_run,
+                inferred=inferred_this_run,
             )
 
         # Losing the lease is terminal and takes precedence over everything else
@@ -1817,6 +1924,7 @@ def _run_continuous(
                         f"{_format_elapsed(time.monotonic() - started)}"
                         f" · enriched this run {enriched_this_run:,}"
                         f" · errors {errors_this_run:,}",
+                        *_inferred_lines(inferred_this_run),
                         *_lease_lost_lines(result),
                     ],
                 )
@@ -1828,6 +1936,7 @@ def _run_continuous(
                     elapsed=time.monotonic() - started,
                     processed=enriched_this_run,
                     errors=errors_this_run,
+                    inferred=inferred_this_run,
                 )
                 # "enriched this run N" above counts rows the shared checkpoint
                 # declined, so the discrepancy an operator would otherwise find
@@ -1862,6 +1971,7 @@ def _run_continuous(
                     elapsed=time.monotonic() - started,
                     processed=enriched_this_run,
                     errors=errors_this_run,
+                    inferred=inferred_this_run,
                 ),
             )
             if control is not None:
@@ -1886,6 +1996,7 @@ def _run_continuous(
                     elapsed=time.monotonic() - started,
                     processed=enriched_this_run,
                     errors=errors_this_run,
+                    inferred=inferred_this_run,
                 ),
             )
             logger.warning(
@@ -1895,6 +2006,7 @@ def _run_continuous(
                 cycles=cycle,
                 elapsed_seconds=round(time.monotonic() - started),
                 ai_fallbacks=result.ai_fallbacks,
+                quota_inferred_rows=inferred_this_run,
                 **census.to_dict(),
             )
             return EXIT_AI_CIRCUIT_OPEN
@@ -1959,6 +2071,7 @@ def _run_continuous(
                     elapsed=time.monotonic() - started,
                     processed=enriched_this_run,
                     errors=errors_this_run,
+                    inferred=inferred_this_run,
                 ),
             )
             logger.warning(
@@ -1968,6 +2081,7 @@ def _run_continuous(
                 cycles=cycle,
                 refused_cycles=quota_zero_cycles,
                 elapsed_seconds=round(time.monotonic() - started),
+                quota_inferred_rows=inferred_this_run,
                 **census.to_dict(),
             )
             return EXIT_PROVIDER_REFUSED
@@ -1999,7 +2113,8 @@ def _run_continuous(
         if result.quota_exhausted and not rpd_spent and not throttle_ruled_out:
             wait = min(wait, float(cfg.backfill.quota_backoff_seconds))
             reason = (
-                f"Provider refused on quota, but the local daily budget still "
+                f"Provider refused on quota{_inferred_clause(result)}, but the "
+                f"local daily budget still "
                 f"has {headroom} requests — treating it as a per-minute "
                 f"throttle and backing off {wait / 60:.0f}min "
                 f"(backfill.quota_backoff_seconds)"
@@ -2007,13 +2122,17 @@ def _run_continuous(
         elif result.quota_exhausted and not rpd_spent:
             wait = max(wait, float(cfg.backfill.quota_backoff_seconds))
             reason = (
-                f"Provider has refused on quota for {quota_zero_cycles} "
+                f"Provider has refused on quota{_inferred_clause(result)} for "
+                f"{quota_zero_cycles} "
                 f"consecutive passes without enriching anything — this is not a "
                 f"per-minute throttle. Waiting out the RPD window instead of "
                 f"re-spending retries against a refusing account"
             )
         elif result.quota_exhausted:
-            reason = "Provider quota exhausted and the local daily budget is spent"
+            reason = (
+                f"Provider quota exhausted{_inferred_clause(result)} and the "
+                "local daily budget is spent"
+            )
         else:
             reason = "Daily budget spent"
         resume_at = datetime.now().astimezone() + timedelta(seconds=wait)
@@ -2039,7 +2158,11 @@ def _run_continuous(
             == "lease_lost"
         ):
             # Lost while sleeping out the budget window: nothing was in flight.
-            return _lease_lost_exit(liveness, _lease_lost_lines())
+            # This is the wait that follows an inferred refusal, so the count
+            # belongs on this banner as on every other.
+            return _lease_lost_exit(
+                liveness, _inferred_lines(inferred_this_run) + _lease_lost_lines()
+            )
 
 
 def _supervisor_heartbeat_for(cfg, redis) -> Heartbeat:
@@ -2845,6 +2968,10 @@ def main(argv: list[str] | None = None) -> int:
             f"quarantined {result.skipped_quarantined}, errors {result.errors}, "
             f"budget_exhausted={result.budget_exhausted})"
         )
+        # On its own line and only when there is something to say: a pass that
+        # backed off on a quota the provider did not state says so here.
+        for line in _inferred_lines(result.quota_inferred_rows):
+            print(line)
     if result.lease_lost:
         rc = _lease_lost_exit(liveness, _lease_lost_lines(result))
         if rc == EXIT_MAIN_THREAD_STALLED:

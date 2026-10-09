@@ -2080,6 +2080,24 @@ def is_quota_exhausted(exc: BaseException) -> bool:
     return any(marker in text for marker in _QUOTA_MARKERS)
 
 
+def is_quota_inferred(exc: BaseException) -> bool:
+    """True when a quota refusal was *inferred*, not stated (v0.14-s1.14).
+
+    The adapter reads a storm of identical transport failures as a provider
+    throttle when a stated refusal licenses it, and raises a quota error that
+    also carries ``is_quota_inferred``. This predicate never decides a rollback:
+    :func:`is_quota_exhausted` stays the only signal for that. It only tells
+    ``run_backfill`` which refused rows to count in
+    ``BackfillResult.quota_inferred_rows``, so the end-of-run banner can say how
+    much of a run rests on a guess.
+
+    Attribute only, with no class-name or text net (AD-1 keeps it duck-typed):
+    the flag is set by our own adapter, so there is no untagged case to catch,
+    and a message that merely says "inferred" must not be counted.
+    """
+    return bool(getattr(exc, "is_quota_inferred", False))
+
+
 def is_degraded_result(exc: BaseException) -> bool:
     """True when ``exc`` means "the client fabricated this result" (v0.13-s3.2).
 
@@ -2341,6 +2359,12 @@ class BackfillResult:
     budget_exhausted: bool = False
     # The provider refused on quota: back off, do not treat rows as failed.
     quota_exhausted: bool = False
+    # Rows whose quota refusal the adapter *inferred* from a transport storm
+    # (v0.14-s1.14). A subset of the rows rolled back on quota, never a second
+    # signal: ``quota_exhausted`` is set for them exactly as for a stated one.
+    # Ids, not a count: a rolled-back row is a candidate again, so a caller
+    # that sums passes needs them to count each row once.
+    quota_inferred_ids: list[str] = field(default_factory=list)
     # An operator asked the run to stop (CLI flag, signal, or story 1.5's API).
     stopped: bool = False
     # The single-instance lease was lost mid-run (renew() came back False):
@@ -2373,6 +2397,11 @@ class BackfillResult:
     tpm_waits: int = 0
     tpm_wait_seconds: float = 0.0
 
+    @property
+    def quota_inferred_rows(self) -> int:
+        """How many rows of this pass were classified by inference."""
+        return len(self.quota_inferred_ids)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "processed": self.processed,
@@ -2384,6 +2413,7 @@ class BackfillResult:
             "requests_reserved": self.requests_reserved,
             "budget_exhausted": self.budget_exhausted,
             "quota_exhausted": self.quota_exhausted,
+            "quota_inferred_rows": self.quota_inferred_rows,
             "ai_fallbacks": self.ai_fallbacks,
             "ai_circuit_open": self.ai_circuit_open,
             "stopped": self.stopped,
@@ -3044,6 +3074,8 @@ async def run_backfill(
                 # quarantine a perfectly good property. Back off instead.
                 result.quota_exhausted = True
                 result.budget_exhausted = True
+                if is_quota_inferred(exc):
+                    result.quota_inferred_ids.append(pid)
                 if ledger is not None:
                     ledger.rollback_attempt(pid)
                 _publish(BackfillState.BACKING_OFF)

@@ -26,12 +26,14 @@ from adapters.ai.client import (
     AIClientError,
     AIQuotaExhaustedError,
     AIResultDegradedError,
+    AITransportQuotaInferredError,
     GeminiClient,
     GemmaClient,
     LMStudioClient,
     OllamaClient,
+    TransportQuotaLicence,
 )
-from core.backfill_runner import is_quota_exhausted
+from core.backfill_runner import is_quota_exhausted, is_quota_inferred
 
 pytestmark = pytest.mark.unit
 
@@ -297,16 +299,26 @@ def _transport_client(
     max_retries=None,
     window=300.0,
     throttled_ago=None,
+    hold=None,
+    licence=None,
 ):
     """Client whose ``session.post`` replays ``effects`` (exceptions or ctxs).
 
     ``throttled_ago`` stamps the recency clock as if the provider had answered
     429 that many seconds ago; ``None`` means no throttle was ever observed.
+    ``hold`` / ``licence`` (v0.14-s1.14) are passed only when given, so the
+    older tests keep building the client exactly as they did.
     """
+    extra = {}
+    if hold is not None:
+        extra["transport_quota_hold_seconds"] = hold
+    if licence is not None:
+        extra["quota_licence"] = licence
     client = cls(
         api_key="k",
         max_retries=max_retries if max_retries is not None else len(effects),
         transport_quota_window_seconds=window,
+        **extra,
     )
     client._sleep_backoff = AsyncMock(return_value=0.0)  # no real backoff sleep
     client.session = MagicMock()
@@ -391,10 +403,27 @@ def test_genuine_outage_with_no_observed_throttle_stays_a_hard_error():
     assert client.last_error.startswith("connection:")
 
 
-def test_storm_after_a_stale_throttle_stays_a_hard_error():
-    """A 429 seen an hour ago licenses nothing — the quota window has rolled."""
+@pytest.mark.parametrize(
+    ("hold", "throttled_ago"),
+    [
+        # Hold disabled: only the short window licenses, and an hour is past it.
+        (0.0, 3600.0),
+        # Hold enabled (the shipped 7 200 s): a refusal older than it is stale.
+        (7200.0, 7300.0),
+    ],
+)
+def test_storm_after_a_stale_throttle_stays_a_hard_error(hold, throttled_ago):
+    """A 429 older than every licence licenses nothing (restated for v0.14-s1.14).
+
+    Before the hold existed an hour-old 429 was stale by the window alone. The
+    hold now licenses a silent hour, so "stale" is stated twice: with the hold
+    off, and past the hold.
+    """
     client = _transport_client(
-        [_reset(), _reset(), _reset()], window=300.0, throttled_ago=3600.0
+        [_reset(), _reset(), _reset()],
+        window=300.0,
+        hold=hold,
+        throttled_ago=throttled_ago,
     )
 
     with pytest.raises(aiohttp.ClientError) as exc:
@@ -680,3 +709,640 @@ def test_an_inferred_throttle_does_not_also_log_a_hard_error_traceback(caplog):
         for r in caplog.records
         if r.levelno >= logging.ERROR
     )
+
+
+# ---------------------------------------------------------------------------
+# The licence holds across a throttle (v0.14-s1.14: DW-12, DW-13, DW-14, DW-15)
+#
+# "What the provider last told this process" lives in a TransportQuotaLicence
+# that outlives a client. A stated refusal licenses a storm three ways: inside
+# the call (``in-call``), within the short window on either side of the storm's
+# first failure (``window``), and for a bounded hold after it while the provider
+# has answered nothing at all (``hold``). Every test drives a fake clock.
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    """Stands in for the client module's ``time`` name; only ``monotonic`` is fake."""
+
+    def __init__(self, now=50_000.0):
+        self.now = now
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    import adapters.ai.client as client_module
+
+    fake = _Clock()
+    monkeypatch.setattr(client_module, "time", fake)
+    return fake
+
+
+def _script(client, effects):
+    """Next call: one attempt per effect."""
+    client.session.post.side_effect = list(effects)
+    client.max_retries = len(effects)
+
+
+def _state_a_refusal(client):
+    """The provider answers 429 on every attempt of one call (a stated refusal)."""
+    _script(client, [_http_response(429, "rate limited"), _http_response(429, "rate limited")])
+    with pytest.raises(AIQuotaExhaustedError) as exc:
+        _call(client)
+    assert is_quota_inferred(exc.value) is False
+    return exc.value
+
+
+def _answer(client, status, body="upstream error"):
+    """The provider answers one call with a terminal non-quota status."""
+    _script(client, [_http_response(status, body)])
+    with pytest.raises(AIClientError):
+        _call(client)
+
+
+def _storm_raises(client, n=3):
+    _script(client, [_reset() for _ in range(n)])
+    with pytest.raises((AIQuotaExhaustedError, aiohttp.ClientError)) as exc:
+        _call(client)
+    return exc.value
+
+
+def _basis_logged(caplog):
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if "gemini_transport_quota_inferred" in r.getMessage()
+    ]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def test_inferred_error_is_a_quota_refusal_that_says_it_was_inferred(clock):
+    """Core rolls back on ``is_quota_exhausted``; ``is_quota_inferred`` only counts."""
+    client = _transport_client([], max_retries=2)
+    stated = _state_a_refusal(client)
+    inferred = _storm_raises(client)
+
+    assert isinstance(inferred, AITransportQuotaInferredError)
+    assert isinstance(inferred, AIQuotaExhaustedError)
+    assert is_quota_exhausted(inferred) is True
+    assert is_quota_inferred(inferred) is True
+    # A stated refusal is never "inferred", and neither is a plain error whose
+    # text merely mentions it: the attribute is the only signal.
+    assert is_quota_exhausted(stated) is True
+    assert is_quota_inferred(stated) is False
+    assert is_quota_inferred(RuntimeError("quota inferred from transport")) is False
+
+
+def test_throttle_that_turns_silent_mid_call_is_read_as_quota(clock, caplog):
+    """DW-12: attempt 0 answers 429, the rest are identical resets.
+
+    The in-call refusal is evidence, not a veto. The clock jumps far past the
+    window between attempts and the hold is off, so only the in-call basis can
+    license this.
+    """
+    client = _transport_client(
+        [_http_response(429, "rate limited"), _reset(), _reset()], hold=0.0
+    )
+
+    async def _slow_backoff(_backoff):
+        clock.now += 10_000.0
+        return 0.0
+
+    client._sleep_backoff = _slow_backoff
+
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        with pytest.raises(AITransportQuotaInferredError) as exc:
+            _call(client)
+
+    assert is_quota_exhausted(exc.value) is True
+    assert client.rate_limit_hits == 1  # the 429 only, never the inference
+    assert client.transport_quota_inferences == 1
+    line = _basis_logged(caplog)
+    assert "basis=in-call" in line
+    assert "attempts=3" in line
+    assert "ClientConnectionError" in line
+
+
+def test_a_refusal_then_one_cut_off_attempt_meets_the_two_failure_floor(clock):
+    """The floor counts stated refusals and transport failures together."""
+    client = _transport_client([_http_response(429, "rate limited"), _reset()])
+
+    with pytest.raises(AITransportQuotaInferredError):
+        _call(client)
+
+
+def test_a_non_quota_answer_in_the_call_vetoes_even_an_in_call_refusal(clock):
+    """Only an answer that is not a stated refusal disqualifies the call."""
+    client = _transport_client(
+        [
+            _http_response(429, "rate limited"),
+            _http_response(503, "unavailable"),
+            _reset(),
+            _reset(),
+        ]
+    )
+
+    with pytest.raises(aiohttp.ClientError) as exc:
+        _call(client)
+
+    assert is_quota_exhausted(exc.value) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_a_failed_body_read_vetoes_an_in_call_refusal(clock):
+    answered = AsyncMock(status=429)
+    answered.text.side_effect = aiohttp.ClientPayloadError("response payload truncated")
+    same = aiohttp.ClientPayloadError("response payload truncated")
+    client = _transport_client([_http_response(429, "rate limited"), _ctx(answered), same])
+
+    with pytest.raises(aiohttp.ClientPayloadError):
+        _call(client)
+
+    assert client.transport_quota_inferences == 0
+
+
+def test_a_200_whose_body_cannot_be_read_vetoes_an_in_call_refusal(clock):
+    """The provider answered 200: whatever the body read raised, it is serving.
+
+    ``response.json()`` raises ``ContentTypeError`` (a ``ClientError``) for an
+    HTML page under a 200, so the attempt lands in the transport arm. After an
+    in-call 429 that would complete a "storm" of one stated refusal and one
+    transport failure, and the row would be rolled back as throttled by a
+    provider that had just answered it.
+    """
+    ok_but_unreadable = AsyncMock(status=200)
+    ok_but_unreadable.json.side_effect = aiohttp.ClientPayloadError("not json")
+    client = _transport_client(
+        [_http_response(429, "rate limited"), _ctx(ok_but_unreadable)]
+    )
+
+    with pytest.raises(aiohttp.ClientPayloadError) as exc:
+        _call(client)
+
+    assert is_quota_exhausted(exc.value) is False
+    assert client.transport_quota_inferences == 0
+    # The 200 cleared the licence, so nothing licenses a later storm either.
+    assert client.last_rate_limit_at is None
+
+
+def test_silent_past_the_window_is_held_as_quota(clock, caplog):
+    """DW-13: a 429 stated 1 800 s ago, nothing answered since, identical storm."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 1_800.0
+
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        exc = _storm_raises(client)
+
+    assert isinstance(exc, AITransportQuotaInferredError)
+    line = _basis_logged(caplog)
+    assert "basis=hold" in line
+    assert "7200.0" in line  # the hold it was judged against
+
+
+def test_silent_past_the_hold_is_a_hard_error(clock):
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 7_201.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_the_hold_reaches_exactly_its_bound(clock):
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 7_200.0
+
+    assert isinstance(_storm_raises(client), AITransportQuotaInferredError)
+
+
+def test_hold_disabled_leaves_only_the_window(clock):
+    client = _transport_client([], max_retries=2, hold=0.0)
+    _state_a_refusal(client)
+    clock.now += 1_800.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_an_answer_since_the_refusal_ends_the_hold(clock):
+    """The hold needs silence: a 500 answered in between means the provider talks."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 900.0
+    _answer(client, 500)
+    clock.now += 900.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_a_retried_non_quota_answer_also_ends_the_hold(clock):
+    """A 503 that the ladder retries is an answer too, whatever the call ends on."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 900.0
+    ok = AsyncMock(status=503)
+    ok.text.return_value = "unavailable"
+    _script(client, [_ctx(ok), _reset()])
+    with pytest.raises(aiohttp.ClientError):
+        _call(client)
+    clock.now += 900.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+
+
+def test_an_answer_inside_the_window_keeps_the_fu8_behaviour(clock, caplog):
+    """429 stated 10 s ago, then a 500, then a storm on a later call."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 5.0
+    _answer(client, 500)
+    clock.now += 5.0
+
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        exc = _storm_raises(client)
+
+    assert isinstance(exc, AITransportQuotaInferredError)
+    assert "basis=window" in _basis_logged(caplog)
+
+
+def test_a_new_refusal_after_an_answer_starts_a_new_hold(clock):
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    _answer(client, 500)
+    _state_a_refusal(client)
+    clock.now += 1_800.0
+
+    assert isinstance(_storm_raises(client), AITransportQuotaInferredError)
+
+
+def test_a_success_clears_the_hold_too(clock):
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    ok = AsyncMock(status=200)
+    ok.json.return_value = _chat("{}")
+    _script(client, [_ctx(ok)])
+    _call(client)
+    assert client.quota_licence.refused_at is None
+    clock.now += 1_800.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+
+
+def test_two_clients_sharing_a_licence_carry_it_across_a_cycle_boundary(clock, caplog):
+    """DW-14: cycle 1 ends on a stated 429; 900 s later a new client meets a storm."""
+    licence = TransportQuotaLicence()
+    first = _transport_client([], max_retries=2, licence=licence)
+    _state_a_refusal(first)
+    clock.now += 900.0
+
+    second = _transport_client([], max_retries=2, licence=licence)
+    assert second.quota_licence is licence
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        exc = _storm_raises(second)
+
+    assert isinstance(exc, AITransportQuotaInferredError)
+    assert "basis=hold" in _basis_logged(caplog)
+    assert second.rate_limit_hits == 0
+    assert second.transport_quota_inferences == 1
+    assert first.transport_quota_inferences == 0
+
+
+def test_clients_without_a_shared_licence_start_with_no_evidence(clock):
+    first = _transport_client([], max_retries=2)
+    _state_a_refusal(first)
+    clock.now += 900.0
+
+    second = _transport_client([], max_retries=2)
+    assert second.quota_licence is not first.quota_licence
+    assert second.last_rate_limit_at is None
+    exc = _storm_raises(second)
+
+    assert is_quota_exhausted(exc) is False
+    assert second.transport_quota_inferences == 0
+
+
+@pytest.mark.parametrize(
+    ("later_by", "inferred"),
+    [
+        # Another row's 429 lands just after this storm began: live evidence.
+        (10.0, True),
+        (300.0, True),
+        # DW-15: it lands long after. One-sided recency licensed this.
+        (301.0, False),
+        (10_000.0, False),
+    ],
+)
+def test_a_refusal_stated_after_the_storm_began_licenses_only_within_the_window(
+    clock, later_by, inferred
+):
+    client = _transport_client([_reset(), _reset()])
+
+    async def _another_row_is_refused(_backoff):
+        clock.now += later_by
+        client.quota_licence.note_refusal()
+        return 0.0
+
+    client._sleep_backoff = _another_row_is_refused
+
+    with pytest.raises((AIQuotaExhaustedError, aiohttp.ClientError)) as exc:
+        _call(client)
+
+    assert is_quota_exhausted(exc.value) is inferred
+    assert client.transport_quota_inferences == (1 if inferred else 0)
+
+
+def test_window_disabled_means_no_inference_whatever_the_hold(clock):
+    client = _transport_client([], max_retries=2, window=0.0, hold=7200.0)
+    _state_a_refusal(client)
+    clock.now += 10.0
+    assert is_quota_exhausted(_storm_raises(client)) is False
+
+    # Not even on a refusal stated inside the call.
+    _script(client, [_http_response(429, "rate limited"), _reset(), _reset()])
+    with pytest.raises(aiohttp.ClientError):
+        _call(client)
+    assert client.transport_quota_inferences == 0
+
+
+def test_an_inference_never_moves_the_anchor(clock):
+    """No self-reinforcement: the hold is counted from the stated refusal only."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    anchor = client.quota_licence.refused_at
+    assert anchor == clock.now
+
+    clock.now += 1_800.0
+    assert isinstance(_storm_raises(client), AITransportQuotaInferredError)
+    clock.now += 1_800.0
+    assert isinstance(_storm_raises(client), AITransportQuotaInferredError)
+    assert client.quota_licence.refused_at == anchor
+    assert client.quota_licence.answered_since_refusal is False
+
+    clock.now += 3_601.0  # 7 201 s after the stated refusal
+    assert is_quota_exhausted(_storm_raises(client)) is False
+    assert client.transport_quota_inferences == 2
+
+
+def test_last_rate_limit_at_reads_and_writes_the_licence(clock):
+    licence = TransportQuotaLicence()
+    client = _transport_client([], max_retries=2, licence=licence)
+    assert client.last_rate_limit_at is None
+
+    client.last_rate_limit_at = 123.0
+    assert licence.refused_at == 123.0
+    licence.note_other_answer()
+    client.last_rate_limit_at = 456.0  # a stamp is a refusal: silence starts over
+    assert licence.answered_since_refusal is False
+    client.last_rate_limit_at = None
+    assert licence.refused_at is None
+
+
+def test_the_licence_tracks_what_the_provider_last_said(clock):
+    licence = TransportQuotaLicence()
+    assert licence.refused_at is None and licence.answered_since_refusal is False
+
+    licence.note_other_answer()  # nothing to qualify: no refusal on record
+    licence.note_refusal()
+    assert licence.refused_at == clock.now
+    assert licence.answered_since_refusal is False
+    licence.note_other_answer()
+    assert licence.answered_since_refusal is True
+    assert licence.refused_at == clock.now
+    licence.note_success()
+    assert licence.refused_at is None and licence.answered_since_refusal is False
+
+
+def test_an_out_of_range_hold_is_clamped_and_says_so(caplog):
+    """Same rule as the window: the bound is the config's, the client only mirrors it."""
+    cases = [
+        (86_400.0, GeminiClient._MAX_TRANSPORT_QUOTA_HOLD_SECONDS),
+        (-1.0, 0.0),
+        (float("inf"), 0.0),
+        (float("nan"), 0.0),
+    ]
+    for raw, applied in cases:
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+            client = GeminiClient(api_key="k", transport_quota_hold_seconds=raw)
+        assert client.transport_quota_hold_seconds == applied
+        assert "gemini_transport_quota_hold_clamped" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        ok = GeminiClient(api_key="k", transport_quota_hold_seconds=7200.0)
+    assert ok.transport_quota_hold_seconds == 7200.0
+    assert "clamped" not in caplog.text
+    assert GeminiClient._MAX_TRANSPORT_QUOTA_HOLD_SECONDS == 21_600.0
+
+
+# -- review pass 1 (v0.14-s1.14) ---------------------------------------------
+
+
+def test_a_retried_answer_with_a_quota_body_is_a_stated_refusal_too(clock, caplog):
+    """A retried 503 whose body says RESOURCE_EXHAUSTED is the provider refusing.
+
+    On the final attempt the same answer has always been a stated refusal
+    (``_is_quota_response``). Read as "another answer" on an earlier attempt it
+    vetoed the call and ended the hold of every client sharing the licence.
+    """
+    client = _transport_client(
+        [_http_response(503, '{"error": {"status": "RESOURCE_EXHAUSTED"}}'), _reset(), _reset()]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        with pytest.raises(AITransportQuotaInferredError):
+            _call(client)
+
+    assert client.rate_limit_hits == 1
+    assert client.quota_licence.answered_since_refusal is False
+    assert "basis=in-call" in _basis_logged(caplog)
+
+
+def test_a_success_on_another_row_revokes_an_in_call_refusal(clock):
+    """A 200 clears the licence, and the in-call basis is under the same rule.
+
+    With ``--concurrency`` above 1 another row can be answered between this
+    call's 429 and the end of its storm: the provider is serving, so the storm
+    is not read as the same throttle.
+    """
+    client = _transport_client([_http_response(429, "rate limited"), _reset(), _reset()])
+
+    async def _another_row_is_served(_backoff):
+        client.quota_licence.note_success()
+        return 0.0
+
+    client._sleep_backoff = _another_row_is_served
+
+    with pytest.raises(aiohttp.ClientError) as exc:
+        _call(client)
+
+    assert is_quota_exhausted(exc.value) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_an_unreadable_200_vetoes_the_call_even_when_the_licence_is_live_again(clock):
+    """The veto is the call's own, not a side effect of the cleared licence.
+
+    A 200 clears the licence, which alone would decline the inference. With
+    ``--concurrency`` above 1 another row can be refused between that 200 and
+    the end of this call, and the licence is live again: only the record that
+    *this* call was answered keeps a row the provider served from being rolled
+    back as throttled (follow-up review of v0.14-s1.14).
+    """
+    ok_but_unreadable = AsyncMock(status=200)
+
+    def _another_row_is_refused_then_the_body_read_fails():
+        client.quota_licence.note_refusal()
+        raise aiohttp.ClientPayloadError("not json")
+
+    ok_but_unreadable.json.side_effect = _another_row_is_refused_then_the_body_read_fails
+    client = _transport_client(
+        [_http_response(429, "rate limited"), _ctx(ok_but_unreadable)]
+    )
+
+    with pytest.raises(aiohttp.ClientPayloadError) as exc:
+        _call(client)
+
+    assert client.last_rate_limit_at is not None  # the licence is live
+    assert is_quota_exhausted(exc.value) is False
+    assert client.transport_quota_inferences == 0
+
+
+def test_a_refusal_stated_in_the_middle_of_the_storm_is_in_call_evidence(clock, caplog):
+    """``[reset, 429, reset]``: the storm's first failure precedes the refusal.
+
+    The in-call basis has no time test, so the order does not matter: every
+    attempt was a stated refusal or the same transport failure.
+    """
+    client = _transport_client([_reset(), _http_response(429, "rate limited"), _reset()])
+
+    with caplog.at_level(logging.WARNING, logger="adapters.ai.client"):
+        with pytest.raises(AITransportQuotaInferredError):
+            _call(client)
+
+    assert "basis=in-call" in _basis_logged(caplog)
+    assert client.rate_limit_hits == 1
+
+
+def test_an_in_call_refusal_does_not_excuse_mixed_failure_shapes(clock):
+    """``[429, reset, timeout]`` is still the shape of an outage (fu8 rule kept)."""
+    client = _transport_client(
+        [_http_response(429, "rate limited"), _reset(), asyncio.TimeoutError()]
+    )
+
+    with pytest.raises((aiohttp.ClientError, asyncio.TimeoutError)) as exc:
+        _call(client)
+
+    assert is_quota_exhausted(exc.value) is False
+    assert client.transport_quota_inferences == 0
+
+
+@pytest.mark.parametrize("cls", [GeminiClient, GemmaClient])
+def test_the_backfill_client_classes_both_carry_the_licence_across_a_cycle(clock, cls):
+    """The backfill builds ``GemmaClient`` for gemma model ids, and that class
+    wraps ``chat_completions``: the in-call and hold bases, the shared licence
+    and the inferred error have to come through the wrapper unchanged."""
+    licence = TransportQuotaLicence()
+    first = _transport_client(
+        [_http_response(429, "rate limited"), _reset(), _reset()], cls=cls, licence=licence
+    )
+    with pytest.raises(AITransportQuotaInferredError) as in_call:
+        _call(first)
+    assert "basis=in-call" in str(in_call.value)
+
+    clock.now += 900.0  # the quota back-off; the next cycle builds a new client
+    second = _transport_client([_reset(), _reset()], cls=cls, licence=licence)
+    with pytest.raises(AITransportQuotaInferredError) as held:
+        _call(second)
+    assert "basis=hold" in str(held.value)
+    assert is_quota_inferred(held.value) is True
+    assert second.rate_limit_hits == 0
+
+
+def test_every_attempt_of_the_call_has_to_be_accounted_for(clock):
+    """The guard no retry loop reaches today, pinned on the basis function.
+
+    Two identical failures on a five-attempt client leave three attempts
+    unexplained: that is not a storm, whatever licence is live.
+    """
+    client = _transport_client([], max_retries=5)
+    client.last_rate_limit_at = clock.now - 1.0
+    signatures = ["ClientConnectionError: reset"] * 2
+
+    assert (
+        client._transport_quota_basis(
+            signatures, stated_refusals=0, saw_other_answer=False, first_failure_at=clock.now
+        )
+        is None
+    )
+    assert (
+        client._transport_quota_basis(
+            signatures * 2 + signatures[:1],
+            stated_refusals=0,
+            saw_other_answer=False,
+            first_failure_at=clock.now,
+        )
+        == "window"
+    )
+
+
+def test_an_unreadable_answer_ends_the_hold_for_later_calls(clock):
+    """A body that cannot be read is still an answer: the provider is not silent."""
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    clock.now += 900.0
+    answered = AsyncMock(status=503)
+    answered.text.side_effect = aiohttp.ClientPayloadError("response payload truncated")
+    _script(client, [_ctx(answered), _ctx(answered)])
+    with pytest.raises(aiohttp.ClientPayloadError):
+        _call(client)
+    clock.now += 900.0
+
+    exc = _storm_raises(client)
+
+    assert is_quota_exhausted(exc) is False
+    assert client.transport_quota_inferences == 0
+
+
+@pytest.mark.parametrize("stage", ["visual", "text", "verdict"])
+def test_the_enrichment_stages_let_an_inferred_refusal_through_intact(clock, stage, tmp_path):
+    """The production path: a stage's fallback handler must not swallow it.
+
+    ``analyze_visuals`` / ``analyze_text`` / ``summarize_deal`` catch every
+    exception and fabricate a result, except a quota refusal. The inferred
+    subclass has to come out as itself, flag included, from a real storm.
+    """
+    client = _transport_client([], max_retries=2)
+    _state_a_refusal(client)
+    _script(client, [_reset(), _reset()])
+
+    with pytest.raises(AITransportQuotaInferredError) as exc:
+        if stage == "visual":
+            asyncio.run(client.analyze_visuals([_image(tmp_path)], "prompt"))
+        elif stage == "text":
+            asyncio.run(client.analyze_text("description", "prompt"))
+        else:
+            asyncio.run(client.summarize_deal(stat_analysis={"category": "average"}))
+
+    assert is_quota_inferred(exc.value) is True
+    assert is_quota_exhausted(exc.value) is True
