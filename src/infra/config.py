@@ -223,6 +223,44 @@ class BackfillConfig(BaseModel, frozen=True):
     # instead of resuming — the exclusion still holds, an operator just has to
     # restart it. ``0`` = never wait.
     migration_wait_seconds: int = Field(default=1800, ge=0)
+    # Consecutive ``--continuous`` cycles that end in a provider quota refusal
+    # with nothing enriched before the run gives up and exits 10 (v0.14-s1.13,
+    # DW-19). It bounds how long an unattended run keeps sleeping and retrying
+    # against a provider that refuses every pass. With the shipped values that
+    # is four refused passes ``quota_backoff_seconds`` apart, then two daily
+    # windows each ending in another refused pass. Any cycle that enriches a
+    # row starts the count over. ``0`` disables the limit: the run waits and
+    # retries for ever, as it did before. A value of 4 or less ends the run
+    # during the ``quota_backoff_seconds`` back-offs, before the daily-window
+    # wait is ever tried.
+    max_no_progress_cycles: int = Field(default=6, ge=0)
+    # Seconds the run's main thread may go without a progress stamp before the
+    # liveness ticker stops vouching for it (v0.14-s1.13, DW-81): the lease is
+    # no longer renewed, the state is no longer published and the supervisor
+    # key is no longer beaten, so a hung run reads as gone instead of alive.
+    # A wedged process keeps a successor out for up to this limit, plus a
+    # quarter of it (the watchdog's cadence), plus the lease TTL: about 90
+    # minutes at the defaults. It was the lease TTL alone before v0.14-s1.12,
+    # and unbounded between that story and this one. The longest honest gap
+    # is one database statement blocked by a migration
+    # (``migration_wait_seconds`` and the migration lock are both 1800s), so
+    # the default is twice that. The floor is 900s, but any value under 1800
+    # can read a statement blocked by a long migration as a hang. ``0``
+    # disables the watchdog.
+    main_thread_stall_seconds: int = Field(default=3600, ge=0)
+
+    @field_validator("main_thread_stall_seconds")
+    @classmethod
+    def _stall_limit_is_off_or_long_enough(cls, value: int) -> int:
+        """``0`` (off) or at least 900s: a shorter limit reads a slow query as a hang."""
+        if value != 0 and value < 900:
+            raise ValueError(
+                "backfill.main_thread_stall_seconds must be 0 (disabled) or at "
+                f"least 900, got {value}: a blocked database statement is an "
+                "honest gap of many minutes, and a shorter limit would drop the "
+                "lease of a healthy run"
+            )
+        return value
 
     @model_validator(mode="after")
     def _poll_stays_under_lease_ttl(self) -> "BackfillConfig":

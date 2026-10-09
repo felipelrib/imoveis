@@ -2408,3 +2408,399 @@ def test_the_owner_of_an_empty_pass_still_publishes_running():
     assert result.lease_lost is False
     assert control.state() is BackfillState.IDLE  # the closing publish
     assert "t:state" in r.kv
+
+
+# ---------------------------------------------------------------------------
+# Runner lifecycle ends honestly (v0.14-s1.13)
+# ---------------------------------------------------------------------------
+#
+# Three things on ``BackfillControl``: a pause that stays a pause until an
+# operator resumes it (DW-23), a stop a signal handler can ask for without
+# touching Redis (DW-22), and the outcome record of the last supervised run
+# (DW-28).
+
+
+class _ClockedRedis(FakeRedis):
+    """``FakeRedis`` whose TTLs really run out, on a clock the test moves."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.now = 0.0
+        self.deadlines: dict[str, float] = {}
+        self.commands: list[tuple[str, str]] = []
+
+    def _drop_if_due(self, key) -> None:
+        due = self.deadlines.get(key)
+        if due is not None and self.now >= due:
+            self.kv.pop(key, None)
+            self.deadlines.pop(key, None)
+
+    def get(self, key):
+        self._drop_if_due(key)
+        self.commands.append(("get", key))
+        return super().get(key)
+
+    def set(self, key, val, ex=None, nx=False):
+        self._drop_if_due(key)
+        self.commands.append(("set", key))
+        written = super().set(key, val, ex=ex, nx=nx)
+        if written:
+            if ex:
+                self.deadlines[key] = self.now + ex
+            else:
+                self.deadlines.pop(key, None)
+        return written
+
+    def expire(self, key, ttl):
+        self._drop_if_due(key)
+        self.commands.append(("expire", key))
+        if key not in self.kv:
+            return 0
+        self.deadlines[key] = self.now + ttl
+        return 1
+
+    def delete(self, key):
+        self.commands.append(("delete", key))
+        self.deadlines.pop(key, None)
+        return super().delete(key)
+
+
+_T0 = datetime.fromisoformat("2026-10-08T12:00:00+00:00")
+
+
+def test_a_pause_records_when_it_was_requested():
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t", now_fn=lambda: _T0)
+
+    control.request_pause()
+
+    assert control.is_paused() is True
+    assert control.paused_since() == _T0
+    assert r.expires["t:control:pause"] == control.request_ttl_seconds
+
+
+def test_a_second_pause_keeps_the_first_stamp_and_only_rearms_the_ttl():
+    r = _ClockedRedis()
+    clock = {"now": _T0}
+    control = BackfillControl(
+        r, prefix="t", request_ttl_seconds=100, now_fn=lambda: clock["now"]
+    )
+    control.request_pause()
+    r.now = 60.0
+    clock["now"] = _T0 + timedelta(seconds=60)
+
+    control.request_pause()  # pressed again, an hour later or a minute later
+
+    assert control.paused_since() == _T0  # when it was first asked for
+    assert r.deadlines["t:control:pause"] == 160.0  # the TTL was re-armed
+
+
+def test_a_pause_written_before_the_key_carried_a_time_is_still_a_pause():
+    r = FakeRedis()
+    r.set("t:control:pause", "1")  # what request_pause wrote before v0.14-s1.13
+    control = BackfillControl(r, prefix="t")
+
+    assert control.is_paused() is True
+    assert control.paused_since() is None
+
+
+def test_paused_since_is_none_without_a_pause():
+    assert BackfillControl(FakeRedis(), prefix="t").paused_since() is None
+
+
+def test_hold_pause_extends_an_existing_pause_and_never_creates_one():
+    r = _ClockedRedis()
+    control = BackfillControl(r, prefix="t", request_ttl_seconds=100)
+
+    # No pause: nothing to hold, and the runner must not invent a request.
+    assert control.hold_pause() is False
+    assert control.is_paused() is False
+    assert "t:control:pause" not in r.kv
+
+    control.request_pause()
+    r.now = 90.0
+    assert control.hold_pause() is True
+    r.now = 150.0  # past the first TTL, inside the extended one
+    assert control.is_paused() is True
+
+
+def test_pause_held_past_its_ttl_stays_paused_until_an_operator_resumes():
+    """I/O matrix "Pause held past its TTL". Without the hold the key lapses
+    after ``request_ttl_seconds`` and the run starts launching rows again."""
+    r = _ClockedRedis()
+    control = BackfillControl(r, prefix="t", request_ttl_seconds=100)
+    control.request_pause()
+    seen: list[str] = []
+    polls = {"n": 0}
+
+    async def sleep_fn(_seconds):
+        polls["n"] += 1
+        r.now += 30.0  # each pause poll is 30s of Redis time
+        assert seen == [], "a row was launched under a pause nobody resumed"
+        if polls["n"] == 20:  # 600s: six request TTLs
+            control.request_resume()
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    result = _run_with_real_control(
+        _rows(2), enrich=enrich, redis=r, control=control, sleep_fn=sleep_fn
+    )
+
+    assert polls["n"] == 20
+    assert seen == ["prop-0", "prop-1"]  # launched only after the resume
+    assert result.processed == 2
+    assert control.is_paused() is False
+
+
+def test_operator_resume_is_never_undone_by_the_runs_refresh():
+    """I/O matrix "Operator resumes": the refresh is an EXPIRE on a key that
+    exists, so a resume that lands between two refreshes stays a resume."""
+    r = _ClockedRedis()
+    control = BackfillControl(r, prefix="t", request_ttl_seconds=100)
+    control.request_pause()
+
+    control.request_resume()
+    assert control.hold_pause() is False  # the run's next refresh
+
+    assert control.is_paused() is False
+    assert "t:control:pause" not in r.kv
+    # And the runner never issues a SET on the pause key while holding.
+    assert ("set", "t:control:pause") not in r.commands[r.commands.index(("delete", "t:control:pause")):]
+
+
+def test_a_failed_pause_refresh_is_logged_and_the_run_stays_paused(monkeypatch):
+    import core.backfill_runner as runner_mod
+
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    control.request_pause()
+    failures: list[str] = []
+    monkeypatch.setattr(
+        runner_mod, "_log_control_write_failed", lambda action, exc: failures.append(action)
+    )
+
+    real_expire = r.expire
+
+    def _broken_expire(key, ttl):
+        if key == "t:control:pause":
+            raise ConnectionError("redis is down")
+        return real_expire(key, ttl)
+
+    r.expire = _broken_expire
+    polls = {"n": 0}
+    seen: list[str] = []
+
+    async def sleep_fn(_seconds):
+        polls["n"] += 1
+        assert seen == []
+        if polls["n"] == 3:
+            control.request_resume()
+
+    async def enrich(prop):
+        seen.append(prop.id)
+
+    result = _run_with_real_control(
+        _rows(1), enrich=enrich, redis=r, control=control, sleep_fn=sleep_fn
+    )
+
+    assert result.processed == 1
+    assert failures == ["hold-pause"] * 3  # every poll tried, none was fatal
+
+
+# -- a stop asked for by a signal (DW-22) -----------------------------------
+
+
+class _CountingRedis(FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[str] = []
+        self.writes: list[str] = []
+
+    def get(self, key):
+        self.reads.append(key)
+        return super().get(key)
+
+    def set(self, key, val, ex=None, nx=False):
+        self.writes.append(key)
+        return super().set(key, val, ex=ex, nx=nx)
+
+
+def test_a_local_stop_flag_is_a_stop_without_a_redis_read():
+    r = _CountingRedis()
+    control = BackfillControl(r, prefix="t")
+    flag = {"set": False}
+    control.watch_local_stop(lambda: flag["set"])
+
+    assert control.should_stop() is False
+    assert r.reads == ["t:control:stop"]  # flag down: Redis is still asked
+
+    r.reads.clear()
+    flag["set"] = True
+    assert control.should_stop() is True
+    assert control.should_stop() is True
+    assert r.reads == []  # flag up: no Redis read at all
+    # Published once, so the admin API and --status show the pending stop.
+    assert r.writes == ["t:control:stop"]
+    assert BackfillControl(r, prefix="t").should_stop() is True
+
+
+def test_a_local_stop_still_stops_the_run_when_redis_is_down(monkeypatch):
+    import core.backfill_runner as runner_mod
+
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    failures: list[str] = []
+    monkeypatch.setattr(
+        runner_mod, "_log_control_write_failed", lambda action, exc: failures.append(action)
+    )
+
+    def _down(*_a, **_k):
+        raise ConnectionError("redis is down")
+
+    r.set = _down
+    r.get = _down
+    control.watch_local_stop(lambda: True)
+
+    assert control.should_stop() is True
+    assert control.should_stop() is True
+    assert failures == ["publish-local-stop"]  # tried once, never again
+
+
+def test_a_local_stop_ends_a_run_and_launches_nothing_more():
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t")
+    flag = {"set": False}
+    control.watch_local_stop(lambda: flag["set"])
+    seen: list[str] = []
+
+    async def enrich(prop):
+        seen.append(prop.id)
+        flag["set"] = True  # the signal lands while row 0 is in flight
+
+    result = _run_with_real_control(_rows(5), enrich=enrich, redis=r, control=control)
+
+    assert result.stopped is True
+    # Row 1 may already have been launched behind row 0; nothing after it is.
+    assert 0 < len(seen) < 5
+    assert r.get("t:control:stop")  # mirrored for the status surface
+
+
+# -- the outcome record of the last supervised run (DW-28) ------------------
+
+
+def test_record_run_start_then_end_keeps_the_start_time():
+    r = FakeRedis()
+    clock = {"now": _T0}
+    control = BackfillControl(r, prefix="t", now_fn=lambda: clock["now"])
+
+    control.record_run_start("admin-api", "host:1")
+    assert control.last_run() == {
+        "outcome": "started",
+        "exit_code": None,
+        "reason": None,
+        "started_at": _T0.isoformat(),
+        "finished_at": None,
+        "source": "admin-api",
+        "owner": "host:1",
+    }
+    assert r.expires["t:last_run"] == 30 * 24 * 3600
+
+    clock["now"] = _T0 + timedelta(hours=3)
+    control.record_run_end(
+        "provider_refused", exit_code=10, reason="refused six cycles", owner="host:1"
+    )
+
+    assert control.last_run() == {
+        "outcome": "provider_refused",
+        "exit_code": 10,
+        "reason": "refused six cycles",
+        "started_at": _T0.isoformat(),  # the start this end closes
+        "finished_at": (_T0 + timedelta(hours=3)).isoformat(),
+        "source": "admin-api",  # inherited from the start
+        "owner": "host:1",
+    }
+    assert r.expires["t:last_run"] == 30 * 24 * 3600
+
+
+def test_an_end_does_not_borrow_the_start_of_a_run_that_already_ended():
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t", now_fn=lambda: _T0)
+    control.record_run_start("admin-api", "host:1")
+    control.record_run_end("complete", exit_code=0, owner="host:1")
+
+    control.record_run_end("hung", reason="silent", source="cli", owner="host:2")
+
+    last = control.last_run()
+    assert last["outcome"] == "hung"
+    assert last["started_at"] is None
+    assert last["source"] == "cli"
+    assert last["owner"] == "host:2"
+
+
+def test_an_end_does_not_close_another_process_start():
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t", now_fn=lambda: _T0)
+    control.record_run_start("admin-api", "host:1")
+
+    control.record_run_end("hung", owner="host:2")
+
+    assert control.last_run()["started_at"] is None
+
+
+def test_the_end_after_a_hung_record_keeps_the_same_start():
+    """The watchdog writes ``hung`` while the run is stuck; if the run comes
+    back, the supervisor's end record is the same run."""
+    r = FakeRedis()
+    control = BackfillControl(r, prefix="t", now_fn=lambda: _T0)
+    control.record_run_start("admin-api", "host:1")
+    control.record_run_end("hung", reason="silent for 3600s", owner="host:1")
+
+    control.record_run_end("hung", exit_code=11, reason="came back", owner="host:1")
+
+    last = control.last_run()
+    assert (last["outcome"], last["exit_code"]) == ("hung", 11)
+    assert last["started_at"] == _T0.isoformat()
+    assert last["source"] == "admin-api"
+
+
+def test_the_recorded_reason_is_cut_to_500_characters():
+    control = BackfillControl(FakeRedis(), prefix="t")
+
+    control.record_run_end("refused", exit_code=1, reason="x" * 2000)
+
+    assert len(control.last_run()["reason"]) == 500
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "[1, 2]", "{}", '{"outcome": ""}', "null"],
+)
+def test_last_run_reads_anything_it_did_not_write_as_no_record(raw):
+    r = FakeRedis()
+    r.set("t:last_run", raw)
+
+    assert BackfillControl(r, prefix="t").last_run() is None
+
+
+def test_last_run_coerces_odd_fields_to_the_wire_types():
+    r = BytesRedis()
+    r.set(
+        "t:last_run",
+        '{"outcome": "stopped", "exit_code": "6", "reason": 7, '
+        '"started_at": 1, "finished_at": null, "source": null}',
+    )
+
+    assert BackfillControl(r, prefix="t").last_run() == {
+        "outcome": "stopped",
+        "exit_code": None,  # not an int: dropped rather than guessed
+        "reason": "7",
+        "started_at": "1",
+        "finished_at": None,
+        "source": "unknown",
+        "owner": "",
+    }
+
+
+def test_last_run_is_none_when_nothing_was_recorded():
+    assert BackfillControl(FakeRedis(), prefix="t").last_run() is None

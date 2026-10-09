@@ -348,6 +348,21 @@ export interface BackfillPacing {
   tpm_limit: number
 }
 
+/**
+ * How the last run the `--serve` supervisor drove ended (v0.14-s1.13).
+ * `outcome` is a canonical English word; the vocabulary grows with the
+ * runner's exit codes, so an unknown word is rendered verbatim.
+ */
+export interface BackfillLastRun {
+  outcome: string
+  exit_code?: number | null
+  /** The runner's own sentence, in English; shown as written. */
+  reason?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  source?: string
+}
+
 export interface BackfillStatus {
   /** What the runner last *published*; decays on a TTL — says what, never whether. */
   state: BackfillState
@@ -364,6 +379,12 @@ export interface BackfillStatus {
   checkpoint: BackfillCheckpoint
   quarantined?: number | null
   pacing: BackfillPacing
+  /** Null when no supervised run was recorded. Optional: older bodies lack it. */
+  last_run?: BackfillLastRun | null
+  /** When the pause in force was requested; null without a pause. */
+  paused_since?: string | null
+  /** The pause outlived the 7-day request TTL and is still in force. */
+  pause_stale?: boolean
 }
 
 export interface BackfillStartResult {

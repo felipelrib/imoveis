@@ -1316,3 +1316,332 @@ def test_backfill_runner_imports_no_adapter_or_api_module():
     assert not roots & {"adapters", "api"}, sorted(imported)
     # "src.adapters" / "src.api" spellings count too.
     assert not [name for name in imported if name.startswith(("src.adapters", "src.api"))]
+
+
+# ---------------------------------------------------------------------------
+# Main-thread watchdog (v0.14-s1.13, DW-81)
+# ---------------------------------------------------------------------------
+#
+# The thread proves the process exists, not that the run moves. Before the
+# watchdog a run whose main thread hung kept its lease, its published state
+# and the supervisor key alive until someone killed the process.
+
+
+def _watchdog_kit(*, stall=3600, on_stall=None, supervisor=False):
+    clock = _Clock()
+    redis = _Redis(clock)
+    # The supervisor's own key, beaten as a keepalive by the same ticker in
+    # these tests (in production a second, keepalive-only ticker beats it and
+    # the stall callback silences that one).
+    keepalives = (
+        (Heartbeat(redis, prefix="t:supervisor", ttl_seconds=30),) if supervisor else ()
+    )
+    lease = BackfillLease(redis, prefix="t", ttl_seconds=900, token="me")
+    assert lease.acquire() is True
+    control = BackfillControl(redis, prefix="t")
+    heartbeat = Heartbeat(redis, prefix="t", ttl_seconds=300)
+    ticker = LivenessTicker(
+        lease=lease,
+        control=control,
+        heartbeat=heartbeat,
+        keepalives=keepalives,
+        clock=clock,
+        stall_limit_seconds=stall,
+        on_stall=on_stall,
+    )
+    return SimpleNamespace(
+        clock=clock, redis=redis, lease=lease, control=control,
+        heartbeat=heartbeat, ticker=ticker,
+    )
+
+
+@pytest.fixture
+def stall_log(monkeypatch):
+    """``(seconds_silent, limit)`` of every stall line logged."""
+    lines: list[tuple[float, float]] = []
+    monkeypatch.setattr(
+        runner, "_log_main_thread_stalled", lambda silent, limit: lines.append((silent, limit))
+    )
+    return lines
+
+
+def test_main_thread_hang_stops_the_lease_renew_the_state_and_the_supervisor_key(
+    stall_log, lost_log
+):
+    """I/O matrix "Main thread hangs"."""
+    stalls: list[float] = []
+    kit = _watchdog_kit(on_stall=stalls.append, supervisor=True)
+    kit.ticker.set_state(BackfillState.RUNNING)
+
+    _run_for(kit, 3590.0)  # the main thread has been silent, but inside the limit
+    assert kit.ticker.stalled is False
+    assert kit.ticker.lease_lost is False
+    assert kit.lease.is_held_by_self() is True
+    assert kit.control.state() is BackfillState.RUNNING
+    assert kit.redis.get("t:supervisor:active") == "1"
+
+    _run_for(kit, 10.0)  # 3600s without a progress stamp
+    assert kit.ticker.stalled is True
+    assert kit.ticker.lease_lost is True
+    assert stalls == [3600.0]
+    assert stall_log == [(3600.0, 3600.0)]
+    assert lost_log == []  # one line for the stall, not a second "lease lost"
+
+    renews = len(kit.redis.writes("t:lease"))
+    publishes = len(kit.redis.writes("t:state"))
+    beats = len(kit.redis.writes("t:supervisor:active"))
+    _run_for(kit, 1200.0)
+    # Nothing is vouched for any more: the lease lapses, the state decays and
+    # the supervisor key is gone, so the run reads as what it is.
+    assert len(kit.redis.writes("t:lease")) == renews
+    assert len(kit.redis.writes("t:state")) == publishes
+    assert len(kit.redis.writes("t:supervisor:active")) == beats
+    assert kit.redis.get("t:lease") is None
+    assert kit.control.state() is BackfillState.IDLE
+    assert kit.redis.get("t:supervisor:active") is None
+    # Once: the callback and the log line are not repeated on every tick.
+    assert stalls == [3600.0]
+    assert len(stall_log) == 1
+
+
+def test_progress_stamps_keep_the_watchdog_quiet():
+    stalls: list[float] = []
+    kit = _watchdog_kit(on_stall=stalls.append)
+
+    for _ in range(100):  # 10 000s, a stamp every 100s
+        kit.clock.advance(100.0)
+        kit.ticker.note_progress()
+        kit.ticker.tick()
+
+    assert kit.ticker.stalled is False
+    assert kit.ticker.lease_lost is False
+    assert stalls == []
+    assert kit.lease.is_held_by_self() is True
+
+
+def test_a_stall_limit_of_zero_disables_the_watchdog():
+    stalls: list[float] = []
+    kit = _watchdog_kit(stall=0, on_stall=stalls.append)
+
+    _run_for(kit, 20000.0, step=100.0)
+
+    assert kit.ticker.stalled is False
+    assert kit.ticker.progress_interval == 0.0
+    assert stalls == []
+    assert kit.lease.is_held_by_self() is True
+
+
+def test_a_failing_stall_callback_is_logged_and_never_raised(monkeypatch, stall_log):
+    failed: list[str] = []
+    monkeypatch.setattr(
+        runner, "_log_liveness_failed", lambda chore, exc: failed.append(chore)
+    )
+
+    def _boom(_seconds):
+        raise RuntimeError("the record could not be written")
+
+    kit = _watchdog_kit(on_stall=_boom)
+
+    _run_for(kit, 3600.0, step=100.0)  # must not raise
+
+    assert kit.ticker.stalled is True
+    assert kit.ticker.lease_lost is True
+    assert failed == ["on-stall"]
+
+
+def test_active_is_still_beaten_after_a_stall_while_a_pass_is_writing(stall_log):
+    """Rows in flight may still write, so the migration guard stays up: the
+    same rule as after any other lease loss."""
+    kit = _watchdog_kit()
+    kit.ticker.set_writing(True)
+
+    _run_for(kit, 3600.0)
+    assert kit.ticker.stalled is True
+    beats = len(kit.redis.writes("t:active"))
+    _run_for(kit, 600.0)
+
+    assert len(kit.redis.writes("t:active")) > beats
+    assert kit.redis.get("t:active") == "1"
+
+
+def test_note_progress_does_no_io_and_takes_no_lock(stall_log):
+    kit = _watchdog_kit()
+    kit.redis.fail = True  # any Redis call would raise
+    kit.clock.advance(50.0)
+
+    # Both locks held by "someone else": a stamp that waited on either would
+    # hang right here.
+    with kit.ticker._io_lock, kit.ticker._latch_lock:
+        kit.ticker.note_progress()
+
+    assert kit.ticker._last_progress == 50.0
+
+
+def test_progress_interval_is_a_tenth_of_the_limit_capped_at_a_minute():
+    assert _watchdog_kit(stall=3600).ticker.progress_interval == 60.0
+    assert _watchdog_kit(stall=100).ticker.progress_interval == 10.0
+    assert LivenessTicker().progress_interval == 0.0
+
+
+def test_a_ticker_that_only_watches_wakes_often_enough_to_see_the_limit():
+    ticker = LivenessTicker(stall_limit_seconds=40.0, clock=_Clock())
+
+    assert ticker.interval == 10.0
+
+
+def test_silence_stops_the_ticks_without_joining_the_thread():
+    clock = _Clock()
+    redis = _Redis(clock)
+    keepalive = Heartbeat(redis, prefix="t:supervisor", ttl_seconds=30)
+    ticker = LivenessTicker(keepalives=(keepalive,), clock=clock)
+    ticker.tick()
+    assert len(redis.writes("t:supervisor:active")) == 1
+
+    ticker.silence()
+    clock.advance(100.0)
+    ticker.tick()
+
+    assert len(redis.writes("t:supervisor:active")) == 1
+    ticker.stop()  # still harmless afterwards
+
+
+def test_run_backfill_stamps_progress_while_the_event_loop_turns():
+    """The pulse task is what keeps the watchdog quiet inside a pass, on the
+    real ``asyncio.sleep`` and not on the injected ``sleep_fn``."""
+    kit = _watchdog_kit(stall=0.1)  # progress_interval 0.01s
+    stamps: list[float] = []
+    real_note = kit.ticker.note_progress
+
+    def _counting_note():
+        stamps.append(kit.clock())
+        real_note()
+
+    kit.ticker.note_progress = _counting_note
+
+    async def _slow(_prop):
+        await asyncio.sleep(0.2)  # real time: many pulse intervals
+
+    result = _backfill(kit, _rows(1), _slow, control=kit.control)
+
+    assert result.processed == 1
+    assert len(stamps) >= 3
+    # And the task is gone with the pass.
+    assert kit.ticker.stalled is False
+
+
+def test_run_backfill_creates_no_pulse_task_when_the_watchdog_is_off():
+    def _pulses():
+        return [
+            t for t in asyncio.all_tasks() if "_pulse_progress" in repr(t.get_coro())
+        ]
+
+    off = _kit()
+    seen_off: list[int] = []
+
+    async def _probe_off(_prop):
+        seen_off.append(len(_pulses()))
+
+    _backfill(off, _rows(1), _probe_off)
+    assert seen_off == [0]
+
+    on = _watchdog_kit()
+    seen_on: list[int] = []
+
+    async def _probe_on(_prop):
+        seen_on.append(len(_pulses()))
+
+    _backfill(on, _rows(1), _probe_on)
+    assert seen_on == [1]
+
+
+def test_run_backfill_launches_nothing_more_once_the_watchdog_gave_up(stall_log):
+    """If the hung thread comes back, the stall reads as a lost lease: the
+    rows already in flight drain and no new one is launched."""
+    kit = _watchdog_kit()
+    seen: list[str] = []
+
+    async def _hangs_then_returns(prop):
+        seen.append(prop.id)
+        kit.clock.advance(3600.0)  # the main thread was stuck this long
+        kit.ticker.tick()  # what the thread did meanwhile
+
+    result = _backfill(kit, _rows(5), _hangs_then_returns, control=kit.control)
+
+    assert kit.ticker.stalled is True
+    assert result.lease_lost is True
+    assert len(seen) < 5
+
+
+# -- a frozen process is not a hung main thread (follow-up review) -----------
+
+
+class _FreezingEvent:
+    """Stands in for the ticker's stop event: each ``wait`` runs one script
+    step (which may move the clock, as a suspended host does) and the loop
+    ends when the script does."""
+
+    def __init__(self, steps):
+        self._steps = list(steps)
+
+    def is_set(self):
+        return False
+
+    def set(self):
+        self._steps = []
+
+    def wait(self, _timeout):
+        if not self._steps:
+            return True
+        self._steps.pop(0)()
+        return False
+
+
+def test_a_suspended_host_is_not_read_as_a_hung_main_thread(stall_log, monkeypatch):
+    """The ticker's clock keeps counting through a suspend on some platforms.
+    After two hours asleep the first tick used to find the limit passed before
+    the main thread had stamped, and recorded a run that never blocked as
+    ``hung``. The lease is still lost (its TTL passed too): that is exit 7."""
+    frozen: list[float] = []
+    monkeypatch.setattr(runner, "_log_liveness_frozen", frozen.append, raising=False)
+    stalls: list[float] = []
+    kit = _watchdog_kit(on_stall=stalls.append)
+    interval = kit.ticker.interval
+    kit.ticker._stop_event = _FreezingEvent(
+        [lambda: kit.clock.advance(interval + 7200.0)]  # the host slept 2h
+    )
+
+    kit.ticker._loop()
+
+    assert kit.ticker.stalled is False
+    assert stalls == []
+    assert stall_log == []
+    assert frozen == [7200.0]
+    assert kit.ticker.lease_lost is True  # the lease has its own rule
+
+
+def test_a_main_thread_that_hangs_while_the_ticker_keeps_time_is_still_hung(stall_log):
+    """The discount is for time nobody witnessed. Ordinary waits take nothing
+    off, and silence from before a freeze still counts after it."""
+    stalls: list[float] = []
+    kit = _watchdog_kit(on_stall=stalls.append)
+    interval = kit.ticker.interval
+
+    def _on_time():
+        kit.clock.advance(interval)
+
+    def _suspend():
+        kit.clock.advance(interval + 7200.0)
+
+    kit.ticker._stop_event = _FreezingEvent(
+        [
+            *([_on_time] * int(3000 / interval)),  # 3000s of silence it saw
+            _suspend,
+            *([_on_time] * (int(600 / interval) + 2)),
+        ]
+    )
+
+    kit.ticker._loop()
+
+    assert kit.ticker.stalled is True
+    assert len(stalls) == 1
+    assert 3600.0 <= stalls[0] < 3600.0 + 2 * interval

@@ -357,6 +357,41 @@ class BackfillPacingModel(BaseModel):
     tpm_limit: int
 
 
+class BackfillLastRunModel(BaseModel):
+    """How the last run the ``--serve`` supervisor drove ended (v0.14-s1.13).
+
+    Written by the supervisor to ``<prefix>:last_run`` and kept for 30 days,
+    so a run that was refused or died after its start request was accepted
+    leaves a trace here. ``outcome`` is a canonical English word:
+
+    - ``started``: the run is in progress (no ``finished_at`` yet).
+    - ``complete``, ``complete_with_quarantine``, ``stopped``: ended as asked.
+    - ``stalled``, ``lease_held``, ``lease_lost``, ``migration_blocked``,
+      ``ai_circuit_open``, ``provider_refused``, ``failed``, ``usage``: ended
+      by the exit code of the same name (see the runner's exit-code table).
+    - ``refused``: the run raised a refusal before it started (``reason`` is
+      the runner's message). ``crashed``: it raised an exception (``reason``
+      is the exception type only, never its text).
+    - ``hung``: the watchdog found the main thread silent and stopped
+      vouching for the run; the process may still exist. For this outcome
+      ``finished_at`` is when the watchdog gave the run up, not when the
+      process ended.
+    - ``interrupted``: derived at read time, never written: the record still
+      says ``started`` but the lease is free and the supervisor that drove
+      the run is gone.
+
+    A client must render a word it does not know verbatim: the vocabulary can
+    grow with the runner's exit codes.
+    """
+
+    outcome: str
+    exit_code: Optional[int] = None
+    reason: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    source: str = "unknown"
+
+
 class BackfillStatusResponse(BaseModel):
     """``GET /admin/backfill/status``.
 
@@ -396,6 +431,19 @@ class BackfillStatusResponse(BaseModel):
     # story 1.4's (DB-derived).
     quarantined: Optional[int] = None
     pacing: BackfillPacingModel
+    # v0.14-s1.13. All three are optional or defaulted, so a body written
+    # before them still validates.
+    #
+    # The recorded outcome of the last run a supervisor drove; null when none
+    # was recorded (or the record aged out after 30 days).
+    last_run: Optional[BackfillLastRunModel] = None
+    # When the pause in force was requested (ISO-8601); null when there is no
+    # pause, or for one requested before the request carried a time.
+    paused_since: Optional[str] = None
+    # The pause is older than a request normally lives (7 days) and is still
+    # set. Whether a run is observing it is not part of this flag; a run that
+    # sees it launches nothing until ``resume``.
+    pause_stale: bool = False
 
 
 class BackfillControlResponse(BaseModel):

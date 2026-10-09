@@ -71,10 +71,15 @@ single-instance lease, and a second start is refused (exit 5) naming the holder.
 Exit codes (``--continuous``)
 ----------------------------
 An unattended run ends while nobody is watching, so the outcome is in the exit
-code as well as the closing banner (v0.13-fu3):
+code as well as the closing banner (v0.13-fu3). The full table, with what a
+supervisor should do for each code, is in
+``docs/features/v0.14-s1.13-runner-lifecycle-ends-honestly.md``:
 
 ===  ==========================================================================
 0    complete — the candidate queue drained, nothing was retired
+1    failed — an unhandled error (traceback), or a start-up refusal such as a
+     missing ``GEMINI_API_KEY`` or all-local routing
+2    usage — the command line was rejected
 3    stalled — work remains but a full cycle made no progress; needs a look
 4    complete, but N rows were quarantined unenriched (see the banner listing)
 5    refused — another runner holds the lease (v0.13-s1.3)
@@ -85,6 +90,14 @@ code as well as the closing banner (v0.13-fu3):
      exclusion key, so no row was launched; with ``--continuous`` this only
      appears once the run has spent ``backfill.migration_wait_seconds`` in
      total (across every blocked cycle) waiting for it to clear
+9    AI circuit open — the AI backend kept returning results the write
+     authority refused (a revoked key, a retired model id, blocked egress)
+10   provider refused — ``backfill.max_no_progress_cycles`` consecutive cycles
+     ended in a provider quota refusal with nothing enriched; waiting longer
+     does not help, so the run ended instead of sleeping again (v0.14-s1.13)
+11   main thread stalled — no progress stamp for
+     ``backfill.main_thread_stall_seconds``; the watchdog gave the lease up
+     and the run, once it came back, launched nothing more (v0.14-s1.13)
 ===  ==========================================================================
 
 Scope (``--task-classes``)
@@ -149,9 +162,11 @@ from core.backfill_runner import (  # noqa: E402
     QueueCensus,
     TokenBudget,
     estimate_eta_days,
+    last_run_view,
     launch_interval_for_rpm,
     parse_task_classes,
     partition_candidates,
+    pause_view,
     pending_control_requests,
     run_backfill,
     stages_for_task_classes,
@@ -176,6 +191,8 @@ logger = get_logger(__name__)
 # Exit codes — a backfill that finishes overnight has to be distinguishable from
 # one that gave up, without reading the scrollback (v0.13-fu3).
 EXIT_COMPLETE = 0                 # candidate queue drained cleanly
+EXIT_ERROR = 1                    # unhandled error, or a start-up refusal
+EXIT_USAGE = 2                    # the command line was rejected
 EXIT_STALLED = 3                  # work remains but no progress is being made
 EXIT_COMPLETE_WITH_QUARANTINE = 4 # queue drained, but rows were retired unenriched
 EXIT_LEASE_HELD = 5               # another runner already holds the lease
@@ -183,13 +200,46 @@ EXIT_STOPPED = 6                  # an operator asked this run to stop
 EXIT_LEASE_LOST = 7               # the lease lapsed mid-run; someone else may own it
 EXIT_MIGRATION_ACTIVE = 8         # migrate-primary.sh holds the primary DB (DW-3/DW-4)
 EXIT_AI_CIRCUIT_OPEN = 9          # the AI client kept fabricating results (DW-17)
+EXIT_PROVIDER_REFUSED = 10        # the provider refused cycle after cycle (DW-19)
+EXIT_MAIN_THREAD_STALLED = 11     # the watchdog gave the lease up (DW-81)
+
+# Exit code -> the outcome word recorded in ``<prefix>:last_run`` and served as
+# ``last_run.outcome`` by ``GET /admin/backfill/status``. One map, so the CLI,
+# the record and the docs cannot name the same ending three ways. Three more
+# words exist that no exit code produces: ``started`` (the run is going),
+# ``refused`` / ``crashed`` (``main`` raised instead of returning, see
+# ``_run_supervised``) and ``interrupted`` (derived by the status snapshot).
+_EXIT_OUTCOMES = {
+    EXIT_COMPLETE: "complete",
+    EXIT_ERROR: "failed",
+    EXIT_USAGE: "usage",
+    EXIT_STALLED: "stalled",
+    EXIT_COMPLETE_WITH_QUARANTINE: "complete_with_quarantine",
+    EXIT_LEASE_HELD: "lease_held",
+    EXIT_STOPPED: "stopped",
+    EXIT_LEASE_LOST: "lease_lost",
+    EXIT_MIGRATION_ACTIVE: "migration_blocked",
+    EXIT_AI_CIRCUIT_OPEN: "ai_circuit_open",
+    EXIT_PROVIDER_REFUSED: "provider_refused",
+    EXIT_MAIN_THREAD_STALLED: "hung",
+}
 
 _BANNER_WIDTH = 68
 
 # Set by the run-level stop handler so ``--serve`` can tell "a signal arrived
 # while a run owned the signal dispositions" from "the run ended on its own".
 # The supervisor exits after such a run instead of returning to the poll loop.
+# It is also the run's own stop request: the handler does nothing but set it
+# (DW-22), and the run reads it through ``BackfillControl.should_stop``.
 _STOP_SIGNAL_RECEIVED = False
+# Whether the "draining" message for that signal has been printed. Printing is
+# done by the main thread the first time it reads the flag, never by the
+# handler.
+_STOP_ANNOUNCED = False
+# The keepalive ticker of the ``--serve`` supervisor while it drives a run, so
+# the run's stall callback can stop it: a hung run must not keep the
+# supervisor key alive (DW-81). ``None`` for a run started by hand.
+_SUPERVISOR_KEEPALIVE = None
 
 # Consecutive ``--continuous`` passes that end in a provider quota refusal with
 # nothing enriched before the short (per-minute-throttle) back-off is ruled out
@@ -212,6 +262,19 @@ _LEASE_LOST_TITLE = (
 _LEASE_LOST_LINES = [
     "The checkpoint is intact: whoever holds the lease continues from it.",
     "Check `--status` before starting another run.",
+]
+_MAIN_THREAD_STALLED_TITLE = (
+    "BACKFILL GAVE UP ITS LEASE — the main thread made no progress for too long"
+)
+_MAIN_THREAD_STALLED_LINE = (
+    "The liveness watchdog stopped renewing the lease "
+    "(backfill.main_thread_stall_seconds); another runner may have started since."
+)
+_PROVIDER_REFUSED_LINES = [
+    "Waiting longer does not help: the run ended instead of sleeping again.",
+    "Nothing was persisted for the refused rows and the checkpoint is intact.",
+    "Check the provider's quota for this key and project, then start again; "
+    "backfill.max_no_progress_cycles sets the limit (0 disables it).",
 ]
 _MIGRATION_BLOCKED_LINES = [
     "No row was launched and the checkpoint is exactly where the last pass "
@@ -620,6 +683,9 @@ def _print_status(cfg, session, redis) -> None:
     # would discard (or one a dead run never observed) was invisible here.
     pending = _pending_requests(control)
     print(f"  pending requests     : {', '.join(pending) if pending else 'none'}")
+    # Since when, and whether it is older than a request normally lives: a run
+    # extends a pause it can see, so "paused" can be true for weeks (DW-23).
+    print(f"  paused since         : {_pause_summary(control, 'pause' in pending)}")
     # A start request with no supervisor waiting is a run that will never
     # happen: both halves have to be visible, or the operator sees a request
     # "accepted" by the API and nothing else for the hour it lives (v0.13-s1.5).
@@ -633,14 +699,53 @@ def _print_status(cfg, session, redis) -> None:
         print("  start request        : none")
     # One read answers both "is it up" and "which process is it": two reads
     # could straddle the expiry of the key.
-    supervisor_id = _supervisor_heartbeat_for(cfg, redis).value()
+    supervisor_heartbeat = _supervisor_heartbeat_for(cfg, redis)
+    supervisor_id = supervisor_heartbeat.value()
     lease_holder = _lease_for(cfg, redis).holder()
     print(
         "  supervisor           : "
         f"{_supervisor_summary(supervisor_id is not None, lease_holder, supervisor_id)}"
     )
     print(f"  lease                : {_lease_summary(lease_holder)}")
+    # How the last run a supervisor drove ended: the only trace of a run that
+    # was refused or died after the API accepted its start request (DW-28).
+    print(
+        "  last run             : "
+        f"{_last_run_summary(last_run_view(control, lease_holder, supervisor_heartbeat))}"
+    )
     _print_quarantine(_quarantine_report(ledger), indent="  ")
+
+
+def _pause_summary(control, paused: bool) -> str:
+    """The ``--status`` line that says since when a pause has been in force."""
+    since, stale = pause_view(control)
+    if since is None:
+        return "unknown (requested before the request carried a time)" if paused else "not paused"
+    if stale:
+        return (
+            f"{since} — STALE: older than the request TTL and still set; a run "
+            "that sees it launches nothing until --resume"
+        )
+    return since
+
+
+def _last_run_summary(last: dict | None) -> str:
+    """The ``--status`` line for the recorded outcome of the last supervised run."""
+    if not last:
+        return "none recorded"
+    outcome = last.get("outcome") or "unknown"
+    if outcome == "started":
+        return f"in progress (started {last.get('started_at') or 'unknown'})"
+    code = last.get("exit_code")
+    text = outcome if code is None else f"{outcome} (exit {code})"
+    when = last.get("finished_at")
+    if when:
+        text += f" at {when}"
+    elif last.get("started_at"):
+        text += f", started {last['started_at']}"
+    if last.get("reason"):
+        text += f" — {last['reason']}"
+    return text
 
 
 def _supervisor_summary(
@@ -691,8 +796,148 @@ def _control_for(cfg, redis) -> BackfillControl:
     return BackfillControl(redis, prefix=cfg.backfill.redis_prefix)
 
 
+def _outcome_for_exit(code) -> str:
+    """The outcome word for an exit code; ``failed`` for one nobody named."""
+    return _EXIT_OUTCOMES.get(code, "failed")
+
+
+def _exit_reason(code, cfg) -> str | None:
+    """One sentence for the operator about an ending that needs explaining.
+
+    This is what the Operações card shows under the outcome. ``None`` for the
+    endings that explain themselves (complete, stopped).
+    """
+    if code == EXIT_PROVIDER_REFUSED:
+        return (
+            f"The provider refused on quota for "
+            f"{int(cfg.backfill.max_no_progress_cycles)} consecutive cycles and "
+            "nothing was enriched (backfill.max_no_progress_cycles). Check the "
+            "provider quota for this key, then start again."
+        )
+    if code == EXIT_MAIN_THREAD_STALLED:
+        return (
+            f"The main thread made no progress for "
+            f"{int(cfg.backfill.main_thread_stall_seconds)}s "
+            "(backfill.main_thread_stall_seconds), so the lease was given up. "
+            "The run came back afterwards and exited without launching more."
+        )
+    return {
+        EXIT_ERROR: "The run ended on an error; see the supervisor log.",
+        EXIT_USAGE: "The run's command line was rejected.",
+        EXIT_STALLED: (
+            "Work remains, but a full cycle enriched nothing while budget was "
+            "left: the remaining rows are failing."
+        ),
+        EXIT_COMPLETE_WITH_QUARANTINE: (
+            "The queue drained, but some rows were quarantined unenriched."
+        ),
+        EXIT_LEASE_HELD: "Another runner holds the lease.",
+        EXIT_LEASE_LOST: (
+            "The lease was lost mid-run; another runner may have taken over."
+        ),
+        EXIT_MIGRATION_ACTIVE: (
+            "A primary database migration held the database for longer than "
+            "backfill.migration_wait_seconds."
+        ),
+        EXIT_AI_CIRCUIT_OPEN: (
+            "The AI backend kept returning results that were refused: check "
+            "the API key, the model id and network egress."
+        ),
+    }.get(code)
+
+
+def _note_progress(liveness) -> None:
+    """Stamp "the main thread ran" for the watchdog, when there is one."""
+    note = getattr(liveness, "note_progress", None)
+    if callable(note):
+        note()
+
+
+def _is_stalled(liveness) -> bool:
+    """True when the watchdog, not a takeover, is why the lease is lost."""
+    # ``is True``: a ticker double answers any attribute with a truthy mock.
+    return getattr(liveness, "stalled", False) is True
+
+
+def _lease_lost_exit(liveness, lines: list[str]) -> int:
+    """Print the banner of a run that no longer holds its lease; return its code.
+
+    Two endings share every code path up to here, because the watchdog treats
+    a stall as a lost lease: a takeover (exit 7) and a main thread that hung
+    until the ticker stopped renewing (exit 11). They get different banners
+    and codes: after a stall nobody may have taken over at all, and what the
+    operator has to look at is this process, not another one.
+    """
+    if _is_stalled(liveness):
+        _print_banner(_MAIN_THREAD_STALLED_TITLE, [_MAIN_THREAD_STALLED_LINE, *lines])
+        return EXIT_MAIN_THREAD_STALLED
+    _print_banner(_LEASE_LOST_TITLE, lines)
+    return EXIT_LEASE_LOST
+
+
+def _stall_callback(control, cfg):
+    """What the watchdog does when the run's main thread stops moving.
+
+    Runs on the ticker thread, after the ticker has already stopped renewing
+    the lease and publishing the state. It stops the supervisor's keepalive,
+    so ``runner_present`` does not stay true for a hung process, and records
+    ``hung`` as the last outcome. Each step is guarded on its own: a Redis
+    that does not answer must not cost the other one.
+    """
+    def _on_stall(seconds_silent: float) -> None:
+        keepalive = _SUPERVISOR_KEEPALIVE
+        if keepalive is not None:
+            try:
+                keepalive.silence()
+            except Exception as exc:  # noqa: BLE001 - never out of the ticker
+                logger.warning("backfill_stall_keepalive_stop_failed", error=str(exc))
+        try:
+            control.record_run_end(
+                "hung",
+                reason=(
+                    f"The main thread made no progress for {seconds_silent:.0f}s "
+                    f"(backfill.main_thread_stall_seconds = "
+                    f"{int(cfg.backfill.main_thread_stall_seconds)}), so the "
+                    "lease stopped being renewed. If the process still exists "
+                    "it has to be ended by hand. If it hung while a pass was "
+                    "writing, the :active key is still beaten and "
+                    "migrate-primary.sh refuses until the process is ended."
+                ),
+                # A supervised run keeps the source of the request that
+                # started it; a run started by hand has no start record.
+                source=None if keepalive is not None else "cli",
+                owner=_process_id(),
+            )
+        except Exception as exc:  # noqa: BLE001 - never out of the ticker
+            logger.warning("backfill_stall_record_failed", error=str(exc))
+
+    return _on_stall
+
+
+def _close_hand_started_stall(control, cfg) -> None:
+    """Write the end of a stalled run that no supervisor will close.
+
+    Under ``--serve`` the supervisor records the end of every run it drives.
+    A run started by hand that stalled and then came back has only the
+    ``hung`` record its own watchdog wrote, with no exit code, so it closes
+    that record itself. Guarded like every write of this record.
+    """
+    if _SUPERVISOR_KEEPALIVE is not None:
+        return
+    _record_last_run(
+        "end",
+        lambda: control.record_run_end(
+            _outcome_for_exit(EXIT_MAIN_THREAD_STALLED),
+            exit_code=EXIT_MAIN_THREAD_STALLED,
+            reason=_exit_reason(EXIT_MAIN_THREAD_STALLED, cfg),
+            source="cli",
+            owner=_process_id(),
+        ),
+    )
+
+
 def _liveness_for(
-    cfg, redis, *, lease=None, control=None, writes_rows: bool = True
+    cfg, redis, *, lease=None, control=None, writes_rows: bool = True, on_stall=None
 ) -> LivenessTicker:
     """The ticker that keeps a run's lease, state and ``:active`` key alive.
 
@@ -705,6 +950,10 @@ def _liveness_for(
     ``:active`` heartbeat at all. With one, a dry run started beside a live
     pass beat that pass's key and then deleted it on the way out, and
     ``migrate-primary.sh`` read an idle guard until the live run's next beat.
+
+    ``on_stall`` turns the main-thread watchdog on, with
+    ``backfill.main_thread_stall_seconds`` as its limit. Only ``main`` passes
+    it: the watchdog belongs to the ticker that runs for the whole run.
     """
     return LivenessTicker(
         lease=lease,
@@ -712,6 +961,10 @@ def _liveness_for(
         heartbeat=(
             Heartbeat(redis, prefix=cfg.backfill.redis_prefix) if writes_rows else None
         ),
+        stall_limit_seconds=(
+            float(cfg.backfill.main_thread_stall_seconds) if on_stall is not None else 0.0
+        ),
+        on_stall=on_stall,
     )
 
 
@@ -795,6 +1048,10 @@ def _run(
         )
     elif lease is None:
         lease = liveness.lease
+    # Three stamps for the watchdog in this function: here, after the candidate
+    # fetch and after the partition. Those are the blocking stretches of a pass
+    # outside the event loop; inside it ``run_backfill`` stamps on a timer.
+    _note_progress(liveness)
     # Read the gate before the first DB query. ``fetch_candidate_rows`` (and the
     # census right after it) can block for the whole upgrade on the ACCESS
     # EXCLUSIVE lock an ALTER TABLE holds, so a pass that is going to be refused
@@ -853,6 +1110,7 @@ def _run(
         limit=args.limit,
     )
     rows = fetch_candidate_rows(session, params)
+    _note_progress(liveness)
     # ``fetch_candidate_rows`` applies only the SQL filters. Drop the rows this
     # pipeline can never score — no/too-few photos, and rows the ledger retired —
     # so they neither cost budget nor inflate "remaining" (v0.13-fu3).
@@ -862,6 +1120,7 @@ def _run(
         ledger=ledger,
         stages=stages,
     )
+    _note_progress(liveness)
     if partition.blocked_total:
         logger.info(
             "backfill_candidates_excluded",
@@ -1142,12 +1401,23 @@ def _publish_wait_state(control, liveness, waiting_state: BackfillState) -> None
     around it stay unguarded on purpose: those decide whether this process may
     keep writing, and a blip there ends the pass by design.
     """
+    paused = False
     try:
-        liveness.set_state(
-            BackfillState.PAUSED if control.is_paused() else waiting_state
-        )
+        paused = bool(control.is_paused())
+        liveness.set_state(BackfillState.PAUSED if paused else waiting_state)
     except Exception as exc:  # noqa: BLE001 - the state key is decoration
         logger.warning("backfill_wait_state_publish_failed", error=str(exc))
+    if paused:
+        # A pause this run can see must not expire under it (DW-23). The wait
+        # loops are where a run spends days, so this is where a seven-day
+        # request TTL would run out. ``EXPIRE`` only: a resume that deleted
+        # the key a moment ago is not undone.
+        try:
+            hold = getattr(control, "hold_pause", None)
+            if callable(hold):
+                hold()
+        except Exception as exc:  # noqa: BLE001 - a refresh never ends a wait
+            logger.warning("backfill_pause_hold_failed", error=str(exc))
 
 
 def _sleep_for_reset(wait: float, *, cfg, control=None, liveness=None) -> str:
@@ -1196,6 +1466,8 @@ def _sleep_for_reset(wait: float, *, cfg, control=None, liveness=None) -> str:
     next_renew = 0.0
     next_state = 0.0
     while True:
+        # Every step is the main thread running: the watchdog hears it here.
+        _note_progress(liveness)
         # First, before anything else is read: once the lease is lost the
         # control keys belong to the successor, and a stop found there is aimed
         # at that run, not at this one.
@@ -1286,6 +1558,7 @@ def _wait_out_migration(
     next_state = 0.0
     announced = False
     while True:
+        _note_progress(liveness)
         # First, as in ``_sleep_for_reset``: a displaced runner must not report
         # (and have its caller clear) a stop aimed at its successor.
         if liveness.lease_lost:
@@ -1396,6 +1669,7 @@ def _run_continuous(
     migration_waited = 0.0
     while True:
         cycle += 1
+        _note_progress(liveness)
         with SessionLocal() as session:
             try:
                 result = _run(
@@ -1409,10 +1683,14 @@ def _run_continuous(
             # TABLE's ACCESS EXCLUSIVE lock can hold them for the whole upgrade.
             # Waiting there instead of in ``_wait_out_migration`` costs this
             # runner its lease.
+            # Around the census: its SELECTs are the other blocking stretch
+            # between two passes.
+            _note_progress(liveness)
             try:
                 census = (
                     None if result.migration_blocked else _census(cfg, session, ledger)
                 )
+                _note_progress(liveness)
             except Exception as exc:  # noqa: BLE001 - re-raised unless the lease is lost
                 # The census reads the attempt ledger in Redis. After a Redis
                 # outage as long as the lease TTL the lease is lost and Redis
@@ -1464,8 +1742,7 @@ def _run_continuous(
                 # Both flags set (a worker's renew failed while the pass was
                 # breaking on the gate): there is nothing to wait for, a
                 # successor owns the run.
-                _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines(result))
-                return EXIT_LEASE_LOST
+                return _lease_lost_exit(liveness, _lease_lost_lines(result))
             waited_from = time.monotonic()
             outcome = _wait_out_migration(
                 cfg,
@@ -1482,8 +1759,7 @@ def _run_continuous(
             if outcome == "lease_lost":
                 # Lost during the *wait*, so this pass launched nothing and has
                 # no completions of its own to report.
-                _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines())
-                return EXIT_LEASE_LOST
+                return _lease_lost_exit(liveness, _lease_lost_lines())
             if outcome == "stopped":
                 _print_banner(
                     "BACKFILL STOPPED — operator requested; resume with the "
@@ -1505,6 +1781,13 @@ def _run_continuous(
         # bound is on one uninterrupted stretch of blocked cycles, not on the
         # lifetime of a runner that may stay up for days.
         migration_waited = 0.0
+        # A row that got through proves the provider is serving, whatever the
+        # pass ended on, so the refusal count of DW-19 starts over. Here, ahead
+        # of every branch: a pass that enriched rows and ended with budget to
+        # spare goes straight to the next pass below, and resetting only on
+        # the way to the sleep let refusals on either side of it add up.
+        if result.processed > 0:
+            quota_zero_cycles = 0
 
         def _end() -> int:
             return _finish(
@@ -1527,8 +1810,8 @@ def _run_continuous(
                 # The census could not be taken (see above): the banner goes
                 # out without the queue summary, with the totals this run
                 # counted itself.
-                _print_banner(
-                    _LEASE_LOST_TITLE,
+                return _lease_lost_exit(
+                    liveness,
                     [
                         f"cycles {cycle} · elapsed "
                         f"{_format_elapsed(time.monotonic() - started)}"
@@ -1537,9 +1820,8 @@ def _run_continuous(
                         *_lease_lost_lines(result),
                     ],
                 )
-                return EXIT_LEASE_LOST
-            _print_banner(
-                _LEASE_LOST_TITLE,
+            return _lease_lost_exit(
+                liveness,
                 _terminal_summary(
                     census,
                     cycle=cycle,
@@ -1552,7 +1834,6 @@ def _run_continuous(
                 # in `--status` is named right here (DW-11).
                 + _unrecorded_completion_lines(result),
             )
-            return EXIT_LEASE_LOST
         # Completion is checked *before* the budget branch: a pass that spends the
         # last of its budget on the last of the queue must exit now, not sleep out
         # the remaining ~24h only to find an empty queue.
@@ -1645,8 +1926,51 @@ def _run_continuous(
         # fall back to the RPD-window wait (never shorter than the back-off).
         if result.quota_exhausted and result.processed == 0:
             quota_zero_cycles += 1
-        else:
-            quota_zero_cycles = 0
+        # Only a row that got through clears the count (above, for every
+        # cycle). A zero-progress cycle that ended on the local budget says
+        # nothing about the provider, so it neither counts nor clears it.
+        # The escalation above only makes the wait longer. A provider that
+        # refuses permanently (a quota set to zero, a project without the
+        # free tier) is then waited on for ever: one refused pass per daily
+        # window, each "safe to resume", with no ending anybody could act on
+        # (DW-19). After ``max_no_progress_cycles`` such cycles with no row
+        # enriched in between the run ends here, before the next sleep, with
+        # its own exit code. Any cycle that enriched a row reset the count
+        # above; ``0`` keeps the old behaviour.
+        #
+        # A healthy provider at the end of its day cannot get here with the
+        # shipped limit of 6. The first four refused passes are
+        # ``quota_backoff_seconds`` apart. From the fourth on the wait is the
+        # rest of the local 24h window, and a refused pass reserved budget
+        # before it was refused, so the pass after that wait opens a window of
+        # its own and the next wait is a whole day. The fifth and the sixth
+        # refusal are therefore at least 24h apart, and a quota that resets
+        # daily has reset between them (locked by
+        # ``test_the_fifth_and_sixth_refusal_are_a_daily_window_apart``).
+        refusal_limit = int(cfg.backfill.max_no_progress_cycles)
+        if 0 < refusal_limit <= quota_zero_cycles:
+            _print_banner(
+                f"BACKFILL STOPPED — the provider refused {quota_zero_cycles} "
+                "cycles in a row and nothing was enriched",
+                _PROVIDER_REFUSED_LINES
+                + _terminal_summary(
+                    census,
+                    cycle=cycle,
+                    elapsed=time.monotonic() - started,
+                    processed=enriched_this_run,
+                    errors=errors_this_run,
+                ),
+            )
+            logger.warning(
+                "backfill_terminal",
+                outcome=_outcome_for_exit(EXIT_PROVIDER_REFUSED),
+                exit_code=EXIT_PROVIDER_REFUSED,
+                cycles=cycle,
+                refused_cycles=quota_zero_cycles,
+                elapsed_seconds=round(time.monotonic() - started),
+                **census.to_dict(),
+            )
+            return EXIT_PROVIDER_REFUSED
         # Reconciliation can hand headroom *back* after the refusal that ended
         # the pass: rows still draining settle down to what they really sent,
         # and one that cost less than its 3-request forecast refunds the
@@ -1715,8 +2039,7 @@ def _run_continuous(
             == "lease_lost"
         ):
             # Lost while sleeping out the budget window: nothing was in flight.
-            _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines())
-            return EXIT_LEASE_LOST
+            return _lease_lost_exit(liveness, _lease_lost_lines())
 
 
 def _supervisor_heartbeat_for(cfg, redis) -> Heartbeat:
@@ -1843,8 +2166,17 @@ def _serve_blocker(holder: dict | None, gate) -> str | None:
     return None
 
 
-def _run_supervised(argv: list[str]) -> int:
-    """Run one API-requested pass, converting *any* failure into an exit code.
+def _run_supervised(argv: list[str], cfg=None) -> tuple[int, str, str | None]:
+    """Run one API-requested pass, converting *any* failure into an outcome.
+
+    Returns ``(exit_code, outcome, reason)``: the three things the supervisor
+    records in ``<prefix>:last_run``, so a run that was refused or died leaves
+    a trace the admin API can read (DW-28). A ``SystemExit`` with a message is
+    a refusal and carries the runner's own message, which names config keys
+    and never a secret; one with an int (or no) code is that code's own
+    outcome (``2`` is argparse rejecting the command line). A crash carries
+    the exception **type only**: its text can hold anything (a URL with a key
+    in it, a row's content) and this record goes out on an HTTP response.
 
     The supervisor has already consumed the start request by the time this is
     called — that is destructive — so a run that dies must not take the
@@ -1858,18 +2190,41 @@ def _run_supervised(argv: list[str]) -> int:
     the supervisor, not a failed run.
     """
     try:
-        return main(argv)
+        rc = main(argv)
     except SystemExit as exc:
         code = exc.code
         rc = code if isinstance(code, int) else (0 if code is None else 1)
         message = "" if isinstance(code, (int, type(None))) else f": {code}"
         print(f"Run refused (exit {rc}){message}", file=sys.stderr)
         logger.warning("backfill_serve_run_refused", exit_code=rc, reason=str(code))
-        return rc
+        if isinstance(code, (int, type(None))):
+            return rc, _outcome_for_exit(rc), (
+                None if cfg is None else _exit_reason(rc, cfg)
+            )
+        return rc, "refused", str(code)
     except Exception as exc:  # noqa: BLE001 - the supervisor must outlive a run
         print(f"Run failed: {exc!r}", file=sys.stderr)
         logger.exception("backfill_serve_run_failed", error=str(exc))
-        return 1
+        return (
+            EXIT_ERROR,
+            "crashed",
+            f"{type(exc).__name__} — see the supervisor log on the host",
+        )
+    if isinstance(rc, bool) or not isinstance(rc, int):
+        rc = EXIT_ERROR
+    return rc, _outcome_for_exit(rc), (None if cfg is None else _exit_reason(rc, cfg))
+
+
+def _record_last_run(action: str, write) -> None:
+    """Write the outcome record, never letting it end the supervisor.
+
+    The record is how the API learns what happened, not part of the run: a
+    Redis error here is logged and the supervisor keeps serving.
+    """
+    try:
+        write()
+    except Exception as exc:  # noqa: BLE001 - the supervisor must outlive a blip
+        logger.warning("backfill_serve_outcome_record_failed", action=action, error=str(exc))
 
 
 def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = None) -> int:
@@ -1887,7 +2242,7 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
 
     ``max_cycles`` bounds the loop for tests; production leaves it unbounded.
     """
-    global _STOP_SIGNAL_RECEIVED
+    global _STOP_SIGNAL_RECEIVED, _SUPERVISOR_KEEPALIVE
     control = _control_for(cfg, redis)
     heartbeat = _supervisor_heartbeat_for(cfg, redis)
     # Read-only handle: the supervisor asks *who holds* the lease and never
@@ -1976,6 +2331,14 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
                 "backfill_serve_start_consumed", source=source, requested_at=requested_at
             )
             _STOP_SIGNAL_RECEIVED = False
+            # The same ``host:pid`` the supervisor beats its key with: a
+            # ``started`` record whose owner is no longer the supervisor, with
+            # the lease free, is a run whose process is gone, and the status
+            # snapshot reads it as ``interrupted``.
+            owner = _process_id()
+            _record_last_run(
+                "start", lambda: control.record_run_start(str(source), owner)
+            )
             try:
                 # Never lets a failing run end the supervisor: the request it
                 # consumed is already gone, so dying here would lose both.
@@ -1985,8 +2348,18 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
                 # being driven: the key expired and ``--status`` reported the
                 # supervisor as not running for the whole (multi-day) run
                 # (DW-34). A keepalive-only ticker beats it for that stretch.
-                with LivenessTicker(keepalives=(heartbeat,)):
-                    rc = _run_supervised(_continuous_argv(args))
+                #
+                # The run can stop that ticker: when its watchdog finds the
+                # main thread hung, a supervisor key that keeps being beaten
+                # would say something is listening (DW-81).
+                with LivenessTicker(keepalives=(heartbeat,)) as keepalive:
+                    _SUPERVISOR_KEEPALIVE = keepalive
+                    try:
+                        rc, outcome, reason = _run_supervised(
+                            _continuous_argv(args), cfg
+                        )
+                    finally:
+                        _SUPERVISOR_KEEPALIVE = None
             finally:
                 # The run installed its own stop-signal handlers; take them back
                 # so the idle loop below answers Ctrl-C itself — and re-arm the
@@ -1995,6 +2368,20 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
                 # heartbeat set).
                 _restore_default_signals()
                 _install_supervisor_signals()
+            # Whatever the ending, it is on the status surface from here on.
+            # Not reached on Ctrl-C (``KeyboardInterrupt`` propagates): the
+            # record then stays ``started`` and reads ``interrupted`` once the
+            # supervisor key is cleared below.
+            _record_last_run(
+                "end",
+                lambda: control.record_run_end(
+                    outcome,
+                    exit_code=rc,
+                    reason=reason,
+                    source=str(source),
+                    owner=owner,
+                ),
+            )
             if _STOP_SIGNAL_RECEIVED:
                 # The signal that stopped the run was aimed at this process, not
                 # at that one run: ``systemctl stop`` (or Ctrl-C) reaches the
@@ -2006,8 +2393,18 @@ def _serve(cfg, redis, args, *, sleep_fn=time.sleep, max_cycles: int | None = No
                 break
             # Includes the refusals: a second supervisor that loses the lease
             # race exits 5 here and simply keeps serving.
-            print(f"Run finished (exit {rc}) — waiting for the next start request.")
-            logger.info("backfill_serve_run_finished", exit_code=rc)
+            if rc == EXIT_PROVIDER_REFUSED:
+                # The supervisor never relaunches a run on its own, and for
+                # this ending that has to be said: the next thing that happens
+                # is an operator deciding to press Start again.
+                print(
+                    f"Run finished (exit {rc}) — the provider keeps refusing, so "
+                    "this supervisor will not relaunch it on its own. Waiting "
+                    "for the next start request."
+                )
+            else:
+                print(f"Run finished (exit {rc}) — waiting for the next start request.")
+            logger.info("backfill_serve_run_finished", exit_code=rc, outcome=outcome)
     except KeyboardInterrupt:
         # Ctrl-C, or the SIGTERM handler installed above: same clean path.
         print("\nSupervisor stopped — no start requests will be served.")
@@ -2289,7 +2686,17 @@ def main(argv: list[str] | None = None) -> int:
             # It beats ``:active`` only inside a pass, where a slow row no
             # longer lets it lapse (DW-9); between passes that key is absent on
             # purpose, so the runner reads as idle to ``migrate-primary.sh``.
-            liveness = _liveness_for(cfg, redis, lease=lease, control=control)
+            #
+            # It is also the watchdog on this thread (DW-81): when no progress
+            # stamp arrives for ``backfill.main_thread_stall_seconds`` it stops
+            # renewing and publishing, so a hung run reads as gone.
+            liveness = _liveness_for(
+                cfg,
+                redis,
+                lease=lease,
+                control=control,
+                on_stall=_stall_callback(control, cfg),
+            )
             liveness.start()
             # A fresh run must not inherit a pause/stop left over from the last
             # one — but silently dropping an operator's request is its own bug,
@@ -2333,9 +2740,15 @@ def main(argv: list[str] | None = None) -> int:
                     # ceiling; stamping ``backing-off`` on the way out reports a
                     # provider refusal that did not happen for the state TTL.
                     EXIT_MIGRATION_ACTIVE,
+                    # ``backing-off`` says "waiting, will retry". A run that
+                    # gave up on the provider is not waiting for anything: it
+                    # ends ``idle`` and the outcome record says why.
+                    EXIT_PROVIDER_REFUSED,
                 )
             )
-            lease_lost = rc == EXIT_LEASE_LOST
+            lease_lost = rc in (EXIT_LEASE_LOST, EXIT_MAIN_THREAD_STALLED)
+            if rc == EXIT_MAIN_THREAD_STALLED:
+                _close_hand_started_stall(control, cfg)
             return rc
 
         with SessionLocal() as session:
@@ -2433,8 +2846,10 @@ def main(argv: list[str] | None = None) -> int:
             f"budget_exhausted={result.budget_exhausted})"
         )
     if result.lease_lost:
-        _print_banner(_LEASE_LOST_TITLE, _lease_lost_lines(result))
-        return EXIT_LEASE_LOST
+        rc = _lease_lost_exit(liveness, _lease_lost_lines(result))
+        if rc == EXIT_MAIN_THREAD_STALLED:
+            _close_hand_started_stall(control, cfg)
+        return rc
     # A migration took the primary DB between the startup check and pass entry:
     # nothing was launched and the checkpoint is intact, so the exit code — not
     # a silent "enriched 0" — is what tells the operator to re-run afterwards.
@@ -2525,6 +2940,30 @@ def _migration_refusal(token: str | None) -> str:
     )
 
 
+def _local_stop_requested() -> bool:
+    """Has a stop signal arrived? Read by the run, on its main thread.
+
+    This is the flag ``BackfillControl.should_stop`` reads before Redis. The
+    first read that finds it set prints the "draining" message: the handler
+    itself must not print (``print`` takes the stream's lock, and the signal
+    may have arrived while the main thread held it).
+    """
+    global _STOP_ANNOUNCED
+    if not _STOP_SIGNAL_RECEIVED:
+        return False
+    if not _STOP_ANNOUNCED:
+        _STOP_ANNOUNCED = True
+        try:
+            print(
+                "\nStop requested — draining in-flight properties. "
+                "Signal again to abort immediately.",
+                file=sys.stderr,
+            )
+        except Exception:  # noqa: BLE001 - a closed stream must not abort the drain
+            pass
+    return True
+
+
 def _install_stop_signals(control: BackfillControl) -> None:
     """SIGINT/SIGTERM → request a clean stop; a second signal aborts hard.
 
@@ -2532,22 +2971,30 @@ def _install_stop_signals(control: BackfillControl) -> None:
     handler immediately restores the default disposition, so an impatient
     operator pressing Ctrl-C twice still gets the usual hard abort.
 
-    It also records that a shutdown was asked for, which is the only way
-    ``_serve`` can learn about a signal that arrived while a supervised run
-    owned the dispositions: without it, ``systemctl stop`` during a live run
-    drained the run and then went straight back to waiting for requests, so the
-    unit never exited and systemd SIGKILLed it after ``TimeoutStopSec``.
+    The handler sets one module flag and restores the disposition, nothing
+    else (DW-22). It used to call ``control.request_stop()`` and ``print``. A
+    Python signal handler runs on the main thread between two bytecodes,
+    wherever that thread is: inside a Redis call holding the connection, or
+    inside a ``print`` holding the stream lock. Doing the same thing again
+    from the handler can block the process for good, with the liveness thread
+    still renewing the lease for it. The run reads the flag at every stop
+    decision instead (``control.should_stop()``), which is where it printed
+    and wrote the stop key before, only a moment later.
+
+    The flag also tells ``_serve`` that a shutdown was asked for while a
+    supervised run owned the dispositions: without it, ``systemctl stop``
+    during a live run drained the run and then went straight back to waiting
+    for requests, so the unit never exited and systemd SIGKILLed it after
+    ``TimeoutStopSec``.
     """
+    global _STOP_ANNOUNCED
+    _STOP_ANNOUNCED = False
+    control.watch_local_stop(_local_stop_requested)
+
     def _handler(signum, _frame):
         global _STOP_SIGNAL_RECEIVED
-        signal.signal(signum, signal.SIG_DFL)
         _STOP_SIGNAL_RECEIVED = True
-        control.request_stop()
-        print(
-            "\nStop requested — draining in-flight properties. "
-            "Signal again to abort immediately.",
-            file=sys.stderr,
-        )
+        signal.signal(signum, signal.SIG_DFL)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

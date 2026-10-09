@@ -322,7 +322,7 @@ multi-day cloud spend, so a start that cannot be audited is rolled back and
 reported as a failure rather than fired unrecorded.
 
 ```
-GET  /admin/backfill/status   # control state, lease holder, budget, checkpoint
+GET  /admin/backfill/status   # control state, lease holder, budget, checkpoint, last run
 POST /admin/backfill/start    # 202 — records a start *request*
 POST /admin/backfill/pause    # pause level (also withdraws a queued start)
 POST /admin/backfill/resume   # clears the pause and any pending stop
@@ -357,6 +357,39 @@ Three non-obvious semantics:
 and `heartbeat_active` means "rows are being enriched right now" (a paused run
 stops beating it on purpose). `quarantined` is always null here — counting it
 scans every property ever attempted; the CLI's `--status` reports it instead.
+
+`last_run` (v0.14-s1.13) is how the last run the `--serve` supervisor drove
+ended: `{outcome, exit_code, reason, started_at, finished_at, source}`, or
+`null` when none was recorded. The supervisor writes it when it launches a run
+and again when the run returns, and it is kept for 30 days, so a run that was
+refused or died after `start` returned 202 leaves a trace here. `outcome` is a
+canonical English word; render one you do not know verbatim. `source` is who
+asked for the run: the source of the start request (`admin-api` for
+`POST /admin/backfill/start`), `cli` for the one record a run started by hand
+writes (`hung`, when its own watchdog gives it up), or `unknown`.
+
+| `outcome` | Meaning | `exit_code` |
+|---|---|---|
+| `started` | the run is in progress | null |
+| `complete` | the queue drained | 0 |
+| `complete_with_quarantine` | the queue drained, some rows were quarantined | 4 |
+| `stopped` | an operator stopped it | 6 |
+| `stalled` | work remains, a full cycle enriched nothing | 3 |
+| `lease_held` | another runner held the lease | 5 |
+| `lease_lost` | the lease was lost mid-run | 7 |
+| `migration_blocked` | a primary migration outlasted `migration_wait_seconds` | 8 |
+| `ai_circuit_open` | the AI backend kept returning refused results | 9 |
+| `provider_refused` | `max_no_progress_cycles` cycles were refused on quota with no row enriched in between | 10 |
+| `hung` | the main thread made no progress for `main_thread_stall_seconds`; the lease was given up. `finished_at` is when the watchdog gave the run up, not when the process ended | null while hung, 11 if the run came back |
+| `refused` | the run refused to start (`reason` is the runner's message) | 1 |
+| `crashed` | the run raised (`reason` is the exception type only) | 1 |
+| `failed`, `usage` | exit 1 / exit 2 returned by the run | 1 / 2 |
+| `interrupted` | derived at read time: the record says `started`, the lease is free and the supervisor that drove the run is gone | null |
+
+`paused_since` is when the pause that is set was requested, and
+`pause_stale: true` says it is older than the 7-day request TTL and still set.
+The flag does not say whether a run is observing it; a run that sees the pause
+launches nothing until `resume`.
 
 `budget.consumed` and `seconds_until_reset` come from the live window in Redis;
 `budget.limit` and the whole `pacing` block are the **configured** values

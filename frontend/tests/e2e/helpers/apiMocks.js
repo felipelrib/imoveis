@@ -266,6 +266,25 @@ export const BACKFILL_STATUS_IDLE = {
     concurrency: 4,
     tpm_limit: 100000,
   },
+  // v0.14-s1.13: nothing recorded, nothing paused.
+  last_run: null,
+  paused_since: null,
+  pause_stale: false,
+};
+
+/**
+ * `last_run` of a run the supervisor ended with exit 10 (v0.14-s1.13): the
+ * provider refused on quota cycle after cycle. `reason` is the runner's own
+ * English sentence and is shown as written.
+ */
+export const BACKFILL_LAST_RUN_PROVIDER_REFUSED = {
+  outcome: "provider_refused",
+  exit_code: 10,
+  reason:
+    "The provider refused on quota for 6 consecutive cycles and nothing was enriched (backfill.max_no_progress_cycles). Check the provider quota for this key, then start again.",
+  started_at: "2026-10-04T09:00:00Z",
+  finished_at: "2026-10-06T14:30:00Z",
+  source: "admin-api",
 };
 
 /** A live run: the lease is held (`active`), the runner is beating, 61% of today's quota spent. */

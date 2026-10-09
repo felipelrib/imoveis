@@ -5,8 +5,8 @@
  * states something the data does not support, so each one is a regression lock,
  * not a formatting preference.
  */
-import { formatNumber } from '../../i18n/format.js'
-import type { BackfillState, SignalCoverage } from '../../api.js'
+import { formatDateTime, formatNumber } from '../../i18n/format.js'
+import type { BackfillLastRun, BackfillState, SignalCoverage } from '../../api.js'
 import type { TFunction } from '../../i18n/LocaleContext.jsx'
 
 /** Wire enum (English) → catalog key. The vocabulary never changes; only the label. */
@@ -23,6 +23,65 @@ export function stateLabel(state: string | undefined, t: TFunction): string {
   // An unknown state word is rendered verbatim rather than mapped to a wrong
   // pt-BR label — honest over pretty (UX-DR3).
   return key ? t(key) : String(state ?? '')
+}
+
+/**
+ * Outcomes of a supervised run that ended the way someone asked for, or that
+ * need nothing done. Every other *known* outcome needs the operator and is
+ * rendered as a failure line. An unknown word is neither: it is shown verbatim
+ * and plainly, because nothing here knows what it means.
+ */
+const LAST_RUN_QUIET = new Set([
+  'complete', 'complete_with_quarantine', 'stopped', 'lease_held',
+])
+
+/** Wire outcome (English) → label; an unknown word is rendered verbatim. */
+export function lastRunOutcomeLabel(outcome: string, t: TFunction): string {
+  const key = `operations.lastRun.${outcome}`
+  const label = t(key)
+  return label === key ? outcome : label
+}
+
+export function lastRunNeedsOperator(outcome: string, t: TFunction): boolean {
+  const known = t(`operations.lastRun.${outcome}`) !== `operations.lastRun.${outcome}`
+  return known && !LAST_RUN_QUIET.has(outcome)
+}
+
+/**
+ * Is this `hung` record about the run that holds the lease right now?
+ *
+ * `hung` is the one ending shown while a run is active, because it is written
+ * about a run whose dead lease has not lapsed yet. The record outlives that
+ * run (30 days), and a run started by hand writes no record of its own, so
+ * without this check an old `hung` is painted over a later, healthy run. The
+ * watchdog stamps `finished_at` when it gives a run up, which is after that
+ * run took its lease and before any later run took one. When either time is
+ * missing or unreadable the line is shown: saying `hung` once too often is the
+ * cheaper mistake.
+ */
+export function hungRunHoldsTheLease(
+  lastRun: BackfillLastRun | null | undefined,
+  leaseAcquiredAt: string | null | undefined,
+): boolean {
+  if (lastRun?.outcome !== 'hung') return false
+  const gaveUp = Date.parse(lastRun.finished_at ?? '')
+  const acquired = Date.parse(leaseAcquiredAt ?? '')
+  if (Number.isNaN(gaveUp) || Number.isNaN(acquired)) return true
+  return gaveUp >= acquired
+}
+
+/**
+ * "última execução: <outcome> · <when>". The time is when the run ended, or when
+ * it started for an outcome that has no end (`interrupted`); with neither, the
+ * line has no time rather than a dash standing in for one.
+ */
+export function lastRunLine(lastRun: BackfillLastRun, t: TFunction, locale: string): string {
+  const outcome = lastRunOutcomeLabel(lastRun.outcome, t)
+  const stamp = lastRun.finished_at ?? lastRun.started_at
+  const when = stamp ? formatDateTime(stamp, locale) : null
+  return when && when !== '—'
+    ? t('operations.lastRunLine', { outcome, when })
+    : t('operations.lastRunLineNoTime', { outcome })
 }
 
 export function signalLabel(taskClass: string, t: TFunction): string {

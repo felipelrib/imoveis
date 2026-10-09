@@ -104,6 +104,10 @@ def _wire(mod, monkeypatch, *, api_key="", n_rows=10, enrich_fn=None, routing=No
     cfg.backfill.control_poll_seconds = 2.0
     cfg.backfill.quota_backoff_seconds = 900
     cfg.backfill.migration_wait_seconds = 1800
+    # Real numbers (v0.14-s1.13): ``int(MagicMock())`` is 1, which would end
+    # every refused cycle with exit 10 and give the watchdog a 1-second limit.
+    cfg.backfill.max_no_progress_cycles = 6
+    cfg.backfill.main_thread_stall_seconds = 3600
     cfg.ai.gemini_api_key = api_key
     cfg.ai.backend = "ollama"
     cfg.ai.gemma_model = "gemma-4-31b-it"
@@ -3372,3 +3376,1015 @@ def test_a_renew_that_raises_at_pass_start_still_records_the_state(monkeypatch):
     seen = _pass_start(mod, monkeypatch, redis, cfg, control=control, lease=lease)
 
     assert seen == ["running"]
+
+
+# ---------------------------------------------------------------------------
+# Runner lifecycle ends honestly (v0.14-s1.13)
+# ---------------------------------------------------------------------------
+#
+# One regression test per row of the story's I/O matrix, at the CLI seam:
+# the provider that refuses for good (DW-19), the outcome of an API-requested
+# run (DW-28), the pause held past its TTL (DW-23), the signal handler that
+# only sets a flag (DW-22) and the main-thread watchdog (DW-81).
+
+
+def _refused(mod):
+    return _br(mod, processed=0, budget_exhausted=True, quota_exhausted=True)
+
+
+def _refusing_provider(mod, monkeypatch, redis, *, passes=None):
+    """``--continuous`` against a provider that refuses every pass."""
+    # Finite on purpose: without the limit the loop never ends, and a test that
+    # hangs says less than one that runs out of passes.
+    run = MagicMock(side_effect=passes or [_refused(mod) for _ in range(40)])
+    monkeypatch.setattr(mod, "_run", run)
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=0, candidates=5))
+    )
+    slept: list[float] = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: slept.append(s))
+    return run, slept
+
+
+def test_provider_refuses_permanently_exits_ten_before_the_next_sleep(monkeypatch, capsys):
+    """I/O matrix "Provider refuses permanently". Before the limit the run
+    slept out a daily window after every refused pass, for ever."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 3
+    _open_budget_window(redis, consumed=30)
+    run, slept = _refusing_provider(mod, monkeypatch, redis)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_PROVIDER_REFUSED == 10
+    assert run.call_count == 3
+    # Two back-offs, between passes 1-2 and 2-3. None after the third pass:
+    # the run ends before it would sleep again.
+    assert sum(slept) == pytest.approx(2 * 900.0)
+    out = capsys.readouterr().out
+    assert "the provider refused 3 cycles in a row" in out
+    # Not waiting for anything any more: ``idle``, not ``backing-off``.
+    assert redis.get("t:state") == "idle"
+    assert redis.get("t:lease") is None
+
+
+def test_a_cycle_that_enriches_a_row_resets_the_refusal_count(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 3
+    _open_budget_window(redis, consumed=30)
+    throttled_but_moving = _br(
+        mod, processed=1, budget_exhausted=True, quota_exhausted=True
+    )
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[
+            _refused(mod),
+            _refused(mod),
+            throttled_but_moving,  # a row got through: the count starts over
+            _refused(mod),
+            _refused(mod),
+            _refused(mod),
+        ],
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_PROVIDER_REFUSED
+    assert run.call_count == 6  # not 3
+
+
+def test_a_refusal_limit_of_zero_keeps_waiting_as_before(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 0
+    _open_budget_window(redis, consumed=30)
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[_refused(mod)] * 12 + [_br(mod, processed=5)],
+    )
+    monkeypatch.setattr(
+        mod,
+        "_census",
+        MagicMock(side_effect=[_census(enriched=0, candidates=5)] * 12 + [_census()]),
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_COMPLETE
+    assert run.call_count == 13
+
+
+def test_every_exit_code_has_an_outcome_word():
+    mod = _load_module()
+    codes = {
+        name: value for name, value in vars(mod).items() if name.startswith("EXIT_")
+    }
+
+    assert set(codes.values()) == set(mod._EXIT_OUTCOMES)
+    assert sorted(codes.values()) == list(range(12))  # 0..11, none reused
+    # The numbers already in use keep their meaning.
+    assert mod._EXIT_OUTCOMES[5] == "lease_held"
+    assert mod._EXIT_OUTCOMES[6] == "stopped"
+    assert mod._EXIT_OUTCOMES[7] == "lease_lost"
+    assert mod._EXIT_OUTCOMES[10] == "provider_refused"
+    assert mod._EXIT_OUTCOMES[11] == "hung"
+    assert len(set(mod._EXIT_OUTCOMES.values())) == len(mod._EXIT_OUTCOMES)
+    assert mod._outcome_for_exit(99) == "failed"
+
+
+# -- the outcome of an API-requested run (DW-28) ----------------------------
+
+
+def _served_run(mod, monkeypatch, main, *, redis=None, max_cycles=1):
+    """Serve one start request with ``main`` replaced; return (redis, control)."""
+    import json
+
+    redis = redis if redis is not None else _RecordingSetRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+    monkeypatch.setattr(mod, "main", main)
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=MagicMock(), max_cycles=max_cycles)
+
+    assert rc == 0
+    raw = redis.get("t:last_run")
+    return cfg, redis, control, (json.loads(raw) if raw else None)
+
+
+@pytest.mark.parametrize(
+    "exit_code,outcome",
+    [
+        (0, "complete"),
+        (3, "stalled"),
+        (4, "complete_with_quarantine"),
+        (5, "lease_held"),
+        (6, "stopped"),
+        (7, "lease_lost"),
+        (8, "migration_blocked"),
+        (9, "ai_circuit_open"),
+        (10, "provider_refused"),
+        (11, "hung"),
+    ],
+)
+def test_api_requested_run_ends_and_serve_records_the_outcome(
+    monkeypatch, exit_code, outcome
+):
+    """I/O matrix "API-requested run ends": any exit code leaves a record."""
+    mod = _load_module()
+    seen = {}
+
+    def _main(_argv):
+        # While the run is going the record says so, with the supervisor's id.
+        seen["during"] = mod._control_for(mod.get_config(), mod.get_redis()).last_run()
+        return exit_code
+
+    _cfg, _redis, control, record = _served_run(mod, monkeypatch, _main)
+
+    assert seen["during"]["outcome"] == "started"
+    assert seen["during"]["owner"] == mod._process_id()
+    assert seen["during"]["source"] == "admin-api"
+    assert record["outcome"] == outcome
+    assert record["exit_code"] == exit_code
+    assert record["source"] == "admin-api"
+    assert record["started_at"] == seen["during"]["started_at"]
+    assert record["finished_at"]
+    assert control.last_run()["outcome"] == outcome
+
+
+def test_api_requested_run_that_is_refused_records_the_runners_message(monkeypatch):
+    mod = _load_module()
+    refusal = "GEMINI_API_KEY is not set: export it in the supervisor's shell."
+
+    _cfg, _redis, _control, record = _served_run(
+        mod, monkeypatch, MagicMock(side_effect=SystemExit(refusal))
+    )
+
+    assert record["outcome"] == "refused"
+    assert record["exit_code"] == 1
+    assert record["reason"] == refusal
+
+
+def test_api_requested_run_that_crashes_records_the_exception_type_only(monkeypatch):
+    mod = _load_module()
+    secret = "https://generativelanguage.googleapis.com/?key=AIza-not-for-the-wire"
+
+    _cfg, redis, _control, record = _served_run(
+        mod, monkeypatch, MagicMock(side_effect=RuntimeError(secret))
+    )
+
+    assert record["outcome"] == "crashed"
+    assert record["exit_code"] == 1
+    assert record["reason"] == "RuntimeError — see the supervisor log on the host"
+    assert "AIza" not in redis.get("t:last_run")
+
+
+def test_serve_records_provider_refused_and_says_it_will_not_relaunch(
+    monkeypatch, capsys
+):
+    """AC 1: after exit 10 the supervisor records the outcome and waits for
+    the next operator request; it never relaunches on its own."""
+    mod = _load_module()
+    launched = MagicMock(return_value=10)
+
+    cfg, _redis, _control, record = _served_run(
+        mod, monkeypatch, launched, max_cycles=4
+    )
+
+    launched.assert_called_once()  # three more polls, no second launch
+    assert record["outcome"] == "provider_refused"
+    assert "max_no_progress_cycles" in record["reason"]
+    assert str(cfg.backfill.max_no_progress_cycles) in record["reason"]
+    assert "will not relaunch it on its own" in capsys.readouterr().out
+
+
+def test_serve_keeps_serving_when_the_outcome_record_cannot_be_written(monkeypatch):
+    """Recording is guarded: a Redis error is logged and the supervisor goes on."""
+    mod = _load_module()
+
+    class _NoRecordRedis(_RecordingSetRedis):
+        def set(self, k, v, ex=None, nx=False):
+            if k == "t:last_run":
+                raise ConnectionError("redis is down")
+            return super().set(k, v, ex=ex, nx=nx)
+
+    redis = _NoRecordRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+    control.request_start("admin-api")
+    launched = MagicMock(return_value=0)
+    monkeypatch.setattr(mod, "main", launched)
+    slept = []
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=slept.append, max_cycles=3)
+
+    assert rc == 0
+    launched.assert_called_once()
+    assert slept == [cfg.backfill.control_poll_seconds] * 2  # it kept polling
+    assert redis.get("t:last_run") is None
+
+
+def test_a_run_ended_by_ctrl_c_reads_interrupted_once_the_supervisor_is_gone(monkeypatch):
+    """I/O matrix "API-requested run killed outright", as far as a process
+    that is still able to run code can show it: the record stays ``started``,
+    the lease is free and the supervisor key is gone."""
+    from core.backfill_runner import last_run_view
+
+    mod = _load_module()
+
+    cfg, redis, control, record = _served_run(
+        mod, monkeypatch, MagicMock(side_effect=KeyboardInterrupt)
+    )
+
+    assert record["outcome"] == "started"  # nobody wrote an end
+    view = last_run_view(
+        control, mod._lease_for(cfg, redis).holder(), mod._supervisor_heartbeat_for(cfg, redis)
+    )
+    assert view["outcome"] == "interrupted"
+
+
+def test_status_prints_the_last_run_and_since_when_it_is_paused(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    control = mod._control_for(cfg, redis)
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+    assert "last run             : none recorded" in out
+    assert "paused since         : not paused" in out
+
+    control.record_run_start("admin-api", "host:1")
+    control.record_run_end(
+        "provider_refused", exit_code=10, reason="refused six cycles", owner="host:1"
+    )
+    control.request_pause()
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+    assert "last run             : provider_refused (exit 10) at " in out
+    assert "refused six cycles" in out
+    assert f"paused since         : {control.paused_since().isoformat()}" in out
+    assert "STALE" not in out
+
+
+def test_status_says_a_pause_older_than_the_request_ttl_is_stale(monkeypatch, capsys):
+    from datetime import datetime, timedelta, timezone
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    long_ago = datetime.now(timezone.utc) - timedelta(days=8)
+    redis.set("t:control:pause", long_ago.isoformat())
+
+    out = _status_output(mod, monkeypatch, capsys, cfg, redis)
+
+    assert "STALE" in out
+    assert "still set" in out
+    # Nothing checked for a run, so the line must not claim one holds it.
+    assert "holding it" not in out
+
+
+# -- the pause held past its TTL, in the wait loops (DW-23) -----------------
+
+
+def test_the_budget_sleep_holds_a_pause_it_can_see(monkeypatch):
+    """A run spends days in this loop: this is where a 7-day request TTL would
+    run out. The hold is an EXPIRE, so it never creates a pause."""
+    mod = _load_module()
+    cfg = _wait_cfg()
+
+    class _ExpireRedis(_FakeRedis):
+        def __init__(self):
+            super().__init__()
+            self.expired = []
+
+        def expire(self, k, ttl):
+            self.expired.append((k, ttl))
+            return super().expire(k, ttl)
+
+    redis = _ExpireRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    control.request_pause()
+    redis.expired.clear()
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+
+    # A real wait: four steps of the loop, whose first state publish is where
+    # the EXPIRE comes from.
+    assert mod._sleep_for_reset(4.0, cfg=cfg, control=control) == "elapsed"
+
+    assert redis.expired == [("t:control:pause", control.request_ttl_seconds)]
+    assert redis.get("t:state") == "paused"
+
+    # No pause: nothing is extended and nothing is created.
+    control.request_resume()
+    redis.expired.clear()
+    mod._publish_wait_state(control, mod.LivenessTicker(control=control), mod.BackfillState.BACKING_OFF)
+    assert redis.expired == []
+    assert redis.get("t:control:pause") is None
+
+
+def test_a_failed_pause_hold_never_ends_the_wait(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    control.request_pause()
+
+    def _down(_k, _ttl):
+        raise ConnectionError("redis is down")
+
+    redis.expire = _down
+
+    # Must not raise.
+    mod._publish_wait_state(control, mod.LivenessTicker(control=control), mod.BackfillState.BLOCKED)
+
+    assert redis.get("t:state") == "paused"
+
+
+# -- the signal handler only sets a flag (DW-22) -----------------------------
+
+
+class _TouchRedis(_FakeRedis):
+    """Counts every command, so "the handler made no Redis call" is checkable."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def get(self, k):
+        self.calls += 1
+        return super().get(k)
+
+    def set(self, k, v, ex=None, nx=False):
+        self.calls += 1
+        return super().set(k, v, ex=ex, nx=nx)
+
+    def delete(self, k):
+        self.calls += 1
+        return super().delete(k)
+
+    def expire(self, k, ttl):
+        self.calls += 1
+        return super().expire(k, ttl)
+
+
+def test_sigint_or_sigterm_handler_sets_a_flag_and_touches_nothing_else(
+    monkeypatch, capsys
+):
+    """I/O matrix "SIGINT / SIGTERM during a run": no Redis call, no lock, no
+    print from the handler; the run observes the flag at its next stop check."""
+    import signal
+
+    mod = _load_module()
+    redis = _TouchRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        mod._install_stop_signals(control)
+        capsys.readouterr()
+        calls_before = redis.calls
+
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+        assert redis.calls == calls_before  # the handler never touched Redis
+        captured = capsys.readouterr()
+        assert captured.out == "" and captured.err == ""  # and printed nothing
+        assert mod._STOP_SIGNAL_RECEIVED is True
+        # A second signal aborts hard: the default disposition is back.
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+        assert redis.get("t:control:stop") is None  # nothing was written yet
+
+        # The run's next stop check sees the flag, says so once, and mirrors
+        # the stop to Redis for the status surface.
+        assert control.should_stop() is True
+        assert control.should_stop() is True
+        err = capsys.readouterr().err
+        assert err.count("Stop requested — draining in-flight properties") == 1
+        assert redis.get("t:control:stop")
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+
+def test_a_signal_during_a_run_drains_and_exits_six(monkeypatch, capsys):
+    """AC 4: the run still stops and exits 6, with the handler doing nothing
+    but setting the flag."""
+    import signal
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+
+    def _pass_that_gets_signalled(*_a, **_k):
+        signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+        return _br(mod, processed=2)  # the rows in flight drained
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_pass_that_gets_signalled))
+    try:
+        rc = mod.main(["--limit", "3"])
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+    assert rc == mod.EXIT_STOPPED == 6
+    assert "Stop requested" in capsys.readouterr().err
+    assert redis.get("t:control:stop") is None  # served, so retired
+    assert redis.get("t:state") == "idle"
+    assert redis.get("t:lease") is None
+
+
+def test_a_signal_stops_a_run_whose_redis_is_unreachable(monkeypatch):
+    """The reason the handler must not touch Redis: the signal can arrive
+    while Redis is not answering, and the stop has to work anyway."""
+    import signal
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    control = mod.BackfillControl(redis, prefix="t")
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+
+    def _down(*_a, **_k):
+        raise ConnectionError("redis is down")
+
+    try:
+        mod._install_stop_signals(control)
+        redis.get = _down
+        redis.set = _down
+
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)  # must not raise
+
+        assert control.should_stop() is True
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+
+# -- the main-thread watchdog (DW-81) ----------------------------------------
+
+
+def test_main_builds_its_ticker_with_the_configured_stall_limit(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.main_thread_stall_seconds = 1800
+    made = []
+    real = mod.LivenessTicker
+
+    class _Recorded(real):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            made.append((kwargs.get("stall_limit_seconds"), kwargs.get("on_stall")))
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Recorded)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=1)))
+
+    assert mod.main(["--limit", "1"]) == 0
+
+    limit, on_stall = made[0]
+    assert limit == 1800.0
+    assert callable(on_stall)
+
+
+def test_main_thread_hang_silences_the_supervisor_key_and_records_hung(monkeypatch):
+    """I/O matrix "Main thread hangs", across the two tickers of a supervised
+    run: the run's watchdog stops the supervisor's keepalive and writes
+    ``hung``; when the thread comes back the run exits 11."""
+    import json
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.main_thread_stall_seconds = 900
+    mod._control_for(cfg, redis).request_start("admin-api")
+    clock = {"t": 0.0}
+    made = []
+    real = mod.LivenessTicker
+
+    class _Clocked(real):
+        def __init__(self, **kwargs):
+            super().__init__(clock=lambda: clock["t"], **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Clocked)
+    seen = {}
+
+    def _hung_pass(*_a, **_k):
+        supervisor_ticker, run_ticker = made[0], made[1]
+        clock["t"] += 900.0  # the main thread was stuck in a call this long
+        run_ticker.tick()  # what the run's ticker thread did meanwhile
+        seen["stalled"] = run_ticker.stalled
+        seen["record_while_hung"] = json.loads(redis.get("t:last_run"))
+        # The supervisor key is no longer beaten: let it lapse and tick.
+        redis.kv.pop("t:supervisor:active", None)
+        clock["t"] += 60.0
+        supervisor_ticker.tick()
+        seen["supervisor_key_while_hung"] = redis.get("t:supervisor:active")
+        lease_renews = redis.hashes.get("t:lease:meta", {}).get("last_seen")
+        clock["t"] += 600.0
+        run_ticker.tick()
+        seen["lease_renewed_after"] = (
+            redis.hashes.get("t:lease:meta", {}).get("last_seen") != lease_renews
+        )
+        return _br(mod, processed=0)  # the thread came back
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_hung_pass))
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=0, candidates=5))
+    )
+    printed = []
+    monkeypatch.setattr(mod, "_print_banner", lambda title, lines: printed.append(title))
+
+    rc = mod._serve(cfg, redis, _serve_args(), sleep_fn=MagicMock(), max_cycles=1)
+
+    assert rc == 0
+    assert seen["stalled"] is True
+    assert seen["record_while_hung"]["outcome"] == "hung"
+    assert seen["record_while_hung"]["exit_code"] is None
+    assert seen["record_while_hung"]["source"] == "admin-api"
+    assert seen["supervisor_key_while_hung"] is None
+    assert seen["lease_renewed_after"] is False
+    # The thread came back: nothing more was launched and the run exited 11.
+    assert printed == [mod._MAIN_THREAD_STALLED_TITLE]
+    final = json.loads(redis.get("t:last_run"))
+    assert (final["outcome"], final["exit_code"]) == ("hung", 11)
+    assert final["started_at"] == seen["record_while_hung"]["started_at"]
+    assert _liveness_threads() == []
+
+
+def test_a_stalled_single_pass_exits_eleven_not_seven(monkeypatch, capsys):
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _Spy = _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: True)
+    _Spy.stalled = property(lambda self: True)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=0)))
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_MAIN_THREAD_STALLED == 11
+    out = capsys.readouterr().out
+    assert "the main thread made no progress" in out
+    assert "LEASE LOST" not in out
+
+
+def test_a_takeover_still_exits_seven(monkeypatch, capsys):
+    """The watchdog shares the lease-lost path; a plain takeover keeps its code."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: True)
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=_br(mod, processed=0)))
+
+    assert mod.main(["--limit", "1"]) == mod.EXIT_LEASE_LOST == 7
+    assert "LEASE LOST" in capsys.readouterr().out
+
+
+def test_the_wait_loops_stamp_progress_on_every_step(monkeypatch):
+    mod = _load_module()
+    cfg = _wait_cfg()
+    stamps = {"n": 0}
+    ticker = mod.LivenessTicker()
+    real_note = ticker.note_progress
+
+    def _note():
+        stamps["n"] += 1
+        real_note()
+
+    ticker.note_progress = _note
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+
+    assert mod._sleep_for_reset(5.0, cfg=cfg, liveness=ticker) == "elapsed"
+
+    assert stamps["n"] >= 5  # one per control_poll_seconds step
+
+
+def test_a_pass_stamps_progress_around_the_candidate_fetch(monkeypatch):
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    order: list[str] = []
+    ticker = mod.LivenessTicker(control=mod._control_for(cfg, redis))
+    ticker.note_progress = lambda: order.append("stamp")
+    monkeypatch.setattr(
+        mod, "fetch_candidate_rows", lambda s, p: order.append("fetch") or []
+    )
+    monkeypatch.setattr(mod, "_build_client", MagicMock())
+    _stub_run_backfill(mod, monkeypatch)
+
+    mod._run(
+        cfg, MagicMock(), redis, _run_args(limit=1),
+        control=mod._control_for(cfg, redis), liveness=ticker,
+    )
+
+    assert order[0] == "stamp"
+    assert order[order.index("fetch") + 1] == "stamp"
+    assert order.count("stamp") == 3
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (v0.14-s1.13)
+# ---------------------------------------------------------------------------
+
+
+def test_a_zero_progress_cycle_on_the_local_budget_does_not_reset_the_refusal_count(
+    monkeypatch,
+):
+    """Only a cycle that enriches a row resets the count. One that ended on
+    the local budget with nothing enriched says nothing about the provider."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 3
+    _open_budget_window(redis, consumed=30)
+    local_budget_only = _br(mod, processed=0, budget_exhausted=True)
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[
+            _refused(mod),
+            local_budget_only,  # neither counts nor clears
+            _refused(mod),
+            _refused(mod),
+            _refused(mod),  # never reached
+        ],
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_PROVIDER_REFUSED
+    assert run.call_count == 4
+
+
+def test_a_system_exit_with_an_int_code_is_recorded_as_that_codes_outcome(monkeypatch):
+    """``SystemExit(2)`` is argparse rejecting the command line: ``usage``,
+    not a refusal "before it started"."""
+    mod = _load_module()
+
+    _cfg, _redis, _control, record = _served_run(
+        mod, monkeypatch, MagicMock(side_effect=SystemExit(2))
+    )
+
+    assert record["outcome"] == "usage"
+    assert record["exit_code"] == 2
+    assert record["reason"] == mod._exit_reason(2, _cfg)
+
+    mod = _load_module()
+    _cfg, _redis, _control, record = _served_run(
+        mod, monkeypatch, MagicMock(side_effect=SystemExit(0))
+    )
+    assert (record["outcome"], record["exit_code"], record["reason"]) == (
+        "complete", 0, None,
+    )
+
+
+def test_a_hand_started_run_that_stalls_records_hung_and_closes_it_with_eleven(
+    monkeypatch,
+):
+    """No supervisor writes the end of a run started by hand: the callback
+    records ``hung`` (source ``cli``) and the exit closes that record."""
+    import json
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.main_thread_stall_seconds = 900
+    clock = {"t": 0.0}
+    made = []
+    real = mod.LivenessTicker
+
+    class _Clocked(real):
+        def __init__(self, **kwargs):
+            super().__init__(clock=lambda: clock["t"], **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Clocked)
+    seen = {}
+
+    def _hung_pass(*_a, **_k):
+        clock["t"] += 900.0
+        made[0].tick()
+        seen["while_hung"] = json.loads(redis.get("t:last_run"))
+        return _br(mod, processed=0)
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_hung_pass))
+    monkeypatch.setattr(mod, "_print_banner", lambda title, lines: None)
+
+    rc = mod.main(["--limit", "1"])
+
+    assert rc == mod.EXIT_MAIN_THREAD_STALLED
+    assert seen["while_hung"]["outcome"] == "hung"
+    assert seen["while_hung"]["exit_code"] is None
+    assert seen["while_hung"]["source"] == "cli"
+    assert "If the process still exists" in seen["while_hung"]["reason"]
+    assert "migrate-primary.sh" in seen["while_hung"]["reason"]
+    final = json.loads(redis.get("t:last_run"))
+    assert (final["outcome"], final["exit_code"]) == ("hung", 11)
+    assert final["source"] == "cli"
+    assert final["owner"] == mod._process_id()
+    assert final["reason"] == mod._exit_reason(11, cfg)
+
+
+def test_a_stop_message_that_cannot_be_printed_is_still_a_stop(monkeypatch):
+    """A closed stream must not raise out of ``should_stop`` and abort the
+    pass instead of draining it: the flag is the stop."""
+    import signal
+
+    mod = _load_module()
+    control = mod.BackfillControl(_FakeRedis(), prefix="t")
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+
+    class _Closed:
+        def write(self, _text):
+            raise ValueError("I/O operation on closed file")
+
+        def flush(self):
+            raise ValueError("I/O operation on closed file")
+
+    try:
+        mod._install_stop_signals(control)
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        monkeypatch.setattr(mod.sys, "stderr", _Closed())
+
+        assert control.should_stop() is True
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+
+def test_installing_the_stop_signals_always_arms_the_local_stop():
+    """A control without ``watch_local_stop`` must fail loudly, not leave a
+    handler that sets a flag nobody reads."""
+    import signal
+
+    mod = _load_module()
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+
+    class _NoWatch:
+        pass
+
+    try:
+        with pytest.raises(AttributeError):
+            mod._install_stop_signals(_NoWatch())
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+
+def test_the_migration_wait_stamps_progress_on_every_step(monkeypatch):
+    mod = _load_module()
+    cfg = _wait_cfg()
+    redis = _FakeRedis()
+    redis.set(mod._migration_gate_for(cfg, redis).key, "migrate-primary:1234")
+    stamps = {"n": 0}
+    sleeps = {"n": 0}
+    ticker = mod.LivenessTicker()
+    real_note = ticker.note_progress
+
+    def _note():
+        stamps["n"] += 1
+        real_note()
+
+    ticker.note_progress = _note
+    clock = {"t": 0.0}
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock["t"])
+
+    def _sleep(seconds):
+        sleeps["n"] += 1
+        clock["t"] += seconds
+
+    monkeypatch.setattr(mod.time, "sleep", _sleep)
+
+    outcome = mod._wait_out_migration(cfg, redis, liveness=ticker, budget_seconds=5.0)
+
+    assert outcome == "timeout"
+    assert sleeps["n"] >= 5  # one per control_poll_seconds step
+    assert stamps["n"] >= sleeps["n"]  # at least one stamp per step
+
+
+def test_every_outcome_word_has_a_label_in_both_catalogs():
+    """The card labels ``last_run.outcome`` from ``operations.lastRun.<word>``.
+    A word the runner can write with no label would be shown raw, in English,
+    in the pt-BR UI."""
+    import json
+
+    mod = _load_module()
+    words = set(mod._EXIT_OUTCOMES.values()) | {"refused", "crashed", "interrupted"}
+    assert "started" not in words  # never rendered as an ending
+    locales = _SCRIPT.parents[2] / "frontend" / "src" / "i18n" / "locales"
+
+    for name in ("en.json", "pt-BR.json"):
+        catalog = json.loads((locales / name).read_text(encoding="utf-8"))
+        labels = catalog["operations"]["lastRun"]
+        missing = sorted(word for word in words if not labels.get(word))
+        assert missing == [], f"{name} has no operations.lastRun label for {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review (v0.14-s1.13)
+# ---------------------------------------------------------------------------
+
+
+def test_a_cycle_that_enriches_rows_with_budget_to_spare_resets_the_refusal_count(
+    monkeypatch,
+):
+    """A pass that enriched rows and ended with budget left goes straight to
+    the next pass. The reset used to sit on the way to the sleep only, so the
+    refusals on either side of such a pass added up to a false exit 10."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.max_no_progress_cycles = 3
+    _open_budget_window(redis, consumed=30)
+    run, _slept = _refusing_provider(
+        mod,
+        monkeypatch,
+        redis,
+        passes=[
+            _refused(mod),
+            _refused(mod),
+            _br(mod, processed=2),  # rows got through, budget to spare
+            _refused(mod),
+            _refused(mod),
+            _refused(mod),
+        ],
+    )
+
+    assert mod.main(["--continuous"]) == mod.EXIT_PROVIDER_REFUSED
+    assert run.call_count == 6  # not 4
+
+
+def test_the_fifth_and_sixth_refusal_are_a_daily_window_apart(monkeypatch):
+    """Why the shipped limit of 6 cannot end a run on a healthy provider that
+    merely ran out for the day: after the four short back-offs every refused
+    pass is followed by a wait of a whole local window, because the pass
+    reserved budget (and so opened a window) before it was refused."""
+    from datetime import datetime, timedelta, timezone
+
+    from core.backfill_runner import DailyBudget
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    assert cfg.backfill.max_no_progress_cycles == 6
+    # The run has been spending for 20 hours: 4h of its window are left.
+    opened = datetime.now(timezone.utc) - timedelta(hours=20)
+    redis.hashes["t:budget"] = {
+        "count": "300",
+        "start": opened.isoformat(),
+        "start_epoch": str(opened.timestamp()),
+    }
+
+    def _refused_pass(*_a, **_k):
+        # What a real refused pass does first: reserve one property.
+        assert DailyBudget(redis, prefix="t", daily_limit=14000).try_consume(3)
+        return _refused(mod)
+
+    run = MagicMock(side_effect=_refused_pass)
+    monkeypatch.setattr(mod, "_run", run)
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=0, candidates=5))
+    )
+    waits: list[float] = []
+
+    def _wait(wait, **_k):
+        waits.append(wait)
+        # Time passes: the same as the window having opened that much earlier.
+        window = redis.hashes.get("t:budget")
+        if window:
+            start = datetime.fromisoformat(window["start"]) - timedelta(seconds=wait)
+            window["start"] = start.isoformat()
+            window["start_epoch"] = str(start.timestamp())
+        return "elapsed"
+
+    monkeypatch.setattr(mod, "_sleep_for_reset", _wait)
+
+    assert mod.main(["--continuous"]) == mod.EXIT_PROVIDER_REFUSED
+    assert run.call_count == 6
+    assert len(waits) == 5
+    assert waits[:3] == [900.0, 900.0, 900.0]
+    # The rest of the window that was open (4h, less the 45 minutes above).
+    assert 3 * 3600 < waits[3] < 4 * 3600 + 300
+    # The fifth pass opened a window of its own: a whole day before the sixth.
+    assert waits[4] >= 24 * 3600
+    assert sum(waits) > 24 * 3600
+
+
+@pytest.mark.parametrize("where", ["budget-sleep", "migration-wait"])
+def test_a_stall_found_in_a_continuous_wait_exits_eleven_not_seven(
+    monkeypatch, capsys, where
+):
+    """The wait loops are where a run spends its days. A watchdog stall that
+    surfaces there is ``hung`` (exit 11), not a takeover (exit 7)."""
+    mod = _load_module()
+    redis = _FakeRedis()
+    _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    _open_budget_window(redis, consumed=30)
+    lost = {"now": False}
+    _Spy = _spy_ticker(mod, monkeypatch, [], redis, lease_lost=lambda: lost["now"])
+    _Spy.stalled = property(lambda self: lost["now"])
+    result = (
+        _refused(mod) if where == "budget-sleep" else _br(mod, migration_blocked=True)
+    )
+    monkeypatch.setattr(mod, "_run", MagicMock(return_value=result))
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=0, candidates=5))
+    )
+
+    def _wait(*_a, **_k):
+        lost["now"] = True  # the watchdog gave up while this run was waiting
+        return "lease_lost"
+
+    monkeypatch.setattr(mod, "_sleep_for_reset", _wait)
+    monkeypatch.setattr(mod, "_wait_out_migration", _wait)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MAIN_THREAD_STALLED == 11
+    out = capsys.readouterr().out
+    assert "the main thread made no progress" in out
+    assert "LEASE LOST" not in out
+
+
+def test_a_hand_started_continuous_run_that_stalls_closes_its_own_record(monkeypatch):
+    """``--continuous`` without a supervisor: nobody else writes the end, so
+    the ``hung`` record its watchdog wrote is closed with exit code 11."""
+    import json
+
+    mod = _load_module()
+    redis = _FakeRedis()
+    cfg = _wire(mod, monkeypatch, api_key="k", routing=_CLOUD_ROUTING, redis=redis)
+    cfg.backfill.main_thread_stall_seconds = 900
+    clock = {"t": 0.0}
+    made = []
+    real = mod.LivenessTicker
+
+    class _Clocked(real):
+        def __init__(self, **kwargs):
+            super().__init__(clock=lambda: clock["t"], **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(mod, "LivenessTicker", _Clocked)
+    seen = {}
+
+    def _hung_pass(*_a, **_k):
+        clock["t"] += 900.0
+        made[0].tick()
+        seen["while_hung"] = json.loads(redis.get("t:last_run"))
+        return _br(mod, processed=0)
+
+    monkeypatch.setattr(mod, "_run", MagicMock(side_effect=_hung_pass))
+    monkeypatch.setattr(
+        mod, "_census", MagicMock(return_value=_census(enriched=0, candidates=5))
+    )
+    monkeypatch.setattr(mod, "_print_banner", lambda title, lines: None)
+
+    rc = mod.main(["--continuous"])
+
+    assert rc == mod.EXIT_MAIN_THREAD_STALLED
+    assert seen["while_hung"]["exit_code"] is None
+    final = json.loads(redis.get("t:last_run"))
+    assert (final["outcome"], final["exit_code"], final["source"]) == ("hung", 11, "cli")
+    assert final["reason"] == mod._exit_reason(11, cfg)

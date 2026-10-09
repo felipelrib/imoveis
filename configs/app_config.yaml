@@ -403,6 +403,25 @@ backfill:
   # on forever), and any cycle that actually runs starts it over.
   # 0 = never wait (refuse immediately).
   migration_wait_seconds: 1800
+  # Consecutive `--continuous` cycles that end in a provider quota refusal with
+  # nothing enriched before the run gives up and exits 10 (v0.14-s1.13). Bounds
+  # how long an unattended run keeps sleeping against a provider that refuses
+  # every pass: four refused passes `quota_backoff_seconds` apart, then two
+  # daily windows each ending in another refused pass. A cycle that enriches a
+  # row resets the count. 0 = no limit (wait and retry for ever). 4 or less
+  # ends the run during the 15-minute back-offs, before the daily-window wait
+  # is ever tried.
+  max_no_progress_cycles: 6
+  # Seconds the run's main thread may go without a progress stamp before the
+  # liveness ticker stops renewing the lease, publishing the state and beating
+  # the supervisor key (v0.14-s1.13), so a hung process stops reading as
+  # alive. It keeps a successor out for up to this limit, plus a quarter of it
+  # (the watchdog's cadence), plus the lease TTL: about 90 minutes at the
+  # defaults (the lease TTL alone before v0.14-s1.12). One database statement
+  # blocked by a migration is an honest gap of up to 1800s, hence 3600.
+  # 0 = watchdog off; any other value must be at least 900, and a value under
+  # 1800 can read a statement blocked by a long migration as a hang.
+  main_thread_stall_seconds: 3600
 
 # NOTE (v0.13-s1.3, corrected by v0.13-s3.5): the cloud backfill derives its
 # backend from `ai.enrichment_routing` instead of hardcoding Gemma. With the

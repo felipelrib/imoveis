@@ -92,6 +92,10 @@ def _cfg():
     cfg.backfill.control_poll_seconds = 2.0
     cfg.backfill.quota_backoff_seconds = 900
     cfg.backfill.migration_wait_seconds = 1800
+    # Real numbers (v0.14-s1.13): ``int(MagicMock())`` is 1, which would end
+    # every refused cycle with exit 10 and give the watchdog a 1-second limit.
+    cfg.backfill.max_no_progress_cycles = 6
+    cfg.backfill.main_thread_stall_seconds = 3600
     cfg.ai.gemini_api_key = "k"
     cfg.ai.backend = "ollama"
     cfg.ai.gemma_model = "gemma-4-31b-it"

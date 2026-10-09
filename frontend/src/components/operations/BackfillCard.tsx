@@ -5,7 +5,10 @@ import {
 } from '../../api.js'
 import { useToast } from '../ToastProvider.jsx'
 import { useLocale } from '../../i18n/LocaleContext.jsx'
-import { etaLine, stateLabel, throughputLine } from './lines.js'
+import { formatDateTime } from '../../i18n/format.js'
+import {
+  etaLine, hungRunHoldsTheLease, lastRunLine, lastRunNeedsOperator, stateLabel, throughputLine,
+} from './lines.js'
 import type { TFunction } from '../../i18n/LocaleContext.jsx'
 import type { BackfillFailure, UseBackfillResult } from '../../hooks/useBackfill.js'
 
@@ -176,6 +179,28 @@ function BackfillBody({
   // the warning anyway.
   const warn = Boolean(status?.heartbeat_active)
 
+  // How the last supervised run ended (v0.14-s1.13). Hidden while a run is
+  // active: the card is then about that run, and a line about the one before
+  // it reads as its status. `started` is the record of the run in progress,
+  // or of one about to be read as `interrupted`, so it is not an ending.
+  // `hung` is the exception: it is written about the run that still holds the
+  // lease (for up to the lease TTL), which is exactly when it has to be said.
+  // Only then: the record is kept for 30 days and a run started by hand writes
+  // none of its own, so an old `hung` would otherwise be painted over every
+  // later run for as long as that run holds the lease.
+  const lastRun = status?.last_run
+  const showLastRun = Boolean(lastRun)
+    && lastRun?.outcome !== 'started'
+    && (!active || hungRunHoldsTheLease(lastRun, status?.lease?.acquired_at))
+
+  // A run holds a pause it can see, so a pause stays a pause for as long as
+  // nobody resumes it. Since when is said while a run is paused; a pause with
+  // no run behind it is the dead-runner case above and says nothing.
+  const pausedSince = active && pauseLevel && status?.paused_since
+    ? formatDateTime(status.paused_since, locale)
+    : null
+  const pauseStale = active && pauseLevel && Boolean(status?.pause_stale)
+
   return (
     <>
       {status && (
@@ -218,6 +243,37 @@ function BackfillBody({
               {etaLine(etaDays, t, locale)}
             </div>
           )}
+        </div>
+      )}
+
+      {showLastRun && lastRun && (
+        <div className="ops-lines" data-testid="backfill-last-run">
+          <div
+            className={lastRunNeedsOperator(lastRun.outcome, t) ? 'ops-fail' : 'ops-line'}
+            data-testid="backfill-last-run-line"
+          >
+            {lastRunLine(lastRun, t, locale)}
+          </div>
+          {/* The runner's own sentence, as written: it names config keys and
+              is not translated, the same way a 409 detail is shown. */}
+          {lastRun.reason && (
+            <div className="ops-line" data-testid="backfill-last-run-reason">
+              {lastRun.reason}
+            </div>
+          )}
+        </div>
+      )}
+
+      {pausedSince && pausedSince !== '—' && (
+        <div className="ops-lines" data-testid="backfill-paused">
+          <div className="ops-line" data-testid="backfill-paused-since">
+            {t('operations.pausedSince', { when: pausedSince })}
+          </div>
+        </div>
+      )}
+      {pauseStale && (
+        <div className="ops-fail" data-testid="backfill-pause-stale">
+          {t('operations.pauseStale')}
         </div>
       )}
 

@@ -151,6 +151,100 @@ def test_status_reports_a_live_run_from_the_lease(mock_cfg, mock_redis, _audit):
 
 @pytest.mark.unit
 @patch("api.admin.log_audit_action")
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+def test_status_serves_the_last_run_outcome_without_its_owner(mock_cfg, mock_redis, _audit):
+    """v0.14-s1.13: a run the API asked for that was refused or died leaves a
+    trace the API can read (DW-28)."""
+    from api.admin import backfill_status
+
+    mock_cfg.return_value = _cfg()
+    redis = FakeRedis()
+    mock_redis.return_value = redis
+    control = BackfillControl(redis, prefix="t")
+    control.record_run_start("admin-api", "host:4711")
+    control.record_run_end(
+        "provider_refused", exit_code=10, reason="refused six cycles", owner="host:4711"
+    )
+
+    body = backfill_status()
+
+    assert body.last_run.outcome == "provider_refused"
+    assert body.last_run.exit_code == 10
+    assert body.last_run.reason == "refused six cycles"
+    assert body.last_run.source == "admin-api"
+    assert body.last_run.started_at and body.last_run.finished_at
+    assert "owner" not in body.model_dump()["last_run"]
+    assert "host:4711" not in body.model_dump_json()
+
+
+@pytest.mark.unit
+@patch("api.admin.log_audit_action")
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+def test_status_reads_a_run_whose_process_is_gone_as_interrupted(
+    mock_cfg, mock_redis, _audit
+):
+    from api.admin import backfill_status
+
+    mock_cfg.return_value = _cfg()
+    redis = FakeRedis()
+    mock_redis.return_value = redis
+    BackfillControl(redis, prefix="t").record_run_start("admin-api", "host:4711")
+
+    body = backfill_status()
+
+    assert body.last_run.outcome == "interrupted"
+    # Read-only: the derivation writes nothing.
+    assert json.loads(redis.get("t:last_run"))["outcome"] == "started"
+
+
+@pytest.mark.unit
+@patch("api.admin.log_audit_action")
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+def test_status_says_a_pause_held_past_its_ttl_is_stale(mock_cfg, mock_redis, _audit):
+    """DW-23: the pause is still in force, and the status says since when."""
+    from datetime import datetime, timedelta, timezone
+
+    from api.admin import backfill_status
+
+    mock_cfg.return_value = _cfg()
+    redis = FakeRedis()
+    mock_redis.return_value = redis
+    eight_days_ago = datetime.now(timezone.utc) - timedelta(days=8)
+    BackfillControl(redis, prefix="t", now_fn=lambda: eight_days_ago).request_pause()
+
+    body = backfill_status()
+
+    assert body.pending_requests == ["pause"]
+    assert body.paused_since == eight_days_ago.isoformat()
+    assert body.pause_stale is True
+
+
+@pytest.mark.unit
+@patch("api.admin.log_audit_action")
+@patch("api.admin.get_redis")
+@patch("api.admin.get_config")
+def test_status_survives_a_last_run_value_it_did_not_write(mock_cfg, mock_redis, _audit):
+    from api.admin import backfill_status
+
+    mock_cfg.return_value = _cfg()
+    redis = FakeRedis()
+    mock_redis.return_value = redis
+    redis.set("t:last_run", '{"outcome": 7, "exit_code": "x", "reason": [1]}')
+    redis.set("t:control:pause", "1")  # a pause from before the key carried a time
+
+    body = backfill_status()
+
+    assert body.last_run.outcome == "7"
+    assert body.last_run.exit_code is None
+    assert body.paused_since is None
+    assert body.pause_stale is False
+
+
+@pytest.mark.unit
+@patch("api.admin.log_audit_action")
 @patch("api.admin.get_redis", side_effect=RuntimeError("redis://user:pw@host down"))
 @patch("api.admin.get_config")
 def test_status_maps_a_redis_failure_to_a_generic_500(mock_cfg, _redis, _audit):

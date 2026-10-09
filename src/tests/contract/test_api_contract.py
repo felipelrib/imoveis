@@ -1013,6 +1013,53 @@ class TestAdminBackfillControlContract:
         # Story 1.4 owns coverage/ETA; the control plane must not grow one.
         for forbidden in ("coverage", "eta_days", "throughput", "remaining_properties"):
             assert forbidden not in response.json()
+        # v0.14-s1.13: present on every body, empty when nothing was recorded.
+        assert response.json()["last_run"] is None
+        assert response.json()["paused_since"] is None
+        assert response.json()["pause_stale"] is False
+
+    def test_status_serves_a_recorded_outcome_and_a_stale_pause(
+        self, client, admin_headers, backfill_redis
+    ):
+        """v0.14-s1.13: the outcome the supervisor recorded and a pause held
+        past its TTL come back on the status body, matching the model."""
+        from datetime import datetime, timedelta, timezone
+
+        from api.schemas import BackfillLastRunModel, BackfillStatusResponse
+        from core.backfill_runner import BackfillControl
+
+        prefix = get_config().backfill.redis_prefix
+        eight_days_ago = datetime.now(timezone.utc) - timedelta(days=8)
+        BackfillControl(
+            backfill_redis, prefix=prefix, now_fn=lambda: eight_days_ago
+        ).request_pause()
+        control = BackfillControl(backfill_redis, prefix=prefix)
+        control.record_run_start("admin-api", "host:4711")
+        control.record_run_end(
+            "provider_refused",
+            exit_code=10,
+            reason="The provider refused on quota for 6 consecutive cycles.",
+            owner="host:4711",
+        )
+
+        response = client.get("/admin/backfill/status", headers=admin_headers)
+
+        assert response.status_code == 200, response.text[:300]
+        payload = response.json()
+        body = BackfillStatusResponse.model_validate(payload)
+        assert isinstance(body.last_run, BackfillLastRunModel)
+        # Exactly the documented keys: the supervisor host:pid stays in Redis.
+        assert set(payload["last_run"]) == {
+            "outcome", "exit_code", "reason", "started_at", "finished_at", "source",
+        }
+        assert body.last_run.outcome == "provider_refused"
+        assert body.last_run.exit_code == 10
+        assert body.last_run.reason.startswith("The provider refused")
+        assert body.last_run.source == "admin-api"
+        assert body.last_run.started_at and body.last_run.finished_at
+        assert body.pending_requests == ["pause"]
+        assert body.paused_since == eight_days_ago.isoformat()
+        assert body.pause_stale is True
 
     def test_start_is_accepted_as_a_request_not_an_execution(
         self, client, admin_headers, backfill_redis

@@ -11,6 +11,7 @@ it lands in :func:`build_status_snapshot` — the single aggregator the API and
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -628,3 +629,185 @@ def test_snapshot_never_beats_the_heartbeat_that_blocks_a_migration():
     assert redis.get("t:active") is None
     assert redis.get("t:supervisor:active") is None
     assert redis.get("t:lease") is None
+
+
+# ---------------------------------------------------------------------------
+# Status snapshot: last run and the pause in force (v0.14-s1.13)
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_kwargs(redis) -> dict:
+    """The primitives of ``_snapshot`` as keyword arguments, for a test that
+    passes its own ``now_fn`` or swaps one primitive."""
+    return dict(
+        lease=BackfillLease(redis, prefix="t", owner="host:4711"),
+        control=BackfillControl(redis, prefix="t"),
+        budget=DailyBudget(redis, prefix="t", daily_limit=14000),
+        checkpoint=Checkpoint(redis, prefix="t"),
+        heartbeat=Heartbeat(redis, prefix="t"),
+        migration_gate=MigrationGate(redis, prefix="t"),
+        supervisor_heartbeat=Heartbeat(redis, prefix="t:supervisor"),
+        daily_limit=14000,
+        pacing=dict(_PACING),
+    )
+
+
+_T0 = datetime.fromisoformat("2026-10-08T12:00:00+00:00")
+
+
+def test_snapshot_without_a_record_or_a_pause_reports_neither():
+    snap = _snapshot(FakeRedis())
+
+    assert snap["last_run"] is None
+    assert snap["paused_since"] is None
+    assert snap["pause_stale"] is False
+
+
+def test_api_requested_run_ends_and_the_snapshot_serves_the_outcome():
+    """I/O matrix "API-requested run ends"."""
+    redis = FakeRedis()
+    control = BackfillControl(redis, prefix="t", now_fn=lambda: _T0)
+    control.record_run_start("admin-api", "host:4711")
+    control.record_run_end(
+        "provider_refused",
+        exit_code=10,
+        reason="The provider refused on quota for 6 consecutive cycles.",
+        owner="host:4711",
+    )
+
+    snap = _snapshot(redis)
+
+    assert snap["last_run"] == {
+        "outcome": "provider_refused",
+        "exit_code": 10,
+        "reason": "The provider refused on quota for 6 consecutive cycles.",
+        "started_at": _T0.isoformat(),
+        "finished_at": _T0.isoformat(),
+        "source": "admin-api",
+    }
+    # Provenance stays in Redis: a host name and a pid are not for the wire.
+    assert "owner" not in snap["last_run"]
+
+
+def test_api_requested_run_killed_outright_reads_interrupted():
+    """I/O matrix "API-requested run killed outright": the record says
+    ``started``, the lease is free and the supervisor key is absent."""
+    redis = FakeRedis()
+    BackfillControl(redis, prefix="t").record_run_start("admin-api", "host:4711")
+
+    snap = _snapshot(redis)
+
+    assert snap["last_run"]["outcome"] == "interrupted"
+    assert snap["last_run"]["finished_at"] is None
+    # Derived at read time: nothing is written.
+    assert json.loads(redis.get("t:last_run"))["outcome"] == "started"
+
+
+def test_a_started_record_under_another_supervisor_reads_interrupted():
+    redis = FakeRedis()
+    BackfillControl(redis, prefix="t").record_run_start("admin-api", "host:4711")
+    # The unit was restarted: a new process beats the supervisor key.
+    Heartbeat(redis, prefix="t:supervisor", value="host:9000").beat()
+
+    assert _snapshot(redis)["last_run"]["outcome"] == "interrupted"
+
+
+def test_a_started_record_stays_started_while_the_run_holds_the_lease():
+    redis = FakeRedis()
+    BackfillControl(redis, prefix="t").record_run_start("admin-api", "host:4711")
+    assert BackfillLease(redis, prefix="t", owner="host:4711").acquire()
+
+    assert _snapshot(redis)["last_run"]["outcome"] == "started"
+
+
+def test_a_started_record_stays_started_between_the_release_and_the_end_record():
+    """The supervisor and the run it drives are one process: while that
+    supervisor is alive the lease being free only means the run just ended,
+    so the card never flickers to ``interrupted``."""
+    redis = FakeRedis()
+    BackfillControl(redis, prefix="t").record_run_start("admin-api", "host:4711")
+    Heartbeat(redis, prefix="t:supervisor", value="host:4711").beat()
+
+    assert _snapshot(redis)["last_run"]["outcome"] == "started"
+
+
+def test_a_finished_record_is_never_rewritten_as_interrupted():
+    redis = FakeRedis()
+    control = BackfillControl(redis, prefix="t")
+    control.record_run_start("admin-api", "host:4711")
+    control.record_run_end("hung", reason="silent", owner="host:4711")
+
+    assert _snapshot(redis)["last_run"]["outcome"] == "hung"
+
+
+def test_snapshot_serves_since_when_the_run_is_paused():
+    redis = FakeRedis()
+    BackfillControl(redis, prefix="t", now_fn=lambda: _T0).request_pause()
+
+    snap = build_status_snapshot(
+        **_snapshot_kwargs(redis), now_fn=lambda: _T0 + timedelta(days=2)
+    )
+
+    assert snap["pending_requests"] == ["pause"]
+    assert snap["paused_since"] == _T0.isoformat()
+    assert snap["pause_stale"] is False
+
+
+def test_pause_held_past_its_ttl_is_served_as_stale_and_still_pending():
+    """I/O matrix "Pause held past its TTL": the status says since when and
+    that the pause is stale, and it is still a pending pause."""
+    redis = FakeRedis()
+    control = BackfillControl(redis, prefix="t", now_fn=lambda: _T0)
+    control.request_pause()
+
+    just_under = build_status_snapshot(
+        **_snapshot_kwargs(redis),
+        now_fn=lambda: _T0 + timedelta(seconds=control.request_ttl_seconds - 1),
+    )
+    at_the_ttl = build_status_snapshot(
+        **_snapshot_kwargs(redis),
+        now_fn=lambda: _T0 + timedelta(seconds=control.request_ttl_seconds),
+    )
+
+    assert just_under["pause_stale"] is False
+    assert at_the_ttl["pause_stale"] is True
+    assert at_the_ttl["paused_since"] == _T0.isoformat()
+    assert at_the_ttl["pending_requests"] == ["pause"]
+
+
+def test_a_legacy_pause_has_no_age_and_is_never_stale():
+    redis = FakeRedis()
+    redis.set("t:control:pause", "1")
+
+    snap = _snapshot(redis)
+
+    assert snap["pending_requests"] == ["pause"]
+    assert snap["paused_since"] is None
+    assert snap["pause_stale"] is False
+
+
+def test_the_snapshot_tolerates_a_control_double_without_the_new_reads():
+    """The suite's controls are duck-typed: one that predates the outcome
+    record and the pause time still yields a snapshot."""
+
+    class _OldControl:
+        def is_paused(self):
+            return False
+
+        def should_stop(self):
+            return False
+
+        def start_request(self):
+            return None
+
+        def state(self):
+            return BackfillState.IDLE
+
+    kwargs = _snapshot_kwargs(FakeRedis())
+    kwargs["control"] = _OldControl()
+
+    snap = build_status_snapshot(**kwargs)
+
+    assert snap["last_run"] is None
+    assert snap["paused_since"] is None
+    assert snap["pause_stale"] is False

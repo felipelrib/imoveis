@@ -1,6 +1,7 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
 import {
+  BACKFILL_LAST_RUN_PROVIDER_REFUSED,
   BACKFILL_STATUS_IDLE,
   BACKFILL_STATUS_RUNNING,
   ENRICHMENT_COVERAGE,
@@ -20,7 +21,8 @@ async function bootOperacoes(page, opts = {}) {
     sessionStorage.setItem("api_key", key);
   }, VALID_KEY);
   await installCommonMocks(page);
-  await mockAdminLocale(page, { initial: "pt-BR", defaultLocale: "pt-BR" });
+  const locale = opts.locale ?? "pt-BR";
+  await mockAdminLocale(page, { initial: locale, defaultLocale: locale });
   await mockPlatforms(page);
   await mockAdminBackfill(page, opts.backfill ?? {});
   await mockAdminCoverage(page, opts.coverage ?? ENRICHMENT_COVERAGE, {
@@ -577,5 +579,322 @@ test.describe("Painel health strip (v0.13-s1.6)", () => {
     await expect(page.getByTestId("dashboard-health-strip")).toHaveCount(0);
     await expect(page.getByTestId("health-coverage-chip")).toHaveCount(0);
     await expect(page.getByTestId("health-backfill-chip")).toHaveCount(0);
+  });
+});
+
+test.describe("Operações backfill card — run lifecycle (v0.14-s1.13)", () => {
+  test("a provider-refused last run is shown with the runner's reason", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_IDLE,
+          runner_present: true,
+          last_run: BACKFILL_LAST_RUN_PROVIDER_REFUSED,
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("inativo");
+    const line = page.getByTestId("backfill-last-run-line");
+    // pt-BR label for the canonical English outcome word, then when it ended
+    // (day/month and hour:minute; the hour depends on the browser's zone).
+    await expect(line).toHaveText(
+      /^última execução: encerrada — o provedor recusou por cota repetidas vezes · \d{2}\/\d{2},? \d{2}:\d{2}$/
+    );
+    // An ending that needs the operator is a failure line, not a plain one.
+    await expect(line).toHaveClass(/ops-fail/);
+    // The runner's sentence on its own line, as written.
+    await expect(page.getByTestId("backfill-last-run-reason")).toHaveText(
+      BACKFILL_LAST_RUN_PROVIDER_REFUSED.reason
+    );
+    // The run is over: starting again is the operator's call, and it is offered.
+    await expect(page.getByTestId("backfill-start")).toBeEnabled();
+  });
+
+  test("a clean ending is a plain line and an unknown outcome is shown verbatim", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_IDLE,
+          last_run: {
+            outcome: "complete",
+            exit_code: 0,
+            reason: null,
+            started_at: "2026-10-01T09:00:00Z",
+            finished_at: "2026-10-06T14:30:00Z",
+            source: "admin-api",
+          },
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE,
+    });
+
+    await page.goto("/scraper");
+    const line = page.getByTestId("backfill-last-run-line");
+    await expect(line).toContainText("última execução: concluída · ");
+    await expect(line).toHaveClass(/ops-line/);
+    await expect(line).not.toHaveClass(/ops-fail/);
+    await expect(page.getByTestId("backfill-last-run-reason")).toHaveCount(0);
+
+    // A word this build has no label for is rendered as it came, never mapped
+    // to a wrong one.
+    await mockAdminBackfill(page, {
+      status: {
+        ...BACKFILL_STATUS_IDLE,
+        last_run: { outcome: "quota_project_disabled", exit_code: 12 },
+      },
+    });
+    await page.reload();
+    const unknown = page.getByTestId("backfill-last-run-line");
+    await expect(unknown).toHaveText("última execução: quota_project_disabled");
+    // Nothing here knows what the word means, so it is not painted a failure.
+    await expect(unknown).not.toHaveClass(/ops-fail/);
+
+    // An operator stop is an ending someone asked for: a plain line too.
+    await mockAdminBackfill(page, {
+      status: {
+        ...BACKFILL_STATUS_IDLE,
+        last_run: {
+          outcome: "stopped",
+          exit_code: 6,
+          finished_at: "2026-10-06T14:30:00Z",
+        },
+      },
+    });
+    await page.reload();
+    const stopped = page.getByTestId("backfill-last-run-line");
+    await expect(stopped).toContainText("última execução: parada pelo operador · ");
+    await expect(stopped).toHaveClass(/ops-line/);
+    await expect(stopped).not.toHaveClass(/ops-fail/);
+  });
+
+  test("a hung run is said while it still holds the lease", async ({ page }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_RUNNING,
+          // The watchdog gave the run up; the lease has not lapsed yet.
+          last_run: {
+            outcome: "hung",
+            exit_code: null,
+            reason: "The main thread made no progress for 3600s.",
+            started_at: "2026-10-04T09:00:00Z",
+            finished_at: "2026-10-06T14:30:00Z",
+            source: "admin-api",
+          },
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE_RUNNING,
+    });
+
+    await page.goto("/scraper");
+    const line = page.getByTestId("backfill-last-run-line");
+    await expect(line).toContainText(
+      "última execução: travada — o processo parou de responder · "
+    );
+    await expect(line).toHaveClass(/ops-fail/);
+    await expect(page.getByTestId("backfill-last-run-reason")).toHaveText(
+      "The main thread made no progress for 3600s."
+    );
+  });
+
+  test("an old hung record is not painted over a later run", async ({ page }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_RUNNING,
+          // This run took the lease after the watchdog gave the other one up.
+          // A run started by hand writes no record, so the old one is still
+          // the last in Redis.
+          lease: {
+            ...BACKFILL_STATUS_RUNNING.lease,
+            acquired_at: "2026-10-07T08:00:00Z",
+          },
+          last_run: {
+            outcome: "hung",
+            exit_code: null,
+            reason: "The main thread made no progress for 3600s.",
+            started_at: "2026-10-04T09:00:00Z",
+            finished_at: "2026-10-06T14:30:00Z",
+            source: "admin-api",
+          },
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE_RUNNING,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("em execução");
+    await expect(page.getByTestId("backfill-budget-line")).toBeVisible();
+    await expect(page.getByTestId("backfill-last-run")).toHaveCount(0);
+    await expect(page.getByTestId("backfill-card")).not.toContainText("travada");
+  });
+
+  test("a stale pause left by a dead runner says nothing about a paused run", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_IDLE,
+          // No lease: the pause level outlived the run that observed it.
+          active: false,
+          pending_requests: ["pause"],
+          paused_since: "2026-09-28T09:00:00Z",
+          pause_stale: true,
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("inativo");
+    await expect(page.getByTestId("backfill-paused")).toHaveCount(0);
+    await expect(page.getByTestId("backfill-pause-stale")).toHaveCount(0);
+  });
+
+  test("the last run is labelled in English too", async ({ page }) => {
+    const refusal = "GEMINI_API_KEY is not set: export it in the supervisor's shell.";
+    await bootOperacoes(page, {
+      locale: "en",
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_IDLE,
+          last_run: {
+            outcome: "refused",
+            exit_code: 1,
+            reason: refusal,
+            started_at: "2026-10-06T14:29:00Z",
+            finished_at: "2026-10-06T14:30:00Z",
+            source: "admin-api",
+          },
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE,
+    });
+
+    await page.goto("/scraper");
+    const line = page.getByTestId("backfill-last-run-line");
+    await expect(line).toContainText("last run: refused by the runner · ");
+    await expect(line).toHaveClass(/ops-fail/);
+    await expect(page.getByTestId("backfill-last-run-reason")).toHaveText(refusal);
+
+    await mockAdminBackfill(page, {
+      status: {
+        ...BACKFILL_STATUS_IDLE,
+        // Derived by the API: it has a start and no end.
+        last_run: {
+          outcome: "interrupted",
+          started_at: "2026-10-06T14:30:00Z",
+          source: "admin-api",
+        },
+      },
+    });
+    await page.reload();
+    const interrupted = page.getByTestId("backfill-last-run-line");
+    await expect(interrupted).toContainText(
+      "last run: interrupted — the process ended without recording how · "
+    );
+    await expect(interrupted).toHaveClass(/ops-fail/);
+  });
+
+  test("no last-run line while a run is active", async ({ page }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_RUNNING,
+          // The record of the run before this one is still in Redis.
+          last_run: BACKFILL_LAST_RUN_PROVIDER_REFUSED,
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE_RUNNING,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("em execução");
+    await expect(page.getByTestId("backfill-budget-line")).toBeVisible();
+    await expect(page.getByTestId("backfill-last-run")).toHaveCount(0);
+    await expect(page.getByTestId("backfill-card")).not.toContainText("última execução");
+  });
+
+  test("the record of the run in progress is not rendered as an ending", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_IDLE,
+          // The lease was released a moment ago and the end is not written yet.
+          last_run: {
+            outcome: "started",
+            started_at: "2026-10-06T14:30:00Z",
+            source: "admin-api",
+          },
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("inativo");
+    await expect(page.getByTestId("backfill-last-run")).toHaveCount(0);
+  });
+
+  test("a stale pause says since when and that it is still in force", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_RUNNING,
+          state: "paused",
+          heartbeat_active: false,
+          pending_requests: ["pause"],
+          paused_since: "2026-09-28T09:00:00Z",
+          pause_stale: true,
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE_RUNNING,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-state")).toHaveText("pausado");
+    await expect(page.getByTestId("backfill-paused-since")).toHaveText(
+      /^pausado desde \d{2}\/\d{2},? \d{2}:\d{2}$/
+    );
+    await expect(page.getByTestId("backfill-pause-stale")).toHaveText(
+      "pausa antiga — continua valendo, e nada é lançado até alguém retomar"
+    );
+    // Still a pause: the way out is resume, and it is offered.
+    await expect(page.getByTestId("backfill-resume")).toBeEnabled();
+    await expect(page.getByTestId("backfill-warning")).toHaveCount(0);
+  });
+
+  test("a fresh pause says since when and nothing about being stale", async ({
+    page,
+  }) => {
+    await bootOperacoes(page, {
+      backfill: {
+        status: {
+          ...BACKFILL_STATUS_RUNNING,
+          state: "paused",
+          heartbeat_active: false,
+          pending_requests: ["pause"],
+          paused_since: "2026-10-06T09:00:00Z",
+          pause_stale: false,
+        },
+      },
+      coverage: ENRICHMENT_COVERAGE_RUNNING,
+    });
+
+    await page.goto("/scraper");
+    await expect(page.getByTestId("backfill-paused-since")).toContainText("pausado desde ");
+    await expect(page.getByTestId("backfill-pause-stale")).toHaveCount(0);
   });
 });

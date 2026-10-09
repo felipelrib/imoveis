@@ -58,6 +58,20 @@ _STATE_TTL_SECONDS = 120
 # (a quarter of it), so ``--status`` and story 1.5's API never read a live run
 # back as ``idle`` just because the single startup publish aged out.
 _STATE_REFRESH_SECONDS = _STATE_TTL_SECONDS / 4
+# The outcome of the last run a supervisor drove (``<prefix>:last_run``). Kept
+# for a month: it is what the admin API and the Operações card show after the
+# process that wrote it is gone, and a record nobody rewrites must still expire.
+_LAST_RUN_TTL_SECONDS = 30 * 24 * 3600
+# A reason is one sentence for an operator. Cut, so a run that ends on a long
+# message cannot grow the status payload every poll returns.
+_LAST_RUN_REASON_MAX_CHARS = 500
+# A record with one of these outcomes describes a run that has not ended yet,
+# so the end that follows keeps its ``started_at``.
+_OPEN_RUN_OUTCOMES = frozenset({"started", "hung"})
+# A liveness thread that wakes this much later than it asked to was not merely
+# descheduled: the whole process stood still (a suspended host, a paused VM, a
+# stopped process). The main-thread watchdog does not count that time.
+_FROZEN_WAIT_SECONDS = 60.0
 
 EnrichFn = Callable[[Any], Awaitable[None]]
 SleepFn = Callable[[float], Awaitable[None]]
@@ -837,14 +851,30 @@ class BackfillControl:
         self._stop_key = f"{prefix}:control:stop"
         self._start_key = f"{prefix}:control:start"
         self._state_key = f"{prefix}:state"
+        self._last_run_key = f"{prefix}:last_run"
         self._state_ttl = max(1, int(state_ttl_seconds))
         self._request_ttl = max(1, int(request_ttl_seconds))
         self._start_ttl = max(1, int(start_ttl_seconds))
         self._now_fn = now_fn
+        # A stop this process was asked for by a signal (see
+        # :meth:`watch_local_stop`). ``None`` until a run registers one.
+        self._local_stop: Optional[Callable[[], bool]] = None
+        self._local_stop_published = False
 
     @property
     def state_ttl_seconds(self) -> int:
         return self._state_ttl
+
+    @property
+    def request_ttl_seconds(self) -> int:
+        """How long a pause or stop request lives without anyone holding it.
+
+        Also the age from which a pause that is still set is reported as
+        stale: older than a request normally lives. A run holding it (see
+        :meth:`hold_pause`) is one way to get there; a second pause request,
+        which re-arms the TTL and keeps the first stamp, is the other.
+        """
+        return self._request_ttl
 
     @property
     def refresh_interval_seconds(self) -> float:
@@ -858,7 +888,40 @@ class BackfillControl:
         return max(1.0, self._state_ttl / 4)
 
     def request_pause(self) -> None:
-        self._redis.set(self._pause_key, "1", ex=self._request_ttl)
+        """Ask the run to pause, remembering when it was first asked.
+
+        The key holds the request time, so the status surface can say since
+        when a run has been paused (DW-23). ``SET NX``: a second pause is the
+        same level, so it re-arms the TTL and keeps the first stamp. The retry
+        covers the key expiring between the two commands.
+        """
+        stamp = self._now_fn().isoformat()
+        for _ in range(2):
+            if self._redis.set(self._pause_key, stamp, ex=self._request_ttl, nx=True):
+                return
+            if self._redis.expire(self._pause_key, self._request_ttl):
+                return
+        self._redis.set(self._pause_key, stamp, ex=self._request_ttl)
+
+    def hold_pause(self) -> bool:
+        """Keep an existing pause from expiring; True when there is one.
+
+        Called by a run for as long as it observes the pause, so a pause
+        nobody resumed does not lapse after ``request_ttl_seconds`` and let
+        the run spend cloud quota again (DW-23). It is an ``EXPIRE``: it
+        extends a request an operator made and can never create one, so a
+        resume that deletes the key between two holds stays a resume.
+        """
+        return bool(self._redis.expire(self._pause_key, self._request_ttl))
+
+    def paused_since(self) -> Optional[datetime]:
+        """When the pause in force was requested, or None.
+
+        None when there is no pause, and also for a pause written before the
+        key carried a time (the value ``1``): it is still a pause, only its
+        age is unknown.
+        """
+        return _parse_iso(_decode(self._redis.get(self._pause_key)))
 
     def request_resume(self) -> None:
         """Undo a pause **and** a pending stop — "resume" means both.
@@ -996,8 +1059,145 @@ class BackfillControl:
     def is_paused(self) -> bool:
         return bool(self._redis.get(self._pause_key))
 
+    def watch_local_stop(self, flag: Callable[[], bool]) -> None:
+        """Treat ``flag()`` being true as a stop request for this process.
+
+        A signal handler must not talk to Redis: it runs between two bytecodes
+        of the main thread, possibly inside a Redis call that holds the
+        connection, and a second call on the same connection from the handler
+        can deadlock the process (DW-22). The handler therefore only sets a
+        flag, and the run reads it here, at the places where it already asks
+        whether to stop.
+        """
+        self._local_stop = flag
+        self._local_stop_published = False
+
     def should_stop(self) -> bool:
+        """True when a stop was requested, through Redis or by a local signal.
+
+        With the local flag set no Redis read is made, so the run still stops
+        when Redis is unreachable. The first time the flag is seen the stop is
+        also written to Redis, once and guarded, so the admin API and
+        ``--status`` show a pending stop while the run drains.
+        """
+        flag = self._local_stop
+        if flag is not None and flag():
+            if not self._local_stop_published:
+                self._local_stop_published = True
+                try:
+                    self.request_stop()
+                except Exception as exc:  # noqa: BLE001 - the flag is the stop
+                    _log_control_write_failed("publish-local-stop", exc)
+            return True
         return bool(self._redis.get(self._stop_key))
+
+    # -- outcome of the last supervised run (v0.14-s1.13) --------------------
+    #
+    # A run asked for through the admin API ends in a process the API cannot
+    # see. The ``--serve`` supervisor writes what happened to one key, and the
+    # status snapshot serves it, so a refused or dead run leaves a trace on
+    # the surface the operator started it from (DW-28).
+
+    def _write_last_run(self, record: dict[str, Any]) -> dict[str, Any]:
+        self._redis.set(
+            self._last_run_key, json.dumps(record), ex=_LAST_RUN_TTL_SECONDS
+        )
+        return record
+
+    def record_run_start(self, source: str, owner: str) -> dict[str, Any]:
+        """Record that a requested run was launched by ``owner``.
+
+        ``owner`` is the supervisor's ``host:pid``. It stays in Redis and is
+        what lets a reader tell a run still being driven from one whose
+        process is gone; it is not put on the wire.
+        """
+        return self._write_last_run(
+            {
+                "outcome": "started",
+                "exit_code": None,
+                "reason": None,
+                "started_at": self._now_fn().isoformat(),
+                "finished_at": None,
+                "source": str(source or "unknown"),
+                "owner": str(owner or ""),
+            }
+        )
+
+    def record_run_end(
+        self,
+        outcome: str,
+        *,
+        exit_code: Optional[int] = None,
+        reason: Optional[str] = None,
+        source: Optional[str] = None,
+        owner: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Record how a run ended, keeping the start it closes.
+
+        ``started_at`` and ``source`` are taken from the record already there
+        when that record is still open (``started``, or ``hung``) and was
+        written by the same ``owner``. Any other record belongs to an earlier
+        run, and its start time is not this run's.
+        """
+        previous = self.last_run() or {}
+        previous_owner = previous.get("owner") or ""
+        closes_previous = previous.get("outcome") in _OPEN_RUN_OUTCOMES and (
+            not owner or not previous_owner or previous_owner == owner
+        )
+        text = None if reason is None else str(reason)[:_LAST_RUN_REASON_MAX_CHARS]
+        code = exit_code
+        if isinstance(code, bool) or not isinstance(code, int):
+            code = None
+        return self._write_last_run(
+            {
+                "outcome": str(outcome),
+                "exit_code": code,
+                "reason": text or None,
+                "started_at": previous.get("started_at") if closes_previous else None,
+                "finished_at": self._now_fn().isoformat(),
+                "source": str(
+                    source
+                    or (previous.get("source") if closes_previous else None)
+                    or "unknown"
+                ),
+                "owner": str(owner or (previous_owner if closes_previous else "")),
+            }
+        )
+
+    def last_run(self) -> Optional[dict[str, Any]]:
+        """The recorded outcome of the last supervised run, or None.
+
+        Tolerant: a value this code did not write (not JSON, not an object, no
+        outcome) reads as no record, and every field is coerced to the type the
+        response model declares, so a strange payload cannot turn the status
+        poll into a 500.
+        """
+        raw = self._redis.get(self._last_run_key)
+        if not raw:
+            return None
+        try:
+            data = json.loads(_decode(raw))
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict) or not data.get("outcome"):
+            return None
+
+        def _text(value: Any) -> Optional[str]:
+            return None if value is None or value == "" else str(value)
+
+        exit_code = data.get("exit_code")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            exit_code = None
+        reason = _text(data.get("reason"))
+        return {
+            "outcome": str(data["outcome"]),
+            "exit_code": exit_code,
+            "reason": None if reason is None else reason[:_LAST_RUN_REASON_MAX_CHARS],
+            "started_at": _text(data.get("started_at")),
+            "finished_at": _text(data.get("finished_at")),
+            "source": _text(data.get("source")) or "unknown",
+            "owner": _text(data.get("owner")) or "",
+        }
 
     def publish_state(self, state: BackfillState) -> None:
         self._redis.set(self._state_key, BackfillState(state).value, ex=self._state_ttl)
@@ -1074,6 +1274,26 @@ class LivenessTicker:
     lease or writing state (the supervisor's own key). ``clock`` is injectable
     so the state machine is tested through :meth:`tick` without a thread, and
     it is never the run loop's clock.
+
+    The thread proves that the process exists, not that the run is moving. With
+    ``stall_limit_seconds`` above zero the ticker is also a watchdog on the
+    run's main thread (v0.14-s1.13, DW-81): the run calls
+    :meth:`note_progress` whenever its main thread has run, and when no stamp
+    arrives for that long the ticker stops vouching for the run. A stall is
+    treated as a lost lease for every key (not renewed, state not published),
+    the keepalives of this ticker stop, and ``on_stall(seconds_silent)`` is
+    called once, guarded, on the ticker thread. The ticker cannot end a hung
+    process; if the main thread comes back it reads :attr:`lease_lost`,
+    launches nothing more and exits. ``:active`` keeps the lease-loss rule: it
+    is still beaten while a pass is writing, because rows in flight may write.
+
+    Silence is only counted while this thread was awake to witness it. A wait
+    that returns far later than asked (``_FROZEN_WAIT_SECONDS``) means the
+    whole process stood still, as on a suspended host, where the monotonic
+    clock of some platforms keeps counting: that time is taken off the
+    silence, so the first tick after a long suspend does not read a main
+    thread that never blocked as hung. The lease has its own rule and is lost
+    after such a suspend all the same.
     """
 
     def __init__(
@@ -1084,11 +1304,16 @@ class LivenessTicker:
         heartbeat: Optional[Any] = None,
         keepalives: Iterable[Any] = (),
         clock: Callable[[], float] = time.monotonic,
+        stall_limit_seconds: float = 0.0,
+        on_stall: Optional[Callable[[float], None]] = None,
     ) -> None:
         self._lease = lease
         self._control = control
         self._heartbeat = heartbeat
         self._clock = clock
+        self._stall_limit = _positive_seconds(stall_limit_seconds, 0.0)
+        self._on_stall = on_stall
+        self._stalled = False
 
         self._lease_ttl = _positive_seconds(
             getattr(lease, "ttl_seconds", None), _DEFAULT_LEASE_TTL_SECONDS
@@ -1119,7 +1344,15 @@ class LivenessTicker:
             for keepalive in keepalives
         ]
 
+        # The run was alive when it built the ticker: the silence starts here.
+        self._last_progress = now
+
         periods = [entry[1] for entry in self._keepalives]
+        if self._stall_limit > 0:
+            # The watchdog needs a cadence of its own: a ticker that keeps
+            # nothing else alive would otherwise never look at the stamp often
+            # enough to notice the limit passing.
+            periods.append(self._stall_limit / 4.0)
         if lease is not None:
             periods.append(self._lease_every)
         if control is not None:
@@ -1190,14 +1423,72 @@ class LivenessTicker:
             return True
         return False
 
+    # -- main-thread watchdog ---------------------------------------------------
+
+    @property
+    def stalled(self) -> bool:
+        """True once the watchdog found the main thread silent for the limit."""
+        return self._stalled
+
+    @property
+    def progress_interval(self) -> float:
+        """How often the run should call :meth:`note_progress`; 0 when off.
+
+        A tenth of the limit, at most a minute: many stamps fit in one limit,
+        so a single late one is not a stall.
+        """
+        if self._stall_limit <= 0:
+            return 0.0
+        return max(0.01, min(60.0, self._stall_limit / 10.0))
+
+    def note_progress(self) -> None:
+        """Say that the run's main thread ran just now.
+
+        One assignment: no lock and no I/O, so it is safe wherever the main
+        thread happens to be, and costs nothing on a busy loop.
+        """
+        self._last_progress = self._clock()
+
+    def silence(self) -> None:
+        """Stop ticking from now on, without waiting for the thread.
+
+        For a caller that is on another ticker's thread (the stall callback
+        silencing the supervisor's keepalive): :meth:`stop` joins, and a join
+        from there would wait on a tick that may itself be stuck.
+        """
+        self._stop_event.set()
+
+    def _tick_watchdog(self, now: float) -> None:
+        if self._stall_limit <= 0 or self._stalled:
+            return
+        silent = now - self._last_progress
+        if silent < self._stall_limit:
+            return
+        self._stalled = True
+        # A lost lease for every key: the renew and the state publish both stop
+        # on this flag, and the run reads it at its next stop decision.
+        self._latch(
+            f"the main thread made no progress for {silent:.0f}s "
+            f"(limit {self._stall_limit:.0f}s)",
+            log=False,
+        )
+        _log_main_thread_stalled(silent, self._stall_limit)
+        if self._on_stall is not None:
+            try:
+                self._on_stall(silent)
+            except Exception as exc:  # noqa: BLE001 - a callback never stops the ticker
+                _log_liveness_failed("on-stall", exc)
+
     # -- lease ----------------------------------------------------------------
 
-    def _latch(self, reason: str) -> None:
+    def _latch(self, reason: str, *, log: bool = True) -> None:
         """Record the loss once and log it once, whoever found it."""
         with self._latch_lock:
             if self._lost:
                 return
             self._lost = True
+        if not log:
+            return
         try:
             _log_lease_lost(reason)
         except Exception:  # noqa: BLE001 - a log line never undoes the latch
@@ -1356,6 +1647,9 @@ class LivenessTicker:
         except Exception as exc:  # noqa: BLE001 - never out of a tick
             _log_liveness_failed("clock", exc)
             return
+        # First: a stall has to stop the renew and the publish of this very
+        # tick, not of the next one.
+        self._guarded("watchdog", lambda: self._tick_watchdog(now))
         self._guarded("lease", lambda: self._tick_lease(now))
         self._guarded("state", lambda: self._tick_state(now))
         self._guarded("active", lambda: self._tick_heartbeat(now))
@@ -1424,14 +1718,44 @@ class LivenessTicker:
         if now < due:
             return
         # A tick that outlives ``stop()`` must not re-beat a key its owner has
-        # cleared (the supervisor clears its heartbeat on the way out).
-        if self._stop_event.is_set():
+        # cleared (the supervisor clears its heartbeat on the way out). A
+        # stalled run is not vouched for on any key.
+        if self._stop_event.is_set() or self._stalled:
             return
         keepalive.beat()
         entry[2] = now + period
 
+    def _discount_frozen_wait(self, slept_from: Optional[float]) -> None:
+        """Take a wait that overran by a freeze off the main thread's silence.
+
+        ``slept_from`` is the clock just before this thread went to wait one
+        interval. When it wakes ``_FROZEN_WAIT_SECONDS`` or more late, nothing
+        in this process ran in between, the main thread included, so that
+        stretch says nothing about a hang. Never raises.
+        """
+        if self._stall_limit <= 0 or self._stalled or slept_from is None:
+            return
+        try:
+            now = self._clock()
+            overslept = now - slept_from - self._interval
+            if overslept < _FROZEN_WAIT_SECONDS:
+                return
+            # ``min``: the main thread may have stamped since the wake-up.
+            self._last_progress = min(now, self._last_progress + overslept)
+        except Exception as exc:  # noqa: BLE001 - never out of the thread
+            _log_liveness_failed("frozen-wait", exc)
+            return
+        _log_liveness_frozen(overslept)
+
     def _loop(self) -> None:
-        while not self._stop_event.wait(self._interval):
+        while True:
+            try:
+                slept_from: Optional[float] = self._clock()
+            except Exception:  # noqa: BLE001 - ``tick`` logs a failing clock
+                slept_from = None
+            if self._stop_event.wait(self._interval):
+                return
+            self._discount_frozen_wait(slept_from)
             self.tick()
 
     def start(self) -> "LivenessTicker":
@@ -1504,6 +1828,7 @@ def build_status_snapshot(
     daily_limit: int,
     pacing: dict[str, Any],
     ledger: Any = None,
+    now_fn: Callable[[], datetime] = _now_utc,
 ) -> dict[str, Any]:
     """Aggregate the control-plane primitives into one read-only status dict.
 
@@ -1537,6 +1862,16 @@ def build_status_snapshot(
     the wire by design. No caller passes a ledger today — the CLI counts
     quarantined rows in its own print-out — so the parameter exists for the
     ``--status`` adoption described above, not for a caller that already uses it.
+
+    ``last_run`` is the outcome the ``--serve`` supervisor recorded for the
+    last run it drove, without its ``owner`` (v0.14-s1.13). One outcome is
+    derived here and never written: a record that still says ``started`` while
+    the lease is free and the supervisor key is absent or beaten by another
+    process is a run whose process is gone, and reads ``interrupted``.
+    ``paused_since`` is when the pause in force was requested and
+    ``pause_stale`` says it is older than a request normally lives and still
+    set. It does not say a run is observing it: a second pause request re-arms
+    the TTL, and a pause a dead run held outlives that run.
     """
     holder = lease.holder()
     lease_view = None
@@ -1556,7 +1891,11 @@ def build_status_snapshot(
         supervisor_heartbeat is not None and supervisor_heartbeat.is_active()
     )
     consumed = int(budget.consumed())
+    paused_since, pause_stale = pause_view(control, now_fn)
     return {
+        "last_run": last_run_view(control, holder, supervisor_heartbeat),
+        "paused_since": paused_since,
+        "pause_stale": pause_stale,
         "state": BackfillState(control.state()).value,
         "active": holder is not None,
         # "Is anything listening?" — a lease-holding run, or a supervisor
@@ -1587,6 +1926,68 @@ def build_status_snapshot(
         "quarantined": None if ledger is None else int(ledger.quarantined_count()),
         "pacing": dict(pacing),
     }
+
+
+def pause_view(
+    control: Any, now_fn: Callable[[], datetime] = _now_utc
+) -> Tuple[Optional[str], bool]:
+    """``(paused_since, pause_stale)`` for the status snapshot.
+
+    ``getattr``: the controls the suite passes in are duck-typed, and one
+    without these members has no pause time to report.
+    """
+    read = getattr(control, "paused_since", None)
+    since = read() if callable(read) else None
+    if not isinstance(since, datetime):
+        return None, False
+    ttl = _positive_seconds(
+        getattr(control, "request_ttl_seconds", None), _CONTROL_REQUEST_TTL_SECONDS
+    )
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    try:
+        age = (now_fn() - since).total_seconds()
+    except Exception:  # noqa: BLE001 - an odd stamp is a pause of unknown age
+        return since.isoformat(), False
+    return since.isoformat(), age >= ttl
+
+
+def last_run_view(
+    control: Any, holder: Any, supervisor_heartbeat: Any
+) -> Optional[dict[str, Any]]:
+    """The recorded outcome as it goes on the wire, or None."""
+    read = getattr(control, "last_run", None)
+    record = read() if callable(read) else None
+    if not isinstance(record, dict) or not record.get("outcome"):
+        return None
+    view = {
+        "outcome": record.get("outcome"),
+        "exit_code": record.get("exit_code"),
+        "reason": record.get("reason"),
+        "started_at": record.get("started_at"),
+        "finished_at": record.get("finished_at"),
+        "source": record.get("source") or "unknown",
+    }
+    if view["outcome"] == "started" and holder is None:
+        # The supervisor and the run it drives are one process, and the
+        # supervisor beats its key with its ``host:pid``. While that same
+        # process is alive the record stays ``started`` for the moment between
+        # the lease release and the end record. Otherwise nobody is left to
+        # write the end.
+        owner = record.get("owner") or ""
+        read_id = getattr(supervisor_heartbeat, "value", None)
+        if callable(read_id):
+            supervisor_id = read_id()
+        else:
+            alive = supervisor_heartbeat is not None and supervisor_heartbeat.is_active()
+            supervisor_id = (owner or "unknown") if alive else None
+        if not isinstance(supervisor_id, str) or not supervisor_id:
+            gone = True
+        else:
+            gone = bool(owner) and supervisor_id != owner
+        if gone:
+            view["outcome"] = "interrupted"
+    return view
 
 
 # The task classes a cloud backfill drives by default: exactly the three stages
@@ -2749,6 +3150,21 @@ async def run_backfill(
                 _tick_lease()
                 sem.release()
 
+    def _hold_pause() -> None:
+        """Extend the pause being observed. Never raises.
+
+        ``getattr``: duck-typed controls without the method simply have no
+        pause to hold. A failure is logged: the pause is still read on the next
+        poll, and the next hold retries.
+        """
+        hold = getattr(control, "hold_pause", None)
+        if not callable(hold):
+            return
+        try:
+            hold()
+        except Exception as exc:  # noqa: BLE001 - a refresh never ends a pause
+            _log_control_write_failed("hold-pause", exc)
+
     async def _may_launch() -> bool:
         """Honor pause/stop. False means: stop launching new rows.
 
@@ -2791,6 +3207,11 @@ async def run_backfill(
                 # lapses on its TTL.
                 if liveness is not None and inflight == 0:
                     liveness.hold_heartbeat()
+                # A pause this run is observing must not expire under it: the
+                # request TTL is seven days, and a run that outlived it resumed
+                # on its own and spent cloud quota nobody asked for (DW-23).
+                # Only an existing key is extended, so a resume stays a resume.
+                _hold_pause()
                 await sleep_fn(poll_seconds)
         finally:
             result.paused_seconds += max(0.0, clock() - paused_at)
@@ -2810,11 +3231,38 @@ async def run_backfill(
     # in-flight rows to be cancelled at an arbitrary await point by
     # ``asyncio.run`` — mid-enrichment, mid-write. In-flight rows always drain.
     renewer: Optional[asyncio.Task] = None
+    pulse: Optional[asyncio.Task] = None
+    # How often the watchdog wants to hear from this thread; 0 when it is off
+    # (or the ticker is a double that has no such notion).
+    pulse_every = (
+        _positive_seconds(getattr(liveness, "progress_interval", None), 0.0)
+        if liveness is not None
+        else 0.0
+    )
+
+    async def _pulse_progress() -> None:
+        """Tell the watchdog the event loop is turning (v0.14-s1.13).
+
+        "Progress" here means "the main thread ran": while this coroutine gets
+        scheduled the loop is alive, however slow the rows are. A blocking
+        call that never returns stops it, which is the hang the watchdog
+        exists to see. It sleeps with the real ``asyncio.sleep``, never the
+        injected ``sleep_fn``, for the reason the renewer does.
+        """
+        while True:
+            try:
+                liveness.note_progress()
+            except Exception as exc:  # noqa: BLE001 - a stamp never aborts a run
+                _log_progress_hook_failed(exc)
+            await asyncio.sleep(pulse_every)
+
     try:
         # With a ticker its thread renews for the whole run, so there is no
         # timer task to create (and none to cancel below).
         if lease is not None and liveness is None:
             renewer = asyncio.create_task(_renew_lease_periodically())
+        if pulse_every > 0:
+            pulse = asyncio.create_task(_pulse_progress())
         try:
             for prop, metrics in rows:
                 # A quota refusal means every further launch would 429 too — and each
@@ -2972,6 +3420,11 @@ async def run_backfill(
                 renewer_exc = renewer.exception()
                 if renewer_exc is not None:
                     _log_lease_renewer_failed(renewer_exc, phase="shutdown")
+        if pulse is not None:
+            # Same shape as the renewer, for the same reason: ``wait`` never
+            # re-raises what the task ended with.
+            pulse.cancel()
+            await asyncio.wait({pulse})
     # A quota-exhausted run stays "backing-off" for the operator/API to see;
     # anything else (including an operator stop) has genuinely gone idle. A run
     # that lost its lease publishes nothing: the state key now describes whoever
@@ -3153,6 +3606,67 @@ def _log_liveness_recovered(chore: str) -> None:
 
         get_logger(__name__).info("backfill_liveness_tick_recovered", chore=chore)
     except Exception:  # noqa: BLE001 - the ticker thread must survive its own log
+        pass
+
+
+def _log_liveness_frozen(seconds: float) -> None:
+    """The liveness thread woke far later than it asked to. Never raises."""
+    try:
+        from infra.logging import get_logger
+
+        get_logger(__name__).warning(
+            "backfill_liveness_wait_overran",
+            seconds=round(float(seconds)),
+            impact=(
+                "the process stood still (a suspended host?); that time is "
+                "not counted as main-thread silence"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - the ticker thread must survive its own log
+        pass
+
+
+def _log_main_thread_stalled(seconds_silent: float, limit: float) -> None:
+    """The watchdog gave up on the run's main thread. Never raises.
+
+    One line per run. From here on the lease is not renewed and no state is
+    published, so within one lease TTL the run reads as gone and a successor
+    may start.
+    """
+    try:
+        from infra.logging import get_logger
+
+        get_logger(__name__).error(
+            "backfill_main_thread_stalled",
+            seconds_silent=round(float(seconds_silent)),
+            limit_seconds=round(float(limit)),
+            impact=(
+                "the lease is no longer renewed and the state is no longer "
+                "published; the process may still be hung and has to be ended "
+                "by an operator"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - the ticker thread must survive its own log
+        pass
+
+
+def _log_control_write_failed(action: str, exc: Exception) -> None:
+    """A best-effort write to a control key failed. Never raises.
+
+    ``action`` is ``hold-pause`` (the TTL refresh of a pause being observed)
+    or ``publish-local-stop`` (a stop asked for by a signal, mirrored to Redis
+    for the status surface). Neither decides anything: the pause is read again
+    on the next poll and the local flag is the stop.
+    """
+    try:
+        from infra.logging import get_logger
+
+        get_logger(__name__).warning(
+            "backfill_control_write_failed",
+            action=action,
+            error=str(exc),
+        )
+    except Exception:  # noqa: BLE001 - never out of a stop decision
         pass
 
 

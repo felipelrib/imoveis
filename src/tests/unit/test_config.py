@@ -705,6 +705,13 @@ def test_backfill_from_default_app_config_yaml():
         # ``0`` reads as "no cap" but means *no back-off at all*: a provider
         # refusal becomes a tight retry loop against a throttled account.
         ("quota_backoff_seconds", 0),
+        ("max_no_progress_cycles", -1),
+        # Below the 900s floor: one database statement blocked by a migration
+        # is an honest gap of many minutes, and a shorter limit would drop the
+        # lease of a healthy run. ``0`` (off) is the only value under it.
+        ("main_thread_stall_seconds", 899),
+        ("main_thread_stall_seconds", 1),
+        ("main_thread_stall_seconds", -1),
     ],
 )
 def test_backfill_rejects_out_of_range_pacing_values(field, value):
@@ -713,6 +720,21 @@ def test_backfill_rejects_out_of_range_pacing_values(field, value):
 
     with pytest.raises(ValidationError):
         BackfillConfig(**{field: value})
+
+
+@pytest.mark.unit
+def test_backfill_lifecycle_limits_default_and_can_be_disabled():
+    """v0.14-s1.13: both limits are config-owned, and ``0`` turns each off."""
+    from src.infra.config import BackfillConfig, get_config
+
+    assert BackfillConfig().max_no_progress_cycles == 6
+    assert BackfillConfig().main_thread_stall_seconds == 3600
+    assert get_config().backfill.max_no_progress_cycles == 6
+    assert get_config().backfill.main_thread_stall_seconds == 3600
+
+    off = BackfillConfig(max_no_progress_cycles=0, main_thread_stall_seconds=0)
+    assert (off.max_no_progress_cycles, off.main_thread_stall_seconds) == (0, 0)
+    assert BackfillConfig(main_thread_stall_seconds=900).main_thread_stall_seconds == 900
 
 
 @pytest.mark.unit
